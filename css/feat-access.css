@@ -1,0 +1,69 @@
+/* ============================================================
+   feat-access.css — Settings › Accessibility: the reading font,
+   line / letter / word spacing, and the magnifier's lens.
+   js/core/appearance.js sets the attributes on <html>; the colour
+   filters are an SVG filter, js/core/colorfilter.js.
+   ============================================================ */
+
+/* ---- reading fonts (SIL Open Font License: css/fonts/*-OFL.txt).
+   Fetched only once one is chosen: nothing here loads by default. */
+@font-face{font-family:"OpenDyslexic";src:url("fonts/OpenDyslexic-Regular.woff2") format("woff2");font-weight:100 549;font-style:normal;font-display:swap}
+@font-face{font-family:"OpenDyslexic";src:url("fonts/OpenDyslexic-Bold.woff2") format("woff2");font-weight:550 900;font-style:normal;font-display:swap}
+@font-face{font-family:"Atkinson Hyperlegible";src:url("fonts/AtkinsonHyperlegible-Regular.woff2") format("woff2");font-weight:100 549;font-style:normal;font-display:swap}
+@font-face{font-family:"Atkinson Hyperlegible";src:url("fonts/AtkinsonHyperlegible-Bold.woff2") format("woff2");font-weight:550 900;font-style:normal;font-display:swap}
+
+/* --font is what every app's text is set in (css/tokens.css); code keeps --mono */
+:root[data-font="dyslexic"]{--font:"OpenDyslexic","Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+:root[data-font="hyperlegible"]{--font:"Atkinson Hyperlegible","Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+/* the few surfaces that name Inter themselves follow too */
+:root[data-font="dyslexic"] :is(.ps5,.ps5 *,.lens-pipbody),
+:root[data-font="hyperlegible"] :is(.ps5,.ps5 *,.lens-pipbody){font-family:var(--font) !important}
+
+/* ---- spacing -------------------------------------------------------
+   Applied to every element, over each app's own values, the way WCAG's
+   text-spacing check does it — otherwise only text that never set a line
+   height would move. Code editors, the terminal and anything monospaced
+   keep their geometry: their caret and gutters are measured in px. */
+:root[data-lh] body *:not(:is(.mono,code,pre,kbd,samp,.kbd,.code,.code *,.term,.term *,.desk-term,.desk-term *,.stu-ed,.stu-ed *,.stu-probe,[data-spacing-keep],[data-spacing-keep] *)){
+  line-height:var(--read-lh) !important;
+}
+:root[data-ls] body *:not(:is(.mono,code,pre,kbd,samp,.kbd,.code,.code *,.term,.term *,.desk-term,.desk-term *,.stu-ed,.stu-ed *,.stu-probe,[data-spacing-keep],[data-spacing-keep] *)){
+  letter-spacing:var(--read-ls) !important;
+}
+:root[data-ws] body *:not(:is(.mono,code,pre,kbd,samp,.kbd,.code,.code *,.term,.term *,.desk-term,.desk-term *,.stu-ed,.stu-ed *,.stu-probe,[data-spacing-keep],[data-spacing-keep] *)){
+  word-spacing:var(--read-ws) !important;
+}
+/* …and they don't inherit it from the window around them either. No
+   specificity, so a value of their own still wins. */
+:where(:root[data-lh]) :where(.mono,code,pre,kbd,samp,.kbd,.code,.term,.desk-term,.stu-ed,.stu-probe,[data-spacing-keep]){line-height:normal}
+:where(:root[data-ls]) :where(.mono,code,pre,kbd,samp,.kbd,.code,.term,.desk-term,.stu-ed,.stu-probe,[data-spacing-keep]){letter-spacing:normal}
+:where(:root[data-ws]) :where(.mono,code,pre,kbd,samp,.kbd,.code,.term,.desk-term,.stu-ed,.stu-probe,[data-spacing-keep]){word-spacing:normal}
+
+/* ---- colour filters and Night Shift on a full-screen window ----------
+   <html> carries them (js/core/appearance.js), but a full-screen element
+   is drawn in the top layer, outside <html>'s filter. */
+:root[style*="--root-filter"] :fullscreen{filter:var(--root-filter) !important}
+
+/* ---- Settings › Shortcuts (js/apps/shortcuts-pane.js) -------------- */
+.sc-status,.sc-note{display:block;margin-top:2px;font-size:var(--fs-10);color:var(--ink-3);line-height:1.45}
+.sc-status.is-error{color:var(--ink-0);font-weight:600}
+.sc-done{color:var(--ink-1)}
+.sc-badge{margin-top:3px}
+.sc-swap{margin-top:var(--sp-2)}
+.sc-row.is-recording td{background:var(--fill-accent)}
+.sc-rec__k{min-width:72px;justify-content:center;border-color:var(--line-accent)}
+
+/* ---- the magnifier (js/shell/magnifier.js) ------------------------
+   The lens magnifies what is behind it with an SVG displacement filter
+   used as its backdrop filter — live pixels, so canvases, video and
+   other pages framed in a window magnify too. It never takes a click. */
+.maglens{
+  position:fixed;left:0;top:0;z-index:calc(var(--z-boot) + 20);
+  border-radius:50%;pointer-events:none;will-change:transform;
+  box-shadow:0 0 0 2px var(--accent),0 0 0 4px rgba(0,0,0,.5),var(--sh-4);
+}
+/* outranks "reduce transparency" and "blur off", which drop every
+   backdrop filter: this one is the magnifier, not decoration */
+:root .maglens.maglens{-webkit-backdrop-filter:url(#static-mag) !important;backdrop-filter:url(#static-mag) !important}
+/* full-screen zoom: the desktop itself is scaled, panning with the pointer */
+#os.is-zoomed{transform-origin:0 0}

@@ -1,0 +1,52 @@
+/* feat-cheatsheet.css — the keyboard shortcut sheet (js/shell/cheatsheet.js):
+   hold ⌘ / Ctrl for a second, or Help › Keyboard Shortcuts. Centred over the
+   desktop, above windows and menus, under the lock and boot screens. */
+.csheet{
+  position:absolute;left:50%;top:calc(var(--topbar-h) + (100% - var(--topbar-h) - var(--dock-h)) / 2);
+  transform:translate(-50%,-50%);z-index:var(--z-toast);
+  width:min(1180px,calc(100vw - 32px));max-height:calc(100% - var(--topbar-h) - var(--dock-h) - 24px);
+  display:flex;flex-direction:column;border-radius:var(--r-xl);overflow:hidden;
+  background:var(--glass-3);border:1px solid var(--line-1);box-shadow:var(--sh-4);
+  -webkit-backdrop-filter:var(--blur-3);backdrop-filter:var(--blur-3);
+  animation:csheet-in var(--t-med) var(--ease-out) both;
+  transition:opacity 150ms var(--ease);
+  pointer-events:none;           /* a click goes through: it cancels the sheet (js) */
+}
+.csheet.is-pinned{pointer-events:auto}
+.csheet.is-out{opacity:0}
+@keyframes csheet-in{from{opacity:0;transform:translate(-50%,-48%) scale(.985)}}
+
+.csheet__head{
+  display:flex;align-items:center;gap:var(--sp-3);flex:0 0 auto;
+  padding:var(--sp-4) var(--sp-5);border-bottom:1px solid var(--line-0);
+}
+.csheet__head>.icon{width:16px;height:16px;color:var(--accent-soft)}
+.csheet__title{margin:0;font-size:var(--fs-15);font-weight:650;color:var(--ink-0)}
+.csheet__sub{margin-left:auto;font-size:var(--fs-11);color:var(--ink-3)}
+.csheet__x{margin-left:var(--sp-2)}
+
+.csheet__body{
+  overflow:auto;padding:var(--sp-4) var(--sp-5) var(--sp-5);
+  columns:290px auto;column-gap:var(--sp-6);
+}
+.csheet__body:focus-visible{outline:2px solid var(--accent);outline-offset:-4px}
+.csheet__none{margin:0 0 var(--sp-4);font-size:var(--fs-12);color:var(--ink-3);column-span:all}
+.csheet__sec{break-inside:avoid;margin:0 0 var(--sp-5)}
+.csheet__h{
+  display:flex;align-items:center;gap:var(--sp-2);margin:0 0 var(--sp-2);
+  font-size:calc(10px * var(--fs-k,1));font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);
+}
+.csheet__glyph{--gs:18px;width:var(--gs);height:var(--gs);border-radius:5px}
+.csheet__list{list-style:none;margin:0;padding:0}
+.csheet__row{
+  display:grid;grid-template-columns:116px 1fr;gap:var(--sp-3);align-items:baseline;
+  padding:4px 0;border-bottom:1px solid var(--line-0);font-size:var(--fs-12);color:var(--ink-1);
+}
+.csheet__row:last-child{border-bottom:0}
+.csheet__keys{display:flex;flex-wrap:wrap;align-items:center;gap:3px;min-width:0}
+.csheet__keys .kbd{white-space:nowrap}
+.csheet__or{font-size:var(--fs-10);color:var(--ink-3)}
+.csheet__what{min-width:0}
+
+@media (prefers-reduced-motion:reduce){.csheet{animation:none;transition:none}}
+body.reduce-motion .csheet{animation:none;transition:none}

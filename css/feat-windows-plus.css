@@ -1,0 +1,130 @@
+/* ============================================================
+   Windows and desktop, extra: keep on top (js/core/wm.js), window
+   tabs (js/core/wintabs.js), hot corners (js/shell/hotcorners.js)
+   and dock folders (js/shell/dockfolders.js).
+   ============================================================ */
+
+/* ---- keep on top: a pin in the title bar ------------------- */
+.win__pin{
+  display:none;place-items:center;flex:0 0 auto;
+  width:24px;height:24px;margin-left:calc(var(--sp-1) * -1);border-radius:var(--r-xs);
+  color:var(--accent-soft);transition:background var(--t-fast),color var(--t-fast);
+}
+.win.is-pinned .win__pin{display:grid}
+.win__title .win__pin .icon{width:13px;height:13px;color:inherit}
+.win__pin:hover{background:var(--fill-1);color:var(--ink-0)}
+.win__pin:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* ---- window tabs -------------------------------------------- */
+/* the tabs behind the selected one: there, but never drawn or hit */
+.win.is-tab-behind{visibility:hidden!important;pointer-events:none!important}
+.win-tabs{
+  display:flex;align-items:flex-end;gap:2px;flex:0 0 auto;
+  height:30px;padding:0 var(--sp-2);
+  background:var(--fill-0);border-bottom:1px solid var(--line-1);
+  overflow:hidden;touch-action:none;
+}
+.win-tab{
+  position:relative;display:flex;align-items:center;gap:var(--sp-2);
+  flex:1 1 0;min-width:0;max-width:240px;height:26px;padding:0 var(--sp-1) 0 var(--sp-3);
+  border-radius:var(--r-sm) var(--r-sm) 0 0;
+  font-size:var(--fs-11);font-weight:560;color:var(--ink-3);text-align:left;
+  transition:background var(--t-fast),color var(--t-fast);
+}
+.win-tab:hover{background:var(--fill-1);color:var(--ink-1)}
+.win-tab.is-on{background:var(--fill-2);color:var(--ink-0);box-shadow:inset 0 2px 0 var(--accent)}
+.win-tab>.icon{width:13px;height:13px;flex:0 0 auto;color:var(--accent-soft)}
+.win-tab__name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.win-tab__x{
+  display:grid;place-items:center;flex:0 0 auto;width:18px;height:18px;border-radius:var(--r-xs);
+  color:var(--ink-3);opacity:0;transition:opacity var(--t-fast),background var(--t-fast);
+}
+.win-tab__x .icon{width:11px;height:11px}
+.win-tab:hover .win-tab__x,.win-tab.is-on .win-tab__x{opacity:1}
+.win-tab__x:hover{background:var(--fill-3);color:var(--ink-0)}
+.win-tab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* dragging a window over another's title bar: that one takes it as a tab */
+/* !important: a window whose entrance never handed back to the sheet still
+   holds the win-open keyframe's opacity (fill-mode both) */
+.win.is-tab-drag{opacity:.62!important}
+.win.is-tab-target .win__bar,.win.is-tab-target .win-tabs{
+  background:var(--fill-accent-hi);box-shadow:inset 0 0 0 2px var(--accent);
+}
+.win.is-tab-target .win__bar::after{
+  content:"Drop to add as a tab";position:absolute;left:50%;top:7px;transform:translateX(-50%);
+  padding:2px var(--sp-3);border-radius:var(--r-pill);pointer-events:none;
+  background:var(--accent);color:var(--accent-ink);font-size:var(--fs-11);font-weight:650;white-space:nowrap;
+}
+.win.is-tab-target .win__bar{position:relative}
+
+.overview__tabs{
+  flex:0 0 auto;padding:1px var(--sp-2);border-radius:var(--r-pill);
+  background:var(--fill-2);color:var(--ink-1);font-size:var(--fs-10);font-weight:600;
+}
+
+/* ---- hot corners: a glow where it acted --------------------- */
+.hot-corner{
+  position:fixed;width:120px;height:120px;z-index:calc(var(--z-overlay) + 1);pointer-events:none;opacity:0;
+  background:radial-gradient(circle at var(--hc-x,0) var(--hc-y,0),rgba(var(--accent-rgb)/.55),transparent 68%);
+}
+.hot-corner[data-corner="tl"]{left:0;top:0;--hc-x:0;--hc-y:0}
+.hot-corner[data-corner="tr"]{right:0;top:0;--hc-x:100%;--hc-y:0}
+.hot-corner[data-corner="bl"]{left:0;bottom:0;--hc-x:0;--hc-y:100%}
+.hot-corner[data-corner="br"]{right:0;bottom:0;--hc-x:100%;--hc-y:100%}
+.hot-corner.is-on{animation:hot-corner .6s var(--ease-out)}
+@keyframes hot-corner{0%{opacity:0}25%{opacity:1}100%{opacity:0}}
+body.reduce-motion .hot-corner.is-on{animation:none}
+@media (prefers-reduced-motion:reduce){.hot-corner.is-on{animation:none}}
+
+/* ---- dock folders ------------------------------------------- */
+.dock-folder__tile{
+  display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:3px;padding:6px;
+  background:var(--fill-2);
+  -webkit-backdrop-filter:var(--blur-1);backdrop-filter:var(--blur-1);
+}
+.dock-folder__tile::after{display:none}
+.dock-folder__mini{
+  position:relative;display:grid;place-items:center;align-self:stretch;justify-self:stretch;min-width:0;min-height:0;border-radius:4px;
+  background:linear-gradient(160deg,var(--g1,#3a3a44),var(--g2,#22222a));color:#fff;
+}
+.dock-folder__mini .icon{width:70%;height:70%}
+/* a dragged app held over an icon: that icon will take it in */
+.dock__item.is-drop-into .glyph{transform:scale(1.18);box-shadow:0 0 0 2px var(--accent),var(--glow)}
+
+.dock-folder{
+  position:fixed;z-index:var(--z-panel);
+  display:flex;flex-direction:column;gap:var(--sp-3);
+  min-width:220px;max-width:calc(100vw - 16px);padding:var(--sp-4);
+  border-radius:var(--r-xl);background:var(--glass-3);
+  -webkit-backdrop-filter:var(--blur-3);backdrop-filter:var(--blur-3);
+  border:1px solid var(--line-2);box-shadow:var(--sh-4);
+}
+.dock-folder__name{
+  width:100%;padding:var(--sp-1) var(--sp-2);border-radius:var(--r-sm);
+  background:transparent;border:1px solid transparent;
+  color:var(--ink-0);font:inherit;font-size:var(--fs-13);font-weight:650;text-align:center;
+}
+.dock-folder__name:hover{background:var(--fill-0)}
+.dock-folder__name:focus{background:var(--fill-1);border-color:var(--line-accent);outline:none}
+.dock-folder__grid{display:grid;gap:var(--sp-2)}
+.dock-folder__app{
+  position:relative;display:flex;flex-direction:column;align-items:center;gap:var(--sp-1);
+  width:84px;padding:var(--sp-2) var(--sp-1);border-radius:var(--r-md);
+  color:var(--ink-1);font-size:var(--fs-11);font-weight:560;
+  transition:background var(--t-fast);touch-action:none;
+}
+.dock-folder__app .glyph{--gs:44px}
+.dock-folder__app:hover{background:var(--fill-1)}
+.dock-folder__app:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;background:var(--fill-1)}
+.dock-folder__app.is-lifted{opacity:.35}
+.dock-folder__label{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dock-folder__dot{
+  position:absolute;top:6px;right:14px;width:6px;height:6px;border-radius:50%;
+  background:var(--accent-soft);box-shadow:0 0 7px rgba(var(--accent-rgb)/.8);
+}
+.dock-folder__ghost{
+  --gs:46px;position:fixed;left:0;top:0;z-index:var(--z-menu);pointer-events:none;
+  box-shadow:var(--sh-3);opacity:.92;
+}
+.dock-folder__ghost.is-out{box-shadow:var(--sh-3),0 0 0 2px var(--accent)}

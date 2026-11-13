@@ -1,0 +1,101 @@
+/* ============================================================
+   feat-devroom.css — the Developer Room. The one app that looks a
+   little like a lab bench: monospace values, phosphor-green marks.
+   Only this window changes; the shell's theme is untouched.
+   ============================================================ */
+.dr-app { --dr-ink: #5bffa8; --dr-dim: rgba(91, 255, 168, .55); }
+.dr-app .side__item.is-on { background: rgba(91, 255, 168, .12); color: var(--dr-ink); }
+.dr-app .side__item.is-on .icon { color: var(--dr-ink); }
+.dr-sig {
+  margin: auto var(--sp-4) var(--sp-4); padding-top: var(--sp-6);
+  font: calc(10px * var(--fs-k,1))/1.4 "JetBrains Mono", ui-monospace, monospace; color: var(--ink-4); letter-spacing: .02em;
+}
+.dr-side { display: flex; flex-direction: column; }
+
+.dr { font-size: var(--fs-11); }
+.dr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-4); align-items: start; }
+.dr-card {
+  padding: var(--sp-4); border-radius: var(--r-md);
+  border: 1px solid var(--line-0); background: var(--fill-0);
+  display: grid; gap: 6px; min-width: 0;
+}
+.dr-card__h {
+  font: 700 calc(10px * var(--fs-k,1))/1 "JetBrains Mono", ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--dr-ink); margin-bottom: 4px;
+}
+.dr-card__h::before { content: "// "; color: var(--dr-dim); }
+.dr-kv { display: flex; gap: var(--sp-3); align-items: baseline; min-width: 0; }
+.dr-kv > span { flex: 0 0 auto; color: var(--ink-3); }
+.dr-kv > code, .dr-kv > b {
+  margin-left: auto; min-width: 0; text-align: right; overflow-wrap: anywhere;
+  font: calc(11px * var(--fs-k,1))/1.45 "JetBrains Mono", ui-monospace, monospace; color: var(--ink-0);
+}
+
+.dr-fails { display: grid; gap: 4px; margin-top: 4px; }
+.dr-fails > div { display: flex; gap: 6px; align-items: flex-start; color: #fca5a5; }
+.dr-fails .icon { width: 12px; height: 12px; flex: 0 0 auto; margin-top: 2px; }
+.dr-fails code { font: calc(10.5px * var(--fs-k,1))/1.4 "JetBrains Mono", monospace; overflow-wrap: anywhere; }
+.dr-ok { display: flex; gap: 6px; align-items: center; color: var(--dr-ink); margin-top: 4px; }
+.dr-ok .icon { width: 13px; height: 13px; }
+
+.dr-bar { display: grid; grid-template-columns: minmax(0, 9em) 1fr auto; gap: var(--sp-3); align-items: center; }
+.dr-bar > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font: calc(10.5px * var(--fs-k,1))/1.3 "JetBrains Mono", monospace; }
+.dr-bar i { display: block; height: 6px; border-radius: 3px; background: var(--fill-1); overflow: hidden; }
+.dr-bar i b { display: block; height: 100%; background: linear-gradient(90deg, var(--dr-dim), var(--dr-ink)); border-radius: inherit; }
+.dr-bar code { font: calc(10.5px * var(--fs-k,1))/1 "JetBrains Mono", monospace; color: var(--ink-2); }
+
+.dr-select {
+  height: 28px; padding: 0 8px; border-radius: var(--r-sm); border: 1px solid var(--line-1);
+  background: var(--fill-1); color: var(--ink-0); font: inherit;
+}
+.dr-pre {
+  margin: 0; max-height: 260px; overflow: auto; padding: var(--sp-3); border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, .35); border: 1px solid var(--line-0);
+  font: calc(10.5px * var(--fs-k,1))/1.5 "JetBrains Mono", monospace; color: var(--dr-ink); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+.dr-log {
+  height: 100%; min-height: 260px; max-height: calc(100% - 4px); overflow: auto;
+  padding: var(--sp-3); border-radius: var(--r-md);
+  background: rgba(0, 0, 0, .4); border: 1px solid var(--line-0);
+  font: calc(10.5px * var(--fs-k,1))/1.6 "JetBrains Mono", ui-monospace, monospace;
+}
+.dr-ev { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; align-items: baseline; }
+.dr-ev time { color: var(--ink-4); }
+.dr-ev b { color: var(--dr-ink); font-weight: 600; white-space: nowrap; }
+.dr-ev code { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dr-hint { color: var(--ink-3); margin: var(--sp-3) 0; line-height: 1.5; }
+
+.dr-flags { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px var(--sp-4); }
+.dr-flag {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  padding: 6px var(--sp-3); border-radius: var(--r-sm); border: 1px solid var(--line-0); background: var(--fill-0); cursor: pointer;
+}
+.dr-flag:hover { background: var(--fill-1); }
+.dr-flag code { font: calc(10.5px * var(--fs-k,1))/1.3 "JetBrains Mono", monospace; color: var(--ink-1); overflow-wrap: anywhere; }
+.dr-flag input { accent-color: var(--dr-ink); width: 15px; height: 15px; flex: 0 0 auto; }
+
+.dr-apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px; }
+.dr-appr { display: flex; align-items: center; gap: var(--sp-3); padding: 6px var(--sp-3); border-radius: var(--r-sm); border: 1px solid var(--line-0); background: var(--fill-0); }
+.dr-appr b { display: block; font-size: var(--fs-11); color: var(--ink-0); }
+.dr-appr code { font: calc(10px * var(--fs-k,1))/1.2 "JetBrains Mono", monospace; color: var(--ink-3); }
+.dr-appr .grow { min-width: 0; }
+.dr-tag { font: 600 calc(9.5px * var(--fs-k,1))/1 "JetBrains Mono", monospace; color: var(--dr-ink); padding: 3px 6px; border-radius: var(--r-pill); background: rgba(91, 255, 168, .1); }
+.dr-danger { color: #fca5a5; border-color: rgba(252, 165, 165, .35); }
+.dr-danger:hover { background: rgba(252, 165, 165, .1); }
+
+/* admin: broadcast form */
+.dr-form { display: grid; gap: var(--sp-3); margin-top: var(--sp-2); }
+.dr-field { display: grid; gap: 4px; }
+.dr-field > span { font-size: calc(10px * var(--fs-k,1)); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+.dr-in {
+  width: 100%; min-width: 0; padding: 6px 9px; border-radius: var(--r-sm); border: 1px solid var(--line-1);
+  background: var(--fill-1); color: var(--ink-0); font: inherit; font-size: var(--fs-11); resize: vertical;
+}
+.dr-in:focus-visible, .dr-select:focus-visible { outline: 2px solid var(--dr-ink); outline-offset: 1px; }
+.dr-field .dr-select { width: 100%; }
+.dr-note { margin-top: var(--sp-3); padding: var(--sp-3); border-radius: var(--r-sm); background: rgba(91, 255, 168, .08); border: 1px solid rgba(91, 255, 168, .25); color: var(--ink-1); font-size: var(--fs-11); line-height: 1.5; }
+
+/* admin: the "describe it" AI box */
+.dr-ai { border-color: rgba(91, 255, 168, .3); background: linear-gradient(160deg, rgba(91, 255, 168, .06), var(--fill-0) 60%); margin-bottom: var(--sp-4); }
+.dr-ai .spinner { width: 13px; height: 13px; }

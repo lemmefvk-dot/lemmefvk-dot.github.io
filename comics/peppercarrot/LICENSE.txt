@@ -1,0 +1,12 @@
+Pepper&Carrot by David Revoy
+Licence: CC BY 4.0
+Licence text: https://creativecommons.org/licenses/by/4.0/
+
+Licence statement (https://www.peppercarrot.com/en/about/index.html#license, checked 2026-11-03):
+"Pepper&Carrot webcomics, translations and artworks are licensed under a Creative Commons Attribution 4.0 International license unless otherwise noted (eg. fan-arts)"
+
+Attribution:
+Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). English text by the Pepper&Carrot translators and proofreaders named at https://www.peppercarrot.com/en/about/index.html#credits. Pages downscaled to 720 px wide for StaticOS.
+
+Source: https://www.peppercarrot.com/en/webcomics/index.html
+Notes: Maker notes (same About page): "AI derivation prohibited". Do not use the art to train or generate with AI. The page also asks that no NFTs be made from the art ("please do not make NFTs with my art", https://www.peppercarrot.com/en/documentation/120_License_best_practices.html). Best-practice credit wording from that page: "\"Artwork title\" by David Revoy, licensed under Creative Commons Attribution 4.0." Modification notice: pages were downscaled and re-encoded (a change), cover/title page included as page 1. Episode 40 is unpublished (info.json: "public": 0) and is not included.

@@ -1,0 +1,12 @@
+Max und Moritz by Wilhelm Busch
+Licence: Public domain (author died 1908)
+Licence text: https://commons.wikimedia.org/wiki/Category:Max_und_Moritz_(1865)
+
+Licence statement (https://commons.wikimedia.org/wiki/Template:PD-old-100, checked 2026-11-03):
+"This work is in the public domain in its country of origin and other countries and areas where the copyright term is the author's life plus 100 years or fewer."
+
+Attribution:
+Max und Moritz by Wilhelm Busch (1865), public domain. Page scans from Wikimedia Commons, Category:Max und Moritz (1865), files "Max und Moritz (Busch) 001-093". Downscaled to 800 px wide for StaticOS.
+
+Source: https://commons.wikimedia.org/wiki/Category:Max_und_Moritz_(1865)
+Notes: Licence evidence is the Wikimedia Commons licence template {{PD-Art|PD-old-100}} on every page file (Busch died 1908). This is a curated-archive tag, not a statement by the maker (who is long dead). US status is not separately tagged in the template; verify before using outside StaticOS. The 93 numbered "Max und Moritz (Busch) NNN.png" files are the whole numbered set in that Commons category (one extra non-numbered thumbnail file excluded). Language is German.

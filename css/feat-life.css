@@ -1,0 +1,153 @@
+/* ============================================================
+   feat-life.css — Static Life (habits, budget, recipes, workout)
+   Tokens and the shared .app/.tabs/.btn/.field/.chip/.bar/.empty only,
+   so light mode and every accent just work. Self-injected by
+   js/apps/life.js.
+   ============================================================ */
+
+.life { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; position: relative; }
+.life__bar { gap: var(--sp-3); }
+.life__bar .tabs { max-width: 100%; overflow-x: auto; }
+.life__bar .tabs button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.life__bar .tabs .icon { width: 13px; height: 13px; }
+.life__body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.life__panel { flex: 1; min-height: 0; overflow-y: auto; padding: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-4); position: relative; }
+.life__panel > * { flex: 0 0 auto; }
+
+.life-head { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; justify-content: space-between; }
+.life-head h2 { margin: 0; font-size: var(--fs-15); font-weight: 650; color: var(--ink-0); }
+.life-head small { color: var(--ink-3); font-size: var(--fs-10); }
+.life-head__act { display: flex; align-items: center; gap: var(--sp-2); }
+.life h3 { margin: var(--sp-3) 0 0; font-size: var(--fs-12); font-weight: 620; color: var(--ink-1); }
+.life-note { color: var(--ink-3); font-size: var(--fs-10); margin: 0; line-height: 1.5; }
+.life-err { color: #ff8c9f; font-size: var(--fs-10); margin: 0; min-height: 0; }
+.life-err:empty { display: none; }
+.life-grow { flex: 1 1 160px; min-width: 0; }
+
+.life-card { border: 1px solid var(--line-0); background: var(--fill-0); border-radius: var(--r-md, 10px); padding: var(--sp-4); }
+.life-form { display: flex; flex-direction: column; gap: var(--sp-3); }
+.life-form__row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.life-form .field { min-width: 0; }
+.life-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-10); color: var(--ink-3); flex: 1 1 140px; min-width: 0; }
+.life-field textarea { width: 100%; min-height: 140px; padding: var(--sp-3); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-0); color: var(--ink-0); font: inherit; font-size: var(--fs-11); resize: vertical; }
+.life-field textarea:focus { border-color: var(--line-accent); outline: none; }
+.life-two .life-field { flex: 1 1 260px; }
+.life-sym { width: 3.2em; text-align: center; background: var(--bg-2); border: 1px solid var(--line-0); border-radius: var(--r-sm); height: 26px; color: var(--ink-0); }
+.life-symbol { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-10); color: var(--ink-3); }
+.life .field input[type="date"], .life .field input[type="time"], .life .field input[type="number"] { color-scheme: inherit; }
+
+.life-pick { display: inline-flex; gap: 3px; flex-wrap: wrap; }
+.life-pick button, .life .tabs[aria-label="Entry type"] button { min-width: 36px; height: 24px; padding: 0 var(--sp-3); border-radius: 6px; border: 1px solid var(--line-0); color: var(--ink-2); font-size: var(--fs-10); }
+.life-pick button.is-on { background: var(--fill-accent); color: var(--accent-soft); border-color: var(--line-accent); }
+
+/* ---- habits ---- */
+.life-list { display: flex; flex-direction: column; gap: var(--sp-3); }
+.life-habit { display: flex; flex-direction: column; gap: var(--sp-3); }
+.life-habit__top { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+.life-habit__name { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; }
+.life-habit__name b { font-size: var(--fs-12); color: var(--ink-0); overflow-wrap: anywhere; }
+.life-habit__name small { color: var(--ink-3); font-size: var(--fs-10); }
+.life-habit__streak { display: flex; align-items: baseline; gap: var(--sp-2); }
+.life-streak { font-size: calc(22px * var(--fs-k,1)); font-variant-numeric: tabular-nums; color: var(--accent-soft); }
+.life-habit__streak small { color: var(--ink-3); font-size: var(--fs-10); }
+.life-habit__act { display: flex; gap: 2px; }
+.life-habit__act .ibtn.is-on { color: var(--accent-soft); }
+.life-days { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
+.life-day { flex: 0 0 auto; width: 34px; height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--line-0); background: var(--bg-2); color: var(--ink-2); }
+.life-day small { font-size: calc(9px * var(--fs-k,1)); text-transform: uppercase; opacity: .8; }
+.life-day b { font-size: var(--fs-11); font-weight: 600; }
+.life-day.is-off { opacity: .45; border-style: dashed; }
+.life-day.is-today { border-color: var(--line-accent); }
+.life-day.is-done { background: linear-gradient(150deg, var(--accent-soft), var(--accent)); color: #fff; border-color: transparent; opacity: 1; }
+.life-day:hover { border-color: var(--accent-soft); }
+.life-remind { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--fs-10); color: var(--ink-2); }
+.life-remind input { background: var(--bg-2); border: 1px solid var(--line-0); border-radius: var(--r-sm); height: 24px; color: var(--ink-0); padding: 0 var(--sp-2); }
+.life-how { color: var(--ink-2); font-size: var(--fs-10); }
+.life-how summary { cursor: pointer; color: var(--ink-1); }
+.life-how ul { margin: var(--sp-2) 0 0; padding-left: 18px; line-height: 1.6; }
+
+/* ---- budget ---- */
+.life-nav { display: flex; align-items: center; justify-content: center; gap: var(--sp-4); }
+.life-month { min-width: 9em; text-align: center; font-size: var(--fs-12); color: var(--ink-0); }
+.life-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--sp-3); }
+.life-tile { border: 1px solid var(--line-0); border-radius: var(--r-md, 10px); padding: var(--sp-3) var(--sp-4); background: var(--fill-0); display: flex; flex-direction: column; gap: 2px; }
+.life-tile small { color: var(--ink-3); font-size: var(--fs-10); }
+.life-tile b { font-size: var(--fs-15); font-variant-numeric: tabular-nums; color: var(--ink-0); }
+.life-tile.is-over b, td.is-over { color: #ff8c9f; }
+.life-dyn { display: flex; flex-direction: column; gap: var(--sp-4); }
+.life-chart { display: flex; flex-direction: column; gap: var(--sp-2); }
+.life-chart__row { display: grid; grid-template-columns: minmax(70px, 110px) 1fr minmax(70px, auto); gap: var(--sp-3); align-items: center; font-size: var(--fs-10); }
+.life-chart__name { color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.life-chart__track { position: relative; height: 12px; border-radius: var(--r-pill, 6px); background: var(--fill-2); }
+.life-chart__track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-soft)); }
+.life-chart__track i.is-over { background: #e0587a; }
+.life-chart__track u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink-1); text-decoration: none; border-radius: 1px; }
+.life-chart__val { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-1); }
+.life-table { width: 100%; border-collapse: collapse; font-size: var(--fs-10); }
+.life-table caption { text-align: left; font-size: var(--fs-12); font-weight: 620; color: var(--ink-1); padding: var(--sp-2) 0; }
+.life-table th, .life-table td { padding: 4px var(--sp-3); text-align: right; border-bottom: 1px solid var(--line-0); font-variant-numeric: tabular-nums; color: var(--ink-1); font-weight: 450; }
+.life-table th:first-child { text-align: left; color: var(--ink-0); }
+.life-table thead th { color: var(--ink-3); font-weight: 560; }
+.life-budget { display: inline-flex; align-items: center; gap: 3px; }
+.life-budget input { width: 6.5em; height: 22px; text-align: right; background: var(--bg-2); border: 1px solid var(--line-0); border-radius: var(--r-sm); color: var(--ink-0); padding: 0 var(--sp-2); }
+.life-entries { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.life-entries li { display: grid; grid-template-columns: 52px minmax(70px, 120px) 1fr auto auto; gap: var(--sp-3); align-items: center; padding: 3px 0; border-bottom: 1px solid var(--line-0); font-size: var(--fs-10); color: var(--ink-1); }
+.life-entries__date { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.life-entries__note { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.life-entries b { font-variant-numeric: tabular-nums; color: var(--ink-0); }
+.life-entries b.is-in { color: #6fd39a; }
+
+/* ---- recipes ---- */
+.life-tags { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.life-recipes { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--sp-3); }
+.life-recipe { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 0 0 var(--sp-3); overflow: hidden; cursor: pointer; }
+.life-recipe b { padding: 0 var(--sp-3); color: var(--ink-0); font-size: var(--fs-12); }
+.life-recipe small { padding: 0 var(--sp-3); color: var(--ink-3); font-size: var(--fs-10); }
+.life-recipe:hover { border-color: var(--line-accent); }
+.life-recipe__img { width: 100%; height: 100px; object-fit: cover; background: var(--bg-2); display: block; }
+.life-recipe__img.is-blank { display: grid; place-items: center; color: var(--ink-4); }
+.life-recipe__hero { width: 100%; max-height: 240px; object-fit: cover; border-radius: var(--r-md, 10px); }
+.life-recipe__thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
+.life-recipe-view { display: flex; flex-direction: column; gap: var(--sp-3); }
+.life-recipe-view h2 { margin: 0; font-size: calc(20px * var(--fs-k,1)); color: var(--ink-0); }
+.life-stepper { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.life-stepper b { min-width: 6em; text-align: center; font-variant-numeric: tabular-nums; color: var(--ink-0); }
+.life-ings, .life-steps { margin: 0; padding-left: 20px; line-height: 1.7; font-size: var(--fs-12); color: var(--ink-1); }
+.life-steps li { margin-bottom: var(--sp-2); }
+.life-picker { display: flex; flex-direction: column; gap: var(--sp-3); }
+.life-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--sp-3); max-height: 260px; overflow-y: auto; }
+.life-pic { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line-0); border-radius: 8px; padding: 4px; background: var(--bg-2); }
+.life-pic img { width: 100%; height: 64px; object-fit: cover; border-radius: 6px; }
+.life-pic span { font-size: calc(9.5px * var(--fs-k,1)); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.life-pic:hover { border-color: var(--accent-soft); }
+
+.life-cook { position: absolute; inset: 0; z-index: 5; background: var(--bg-1, var(--bg-2)); display: flex; flex-direction: column; overflow: hidden; }
+.life-cook__bar { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--line-0); }
+.life-cook__bar > b { flex: 1 1 200px; font-size: calc(20px * var(--fs-k,1)); color: var(--ink-0); }
+.life-cook__count { color: var(--ink-2); font-size: var(--fs-12); }
+.life-cook__body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--sp-5); display: grid; grid-template-columns: minmax(180px, 1fr) minmax(260px, 2fr); gap: var(--sp-6, 24px); align-content: start; }
+.life-cook h3 { font-size: calc(18px * var(--fs-k,1)); color: var(--ink-1); margin: 0 0 var(--sp-3); }
+.life-cook ul, .life-cook ol { margin: 0; padding-left: 22px; font-size: calc(clamp(20px, 2.6vw, 32px) * var(--fs-k,1)); line-height: 1.5; color: var(--ink-0); }
+.life-cook ol { list-style: none; padding: 0; }
+.life-cook ol li { margin-bottom: var(--sp-3); }
+.life-step { display: flex; gap: var(--sp-4); align-items: flex-start; width: 100%; text-align: left; padding: var(--sp-3); border-radius: 12px; border: 1px solid var(--line-0); background: var(--fill-0); color: inherit; font: inherit; }
+.life-step__box { flex: 0 0 auto; width: 1.1em; height: 1.1em; margin-top: .2em; border-radius: 6px; border: 2px solid var(--line-2); display: grid; place-items: center; color: #fff; }
+.life-step__box .icon { width: .8em; height: .8em; }
+.life-step.is-done { opacity: .55; text-decoration: line-through; }
+.life-step.is-done .life-step__box { background: var(--accent); border-color: transparent; }
+@media (max-width: 640px) { .life-cook__body { grid-template-columns: 1fr; } }
+
+/* ---- workout ---- */
+.life-wk__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--sp-3); }
+.life-wk__total { color: var(--ink-0); font-variant-numeric: tabular-nums; }
+.life-wk__run { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-4); text-align: center; flex: 1; padding: var(--sp-5); border-radius: var(--r-lg, 14px); border: 1px solid var(--line-0); background: var(--fill-0); }
+.life-wk__run[data-kind="work"] { border-color: var(--line-accent); background: var(--fill-accent); }
+.life-wk__run[data-kind="rest"] { background: var(--fill-1); }
+.life-wk__run.is-paused { opacity: .85; }
+.life-wk__label { font-size: calc(clamp(22px, 4vw, 40px) * var(--fs-k,1)); font-weight: 700; color: var(--ink-0); letter-spacing: -.5px; }
+.life-wk__time { font-size: calc(clamp(72px, 16vw, 160px) * var(--fs-k,1)); line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink-0); }
+.life-wk__round, .life-wk__next { color: var(--ink-2); font-size: var(--fs-12); }
+.life-wk__run .bar { width: min(420px, 90%); }
+.life-wk__ctl { justify-content: center; }
+.life-wk__run .life-form__row { justify-content: center; }
+.life .btn.is-on { color: var(--accent-soft); border-color: var(--line-accent); background: var(--fill-accent); }

@@ -1,0 +1,348 @@
+/* ============================================================
+   feat-store.css — Static Store (section 32), and the icon styles
+   it sells.
+
+   The icon styles are global (html[data-icons], set by main.js's
+   applyPrefs so they paint on the first frame), which is why this
+   file is linked from index.html and not only by the Store. The
+   `.st-look[data-icons]` copies are the Store's previews: they are
+   one step more specific so a preview can show a style other than
+   the one in use.
+   ============================================================ */
+
+/* ---------------- icon styles ---------------- */
+html[data-icons="round"] .glyph,
+.st-look[data-icons="round"] .glyph.glyph { border-radius: 50%; }
+
+html[data-icons="sharp"] .glyph,
+.st-look[data-icons="sharp"] .glyph.glyph { border-radius: calc(var(--gs, 38px) * .12); }
+
+html[data-icons="flat"] .glyph,
+.st-look[data-icons="flat"] .glyph.glyph {
+  background: linear-gradient(160deg, var(--g1, #3a3a44), var(--g2, #22222a));
+  box-shadow: none;
+}
+html[data-icons="flat"] .glyph::after,
+.st-look[data-icons="flat"] .glyph.glyph::after { display: none; }
+html[data-icons="flat"] .glyph .icon,
+.st-look[data-icons="flat"] .glyph.glyph .icon { filter: none; }
+
+html[data-icons="outline"] .glyph,
+.st-look[data-icons="outline"] .glyph.glyph {
+  background: rgba(10, 6, 10, .55);
+  box-shadow: inset 0 0 0 1.5px var(--gl, var(--g1, #8a8a96)), 0 4px 14px -6px var(--gl, var(--g1, transparent));
+  color: var(--gl, var(--g1, #fff));
+}
+html[data-icons="outline"] .glyph::after,
+.st-look[data-icons="outline"] .glyph.glyph::after { display: none; }
+html[data-icons="outline"] .glyph .icon,
+.st-look[data-icons="outline"] .glyph.glyph .icon { filter: none; }
+/* light mode: outline tiles need a light fill to stay tiles */
+:root[data-theme="light"][data-icons="outline"] .glyph { background: rgba(255, 255, 255, .7); }
+
+/* tinted: one family — every tile a deep glass of the accent, the symbol in
+   its lighter companion, so the set follows the theme (and a theme pack) */
+html[data-icons="tinted"] .glyph,
+.st-look[data-icons="tinted"] .glyph.glyph {
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(var(--accent-rgb) / .34), transparent 62%),
+    linear-gradient(160deg, rgba(var(--accent-rgb) / .26), rgba(var(--accent-rgb) / .08)),
+    #0c0d11;
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb) / .42), 0 1px 0 rgba(255,255,255,.12) inset, var(--sh-2);
+  color: var(--accent-soft);
+}
+html[data-icons="tinted"] .glyph::after,
+.st-look[data-icons="tinted"] .glyph.glyph::after { display: none; }
+html[data-icons="tinted"] .glyph .icon,
+.st-look[data-icons="tinted"] .glyph.glyph .icon { filter: none; }
+:root[data-theme="light"][data-icons="tinted"] .glyph {
+  background: linear-gradient(160deg, rgba(var(--accent-rgb) / .22), rgba(var(--accent-rgb) / .08)), #fff;
+  color: var(--accent);
+}
+
+/* a preview inside the Store has to show "glass" even when another
+   style is in use — restore the defaults explicitly */
+.st-look[data-icons="glass"] .glyph.glyph {
+  border-radius: calc(var(--gs, 38px) * .28);
+  background:
+    radial-gradient(120% 100% at 50% -12%, rgba(255,255,255,var(--dome,.34)), transparent 56%),
+    radial-gradient(140% 120% at 50% 120%, rgba(0,0,0,.30), transparent 60%),
+    linear-gradient(160deg, var(--g1, #3a3a44), var(--g2, #22222a));
+  box-shadow: 0 1px 0 rgba(255,255,255,.26) inset, 0 -1px 0 rgba(0,0,0,.34) inset, 0 0 0 .5px rgba(0,0,0,.4), var(--sh-2);
+  color: #fff;
+}
+.st-look[data-icons="glass"] .glyph.glyph::after { display: block; }
+/* round and sharp are glass tiles in another shape: a preview of either keeps
+   the glass finish even while Flat, Outline or Tinted is the style in use */
+.st-look[data-icons="round"] .glyph.glyph,
+.st-look[data-icons="sharp"] .glyph.glyph {
+  background:
+    radial-gradient(120% 100% at 50% -12%, rgba(255,255,255,var(--dome,.34)), transparent 56%),
+    radial-gradient(140% 120% at 50% 120%, rgba(0,0,0,.30), transparent 60%),
+    linear-gradient(160deg, var(--g1, #3a3a44), var(--g2, #22222a));
+  box-shadow: 0 1px 0 rgba(255,255,255,.26) inset, 0 -1px 0 rgba(0,0,0,.34) inset, 0 0 0 .5px rgba(0,0,0,.4), var(--sh-2);
+  color: #fff;
+}
+.st-look[data-icons="round"] .glyph.glyph::after,
+.st-look[data-icons="sharp"] .glyph.glyph::after { display: block; }
+.st-look[data-icons="flat"] .glyph.glyph { color: #fff; }
+
+/* ---------------- the app art in each style (js/core/appart.js) ---------------
+   Glass, Round and Sharp show the drawing, lit, in their own tile shape. Flat
+   shows it without its light, highlights and shadows. Outline and Tinted show
+   it in their one colour on their own tile: the drawing's tile, light and
+   shadows go, its body is the colour and the details that stand out from the
+   body are a dimmer mix of the colour and the tile (appart.js sorts the parts).
+   A third-party mark keeps its line glyph there, as Pixel icons keep theirs. */
+html[data-icons="flat"] .appart .d,
+.st-look[data-icons="flat"] .appart .d { display: none; }
+.st-look[data-icons="glass"] .appart .d,
+.st-look[data-icons="round"] .appart .d,
+.st-look[data-icons="sharp"] .appart .d { display: inline; }
+
+html[data-icons="outline"] .glyph--art:not(.st-look *),
+html[data-icons="tinted"] .glyph--art:not(.st-look *),
+.st-look[data-icons="outline"] .glyph.glyph--art,
+.st-look[data-icons="tinted"] .glyph.glyph--art { --mono-mid: color-mix(in srgb, currentColor 40%, #111016); }
+:root[data-theme="light"][data-icons="outline"] .glyph--art:not(.st-look *),
+:root[data-theme="light"][data-icons="tinted"] .glyph--art:not(.st-look *),
+:root[data-theme="light"] .st-look[data-icons="outline"] .glyph.glyph--art,
+:root[data-theme="light"] .st-look[data-icons="tinted"] .glyph.glyph--art { --mono-mid: color-mix(in srgb, currentColor 36%, #fff); }
+html[data-icons="outline"] .glyph--art:not(.st-look *) .appart :is(.tl, .d),
+html[data-icons="tinted"] .glyph--art:not(.st-look *) .appart :is(.tl, .d),
+.st-look[data-icons="outline"] .glyph.glyph--art .appart :is(.tl, .d),
+.st-look[data-icons="tinted"] .glyph.glyph--art .appart :is(.tl, .d) { display: none; }
+html[data-icons="outline"] .glyph--art:not(.st-look *) .appart .inkf,
+html[data-icons="tinted"] .glyph--art:not(.st-look *) .appart .inkf,
+.st-look[data-icons="outline"] .glyph.glyph--art .appart .inkf,
+.st-look[data-icons="tinted"] .glyph.glyph--art .appart .inkf { fill: currentColor; }
+html[data-icons="outline"] .glyph--art:not(.st-look *) .appart .inks,
+html[data-icons="tinted"] .glyph--art:not(.st-look *) .appart .inks,
+.st-look[data-icons="outline"] .glyph.glyph--art .appart .inks,
+.st-look[data-icons="tinted"] .glyph.glyph--art .appart .inks { stroke: currentColor; }
+html[data-icons="outline"] .glyph--art:not(.st-look *) .appart .midf,
+html[data-icons="tinted"] .glyph--art:not(.st-look *) .appart .midf,
+.st-look[data-icons="outline"] .glyph.glyph--art .appart .midf,
+.st-look[data-icons="tinted"] .glyph.glyph--art .appart .midf { fill: var(--mono-mid); }
+html[data-icons="outline"] .glyph--art:not(.st-look *) .appart .mids,
+html[data-icons="tinted"] .glyph--art:not(.st-look *) .appart .mids,
+.st-look[data-icons="outline"] .glyph.glyph--art .appart .mids,
+.st-look[data-icons="tinted"] .glyph.glyph--art .appart .mids { stroke: var(--mono-mid); }
+
+html[data-icons="outline"] .glyph--mark > .appart,
+html[data-icons="tinted"] .glyph--mark > .appart,
+html[data-pixelicons="on"] .glyph--art > .appart,
+.st-look[data-icons="outline"] .glyph.glyph--mark > .appart,
+.st-look[data-icons="tinted"] .glyph.glyph--mark > .appart { display: none; }
+html[data-icons="outline"] .glyph--mark > .icon,
+html[data-icons="tinted"] .glyph--mark > .icon,
+html[data-pixelicons="on"] .glyph--art > .icon,
+.st-look[data-icons="outline"] .glyph.glyph--mark > .icon,
+.st-look[data-icons="tinted"] .glyph.glyph--mark > .icon { display: inline-flex; }
+/* a preview of a drawn style, while Outline or Tinted is the style in use */
+.st-look[data-icons="glass"] .glyph.glyph--art > .appart,
+.st-look[data-icons="round"] .glyph.glyph--art > .appart,
+.st-look[data-icons="sharp"] .glyph.glyph--art > .appart,
+.st-look[data-icons="flat"] .glyph.glyph--art > .appart { display: block; }
+.st-look[data-icons="glass"] .glyph.glyph--art > .icon,
+.st-look[data-icons="round"] .glyph.glyph--art > .icon,
+.st-look[data-icons="sharp"] .glyph.glyph--art > .icon,
+.st-look[data-icons="flat"] .glyph.glyph--art > .icon { display: none; }
+/* Pixel icons win over a preview too: the whole set is pixels while it is on */
+html[data-pixelicons="on"] .st-look .glyph.glyph.glyph--art > .appart { display: none; }
+html[data-pixelicons="on"] .st-look .glyph.glyph.glyph--art > .icon { display: inline-flex; }
+
+/* ---------------- the Store ---------------- */
+.st { padding-bottom: var(--sp-7); }
+
+.st-side .side__group + .side__group { margin-top: var(--sp-4); }
+
+.st-shelf { margin-bottom: var(--sp-6); }
+.st-shelf__head { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.st-more {
+  display: inline-flex; align-items: center; gap: 2px;
+  font: inherit; font-size: var(--fs-11); color: var(--accent-soft);
+  background: none; border: 0; padding: 2px 4px; border-radius: var(--r-xs); cursor: pointer;
+}
+.st-more .icon { width: 12px; height: 12px; }
+.st-more:hover { text-decoration: underline; }
+.st-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* rows: the existing .store__item look, with room for tags and two buttons */
+/* the shared .grid2 packs 200px columns — too tight for a row with a
+   description, tags and buttons, so the Store asks for wider ones */
+.st .grid2 { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.st-item {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 1fr auto;
+  column-gap: var(--sp-4); row-gap: var(--sp-3); align-items: start; position: relative;
+}
+.st-item > :first-child { grid-row: 1 / span 2; }
+.st-item__acts { grid-column: 2; }
+.st-item.is-on { border-color: rgba(var(--accent-rgb) / .45); background: rgba(var(--accent-rgb) / .07); }
+.st-item__body { min-width: 0; }
+.st-item__body small { overflow-wrap: anywhere; }
+.st-item__acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.st-item__acts .btn { justify-content: center; min-width: 64px; }
+
+.st-tags, .st-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.st-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 19px; padding: 0 7px; border-radius: var(--r-pill);
+  font-size: calc(10px * var(--fs-k,1)); font-weight: 560; color: var(--ink-2);
+  background: var(--fill-1); border: 1px solid var(--line-0);
+  white-space: nowrap;
+}
+.st-tag .icon { width: 10px; height: 10px; }
+.st-tag--on { color: var(--accent-soft); background: rgba(var(--accent-rgb) / .12); border-color: rgba(var(--accent-rgb) / .3); }
+.st-chips .st-tag { height: 24px; font-size: var(--fs-11); padding: 0 10px; }
+
+/* hero */
+.st-hero { position: relative; overflow: hidden; margin-bottom: var(--sp-6); }
+.st-hero__glow {
+  position: absolute; inset: -40% -10% auto auto; width: 70%; height: 180%;
+  background: radial-gradient(closest-side, rgba(var(--accent-rgb) / .22), transparent);
+  pointer-events: none;
+}
+.st-hero__kicker { font-size: var(--fs-10); font-weight: 650; letter-spacing: .09em; text-transform: uppercase; color: var(--accent-soft); margin-bottom: 4px; }
+.st-hero p { max-width: 460px; }
+
+/* theme swatch in place of a glyph */
+.st-swatch {
+  width: 42px; height: 42px; flex: 0 0 auto; border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.14) inset, 0 6px 18px -8px rgba(0,0,0,.6);
+}
+.st-swatch--sm { width: 30px; height: 30px; }
+
+/* icon style preview: three sample tiles */
+.st-look { display: flex; gap: 4px; flex: 0 0 auto; padding-top: 2px; }
+
+/* appearance switch above the themes */
+.st-modebar { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-5); font-size: var(--fs-11); color: var(--ink-2); flex-wrap: wrap; }
+.st-seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--r-pill); background: var(--fill-1); border: 1px solid var(--line-0); }
+.st-seg__b {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 12px;
+  border: 0; border-radius: var(--r-pill); background: none; color: var(--ink-2);
+  font: inherit; font-size: var(--fs-11); cursor: pointer;
+}
+.st-seg__b .icon { width: 12px; height: 12px; }
+.st-seg__b.is-on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.st-seg__b:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* wallpaper tiles */
+.st-walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: var(--sp-4); }
+.st-wall {
+  display: flex; flex-direction: column; border-radius: var(--r-md); overflow: hidden;
+  border: 1px solid var(--line-0); background: var(--fill-0);
+  transition: border-color var(--t-fast), transform var(--t-fast);
+}
+.st-wall:hover { border-color: var(--line-2); }
+.st-wall.is-on { border-color: rgba(var(--accent-rgb) / .6); box-shadow: 0 0 0 1px rgba(var(--accent-rgb) / .35); }
+.st-wall__art {
+  position: relative; aspect-ratio: 16 / 9; background: #0b070a center / cover no-repeat;
+}
+.st-wall__art--scene {
+  background:
+    radial-gradient(22% 30% at 72% 30%, rgba(255,255,255,.55), rgba(var(--accent-rgb) / .35) 45%, transparent 70%),
+    linear-gradient(180deg, transparent 55%, rgba(var(--accent-rgb) / .25) 56%, #0b0610 70%),
+    linear-gradient(175deg, #2a1026, #120812 60%, #07040a);
+}
+.st-wall__kind {
+  position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px;
+  height: 20px; padding: 0 8px; border-radius: var(--r-pill);
+  font-size: calc(10px * var(--fs-k,1)); font-weight: 600; color: #fff; background: rgba(0,0,0,.55);
+  backdrop-filter: blur(6px);
+}
+.st-wall__kind .icon { width: 10px; height: 10px; }
+.st-wall__meta { display: flex; align-items: flex-start; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+.st-wall__meta b { display: block; font-size: var(--fs-12); font-weight: 620; color: var(--ink-0); }
+.st-wall__meta small { display: block; font-size: var(--fs-10); color: var(--ink-3); margin-top: 1px; line-height: 1.4; }
+
+.st-redeem { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-5); flex-wrap: wrap; }
+.st-redeem .field { width: 200px; }
+
+/* layout schematic: a desktop in miniature */
+.st-lay {
+  position: relative; width: 64px; height: 42px; flex: 0 0 auto; border-radius: 6px;
+  background: linear-gradient(160deg, rgba(var(--accent-rgb) / .35), #120912 70%);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.12) inset;
+  overflow: hidden;
+}
+.st-lay__icons { position: absolute; left: 4px; top: 4px; display: grid; gap: 2px; }
+.st-lay__icons i { width: 6px; height: 6px; border-radius: 2px; background: rgba(255,255,255,.7); }
+.st-lay__clock { position: absolute; left: 50%; top: 13px; width: 18px; height: 5px; transform: translateX(-50%); border-radius: 2px; background: rgba(255,255,255,.8); }
+.st-lay__rail { position: absolute; right: 3px; top: 3px; bottom: 9px; width: 14px; display: grid; gap: 2px; align-content: start; }
+.st-lay__rail i { height: 7px; border-radius: 2px; background: rgba(255,255,255,.28); }
+.st-lay__rail i.is-acc { background: var(--accent); }
+.st-lay__dock { position: absolute; left: 50%; bottom: 2px; width: 30px; height: 5px; transform: translateX(-50%); border-radius: 3px; background: rgba(255,255,255,.45); }
+
+/* notices above a section */
+.st-banner {
+  display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-5);
+  padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md);
+  font-size: var(--fs-11); color: var(--ink-1);
+  background: rgba(var(--accent-rgb) / .08); border: 1px solid rgba(var(--accent-rgb) / .25);
+}
+.st-banner > .icon { width: 15px; height: 15px; color: var(--accent-soft); flex: 0 0 auto; }
+
+.st-loading { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-6); color: var(--ink-3); font-size: var(--fs-11); }
+.st-foot { margin-top: var(--sp-5); font-size: var(--fs-11); color: var(--ink-3); line-height: 1.55; max-width: 560px; }
+
+/* updates */
+.st-upd b { display: block; font-size: var(--fs-13); color: var(--ink-0); }
+.st-upd small { display: block; font-size: var(--fs-10); color: var(--ink-3); margin-top: 2px; }
+.st-rel { display: grid; gap: 4px; }
+.st-rel__i {
+  display: flex; align-items: center; gap: var(--sp-4); text-align: left;
+  padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm);
+  border: 1px solid var(--line-0); background: var(--fill-0); color: inherit; font: inherit; cursor: pointer;
+}
+.st-rel__i:hover { background: var(--fill-1); border-color: var(--line-2); }
+.st-rel__i b { display: block; font-size: var(--fs-12); color: var(--ink-0); }
+.st-rel__i small { display: block; font-size: var(--fs-10); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-rel__i > span.grow { min-width: 0; }
+.st-rel__v {
+  flex: 0 0 auto; min-width: 42px; height: 22px; display: grid; place-items: center;
+  border-radius: var(--r-pill); font-size: calc(11px * var(--fs-k,1)); font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--accent-soft); background: rgba(var(--accent-rgb) / .12);
+}
+.st-rel__d { flex: 0 0 auto; }
+
+/* in use */
+.st-uses { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-6); }
+.st-use {
+  display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4);
+  border-radius: var(--r-md); border: 1px solid var(--line-0); background: var(--fill-0);
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.st-use:hover { background: var(--fill-1); border-color: var(--line-2); }
+.st-use:focus-visible, .st-rel__i:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.st-use small { display: block; font-size: var(--fs-10); color: var(--ink-3); }
+.st-use b { display: block; font-size: var(--fs-12); color: var(--ink-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-use > span.grow { min-width: 0; }
+.st-use > .icon { width: 14px; height: 14px; color: var(--ink-3); flex: 0 0 auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .st-wall, .st-use { transition: none; }
+}
+
+/* share your look */
+.st-share {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--sp-5);
+  padding: var(--sp-5); margin-bottom: var(--sp-6); border-radius: var(--r-md);
+  border: 1px solid var(--line-0); background: linear-gradient(160deg, rgba(var(--accent-rgb) / .08), var(--fill-0) 60%);
+}
+.st-share__col { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
+.st-share__col .st-foot { margin: 0; }
+.st-code {
+  flex: 1; min-width: 0; height: 30px; padding: 0 10px; border-radius: var(--r-sm);
+  border: 1px solid var(--line-1); background: var(--fill-1); color: var(--ink-0);
+  font: calc(11px * var(--fs-k,1))/1 var(--font-mono, ui-monospace, monospace);
+}
+.st-code:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.st-lookprev:empty { display: none; }
+.st-lookprev { padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); background: var(--fill-0); border: 1px solid var(--line-0); font-size: var(--fs-11); color: var(--ink-1); }
+.st-lookprev__h { font-weight: 600; color: var(--ink-0); margin-bottom: 4px; }
+.st-lookprev ul { margin: 0; padding-left: 1.1em; display: grid; gap: 2px; }
+.st-lookprev__err { display: flex; gap: 6px; align-items: flex-start; color: #fca5a5; }
+.st-lookprev__err .icon { width: 13px; height: 13px; flex: 0 0 auto; margin-top: 1px; }

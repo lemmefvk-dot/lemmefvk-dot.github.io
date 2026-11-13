@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="A one-file launcher for the hosted StaticOS website.">
+  <title>Open StaticOS</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.6 system-ui, sans-serif; background: #101116; color: #f4f4f7; }
+    body { box-sizing: border-box; max-width: 680px; margin: 0 auto; padding: 10vh 24px; }
+    main { padding: clamp(24px, 6vw, 48px); border: 1px solid #343640; border-radius: 22px; background: #191a21; }
+    h1 { margin: 0 0 12px; font-size: clamp(2rem, 7vw, 3.4rem); line-height: 1.1; }
+    p { color: #c1c2cc; }
+    .open { display: inline-block; margin: 10px 0; padding: 12px 18px; border-radius: 12px; background: #ff5275; color: #210812; font-weight: 700; text-decoration: none; }
+    small { display: block; margin-top: 12px; color: #9a9ba6; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>StaticOS</h1>
+    <p>This one-file launcher opens the hosted StaticOS website. An internet connection is required; the website itself is not included in this file.</p>
+    <a class="open" href="https://staticos.surge.sh/" target="_blank" rel="noopener noreferrer">Open StaticOS</a>
+    <small>To save or restore your StaticOS data, open Settings → Privacy. Your browser’s saved data is separate from this launcher. For an offline copy, download the full website ZIP, extract it, and serve the files over HTTP.</small>
+  </main>
+</body>
+</html>

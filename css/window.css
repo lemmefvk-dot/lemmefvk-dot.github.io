@@ -1,0 +1,265 @@
+/* ============================================================
+   StaticOS 3.0 — window chrome (see js/core/wm.js)
+   Windows are absolutely positioned and moved with left/top on
+   a transform-free layer so app content never blurs.
+   ============================================================ */
+/* The layer spans the whole stage, so it must not swallow pointer events —
+   otherwise a right-click on empty desktop never reaches .desktop and the
+   desktop context menu is unreachable. Only the windows themselves are hit. */
+.layer-win{position:absolute;inset:0;z-index:var(--z-win);pointer-events:none}
+.layer-win>*{pointer-events:auto}
+
+.win{
+  position:absolute;display:flex;flex-direction:column;
+  min-width:260px;min-height:160px;
+  border-radius:var(--r-lg);
+  background:var(--glass-2);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);
+  border:1px solid var(--line-1);
+  box-shadow:var(--sh-3),inset 0 1px 0 var(--glass-hi);
+  overflow:hidden;
+  /* no will-change: a promoted layer per window costs GPU memory for the
+     whole session. Animations (all transform/opacity, js/core/wm.js) are
+     promoted by the browser for exactly as long as they run. */
+  animation:win-open var(--t-slow) var(--ease-out) both;
+}
+@keyframes win-open{from{opacity:0;transform:scale(.955) translateY(12px)}to{opacity:1;transform:none}}
+
+.win.is-active{
+  border-color:var(--line-2);
+  box-shadow:var(--sh-4),0 0 0 1px rgba(var(--accent-rgb)/.10),inset 0 1px 0 var(--glass-hi);
+}
+.win.is-active .win__title{color:var(--ink-0)}
+.win:not(.is-active){filter:saturate(.85) brightness(.94)}
+.win.is-min{pointer-events:none;opacity:0;transform:scale(.7);transition:opacity var(--t-med),transform var(--t-med) var(--ease)}
+.win.is-max{border-radius:0;border-color:transparent}
+.win.is-dragging{transition:none!important;box-shadow:var(--sh-4)}
+.win.is-dragging .win__body{pointer-events:none}
+/* snapping and maximising: the geometry is set once and the move is drawn
+   with a transform (wm.js animateTo) — transitioning left/top/width/height
+   re-laid out the app inside on every frame */
+.win.is-snapping .win__body{pointer-events:none}
+.win.is-launched{animation:none}   /* entrance already played (wm.js animateOpen); must precede .is-closing */
+.win.is-closing{animation:win-close var(--t-med) var(--ease) both}
+@keyframes win-close{to{opacity:0;transform:scale(.95) translateY(6px)}}
+
+/* ---- desktops (js/core/wm.js) -------------------------------
+   A window on another desktop is hidden, not removed: its app keeps
+   running. While a slide plays it stays visible (is-leaving), and
+   during a swipe the neighbour's windows peek in (is-peek). */
+.win.is-away:not(.is-leaving):not(.is-peek){visibility:hidden}
+.win.is-away,.win.is-leaving,.win.is-peek{pointer-events:none}
+
+/* a sideways finger on the bare desktop swipes between desktops
+   (shell/desktops.js) — keep the browser from claiming it as a pan */
+.desktop{touch-action:pan-y pinch-zoom}
+
+/* reduced motion (the OS setting; the system one collapses the tokens) */
+body.reduce-motion .win{animation:none}
+body.reduce-motion .win.is-closing{animation:none;opacity:0}
+@media (prefers-reduced-motion:reduce){
+  .win{animation:none}
+  .win.is-closing{animation:none;opacity:0}
+}
+
+/* ---- title bar --------------------------------------------- */
+.win__bar{
+  display:flex;align-items:center;gap:var(--sp-3);
+  height:36px;flex:0 0 auto;padding:0 var(--sp-3) 0 var(--sp-4);
+  background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.012));
+  border-bottom:1px solid var(--line-0);
+  cursor:default;
+  touch-action:none;   /* a finger on the title bar drags the window, not the page */
+}
+.win__bar--tall{height:42px}
+
+.win__lights{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.light{
+  width:11px;height:11px;border-radius:50%;flex:0 0 auto;position:relative;
+  border:.5px solid rgba(0,0,0,.28);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4);
+  transition:filter var(--t-fast),transform var(--t-fast);
+}
+.light .icon{width:7px;height:7px;color:rgba(0,0,0,.62);opacity:0;position:absolute;inset:2px;transition:opacity var(--t-fast)}
+.light .icon svg{stroke-width:2.6}
+.win__lights:hover .light .icon{opacity:1}
+.light:active{transform:scale(.88)}
+.light--close{background:linear-gradient(180deg,#ff6b81,#ec3350)}
+.light--min{background:linear-gradient(180deg,#ffcf6b,#eba21f)}
+.light--max{background:linear-gradient(180deg,#7ce08a,#2fb14c)}
+.win:not(.is-active) .light{background:var(--fill-2);border-color:transparent;box-shadow:none}
+
+.win__lead{display:flex;align-items:center;gap:2px;flex:0 0 auto}
+.win__title{
+  display:flex;align-items:center;gap:var(--sp-3);min-width:0;
+  font-size:var(--fs-12);font-weight:600;color:var(--ink-2);
+  transition:color var(--t-fast);
+}
+.win__title .icon{width:14px;height:14px;color:var(--accent-soft)}
+.win__title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.win__sub{font-size:var(--fs-10);color:var(--ink-3);font-weight:500}
+.win__tools{display:flex;align-items:center;gap:2px;margin-left:auto;flex:0 0 auto}
+
+/* segmented control used in window toolbars (Files grid/list) */
+.seg{display:flex;padding:2px;gap:2px;border-radius:var(--r-sm);background:var(--fill-0);border:1px solid var(--line-0)}
+.seg button{
+  display:flex;align-items:center;justify-content:center;gap:4px;
+  height:20px;min-width:22px;padding:0 5px;border-radius:6px;
+  color:var(--ink-3);font-size:var(--fs-10);font-weight:560;transition:all var(--t-fast);
+}
+.seg button .icon{width:13px;height:13px}
+.seg button:hover{color:var(--ink-1)}
+.seg button.is-on{background:var(--fill-2);color:var(--ink-0);box-shadow:var(--sh-1)}
+
+/* ---- body -------------------------------------------------- */
+.win__body{position:relative;flex:1 1 auto;min-height:0;display:flex;overflow:hidden}
+.win__body>*{min-width:0;min-height:0}
+
+/* chromeless windows (terminal, media) get their own bar style */
+.win--terminal{background:rgba(10,4,7,.88)}
+.win--terminal .win__bar{background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.01))}
+
+/* ---- resize grips ----------------------------------------- */
+.win__grip{position:absolute;z-index:3}
+.win__grip[data-dir="n"]{top:-3px;left:10px;right:10px;height:7px;cursor:ns-resize}
+.win__grip[data-dir="s"]{bottom:-3px;left:10px;right:10px;height:7px;cursor:ns-resize}
+.win__grip[data-dir="w"]{left:-3px;top:10px;bottom:10px;width:7px;cursor:ew-resize}
+.win__grip[data-dir="e"]{right:-3px;top:10px;bottom:10px;width:7px;cursor:ew-resize}
+.win__grip[data-dir="nw"]{top:-3px;left:-3px;width:14px;height:14px;cursor:nwse-resize}
+.win__grip[data-dir="ne"]{top:-3px;right:-3px;width:14px;height:14px;cursor:nesw-resize}
+.win__grip[data-dir="sw"]{bottom:-3px;left:-3px;width:14px;height:14px;cursor:nesw-resize}
+.win__grip[data-dir="se"]{bottom:-3px;right:-3px;width:14px;height:14px;cursor:nwse-resize}
+.win.is-max .win__grip{display:none}
+
+/* ---- snap preview ----------------------------------------- */
+.snap-ghost{
+  position:absolute;z-index:calc(var(--z-win) - 1);pointer-events:none;
+  border-radius:var(--r-lg);border:1.5px solid var(--line-accent);
+  background:rgba(var(--accent-rgb)/.10);
+  box-shadow:0 0 40px rgba(var(--accent-rgb)/.18) inset;
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  /* sized for its zone at once; the grow from the window is a transform (wm.js showGhost) */
+  opacity:0;transition:opacity var(--t-fast) var(--ease);
+}
+.snap-ghost.is-on{opacity:1}
+:root[data-gamemode="on"] .snap-ghost{background:rgba(var(--accent-rgb)/.16)}
+
+/* ---- snap layouts: the picker on the maximise button (shell/snaplayouts.js) */
+.snap-picker{
+  position:absolute;z-index:var(--z-menu);
+  display:grid;grid-template-columns:repeat(4,78px);gap:8px;padding:10px;
+  border-radius:var(--r-md);background:var(--glass-3);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);
+  border:1px solid var(--line-1);box-shadow:var(--sh-3);
+  transform-origin:14px top;
+}
+.snap-picker.is-above{transform-origin:14px bottom}
+.snap-picker__layout{
+  display:grid;gap:3px;height:50px;padding:3px;border-radius:7px;
+  background:var(--fill-0);border:1px solid var(--line-0);
+}
+.snap-picker__zone{
+  min-width:0;min-height:0;padding:0;border-radius:4px;
+  background:var(--fill-2);border:1px solid var(--line-1);
+  transition:background var(--t-fast),border-color var(--t-fast),box-shadow var(--t-fast);
+}
+.snap-picker__zone:hover,.snap-picker__zone:focus-visible{
+  background:rgba(var(--accent-rgb)/.55);border-color:var(--line-accent);
+  box-shadow:0 0 10px rgba(var(--accent-rgb)/.35);outline:none;
+}
+.snap-picker__zone.is-current{background:rgba(var(--accent-rgb)/.24)}
+
+/* ---- desktop HUD (shell/desktops.js) ----------------------- */
+.desk-hud{
+  position:absolute;left:50%;top:calc(var(--topbar-h) + 14px);z-index:var(--z-panel);
+  display:flex;gap:6px;padding:6px;border-radius:var(--r-pill);
+  background:var(--glass-3);-webkit-backdrop-filter:var(--blur-1);backdrop-filter:var(--blur-1);
+  border:1px solid var(--line-1);box-shadow:var(--sh-2);
+  font-size:var(--fs-11);font-weight:600;color:var(--ink-2);
+  pointer-events:none;opacity:0;transform:translate(-50%,-6px);
+  transition:opacity var(--t-med) var(--ease),transform var(--t-med) var(--ease);
+}
+.desk-hud.is-on{opacity:1;transform:translate(-50%,0)}
+.desk-hud__pill{padding:4px 11px;border-radius:var(--r-pill);white-space:nowrap}
+.desk-hud__pill.is-on{background:var(--fill-accent-hi);color:var(--ink-0)}
+
+/* ---- mission-control style overview ----------------------- */
+.overview{
+  position:absolute;inset:0;z-index:var(--z-overlay);
+  background:rgba(6,2,3,.55);-webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);
+  animation:fade-in var(--t-med) var(--ease) both;
+}
+.overview__grid{position:absolute;inset:0}
+.overview__grid .overview__item{animation:ov-in var(--t-slow) var(--ease-out) backwards;touch-action:none}
+@keyframes ov-in{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+.overview__item.is-dragging{z-index:5;transition:none;cursor:grabbing;pointer-events:none;opacity:.8;box-shadow:var(--sh-4),var(--glow)}
+.overview.is-dragging .overview__item:not(.is-dragging){opacity:.55}
+
+/* a context menu opened from the overview (a desktop's right-click menu)
+   must sit above it — menus are normally below the overlay layer */
+.overview ~ .menu{z-index:calc(var(--z-overlay) + 1)}
+
+/* the desktop strip along the top of the overview */
+.overview__desks{
+  position:absolute;left:0;right:0;top:calc(var(--topbar-h) + 14px);z-index:2;
+  display:flex;justify-content:center;align-items:flex-start;gap:14px;padding:0 28px;
+}
+.ov-desk{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px}
+.ov-desk__thumb{
+  position:relative;display:block;padding:0;overflow:hidden;cursor:pointer;
+  border-radius:var(--r-sm);border:1.5px solid var(--line-1);box-shadow:var(--sh-2);
+  background:radial-gradient(120% 90% at 50% -10%,rgba(var(--accent-rgb)/.28),transparent 60%),linear-gradient(175deg,#1b1020,#08050b);
+  transition:transform var(--t-med) var(--ease),border-color var(--t-fast),box-shadow var(--t-med);
+}
+.ov-desk__thumb:hover{transform:translateY(-2px);border-color:var(--line-2)}
+.ov-desk.is-current .ov-desk__thumb{border-color:var(--accent);box-shadow:var(--sh-2),var(--glow)}
+.ov-desk.is-drop .ov-desk__thumb{border-color:var(--accent);transform:scale(1.07);box-shadow:var(--sh-3),var(--glow-lg)}
+.ov-desk__win{
+  position:absolute;display:grid;place-items:center;border-radius:3px;
+  background:var(--glass-2);border:1px solid var(--line-2);box-shadow:0 2px 6px rgba(0,0,0,.4);
+  color:var(--ink-1);
+}
+.ov-desk__win .icon{width:11px;height:11px}
+.ov-desk--add .ov-desk__thumb{display:grid;place-items:center;background:var(--fill-0);border-style:dashed;color:var(--ink-2)}
+.ov-desk--add .ov-desk__thumb .icon{width:20px;height:20px}
+.ov-desk__name{max-width:150px;font-size:var(--fs-11);font-weight:600;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text}
+.ov-desk.is-current .ov-desk__name{color:var(--ink-0)}
+.ov-desk__input{
+  width:120px;height:20px;padding:0 6px;border-radius:5px;text-align:center;
+  font:600 var(--fs-11)/1 var(--font);color:var(--ink-0);background:var(--fill-2);border:1px solid var(--line-accent);
+}
+.ov-desk__x{
+  position:absolute;top:-7px;left:-7px;width:20px;height:20px;border-radius:50%;
+  display:grid;place-items:center;background:var(--glass-3);border:1px solid var(--line-2);color:var(--ink-1);
+  opacity:0;transform:scale(.8);transition:opacity var(--t-fast),transform var(--t-fast);
+}
+.ov-desk__x .icon{width:11px;height:11px}
+.ov-desk:hover .ov-desk__x,.ov-desk__x:focus-visible{opacity:1;transform:none}
+.ov-desk__x:hover{background:#ec3350;color:#fff}
+
+/* wallpaper of a desktop that has its own, fading in on the switch (shell/desktop.js) */
+.wp > .wp-in{animation:fade-in 420ms var(--ease) both}
+body.reduce-motion .wp > .wp-in,body.reduce-motion .overview__grid .overview__item{animation:none}
+@media (prefers-reduced-motion:reduce){.wp > .wp-in,.overview__grid .overview__item{animation:none}}
+.overview__item{
+  position:absolute;border-radius:var(--r-md);overflow:hidden;cursor:pointer;
+  border:1px solid var(--line-1);box-shadow:var(--sh-3);
+  transition:transform var(--t-med) var(--ease),box-shadow var(--t-med),border-color var(--t-fast);
+  background:var(--glass-2);
+}
+.overview__item:hover{transform:scale(1.03);border-color:var(--line-accent);box-shadow:var(--sh-4),var(--glow)}
+.overview__cap{
+  position:absolute;left:0;right:0;bottom:0;padding:var(--sp-3) var(--sp-4);
+  display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-11);font-weight:600;color:#fff;
+  background:linear-gradient(0deg,rgba(0,0,0,.8),transparent);
+}
+.overview__cap .icon{width:14px;height:14px}
+.overview__hint{
+  position:absolute;left:50%;bottom:calc(var(--dock-h) + 22px);transform:translateX(-50%);
+  font-size:var(--fs-11);color:var(--ink-2);display:flex;gap:var(--sp-5);align-items:center
+}
+.kbd{
+  display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;
+  border-radius:5px;background:var(--fill-1);border:1px solid var(--line-1);border-bottom-width:2px;
+  font-family:var(--mono);font-size:var(--fs-10);color:var(--ink-1)
+}

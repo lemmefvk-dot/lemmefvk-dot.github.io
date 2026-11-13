@@ -1,0 +1,164 @@
+/* ============================================================
+   feat-piano.css — Static Piano
+   Self-injected by js/apps/piano.js. Uses only OS tokens so it
+   sits native in dark and light themes and scales to phone width.
+   ============================================================ */
+
+.piano { background: var(--bg-1, var(--fill-0)); }
+
+/* ---- top bar transport ---- */
+.piano__bar { gap: var(--sp-3); }
+.piano__transport { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; justify-content: flex-end; }
+.piano__rectime { font-size: var(--fs-10); color: var(--ink-3); min-width: 62px; text-align: right; }
+
+.piano__recdot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--ink-3); flex: 0 0 auto;
+  transition: background var(--t-fast), box-shadow var(--t-fast);
+}
+.piano__rec.is-rec { border-color: rgba(255,60,80,.42); color: #ff8c9f; background: rgba(255,60,80,.14); }
+.piano__rec.is-rec .piano__recdot {
+  background: #ff5064; box-shadow: 0 0 0 3px rgba(255,80,100,.25);
+  animation: piano-blink 1s steps(1) infinite;
+}
+@keyframes piano-blink { 50% { opacity: .35; } }
+
+/* ---- control panel ---- */
+.piano__panel {
+  display: flex; align-items: flex-end; flex-wrap: wrap;
+  gap: var(--sp-3) var(--sp-5);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--line-0);
+  background: rgba(255,255,255,.014);
+}
+.piano__group { display: flex; flex-direction: column; gap: var(--sp-2); }
+.piano__group--wide { flex: 1 1 190px; min-width: 168px; }
+.piano__glabel {
+  font-size: calc(9px * var(--fs-k,1)); font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+}
+
+/* segmented voice selector */
+.piano__seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--r-sm); background: var(--fill-1); border: 1px solid var(--line-1); }
+.piano__segbtn {
+  height: 24px; padding: 0 var(--sp-3); border-radius: var(--r-xs);
+  font-size: var(--fs-10); font-weight: 560; color: var(--ink-2);
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.piano__segbtn:hover { color: var(--ink-0); }
+.piano__segbtn.is-on { background: var(--accent); color: var(--accent-ink, #2a0310); box-shadow: var(--glow); }
+
+/* octave stepper */
+.piano__oct { display: inline-flex; align-items: center; gap: var(--sp-2); height: 26px; }
+.piano__octval { font-size: var(--fs-11); font-weight: 600; color: var(--ink-0); min-width: 62px; text-align: center; font-family: var(--font-mono, var(--mono)); }
+
+/* sliders */
+.piano__slid { display: flex; align-items: center; gap: var(--sp-3); height: 26px; }
+.piano__vol, .piano__bpm { flex: 1 1 auto; min-width: 90px; }
+.piano__volico { display: inline-flex; color: var(--ink-2); flex: 0 0 auto; }
+.piano__volico .icon { width: 15px; height: 15px; }
+.piano__volico.is-muted { color: var(--ink-4); }
+.piano__bpmval { font-size: var(--fs-10); color: var(--ink-2); min-width: 54px; font-family: var(--font-mono, var(--mono)); }
+
+/* ---- keyboard stage ---- */
+.piano__stage { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: var(--sp-5); gap: var(--sp-4); }
+.piano__board {
+  flex: 1; min-height: 132px; overflow-x: auto; overflow-y: hidden;
+  border-radius: var(--r-md); background: var(--fill-0); border: 1px solid var(--line-1);
+  box-shadow: inset 0 2px 8px rgba(0,0,0,.28);
+  padding: 8px;
+}
+.piano__keys { position: relative; height: 100%; display: flex; }
+.piano__whites { display: flex; flex: 1; gap: 3px; }
+.piano__blacks { position: absolute; inset: 0; pointer-events: none; }
+
+.pkey {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  justify-content: flex-end; gap: 3px; cursor: pointer; user-select: none;
+  -webkit-user-select: none; touch-action: none;
+}
+.pkey__key {
+  font-size: calc(9px * var(--fs-k,1)); font-weight: 700; letter-spacing: .04em;
+  padding: 2px 5px; border-radius: var(--r-pill);
+  background: var(--fill-2); color: var(--ink-2); text-transform: uppercase;
+}
+.pkey__name { font-size: var(--fs-10); font-weight: 600; }
+
+/* white keys */
+.pkey--white {
+  flex: 1 1 0; min-width: 30px;
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
+  background: linear-gradient(180deg, #fff, #e9e6ef);
+  border: 1px solid rgba(0,0,0,.18); border-top: 0;
+  padding-bottom: 10px; color: #2a2540;
+  box-shadow: inset 0 -3px 6px rgba(0,0,0,.10);
+  transition: background var(--t-fast), transform var(--t-fast);
+}
+.pkey--white .pkey__key { background: rgba(0,0,0,.06); color: #4a4460; }
+.pkey--white:hover { background: linear-gradient(180deg, #fff, #ded9ea); }
+.pkey--white.is-down {
+  background: linear-gradient(180deg, var(--accent-soft), var(--accent));
+  color: var(--accent-ink, #2a0310); transform: translateY(1px);
+  box-shadow: inset 0 3px 8px rgba(0,0,0,.22);
+}
+.pkey--white.is-down .pkey__key { background: rgba(0,0,0,.14); color: inherit; }
+
+/* black keys */
+.pkey--black {
+  position: absolute; top: 0; height: 62%;
+  transform: translateX(-50%); pointer-events: auto;
+  border-radius: 0 0 var(--r-xs) var(--r-xs);
+  background: linear-gradient(180deg, #3a3550, #17141f);
+  border: 1px solid #000; border-top: 0;
+  color: #d7d2e6; padding-bottom: 7px; justify-content: flex-end;
+  box-shadow: 0 3px 5px rgba(0,0,0,.5), inset 0 -2px 3px rgba(255,255,255,.06);
+  z-index: 2;
+}
+.pkey--black .pkey__key { background: rgba(255,255,255,.10); color: #cfc8e2; }
+.pkey--black:hover { background: linear-gradient(180deg, #48425f, #1d1926); }
+.pkey--black.is-down {
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000));
+  color: #fff; transform: translateX(-50%) translateY(1px);
+}
+
+.pkey:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; z-index: 4; }
+
+/* reduced motion */
+.piano.is-reduced .pkey, .piano.is-reduced .piano__segbtn, .piano.is-reduced .piano__rec { transition: none; }
+.piano.is-reduced .piano__rec.is-rec .piano__recdot { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .pkey, .piano__segbtn { transition: none; }
+  .piano__rec.is-rec .piano__recdot { animation: none; }
+}
+
+/* ---- legend ---- */
+.piano__legend { flex: 0 0 auto; }
+.piano__legend.is-hidden { display: none; }
+.piano__legrow { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); }
+.piano__leglabel { font-size: calc(9px * var(--fs-k,1)); font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.piano__legkeys { display: inline-flex; align-items: center; gap: 3px; }
+.piano__legtext { font-size: var(--fs-10); color: var(--ink-3); margin-left: 2px; }
+.piano__legend kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 17px; padding: 0 4px;
+  font-family: var(--font-mono, var(--mono)); font-size: calc(9.5px * var(--fs-k,1)); color: var(--ink-1);
+  background: var(--fill-1); border: 1px solid var(--line-1); border-bottom-width: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* light theme: black keys stay dark, board a touch lighter */
+html[data-theme=light] .piano__board { background: rgba(0,0,0,.03); }
+html[data-theme=light] .pkey--white { border-color: rgba(0,0,0,.22); }
+
+/* mobile: stack transport under the title, let the board breathe */
+body.is-mobile .piano__transport { justify-content: flex-start; }
+body.is-mobile .piano__panel { padding: var(--sp-3) var(--sp-4); gap: var(--sp-3); }
+body.is-mobile .piano__stage { padding: var(--sp-3); }
+body.is-mobile .pkey--white { min-width: 26px; }
+body.is-mobile .pkey__name { font-size: calc(9px * var(--fs-k,1)); }
+
+/* ---- MIDI keyboard ---- */
+.piano__midi { flex: 2 1 260px; }
+.piano__midistat { font-size: var(--fs-10); color: var(--ink-2); line-height: 1.35; }
+.piano__midilast { font-size: var(--fs-10); color: var(--ink-1); min-width: 96px; }
+.piano__pedal { font-size: calc(9px * var(--fs-k,1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 2px 6px; border-radius: var(--r-pill); background: var(--fill-2); color: var(--ink-3); }
+.piano__pedal.is-on { background: var(--accent); color: var(--accent-ink, #2a0310); }

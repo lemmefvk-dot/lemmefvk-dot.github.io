@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-accent="aether" data-density="normal">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="StaticOS — a desktop operating system that runs in a browser tab.">
+<title>StaticOS</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Not render-blocking: a stylesheet on another host would otherwise hold up
+     the whole start-up (scripts wait for blocking stylesheets) on a slow or
+     filtered connection, and fail outright offline. The boot splash covers
+     the moment it takes to swap in. sw.js keeps a copy for offline. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" crossorigin media="print" onload="this.media='all'">
+
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/window.css">
+<link rel="stylesheet" href="css/shell.css">
+<link rel="stylesheet" href="css/apps.css">
+<link rel="stylesheet" href="css/features.css">
+<link rel="stylesheet" href="css/feat-clock.css">
+<link rel="stylesheet" href="css/feat-mobile.css">
+<link rel="stylesheet" href="css/feat-a11y.css">
+<link rel="stylesheet" href="css/feat-access.css">
+<link rel="stylesheet" href="css/feat-boot.css">
+<link rel="stylesheet" href="css/feat-lens.css">
+<link rel="stylesheet" href="css/feat-account.css">
+<link rel="stylesheet" href="css/feat-earlyaccess.css">
+<link rel="stylesheet" href="css/feat-gamemode.css">
+<link rel="stylesheet" id="feat-store-css" href="css/feat-store.css">
+<link rel="stylesheet" href="css/feat-home.css">
+<link rel="stylesheet" href="css/feat-deskwidgets.css">
+<link rel="stylesheet" href="css/feat-spooky.css">
+<link rel="stylesheet" href="css/feat-winter.css">
+<link rel="stylesheet" href="css/feat-windows-plus.css">
+<link rel="stylesheet" href="css/feat-celebrate.css">
+<link rel="stylesheet" id="feat-feedback-css" href="css/feat-feedback.css">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff7a98'/%3E%3Cstop offset='1' stop-color='%23c1123a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='24' height='24' rx='7' fill='url(%23g)'/%3E%3Cpath d='M12 5.5 18.5 12 12 18.5 5.5 12z' fill='%23fff'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<div id="os" aria-label="StaticOS desktop"></div>
+
+<div id="too-small" class="hidden">
+  <div class="ts__card">
+    <div class="ts__logo"></div>
+    <b>StaticOS needs a wider screen</b>
+    <small>This is a desktop shell — windows, a dock and a widget rail. Rotate your device or open it on a screen at least 900px wide.</small>
+    <button class="btn btn--primary" id="ts-anyway">Continue anyway</button>
+  </div>
+</div>
+
+<noscript>
+  <div style="padding:40px;font-family:system-ui;color:#eee">
+    <h1>StaticOS</h1>
+    <p>This shell is built entirely in JavaScript. Please enable it.</p>
+  </div>
+</noscript>
+
+<!-- Boot watchdog. A plain script, so it runs even when StaticOS's own
+     modules cannot. If start-up throws and stalls, or the shell has not come
+     up within 30 s, it replaces the blank page with a way out: reload, repair (drop
+     the proxy's service worker and caches), or reset saved data. main.js
+     marks progress on window.__staticBoot. -->
+<script>
+(function () {
+  var B = window.__staticBoot = { alive: false, ok: false, shown: false, errors: [] };
+  function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text) e.textContent = text; return e; }
+  function repair(resetData) {
+    var jobs = [];
+    try { if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); })); } catch (e) {}
+    try { if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+    /* only the person this tab is signed in as (js/core/profiles.js names
+       their keys): staticos.state.v3, or staticos.state.v3::<id> */
+    var mine = 'staticos.state.v3', who = null;
+    try { who = JSON.parse(sessionStorage.getItem('staticos.profile') || 'null'); } catch (e) {}
+    try {
+      if (who && who.guest) mine = null;
+      else if (who && /^p[a-z0-9]{8}$/.test(who.id)) mine += '::' + who.id;
+      else if (!(who && who.id === 'default') && localStorage.getItem('staticos.profiles.v1')) mine = null;
+    } catch (e) {}
+    try { sessionStorage.clear(); } catch (e) {}
+    /* frozen: a page that got far enough to save must not write it straight back */
+    if (resetData && mine) { B.frozen = true; try { localStorage.removeItem(mine); } catch (e) {} }
+    Promise.all(jobs).catch(function () {}).then(function () { location.replace(location.pathname + '?repaired=' + Date.now()); });
+  }
+  B.recover = function (why) {
+    if (B.shown || B.ok) return;
+    B.shown = true;
+    var btn = 'margin:6px;padding:9px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.18);background:#231419;color:#fff;font:600 13px system-ui,sans-serif;cursor:pointer';
+    var box = el('div', 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#0b0708;color:#e8dfe3;font:14px/1.5 system-ui,sans-serif;padding:20px');
+    box.id = 'boot-recover';
+    var card = el('div', 'max-width:460px;text-align:center');
+    card.appendChild(el('div', 'font-size:20px;font-weight:700;margin-bottom:8px', "StaticOS didn't start"));
+    card.appendChild(el('div', 'color:#a99ba1;margin-bottom:14px', 'Something broke while it was loading. Repair clears the proxy\'s saved worker and caches, which fixes most of these. Your settings stay.'));
+    if (why) card.appendChild(el('code', 'display:block;font-size:12px;color:#7d7379;margin-bottom:14px;word-break:break-word', String(why).slice(0, 300)));
+    var again = el('button', btn, 'Try again'); again.onclick = function () { location.reload(); };
+    var fix = el('button', btn + ';background:#ff456d;color:#2a0310;border-color:transparent', 'Repair and reload'); fix.onclick = function () { repair(false); };
+    var wipe = el('button', btn, 'Reset StaticOS'); wipe.onclick = function () { if (confirm('Reset StaticOS? Your settings, accounts and saved state on this browser are erased.')) repair(true); };
+    card.appendChild(again); card.appendChild(fix); card.appendChild(wipe);
+    box.appendChild(card);
+    (document.body || document.documentElement).appendChild(box);
+  };
+  /* an error only counts if start-up then stalls — a harmless one (a single
+     app, a widget) must not cover a desktop that is coming up fine */
+  function onErr(msg) {
+    if (B.alive) return;
+    B.errors.push(msg);
+    setTimeout(function () { if (!B.alive) B.recover(msg); }, 4000);
+  }
+  window.addEventListener('error', function (e) {
+    if (typeof ErrorEvent !== 'undefined' && e instanceof ErrorEvent) return onErr(e.message || 'a script error');
+    var t = e && e.target;                       /* images and styles failing are not fatal */
+    if (t && t.tagName === 'SCRIPT') onErr('could not load ' + (t.src || 'a script'));
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) { onErr('start-up failed: ' + ((e && e.reason && e.reason.message) || e.reason)); });
+  /* slow school or café Wi-Fi can take a while — give it room */
+  setTimeout(function () { if (!B.alive) B.recover(B.errors[0] || 'The desktop did not come up within 30 seconds.'); }, 30000);
+  /* if it does come up after all, get out of the way */
+  var watch = setInterval(function () {
+    if (!B.alive) return;
+    clearInterval(watch);
+    var box = document.getElementById('boot-recover');
+    if (box) box.remove();
+  }, 1000);
+})();
+</script>
+<script type="module" src="js/main.js?v=ps5-home-v3"></script>
+</body>
+</html>

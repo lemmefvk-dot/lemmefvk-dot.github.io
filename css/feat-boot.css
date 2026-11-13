@@ -1,0 +1,193 @@
+/* ==================================================================
+   Boot manager + per-drive skins — .bp/.bpt-*, .bootos-*, .tty-*,
+   .os-skin, .desk-term (the Linux wallpaper terminal)
+
+   The boot manager is a GRUB-style text screen: light grey on black,
+   one boxed menu, the highlighted row inverted. Everything after it
+   (the typed boot command, the whole Linux boot) runs on the same
+   .bootos--tty surface, so the hand-off is seamless. Windows keeps its
+   own centred logo screen.
+
+   body[data-os] + body[data-wp="canopy"] decide whether a skin shows:
+   a drive only restyles the default wallpaper.
+   ================================================================== */
+
+.bp,.bootos{
+  --tty-ink:#c8c8c8;
+  --tty-dim:#7d7d7d;
+  --tty-font:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+
+/* ---------- the menu ---------- */
+.bp{
+  position:fixed;inset:0;z-index:9000;background:#000;color:var(--tty-ink);
+  cursor:none;user-select:none;-webkit-user-select:none;   /* keyboard only */
+  font:calc(15px * var(--fs-k,1))/1.5 var(--tty-font);display:flex;flex-direction:column;align-items:center;
+  padding:max(24px,6vh) 16px 24px;overflow:auto;
+  opacity:0;transition:opacity 260ms ease;
+}
+.bp.is-in{opacity:1}
+.bp.is-out{opacity:0;transition-duration:180ms}
+.bpt__title{margin-bottom:22px;text-align:center;white-space:pre}
+.bpt__menu,.bpt__cli{width:min(760px,100%)}
+.bpt__box{border:1px solid var(--tty-ink);padding:6px 0;min-height:190px}
+.bpt__row{
+  display:flex;width:100%;padding:1px 10px;text-align:left;cursor:none;
+  font:inherit;color:inherit;white-space:pre;overflow:hidden;text-overflow:ellipsis;
+}
+.bpt__row[aria-selected="true"]{background:var(--tty-ink);color:#000}
+.bpt__mark{width:1.2ch;flex:none}
+.bpt__help{margin-top:14px;padding:0 4ch;color:var(--tty-ink)}
+.bpt__skip{white-space:pre}
+.bpt__count{margin-top:10px;padding:0 4ch;min-height:1.5em}
+.bpt__dim{color:var(--tty-dim);margin-bottom:10px}
+.bpt__cliout div{white-space:pre-wrap}
+.bpt__prompt{display:flex}
+.bpt__input{flex:1;min-width:0;background:none;border:0;outline:0;font:inherit;color:#fff;caret-color:#fff;padding:0;cursor:none}
+
+/* ---------- the tty the boot runs on ---------- */
+.bootos{
+  position:fixed;inset:0;z-index:9000;display:grid;place-items:center;background:#000;
+  opacity:0;transition:opacity 380ms ease;
+}
+.bootos.is-in{opacity:1}
+.bootos.is-out{opacity:0}
+
+.bootos--tty{
+  cursor:none;
+  display:block;place-items:normal;padding:22px 28px;overflow:hidden;opacity:1;
+  font:calc(14px * var(--fs-k,1))/1.6 var(--tty-font);color:var(--tty-ink);
+}
+.bootos--tty.is-out{opacity:0}
+.tty__line{white-space:pre-wrap;overflow-wrap:anywhere;min-height:1.6em}
+.tty__dim{color:var(--tty-dim)}
+.tty__ok{color:#4ade80;font-weight:700}
+.tty__brand{color:#e8622c;font-weight:700}
+.tty__user{color:#4ade80;font-weight:700}
+.tty__path{color:#60a5fa;font-weight:700}
+.tty__skip{position:fixed;right:18px;bottom:14px;font-size:calc(11px * var(--fs-k,1));color:#555}
+
+/* ---------- Windows ---------- */
+.bootos__win{display:flex;flex-direction:column;align-items:center;gap:56px}
+.bootos__winlogo{display:grid;grid-template-columns:1fr 1fr;gap:5px;width:88px;height:88px}
+.bootos__winlogo i{background:#2f81f7;border-radius:2px}
+.bootos__spinner{position:relative;width:44px;height:44px}
+.bootos__spinner span{position:absolute;inset:0;animation:win-orbit 5.5s infinite;opacity:0}
+.bootos__spinner span::after{
+  content:"";position:absolute;top:0;left:50%;width:6px;height:6px;margin-left:-3px;
+  border-radius:50%;background:#fff;
+}
+.bootos__spinner span:nth-child(2){animation-delay:.24s}
+.bootos__spinner span:nth-child(3){animation-delay:.48s}
+.bootos__spinner span:nth-child(4){animation-delay:.72s}
+.bootos__spinner span:nth-child(5){animation-delay:.96s}
+@keyframes win-orbit{
+  0%{transform:rotate(225deg);opacity:1;animation-timing-function:ease-out}
+  7%{transform:rotate(345deg);animation-timing-function:linear}
+  30%{transform:rotate(455deg);animation-timing-function:ease-in-out}
+  39%{transform:rotate(690deg);animation-timing-function:linear}
+  70%{transform:rotate(815deg);opacity:1;animation-timing-function:ease-out}
+  75%{transform:rotate(945deg);animation-timing-function:ease-out}
+  76%{transform:rotate(945deg);opacity:0}
+  100%{transform:rotate(945deg);opacity:0}
+}
+.bootos__cap{font-size:calc(14px * var(--fs-k,1));color:rgba(255,255,255,.82);font-weight:400;letter-spacing:.2px;
+  font-family:"Segoe UI",Inter,system-ui,sans-serif}
+
+/* ---------- the skins (default wallpaper only) ---------- */
+.os-skin{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .7s ease;overflow:hidden}
+body[data-os][data-wp="canopy"] .os-skin{opacity:1}
+
+/* Windows: a glass bloom (assets/skins/windows-bloom.svg) */
+.os-skin__win{position:absolute;inset:0;background:#01051a url("../assets/skins/windows-bloom.svg") center/cover no-repeat}
+
+/* Linux: a dark desk; the real terminal (.desk-term) sits on top of it */
+body[data-os="linux"] .os-skin{
+  background:
+    radial-gradient(50% 45% at 85% 12%,rgba(232,98,44,.22),transparent 70%),
+    radial-gradient(45% 50% at 8% 95%,rgba(130,60,200,.18),transparent 70%),
+    repeating-linear-gradient(180deg,rgba(255,255,255,.018) 0 1px,transparent 1px 3px),
+    #0c0d10;
+}
+
+/* ---------- the wallpaper terminal (js/shell/deskterm.js) ----------
+   The last child of .desktop: above wallpaper, skin and icons, below
+   widgets (z 50), windows (100) and the dock. Anchored bottom-left, just
+   right of the icon grid (--dt-left/--dt-right, measured), clear of the
+   widget rail and the dock. The big centred clock steps aside for it. */
+.desk-term{
+  position:absolute;z-index:1;display:flex;flex-direction:column;
+  /* --dt-left / --dt-right are measured by deskterm.js place() */
+  left:var(--dt-left,clamp(130px,11vw,190px));
+  bottom:calc(var(--dock-h) + var(--sp-5) + 8px);
+  width:min(900px,calc(100% - var(--dt-left,150px) - var(--dt-right,340px)));
+  height:min(560px,calc(100% - var(--topbar-h) - var(--dock-h) - 3*var(--sp-5) - 16px));
+  min-width:320px;min-height:220px;
+  border-radius:14px;border:1px solid transparent;
+  transition:border-color .25s ease,box-shadow .25s ease,background .25s ease;
+  --mono:var(--font-mono,ui-monospace,"SF Mono",Menlo,monospace);
+}
+.desk-term:hover{border-color:rgba(255,255,255,.06)}
+.desk-term.is-focus{border-color:rgba(var(--accent-rgb)/.35);box-shadow:0 0 0 1px rgba(var(--accent-rgb)/.12),0 18px 60px -20px rgba(0,0,0,.6)}
+body.has-deskterm .deskclock{display:none}
+/* called forward over the windows (under the dock and menus) */
+.desk-term.is-raised{z-index:calc(var(--z-win) + 50);background:rgba(9,10,13,.9);box-shadow:0 24px 70px -18px rgba(0,0,0,.75)}
+
+/* on any wallpaper other than the Linux skin, give the text a surface */
+body.has-deskterm:not([data-wp="canopy"]) .desk-term,
+.desk-term.is-raised{
+  background:rgba(9,10,13,.76);border-color:rgba(255,255,255,.08);
+  backdrop-filter:blur(12px) saturate(1.2);-webkit-backdrop-filter:blur(12px) saturate(1.2);
+}
+
+/* the engine's own layout, frameless and wallpaper-sized */
+.desk-term > .app{flex:1;min-height:0}
+.term--embedded .term__out{
+  padding:14px 18px;font-size:calc(13px * var(--fs-k,1));line-height:1.55;color:#c9ccd3;
+  text-shadow:0 1px 0 rgba(0,0,0,.55);scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent;
+}
+.term--embedded .term__in,.term--embedded .term__in input{font-size:calc(13px * var(--fs-k,1))}
+.term--embedded .term__in input{color:#e6e7ea;caret-color:var(--accent)}
+.term--embedded .term__ps1,
+.term--embedded .term__kv dt{color:var(--accent)}
+.term--embedded .term__art{color:var(--accent);font-size:calc(13px * var(--fs-k,1));line-height:1.35;text-shadow:none}
+.term--embedded .term__kv{font-size:calc(13px * var(--fs-k,1))}
+.term--embedded .term__kv dd{color:#c9ccd3}
+.term--embedded .term__dim{color:#9a9ea6}   /* ≥4.5:1 on the desk and the scrim */
+.term--embedded .term__kv-head{color:#e6e7ea!important}
+.term--embedded .term__kv-rule{color:#555a63!important}
+.term--embedded .term__fetch{gap:28px}
+.desk-term__bye{padding:14px 18px;font:calc(13px * var(--fs-k,1))/1.55 var(--mono);color:#7d7d7d}
+
+/* something asked for the terminal: show where it is */
+.desk-term.is-called{animation:dt-call 1.2s ease}
+@keyframes dt-call{
+  0%{box-shadow:0 0 0 0 rgba(var(--accent-rgb)/.0)}
+  25%{box-shadow:0 0 0 4px rgba(var(--accent-rgb)/.55),0 0 40px rgba(var(--accent-rgb)/.35)}
+  100%{box-shadow:0 0 0 0 rgba(var(--accent-rgb)/0)}
+}
+
+@media (max-width:640px){
+  .bp{font-size:calc(12px * var(--fs-k,1))}
+  .bootos--tty{font-size:calc(12px * var(--fs-k,1));padding:16px}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .bp,.bootos,.os-skin{transition:none}
+  .bootos__spinner span,.desk-term{animation:none}
+  .bootos__spinner span{opacity:1}
+}
+
+/* ---- the unlisted `signal` boot: an untuned TV finding the channel ---- */
+.bpn{position:fixed;inset:0;z-index:9001;background:#000;display:grid;place-items:center;overflow:hidden;cursor:none}
+.bpn__cv{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated;opacity:.9}
+.bpn::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.28) 0 2px,transparent 2px 4px);mix-blend-mode:multiply}
+.bpn__ch{position:absolute;top:6vh;right:7vw;font:700 clamp(22px,4vw,44px)/1 "JetBrains Mono",monospace;color:#7CFF7C;
+  text-shadow:0 0 12px rgba(124,255,124,.7),2px 0 rgba(255,0,80,.5),-2px 0 rgba(0,160,255,.5);letter-spacing:.06em}
+.bpn__msg{position:relative;z-index:1;padding:.5em 1.1em;font:700 clamp(18px,3vw,30px)/1 "JetBrains Mono",monospace;letter-spacing:.3em;
+  color:#fff;background:rgba(0,0,0,.72);border:2px solid rgba(255,255,255,.8);text-shadow:2px 0 rgba(255,0,80,.6),-2px 0 rgba(0,160,255,.6)}
+.bpn.is-tuned .bpn__cv{animation:bpn-roll .7s steps(7) both}
+.bpn.is-tuned .bpn__msg{color:var(--accent-soft, #ff7a98);border-color:currentColor}
+@keyframes bpn-roll{0%{transform:translateY(0)}60%{transform:translateY(-30%)}100%{transform:translateY(0);opacity:.15}}
+@media (prefers-reduced-motion:reduce){.bpn.is-tuned .bpn__cv{animation:none}}

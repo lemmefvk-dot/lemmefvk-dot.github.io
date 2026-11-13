@@ -1,0 +1,154 @@
+/* ============================================================
+   feat-home.css — the desktop's Home line (brief section 29): two
+   small pills under the wallpaper clock, "Continue <game>" and
+   "Quick Play". The clock is decorative and ignores the pointer;
+   the pills opt back in.
+   ============================================================ */
+.deskclock__face{display:flex;flex-direction:column;align-items:center;gap:var(--sp-4)}
+.deskhome{
+  display:flex;flex-wrap:wrap;justify-content:center;gap:var(--sp-3);
+  margin-top:var(--sp-3);pointer-events:auto;text-shadow:none;
+  animation:deskhome-in .9s var(--ease-out, ease-out) .35s both;
+}
+.deskhome[hidden]{display:none}
+@keyframes deskhome-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.deskhome__pill{
+  display:inline-flex;align-items:center;gap:8px;max-width:min(360px,80vw);
+  height:32px;padding:0 14px 0 5px;border-radius:var(--r-pill);
+  font:inherit;font-size:var(--fs-11);color:rgba(255,255,255,.86);letter-spacing:.01em;
+  background:rgba(12,8,12,.38);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(14px) saturate(1.3);backdrop-filter:blur(14px) saturate(1.3);
+  box-shadow:0 8px 24px -12px rgba(0,0,0,.6);
+  cursor:pointer;transition:background var(--t-fast),border-color var(--t-fast),transform var(--t-fast);
+}
+.deskhome__pill > span:not(.deskhome__art){white-space:nowrap;color:rgba(255,255,255,.6)}
+.deskhome__pill b{font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.deskhome__pill:hover{background:rgba(20,12,18,.55);border-color:rgba(255,255,255,.26);transform:translateY(-1px)}
+.deskhome__pill:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.deskhome__pill:disabled{opacity:.6;cursor:progress}
+.deskhome__pill--quick{padding-left:12px}
+.deskhome__pill--quick .icon{width:13px;height:13px;color:var(--accent-soft)}
+.deskhome__pill--quick > span{color:#fff}
+
+.deskhome__art{
+  flex:0 0 auto;width:23px;height:23px;border-radius:50%;
+  background:#222 center/cover no-repeat;box-shadow:0 0 0 1px rgba(255,255,255,.2);
+}
+.deskhome__art--glyph{
+  display:grid;place-items:center;color:#fff;
+  background:linear-gradient(150deg,hsl(var(--hue,330) 85% 62%),hsl(var(--hue,330) 70% 28%));
+}
+.deskhome__art--glyph .icon{width:12px;height:12px}
+
+:root[data-theme="light"] .deskhome__pill{background:rgba(255,255,255,.55);color:rgba(20,10,16,.8);border-color:rgba(0,0,0,.1)}
+:root[data-theme="light"] .deskhome__pill b,
+:root[data-theme="light"] .deskhome__pill--quick > span{color:#140a10}
+:root[data-theme="light"] .deskhome__pill > span:not(.deskhome__art){color:rgba(20,10,16,.6)}
+
+@media (prefers-reduced-motion:reduce){.deskhome{animation:none}.deskhome__pill{transition:none}}
+body.reduce-motion .deskhome{animation:none}
+
+/* Static Chat: the honest note under the presence rail in local mode
+   (kept here with the other small shell-level additions) */
+.ch-rail__note{margin:var(--sp-4) var(--sp-3) 0;font-size:calc(10.5px * var(--fs-k,1));line-height:1.5;color:var(--ink-3)}
+
+/* The menu bar's Control Centre popover is div.menu.cc; Controller Center
+   (css/feat-controller.css) also uses a bare .cc block for its window
+   layout. One class more pins the popover back to its own shape. */
+.menu.cc{display:block;flex:none;width:296px;min-width:0;min-height:0}
+
+/* ---- developer broadcasts (core/broadcast.js) ---- */
+.bc-banner{
+  position:fixed;top:calc(var(--topbar-h,34px) + 10px);left:50%;transform:translateX(-50%);
+  z-index:950;width:min(720px,calc(100vw - 24px));
+  display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-4);
+  border-radius:var(--r-lg);border:1px solid rgba(var(--accent-rgb)/.4);
+  background:rgba(18,10,16,.82);-webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
+  box-shadow:0 18px 50px -20px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.04) inset;
+  color:var(--ink-0);animation:bc-in .5s var(--ease-out,ease-out) both;
+}
+@keyframes bc-in{from{opacity:0;transform:translate(-50%,-8px)}to{opacity:1;transform:translate(-50%,0)}}
+.bc-banner__ic{flex:0 0 auto;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(var(--accent-rgb)/.18);color:var(--accent-soft)}
+.bc-banner__ic .icon{width:16px;height:16px}
+.bc-banner__tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.bc-banner__tx small{font-size:calc(9.5px * var(--fs-k,1));font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-soft)}
+.bc-banner__tx b{font-size:var(--fs-13);font-weight:650}
+.bc-banner__tx span{font-size:var(--fs-11);color:var(--ink-1);line-height:1.45;overflow-wrap:anywhere}
+.bc-banner .btn{flex:0 0 auto;white-space:nowrap}
+.bc-banner--warning{border-color:rgba(251,191,36,.55)}
+.bc-banner--warning .bc-banner__ic{background:rgba(251,191,36,.16);color:#fcd34d}
+.bc-banner--warning .bc-banner__tx small{color:#fcd34d}
+.bc-banner--event{background:linear-gradient(120deg,rgba(var(--accent-rgb)/.28),rgba(18,10,16,.86) 55%)}
+:root[data-theme="light"] .bc-banner{background:rgba(255,255,255,.86);color:#140a10}
+.bc-fx{position:fixed;inset:0;width:100vw;height:100vh;z-index:940;pointer-events:none}
+@media (prefers-reduced-motion:reduce){.bc-banner{animation:none}}
+body.is-mobile .bc-banner{top:calc(var(--topbar-h,34px) + 6px);flex-wrap:wrap}
+
+/* the promoted-site card, bottom-left */
+.bc-promo{
+  /* above the dock line, so it never sits on the dock's first icons */
+  position:fixed;left:18px;bottom:calc(var(--dock-h,72px) + 22px);z-index:950;width:min(280px,calc(100vw - 36px));
+  display:flex;flex-direction:column;border-radius:var(--r-lg);overflow:hidden;
+  border:1px solid rgba(var(--accent-rgb)/.35);
+  background:rgba(18,10,16,.86);-webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
+  box-shadow:0 22px 60px -24px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.04) inset;
+  color:var(--ink-0);animation:bc-promo-in .55s var(--ease-out,ease-out) both;
+}
+@keyframes bc-promo-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.bc-promo__img{aspect-ratio:16/7;background:#0b070a;overflow:hidden}
+.bc-promo__img img{width:100%;height:100%;object-fit:cover;display:block}
+.bc-promo__body{display:flex;flex-direction:column;gap:3px;padding:var(--sp-4)}
+.bc-promo__body > small{font-size:calc(9.5px * var(--fs-k,1));font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-soft)}
+.bc-promo__body > b{font-size:var(--fs-13);font-weight:650;overflow-wrap:anywhere}
+.bc-promo__body > span{font-size:var(--fs-11);color:var(--ink-1);line-height:1.45;overflow-wrap:anywhere}
+.bc-promo__row{display:flex;align-items:center;gap:var(--sp-3);margin-top:var(--sp-3)}
+.bc-promo__host{font-size:calc(10px * var(--fs-k,1));color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.bc-promo__x{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.45);border-radius:50%}
+:root[data-theme="light"] .bc-promo{background:rgba(255,255,255,.9);color:#140a10}
+@media (prefers-reduced-motion:reduce){.bc-promo{animation:none}}
+body.is-mobile .bc-promo{left:12px;right:12px;width:auto;bottom:calc(var(--mobile-tabbar-h,64px) + 12px)}
+
+/* ---- the share sheet (shell/share.js) ---- */
+.share{position:fixed;inset:0;z-index:1150;display:grid;place-items:end center;padding:0 16px 96px;
+  background:rgba(4,2,4,.35);opacity:0;transition:opacity .18s ease}
+.share.is-in{opacity:1}
+.share.is-out{opacity:0}
+.share__card{width:min(420px,100%);border-radius:var(--r-xl);overflow:hidden;
+  background:rgba(22,12,18,.92);-webkit-backdrop-filter:blur(24px) saturate(1.4);backdrop-filter:blur(24px) saturate(1.4);
+  border:1px solid rgba(255,255,255,.1);box-shadow:0 30px 80px -24px rgba(0,0,0,.9);
+  transform:translateY(12px);transition:transform .22s var(--ease-out,ease-out)}
+.share.is-in .share__card{transform:none}
+.share__head{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-4) var(--sp-4) var(--sp-3)}
+.share__art{width:46px;height:46px;border-radius:var(--r-md);object-fit:cover;flex:0 0 auto;background:var(--fill-1)}
+.share__art--ic{display:grid;place-items:center;color:var(--accent-soft)}
+.share__art--ic .icon{width:20px;height:20px}
+.share__who{flex:1;min-width:0}
+.share__who small{display:block;font-size:calc(9.5px * var(--fs-k,1));font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-soft)}
+.share__who b{display:block;font-size:var(--fs-13);color:var(--ink-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.share__acts{display:grid;gap:2px;padding:0 var(--sp-3) var(--sp-3)}
+.share__act{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-3);border-radius:var(--r-md);
+  border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.share__act:hover,.share__act:focus-visible{background:var(--fill-1);outline:none}
+.share__act:focus-visible{box-shadow:0 0 0 2px var(--accent) inset}
+.share__ic{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;
+  background:rgba(var(--accent-rgb)/.14);color:var(--accent-soft)}
+.share__ic .icon{width:15px;height:15px}
+.share__lbl b{display:block;font-size:var(--fs-12);color:var(--ink-0)}
+.share__lbl small{display:block;font-size:var(--fs-10);color:var(--ink-3)}
+.share__hint{margin:0;padding:0 var(--sp-5) var(--sp-4);font-size:var(--fs-10);line-height:1.5;color:var(--ink-3)}
+.share__note:empty{display:none}
+.share__note{display:flex;gap:6px;align-items:flex-start;margin:0 var(--sp-4) var(--sp-4);padding:var(--sp-3);border-radius:var(--r-sm);
+  font-size:var(--fs-11);color:var(--ink-1);background:rgba(var(--accent-rgb)/.1);overflow-wrap:anywhere}
+.share__note .icon{width:13px;height:13px;flex:0 0 auto;margin-top:1px;color:var(--accent-soft)}
+:root[data-theme="light"] .share__card{background:rgba(255,255,255,.94)}
+@media (prefers-reduced-motion:reduce){.share,.share__card{transition:none}}
+/* a creation's share link, once made (core/sharelink.js) */
+.share__linkbox{display:flex;gap:var(--sp-3);align-items:center;margin:0 var(--sp-4) var(--sp-3)}
+.share__linkbox[hidden]{display:none}
+.share__linkin{flex:1;min-width:0;height:28px;padding:0 var(--sp-3);border-radius:var(--r-sm);
+  font:inherit;font-size:var(--fs-10);font-family:var(--font-mono,ui-monospace,Menlo,monospace);color:var(--ink-1);
+  background:var(--fill-0);border:1px solid var(--line-1)}
+.share__linkin:focus{outline:none;border-color:var(--line-accent)}
+.share__act[disabled]{opacity:.55;pointer-events:none}

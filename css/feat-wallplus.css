@@ -1,0 +1,43 @@
+/* ============================================================
+   feat-wallplus.css — rotation, Day and Night, the weather
+   overlay and the auto accent (js/shell/wallplus.js, the
+   Settings rows in js/apps/wallplus-pane.js). Tokens only.
+   ============================================================ */
+
+/* the weather overlay: on the wallpaper, under everything else on the desktop */
+.wx-fx{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+:root[data-gamemode="on"] .wx-fx,
+body.is-mobile .wx-fx{display:none}
+
+/* Day and Night: four lights stacked, two showing at most */
+.wp__day{overflow:hidden}
+body.reduce-motion .wp__day > i{transition:none !important}
+@media (prefers-reduced-motion:reduce){ .wp__day > i{transition:none !important} }
+
+/* ---------- Settings › Wallpaper ---------- */
+.wpx-set{display:flex;flex-wrap:wrap;gap:var(--sp-2);width:100%}
+.wpx-set__b{
+  display:inline-flex;align-items:center;gap:var(--sp-2);
+  padding:4px 10px 4px 4px;border-radius:var(--r-pill);
+  background:var(--fill-1);border:1px solid var(--line-1);color:var(--ink-1);
+  font:inherit;font-size:var(--fs-12);cursor:pointer;
+}
+.wpx-set__b:hover{background:var(--fill-2)}
+.wpx-set__b[aria-pressed="true"]{background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0)}
+.wpx-set__b i{width:28px;height:18px;border-radius:var(--r-xs);background-size:cover;background-position:center;flex:0 0 auto;box-shadow:inset 0 0 0 1px var(--line-1)}
+.wpx-skip{display:flex;flex-direction:column;gap:2px;margin-top:var(--sp-1)}
+.wpx-skip small{color:var(--ink-2)}
+.wpx-now{display:flex;flex-direction:column;gap:2px;max-width:440px}
+.wpx-now small{color:var(--ink-2);line-height:1.45}
+.wpx-row-sub{display:block;margin-top:2px;color:var(--ink-2);line-height:1.45}
+
+/* ---------- Settings › Themes › Auto ---------- */
+.st-auto{
+  display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap;
+  padding:var(--sp-4);border-radius:var(--r-md);
+  background:var(--fill-1);border:1px solid var(--line-1);
+}
+.st-auto.is-on{border-color:var(--line-accent);background:var(--fill-accent)}
+.st-auto__sw{width:44px;height:44px;border-radius:50%;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}
+.st-auto__b{display:flex;flex-direction:column;gap:2px;flex:1 1 220px;min-width:0}
+.st-auto__b small{color:var(--ink-2);line-height:1.45}

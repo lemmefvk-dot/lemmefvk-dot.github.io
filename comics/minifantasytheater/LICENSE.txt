@@ -1,0 +1,12 @@
+Mini Fantasy Theater by David Revoy
+Licence: CC BY-SA 4.0
+Licence text: https://creativecommons.org/licenses/by-sa/4.0/
+
+Licence statement (https://www.peppercarrot.com/en/about/index.html#license, checked 2026-11-03):
+"The comic strips "MiniFantasyTheater" are licensed under a Creative Commons Attribution Share-Alike 4.0 International license"
+
+Attribution:
+Mini Fantasy Theater by David Revoy, www.peppercarrot.com/en/webcomics/miniFantasyTheater.html, licensed under CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). Pages downscaled to 640 px wide for StaticOS.
+
+Source: https://www.peppercarrot.com/en/webcomics/miniFantasyTheater.html
+Notes: Same About page also states "AI derivation prohibited". Share-alike: derivatives must be released under CC BY-SA 4.0. Pages downscaled and re-encoded.

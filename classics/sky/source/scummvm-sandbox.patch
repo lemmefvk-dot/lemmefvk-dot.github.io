@@ -1,0 +1,123 @@
+StaticOS: run ScummVM inside a sandboxed iframe with an opaque origin and no network.
+
+An opaque origin has no IndexedDB and cannot fetch, so upstream's IDBFS mount and
+its HTTP file nodes cannot work there. StaticOS's page hands the frame every file
+through postMessage and puts them in the in-memory filesystem before main() runs,
+then copies saved games back out the same way. So this build:
+
+  - mounts nothing and fetches nothing at start-up (emscripten-fs-factory.cpp)
+  - treats every path as an ordinary in-memory file, including /data
+  - takes its arguments from the page, not from location.hash (custom_shell-pre.js)
+  - does not ask for Web MIDI, which a sandboxed frame cannot use anyway (an empty
+    midiOutputMap stays, because backends/midi/webmidi.cpp reads it)
+  - exports FS and ENV so the page can reach the filesystem (configure)
+
+diff --git a/backends/fs/emscripten/emscripten-fs-factory.cpp b/backends/fs/emscripten/emscripten-fs-factory.cpp
+index 6047b195..accfd309 100644
+--- a/backends/fs/emscripten/emscripten-fs-factory.cpp
++++ b/backends/fs/emscripten/emscripten-fs-factory.cpp
+@@ -33,36 +33,7 @@
+ 
+ #include <emscripten.h>
+ 
+-EM_ASYNC_JS(void, _initSettings, (const char *pathPtr), {
+-	try {
+-		const path = UTF8ToString(pathPtr);
+-		const settingsPath = path + "/scummvm.ini";
+-		
+-		// Mount the filesystem
+-		FS.mount(IDBFS, { autoPersist: true }, path);
+-		
+-		// Sync the filesystem
+-		await new Promise((resolve, reject) => {
+-			FS.syncfs(true, (err) => err ? reject(err) : resolve());
+-		});
+-		
+-		// Check if settings file exists and download if needed
+-		if (!FS.analyzePath(settingsPath).exists) {
+-			const response = await fetch("scummvm.ini");
+-			if (response.ok) {
+-				const text = await response.text();
+-				FS.writeFile(settingsPath, text);
+-			}
+-		}
+-	} catch (err) {
+-		console.error("Error initializing files:", err);
+-		alert("Error initializing files: " + err);
+-		throw err;
+-	}
+-});
+-
+ EmscriptenFilesystemFactory::EmscriptenFilesystemFactory() {
+-	_initSettings(getenv("HOME"));
+ 	_httpNodes = new Common::HashMap<Common::String, HTTPFilesystemNode *>();
+ }
+ 
+@@ -78,18 +49,11 @@ AbstractFSNode *EmscriptenFilesystemFactory::makeRootFileNode() const {
+ AbstractFSNode *EmscriptenFilesystemFactory::makeFileNodePath(const Common::String &path) const {
+ 	debug(5, "EmscriptenFilesystemFactory::makeFileNodePath(%s)", path.c_str());
+ 	assert(!path.empty());
+-	if (path.hasPrefix(DATA_PATH)) {
+-		if (!_httpNodes->contains(path)) {
+-			// finding a node by path requires a http request to the server, so we cache the nodes
+-			_httpNodes->setVal(path, new HTTPFilesystemNode(path));
+-		}
+-		return new HTTPFilesystemNode(*(_httpNodes->getVal(path)));
+ #ifdef USE_CLOUD
+-	} else if (path.hasPrefix(CLOUD_FS_PATH) && CloudMan.isStorageEnabled()) {
++	if (path.hasPrefix(CLOUD_FS_PATH) && CloudMan.isStorageEnabled()) {
+ 		return new CloudFilesystemNode(path);
+-#endif
+-	} else {
+-		return new EmscriptenPOSIXFilesystemNode(path);
+ 	}
++#endif
++	return new EmscriptenPOSIXFilesystemNode(path);
+ }
+ #endif
+diff --git a/configure b/configure
+index ff45575d..41de4b62 100755
+--- a/configure
++++ b/configure
+@@ -3386,7 +3386,7 @@ EOF
+ 		append_var LDFLAGS "-s ASYNCIFY=1 -s ASYNCIFY_STACK_SIZE=1048576"
+ 
+ 		append_var LDFLAGS "-s EXPORTED_FUNCTIONS=[_main,_malloc,_free,_raise]"
+-		append_var LDFLAGS "-s EXPORTED_RUNTIME_METHODS=[ccall,lengthBytesUTF8,setValue,writeArrayToMemory]"
++		append_var LDFLAGS "-s EXPORTED_RUNTIME_METHODS=[ccall,lengthBytesUTF8,setValue,writeArrayToMemory,FS,ENV]"
+ 		append_var LDFLAGS "--js-library backends/networking/http/emscripten/networkreadstream-emscripten.js"
+ 
+ 		append_var LDFLAGS "-O2"
+diff --git a/dists/emscripten/custom_shell-pre.js b/dists/emscripten/custom_shell-pre.js
+index c567e001..8d8d3d76 100644
+--- a/dists/emscripten/custom_shell-pre.js
++++ b/dists/emscripten/custom_shell-pre.js
+@@ -1,25 +1,5 @@
+ /*global Module*/
+-Module["arguments"] = [];
++Module["arguments"] = Module["arguments"] || [];
+ 
+-// Add all parameters passed via the fragment identifier
+-if (window.location.hash.length > 0) {
+-    params = decodeURI(window.location.hash.substring(1)).split(" ")
+-    params.forEach((param) => {
+-        Module["arguments"].push(param);
+-    })
+-}
+-
+-// MIDI support
+-var midiOutputMap;
+-if (!("requestMIDIAccess" in navigator)) {
+-	console.error("No MIDI support in your browser.");
+-} else {
+-	navigator
+-		.requestMIDIAccess({ sysex: true, software: true })
+-		.then((midiAccess) => {
+-			midiOutputMap = midiAccess.outputs;
+-			midiAccess.onstatechange = (e) => {
+-				midiOutputMap = e.target.outputs;
+-			};
+-		});
+-}
++// No Web MIDI in a sandboxed frame: backends/midi/webmidi.cpp reads this, and finds no devices
++var midiOutputMap = new Map();

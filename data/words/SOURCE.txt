@@ -1,0 +1,6 @@
+en.txt is built by tools/build-wordlist.mjs from SCOWL 2020.12.07 (Kevin Atkinson).
+source archive: https://sourceforge.net/projects/wordlist/files/SCOWL/2020.12.07/scowl-2020.12.07.tar.gz
+source sha-256: 5587667caa20c4891390c2d42dbb4d5c4c3f41bee77af1457ece3ba23fb859cc
+licence: SCOWL-COPYRIGHT.txt (this folder)
+en.txt sha-256: 8c55084603c920f35db5f44c2a28d76e182c701648635e5235584916dfe4f617
+words: tier 1 10843, tier 2 28075, tier 3 71582; 388 removed by the offensive-word filter

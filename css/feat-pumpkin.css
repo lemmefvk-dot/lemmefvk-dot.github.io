@@ -1,0 +1,82 @@
+/* ============================================================
+   feat-pumpkin.css — Pumpkin Carver
+   Same frame as Static Paint: a wrapping tool bar, a stage that
+   holds the night scene (one canvas, filling it), and a slim dock
+   with the hint line and the cut count. Token-driven, so it reads
+   native in dark and light; everything wraps down to a phone.
+   ============================================================ */
+
+.pmk{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-1)}
+.pmk.is-busy{cursor:progress}
+
+/* ---- tool bar ------------------------------------------------------ */
+.pmk__bar{
+  display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;
+  padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--line-0);background:var(--fill-0);
+}
+.pmk__group{display:inline-flex;align-items:center;gap:var(--sp-2)}
+.pmk__spring{flex:1 1 8px}
+
+.pmk__seg{
+  display:inline-flex;align-items:center;gap:2px;padding:3px;
+  background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-md);
+}
+.pmk__tool,.pmk__stamp{
+  width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;
+  border-radius:var(--r-sm);color:var(--ink-2);
+  transition:background var(--t-fast),color var(--t-fast),transform var(--t-fast);
+}
+.pmk__tool .icon,.pmk__stamp .icon{width:17px;height:17px}
+.pmk__tool:hover,.pmk__stamp:hover{background:var(--fill-1);color:var(--ink-0)}
+.pmk__tool:active,.pmk__stamp:active{transform:scale(.93)}
+.pmk__tool[aria-pressed="true"],.pmk__stamp[aria-pressed="true"]{background:rgba(255,138,42,.16);color:#ffb366;box-shadow:inset 0 0 0 1px rgba(255,150,60,.45)}
+.pmk__stamps{padding:3px;gap:1px;border-radius:var(--r-md);border:1px dashed var(--line-1)}
+.pmk__stamp .icon svg{fill:currentColor;fill-opacity:.18}
+
+.pmk__btn{
+  height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 var(--sp-3);
+  border-radius:var(--r-sm);background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-1);
+  font:600 var(--fs-11)/1 inherit;white-space:nowrap;
+  transition:background var(--t-fast),border-color var(--t-fast),color var(--t-fast);
+}
+.pmk__btn .icon{width:15px;height:15px}
+.pmk__btn:hover:not(:disabled){background:var(--fill-1);color:var(--ink-0)}
+.pmk__btn:disabled{opacity:.5;cursor:not-allowed}
+.pmk__light.is-on{color:#ffc061;border-color:rgba(255,160,60,.45);background:rgba(255,138,42,.12)}
+.pmk__light.is-on .icon{filter:drop-shadow(0 0 4px rgba(255,160,60,.8))}
+.pmk__btn--primary{background:linear-gradient(180deg,#ff9c3a,#e8650c);border-color:transparent;color:#1e0a00}
+.pmk__btn--primary:hover:not(:disabled){background:linear-gradient(180deg,#ffad55,#f2731a);color:#1e0a00}
+
+.pmk__sel{
+  height:30px;max-width:120px;padding:0 var(--sp-3);border-radius:var(--r-sm);
+  background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-1);
+  font-size:var(--fs-11);font-family:inherit;cursor:pointer;
+}
+.pmk :is(.pmk__tool,.pmk__stamp,.pmk__btn,.pmk__sel,.ibtn):focus-visible{outline:2px solid #ff9a3c;outline-offset:1px}
+
+/* ---- stage --------------------------------------------------------- */
+.pmk__stage{position:relative;flex:1;min-height:0;min-width:0;overflow:hidden;background:#05030c}
+.pmk__canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair;outline:none}
+.pmk__canvas[data-tool="stamp"]{cursor:cell}
+.pmk__canvas:focus-visible{box-shadow:inset 0 0 0 2px rgba(255,154,60,.7)}
+.pmk.is-busy .pmk__canvas{cursor:progress}
+
+/* ---- dock ---------------------------------------------------------- */
+.pmk__dock{
+  display:flex;align-items:center;gap:var(--sp-4);
+  padding:var(--sp-2) var(--sp-4);border-top:1px solid var(--line-0);background:var(--fill-0);
+  font-size:var(--fs-11);min-height:32px;
+}
+.pmk__hint{flex:1;min-width:0;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pmk__count{font:var(--fs-10)/1 var(--font-mono,var(--mono));color:var(--ink-3);white-space:nowrap}
+
+html[data-theme="light"] .pmk__tool[aria-pressed="true"],html[data-theme="light"] .pmk__stamp[aria-pressed="true"]{color:#b04a00}
+html[data-theme="light"] .pmk__light.is-on{color:#b04a00}
+
+@media (prefers-reduced-motion:reduce){.pmk__tool,.pmk__stamp,.pmk__btn{transition:none}}
+body.reduce-motion .pmk *{transition:none!important}
+
+/* ---- phone --------------------------------------------------------- */
+body.is-mobile .pmk__bar{padding:var(--sp-2) var(--sp-3);gap:var(--sp-2)}
+body.is-mobile .pmk__btn span:not(.icon){display:none}
+body.is-mobile .pmk__btn--primary span:not(.icon){display:inline}

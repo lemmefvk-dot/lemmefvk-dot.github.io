@@ -1,0 +1,43 @@
+/* ==================================================================
+   The desktop pet (js/shell/pet.js): a 48×40 sprite standing on the
+   dock's top edge. Under every window (the window layer is z 100), so
+   a window that reaches the dock covers it rather than the other way
+   round; only the pet itself takes the pointer.
+   ================================================================== */
+.pet{
+  position:absolute;left:0;top:0;width:48px;height:40px;
+  z-index:calc(var(--z-win) - 1);
+  pointer-events:auto;cursor:pointer;
+  will-change:transform;
+  filter:drop-shadow(0 2px 2px rgba(0,0,0,.35));
+}
+.pet[hidden]{display:none}
+.pet__sprite{display:block;width:48px;height:40px}
+
+/* the heart: up and away (fades in place with reduced motion) */
+.pet__heart{position:absolute;left:50%;top:-6px;width:18px;height:18px;margin-left:-9px;pointer-events:none;
+  color:#ff5d7a;animation:pet-heart 1.2s var(--ease-out) forwards}
+.pet__heart .icon{width:18px;height:18px;fill:#ff5d7a;stroke:#b3203d;filter:drop-shadow(0 0 6px rgba(255,93,122,.6))}
+@keyframes pet-heart{
+  0%{opacity:0;transform:translateY(6px) scale(.6)}
+  20%{opacity:1;transform:translateY(0) scale(1.1)}
+  100%{opacity:0;transform:translateY(-26px) scale(.9)}
+}
+
+/* the nap: a small z drifting up from its head */
+.pet__z{position:absolute;right:2px;top:-4px;pointer-events:none;
+  font:700 calc(11px * var(--fs-k,1))/1 var(--font-ui,system-ui);color:var(--ink-1,#ddd);
+  text-shadow:0 1px 2px rgba(0,0,0,.5);animation:pet-z 2.6s ease-in-out infinite}
+@keyframes pet-z{0%{opacity:0;transform:translate(0,4px) scale(.8)}30%{opacity:.9}100%{opacity:0;transform:translate(6px,-12px) scale(1.1)}}
+
+/* reduced motion and Game Mode: nothing drifts */
+body.reduce-motion .pet__heart{animation:pet-heart-still 1.2s linear forwards}
+body.reduce-motion .pet__z,
+:root[data-gamemode="on"] .pet__z{animation:none;opacity:.8}
+:root[data-gamemode="on"] .pet__heart{animation:pet-heart-still 1.2s linear forwards}
+@keyframes pet-heart-still{0%{opacity:0}15%{opacity:1}75%{opacity:1}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .pet__heart{animation:pet-heart-still 1.2s linear forwards}
+  .pet__z{animation:none;opacity:.8}
+}
+body.is-mobile .pet{display:none}

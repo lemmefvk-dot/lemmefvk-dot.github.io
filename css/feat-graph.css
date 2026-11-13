@@ -1,0 +1,152 @@
+/* ============================================================
+   feat-graph.css — Static Graph (graphing calculator)
+   Layout: a function editor sidebar + a canvas plot. Collapses to
+   a stacked layout in a narrow window (phone width / small window)
+   via the .graph--narrow flag the app sets from its measured size.
+   All colour comes from OS tokens, so it tracks light/dark & accent.
+   ============================================================ */
+
+.graph { min-width: 0; }
+
+/* ---- sidebar --------------------------------------------------- */
+.graph__side.app__side { width: 236px; gap: var(--sp-4); padding: var(--sp-4) var(--sp-4); }
+.graph__sidehd {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+}
+.graph__sidehd .side__label { padding: 0; }
+.graph__add { flex: 0 0 auto; }
+
+.graph__list {
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  margin: 0 calc(var(--sp-2) * -1); padding: var(--sp-1) var(--sp-2);
+}
+
+.graph__fn {
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  padding: var(--sp-3); border-radius: var(--r-md);
+  background: var(--fill-0); border: 1px solid var(--line-0);
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+.graph__fn:focus-within { border-color: var(--line-accent); background: var(--fill-1); }
+.graph__fn.has-err { border-color: rgba(255, 90, 110, .42); }
+
+.graph__fnmain { display: flex; align-items: center; gap: var(--sp-3); }
+
+.graph__swatch {
+  flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--fc, var(--accent));
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px var(--line-1) inset, 0 1px 3px rgba(0, 0, 0, .35);
+  transition: transform var(--t-fast), opacity var(--t-fast), box-shadow var(--t-fast);
+}
+.graph__swatch:hover { transform: scale(1.12); }
+.graph__swatch:active { transform: scale(.94); }
+.graph__swatch.is-off {
+  background: transparent;
+  box-shadow: 0 0 0 2px var(--fc, var(--ink-3)) inset;
+  opacity: .55;
+}
+
+.graph__eq {
+  flex: 0 0 auto; font-family: var(--mono); font-size: var(--fs-11);
+  color: var(--ink-3); font-weight: 600; letter-spacing: -.02em;
+}
+
+.graph__input {
+  flex: 1 1 auto; min-width: 0; height: 26px; padding: 0 var(--sp-2);
+  border-radius: var(--r-xs); border: 1px solid transparent;
+  background: transparent; color: var(--ink-0);
+  font-family: var(--mono); font-size: var(--fs-12); letter-spacing: -.01em;
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.graph__input::placeholder { color: var(--ink-4); font-family: var(--font); }
+.graph__input:hover { background: var(--fill-0); }
+.graph__input:focus { outline: none; background: var(--bg-2); border-color: var(--line-1); }
+
+.graph__del { flex: 0 0 auto; height: 24px; min-width: 24px; }
+.graph__del .icon { width: 13px; height: 13px; }
+
+.graph__err {
+  font-size: var(--fs-10); line-height: 1.4; color: #ff8c9f;
+  padding-left: calc(18px + var(--sp-3));
+}
+:root[data-theme="light"] .graph__err { color: #c62e48; }
+
+.graph__help {
+  flex: 0 0 auto; padding: var(--sp-3); border-radius: var(--r-md);
+  background: var(--fill-0); border: 1px solid var(--line-0);
+}
+.graph__help b { display: block; font-size: calc(9px * var(--fs-k,1)); font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-3); margin-bottom: var(--sp-2); }
+.graph__help p { font-size: var(--fs-10); line-height: 1.5; color: var(--ink-2); margin: 0 0 var(--sp-2); }
+.graph__help p:last-child { margin-bottom: 0; }
+
+/* ---- main / bar ------------------------------------------------ */
+.graph__main { min-width: 0; }
+.graph__bar { font-family: var(--mono); font-size: var(--fs-11); color: var(--ink-2); }
+.graph__rlabel { color: var(--ink-3); font-weight: 700; }
+.graph__rv { color: var(--ink-1); margin-right: var(--sp-3); }
+.graph__spacer { flex: 1 1 auto; }
+.graph__cursor { color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- plot stage ------------------------------------------------ */
+.graph__stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.graph__canvas {
+  display: block; width: 100%; height: 100%;
+  cursor: grab; touch-action: none; outline: none;
+}
+.graph__canvas.is-grabbing { cursor: grabbing; }
+.graph__canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--line-accent); }
+
+.graph__ctrls {
+  position: absolute; right: var(--sp-4); bottom: var(--sp-4);
+  display: flex; flex-direction: column; gap: var(--sp-2);
+}
+.graph__cbtn {
+  width: 30px; height: 30px; border-radius: var(--r-sm);
+  background: var(--glass-2); border: 1px solid var(--line-1);
+  color: var(--ink-1); backdrop-filter: var(--blur-1); box-shadow: var(--sh-2);
+}
+.graph__cbtn:hover { background: var(--glass-3); color: var(--ink-0); border-color: var(--line-2); }
+.graph__cbtn .icon { width: 16px; height: 16px; }
+
+/* ---- narrow / phone layout ------------------------------------ */
+.graph.graph--narrow { flex-direction: column; }
+.graph--narrow .graph__side.app__side {
+  width: 100%; flex: 0 0 auto; max-height: 44%;
+  border-right: 0; border-bottom: 1px solid var(--line-0);
+}
+.graph--narrow .graph__help { display: none; }
+.graph--narrow .graph__bar { flex-wrap: wrap; row-gap: var(--sp-1); }
+.graph--narrow .graph__cursor { flex-basis: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .graph__swatch, .graph__input, .graph__cbtn { transition: none; }
+}
+
+/* ---- curve kinds, table, intersections ------------------------- */
+.graph__kind { flex: 1 1 auto; min-width: 0; height: 26px; font-size: var(--fs-11); }
+.graph__trange { display: flex; gap: var(--sp-2); align-items: center; padding-left: calc(18px + var(--sp-3)); }
+.graph__trange label span { white-space: nowrap; }
+.graph__trange label { display: flex; align-items: center; gap: var(--sp-2); flex: 1 1 0; min-width: 0; font-size: var(--fs-10); color: var(--ink-3); }
+.graph__trange .graph__input { width: 100%; border-color: var(--line-0); }
+.graph__pbtn[aria-pressed="true"] { background: var(--fill-2, var(--fill-1)); border-color: var(--line-accent); color: var(--ink-0); }
+.graph__panel {
+  flex: 0 0 auto; max-height: 42%; min-height: 96px; overflow: auto;
+  padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line-0); background: var(--bg-1, var(--bg-2));
+  font-size: var(--fs-12); color: var(--ink-1);
+}
+.graph__panel[hidden] { display: none; }
+.graph__phead { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; margin-bottom: var(--sp-3); }
+.graph__tctl { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-11); color: var(--ink-3); }
+.graph__tctl .graph__input { border-color: var(--line-1); }
+.graph__tbl { border-collapse: collapse; font-family: var(--mono); font-size: var(--fs-11); font-variant-numeric: tabular-nums; }
+.graph__tbl th, .graph__tbl td { padding: 2px var(--sp-4) 2px 0; text-align: right; }
+.graph__tbl th { color: var(--ink-3); font-weight: 700; border-bottom: 1px solid var(--line-1); }
+.graph__note { margin: 0 0 var(--sp-2); font-size: var(--fs-10); line-height: 1.5; color: var(--ink-3); }
+.graph__sum { margin: 0 0 var(--sp-2); font-weight: 600; }
+.graph__none { margin: 0; color: var(--ink-3); }
+.graph__ix { margin: 0; padding-left: var(--sp-5, 20px); font-family: var(--mono); font-size: var(--fs-11); line-height: 1.7; }
+.graph__ix small { color: var(--ink-3); font-family: var(--font); }

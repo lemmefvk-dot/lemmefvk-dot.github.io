@@ -1,0 +1,111 @@
+/* ============================================================
+   feat-markup.css — Markup (js/apps/markup.js)
+   A wrapping tool bar, a dark stage that holds the picture at
+   its zoom (canvas + the selection box and the text being typed),
+   and a one-line status foot. Tokens only; wraps to a phone.
+   ============================================================ */
+
+.mk{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-1);container:mk/inline-size}
+
+.mk__bar{
+  display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-2) var(--sp-4);
+  padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--line-0);background:var(--fill-0);
+}
+.mk__group{display:inline-flex;align-items:center;gap:var(--sp-1)}
+.mk__bar>*:not(.mk__spring),.mk__seg>*,.mk__group>*{flex:0 0 auto}
+.mk__spring{flex:1 1 0}
+.mk__seg{
+  display:inline-flex;align-items:center;gap:2px;padding:3px;
+  background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-md);
+}
+.mk__tool{
+  width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-sm);
+  color:var(--ink-2);transition:background var(--t-fast),color var(--t-fast);
+}
+.mk__tool .icon{width:17px;height:17px}
+.mk__tool:hover{background:var(--fill-1);color:var(--ink-0)}
+.mk__tool[aria-pressed="true"]{background:var(--fill-accent);color:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--line-accent)}
+.mk__tool:focus-visible,.mk__swatch:focus-visible,.mk__size:focus-visible,.mk__zlbl:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+.mk__swatch{
+  width:20px;height:20px;border-radius:50%;background:var(--sw);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.25),0 0 0 1px var(--line-2);transition:transform var(--t-fast);
+}
+.mk__swatch:hover{transform:scale(1.12)}
+.mk__swatch[aria-pressed="true"]{box-shadow:inset 0 0 0 1px rgba(0,0,0,.25),0 0 0 2px var(--bg-1),0 0 0 4px var(--accent)}
+.mk__custom{
+  width:24px;height:24px;padding:0;border:1px solid var(--line-2);border-radius:50%;background:none;cursor:pointer;overflow:hidden;
+}
+.mk__custom::-webkit-color-swatch-wrapper{padding:0}
+.mk__custom::-webkit-color-swatch{border:0;border-radius:50%}
+.mk__size{width:28px;height:28px;display:inline-grid;place-items:center;border-radius:var(--r-sm);color:var(--ink-2)}
+.mk__size:hover{background:var(--fill-1);color:var(--ink-0)}
+.mk__size i{display:block;width:var(--d);height:var(--d);border-radius:50%;background:currentColor}
+.mk__size[aria-pressed="true"]{background:var(--fill-accent);color:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--line-accent)}
+.mk__zlbl{
+  min-width:46px;height:26px;padding:0 4px;border-radius:var(--r-sm);font-size:var(--fs-11);color:var(--ink-1);
+  font-variant-numeric:tabular-nums;
+}
+.mk__zlbl:hover{background:var(--fill-1)}
+.mk__bar .btn .icon{width:14px;height:14px;color:inherit}
+
+/* the picture: canvas at its own size, scaled to the zoom */
+.mk__stage{
+  flex:1;min-width:0;min-height:0;display:flex;overflow:auto;padding:var(--sp-6);
+  background:linear-gradient(var(--fill-0),var(--fill-0)),var(--bg-0);
+}
+.mk__paper{
+  position:relative;flex:0 0 auto;margin:auto;touch-action:none;cursor:crosshair;outline:none;
+  box-shadow:var(--sh-3),0 0 0 1px var(--line-2);background:var(--bg-2);
+}
+.mk__paper:focus-visible{box-shadow:var(--sh-3),0 0 0 2px var(--accent)}
+.mk__paper[data-tool="text"]{cursor:text}
+.mk__canvas{display:block;width:100%;height:100%;user-select:none;-webkit-user-select:none}
+.mk__selbox{
+  position:absolute;pointer-events:none;border:1.5px dashed var(--accent);border-radius:4px;
+  box-shadow:0 0 0 1px rgba(0,0,0,.35);
+}
+.mk__selbox[hidden]{display:none}
+.mk__text{
+  position:absolute;z-index:2;margin:0;padding:0;border:0;resize:none;overflow:hidden;white-space:pre;
+  background:transparent;outline:1.5px dashed var(--accent);outline-offset:3px;border-radius:2px;
+  caret-color:var(--accent);min-width:12px;
+}
+
+.mk__foot{
+  flex:0 0 auto;min-height:26px;display:flex;align-items:center;padding:0 var(--sp-4);
+  border-top:1px solid var(--line-0);font-size:var(--fs-10);color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;
+}
+
+/* no picture yet, or one that can't be opened */
+.mk__msg{
+  margin:auto;display:flex;flex-direction:column;align-items:center;gap:var(--sp-3);max-width:560px;text-align:center;
+}
+.mk__msg>.icon{width:40px;height:40px;color:var(--ink-3)}
+.mk__msg b{font-size:var(--fs-13);font-weight:650;color:var(--ink-0)}
+.mk__msg small{font-size:var(--fs-11);color:var(--ink-2);line-height:1.55}
+.mk__pick{
+  width:100%;display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:var(--sp-3);margin-top:var(--sp-3);
+}
+.mk__pic{
+  display:flex;flex-direction:column;gap:5px;padding:6px;border-radius:var(--r-md);background:var(--fill-1);
+  border:1px solid var(--line-1);text-align:left;transition:background var(--t-fast),border-color var(--t-fast);
+}
+.mk__pic:hover{background:var(--fill-2);border-color:var(--line-2)}
+.mk__pic:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.mk__pic img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:var(--r-sm);background:var(--bg-2)}
+.mk__pic span{font-size:var(--fs-10);color:var(--ink-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* a phone: bigger targets, the bar scrolls sideways instead of growing */
+body.is-mobile .mk__bar{flex-wrap:nowrap;overflow-x:auto;gap:var(--sp-3);padding:var(--sp-2) var(--sp-3)}
+body.is-mobile .mk__spring{display:none}
+body.is-mobile .mk__tool,body.is-mobile .mk__size{width:44px;height:44px}
+body.is-mobile .mk__swatch{width:32px;height:32px;margin:0 3px}
+body.is-mobile .mk__custom{width:32px;height:32px}
+body.is-mobile .mk__zlbl{min-height:44px}
+body.is-mobile .mk__stage{padding:var(--sp-3)}
+body.is-mobile .mk__bar .btn>span:not(.icon){display:none}
+@container mk (max-width:620px){
+  .mk__bar .btn>span:not(.icon){display:none}
+}

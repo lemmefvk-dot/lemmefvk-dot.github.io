@@ -1,0 +1,116 @@
+/* ============================================================
+   feat-halloween.css — the spooky season (js/shell/spooky.js,
+   the dock pumpkin in js/shell/dock.js). Loaded by spooky.js.
+   ============================================================ */
+
+/* ---- the dock pumpkin ---- */
+.dock__item--pumpkin .glyph{box-shadow:var(--sh-2),0 0 16px rgba(255,138,31,.35)}
+.dock__item--pumpkin.is-done .glyph{filter:saturate(.5) brightness(.82);box-shadow:var(--sh-2)}
+.dock__treat{position:absolute;top:1px;right:3px;width:10px;height:10px;border-radius:50%;
+  background:#ffb04a;border:2px solid rgba(20,8,4,.7);box-shadow:0 0 9px #ff8a1f;
+  animation:hw-glow 1.8s ease-in-out infinite;pointer-events:none}
+@keyframes hw-glow{0%,100%{opacity:.55;transform:scale(.85)}50%{opacity:1;transform:scale(1.1)}}
+
+/* ---- the trick: the whole stage turns over ---- */
+body.hw-flip #os{transform-origin:50% 50%;transition:transform .7s cubic-bezier(.65,0,.35,1)}
+body.hw-flip.hw-flip--instant #os{transition:none}
+body.hw-flip.is-upside-down #os{transform:rotate(180deg)}
+
+/* ---- stickers on the desktop ---- */
+.stickers{position:absolute;inset:0;pointer-events:none;z-index:1}
+.sticker{position:absolute;width:84px;height:84px;padding:0;pointer-events:auto;border-radius:var(--r-sm);
+  filter:drop-shadow(0 6px 10px rgba(0,0,0,.45));transition:transform var(--t-fast) var(--ease);touch-action:none}
+.sticker img{width:100%;height:100%;object-fit:contain;pointer-events:none;-webkit-user-drag:none}
+.sticker:hover{transform:scale(1.06) rotate(-3deg)}
+.sticker.is-dragging{transform:scale(1.12) rotate(4deg);transition:none;z-index:2}
+.sticker:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+body.is-mobile .stickers{display:none}
+
+/* ---- "boo": the ghost that crosses while the icons scatter ---- */
+.hw-ghost{position:absolute;left:0;top:0;width:110px;height:110px;pointer-events:none;z-index:2;
+  filter:drop-shadow(0 8px 18px rgba(0,0,0,.4))}
+
+/* ---- jump-scare mode ---- */
+.scare{position:absolute;inset:0;z-index:var(--z-overlay);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:var(--sp-5);cursor:pointer;
+  background:radial-gradient(ellipse at center,rgba(20,0,10,.6),rgba(0,0,0,.94) 70%);
+  animation:scare-in .12s ease-out both}
+.scare__art{width:min(56vmin,460px);animation:scare-jump .42s cubic-bezier(.2,1.6,.4,1) both,scare-shake .1s linear .42s 5}
+.scare__art svg{display:block;width:100%;height:auto;max-width:none;filter:drop-shadow(0 0 40px rgba(255,255,255,.22))}
+.scare__boo{font-size:clamp(40px,9vmin,96px);font-weight:900;letter-spacing:.04em;line-height:1;color:#fff;text-align:center;
+  text-shadow:0 0 26px rgba(255,40,70,.85),0 4px 0 #3a0010;animation:scare-jump .5s cubic-bezier(.2,1.6,.4,1) .05s both}
+.scare.is-out{animation:scare-out .26s ease forwards}
+/* reduced motion: no jump, no shake, no flash — a quiet card that fades in and out */
+.scare.is-calm{background:rgba(6,2,10,.55);animation:scare-in .4s ease both}
+.scare.is-calm.is-out{animation:scare-out .3s ease forwards}
+.scare.is-calm .scare__art,.scare.is-calm .scare__boo{animation:none}
+.scare.is-calm .scare__art{width:min(30vmin,240px)}
+.scare.is-calm .scare__boo{font-size:clamp(24px,5vmin,44px);text-shadow:0 2px 10px rgba(0,0,0,.6)}
+@keyframes scare-in{from{opacity:0}to{opacity:1}}
+@keyframes scare-out{from{opacity:1}to{opacity:0}}
+@keyframes scare-jump{0%{transform:scale(.18);opacity:0}100%{transform:none;opacity:1}}
+@keyframes scare-shake{0%,100%{transform:translate(0,0)}25%{transform:translate(-7px,3px) rotate(-1.2deg)}75%{transform:translate(7px,-3px) rotate(1.2deg)}}
+
+@media (prefers-reduced-motion:reduce){
+  .dock__treat{animation:none;opacity:1}
+  .sticker,.sticker:hover{transition:none}
+  body.hw-flip #os{transition:none}
+}
+body.reduce-motion .dock__treat{animation:none;opacity:1}
+body.reduce-motion.hw-flip #os{transition:none}
+
+/* ---- Settings → Halloween: your treats ---- */
+.st-hw__row{display:flex;flex-wrap:wrap;gap:var(--sp-2);justify-content:flex-end}
+.st-hw__pick{width:44px;height:44px;padding:4px;border-radius:var(--r-sm);background:var(--fill-0);border:1px solid var(--line-1);
+  transition:background var(--t-fast),border-color var(--t-fast)}
+.st-hw__pick:hover{background:var(--fill-2);border-color:var(--line-accent)}
+.st-hw__pick--wide{width:76px;padding:2px;overflow:hidden}
+.st-hw__art{width:100%;height:100%;object-fit:contain;pointer-events:none}
+.st-hw__pick--wide .st-hw__art{object-fit:cover;border-radius:calc(var(--r-sm) - 2px)}
+
+/* ---- the ghost hunt (js/shell/ghosts.js) ----
+   Small, see-through and slowly bobbing; each one takes its own place
+   in a row, or an empty corner under everything else. */
+.gh{position:relative;flex:0 0 auto;display:inline-grid;place-items:center;width:24px;height:24px;padding:0;
+  border:0;border-radius:var(--r-sm);background:none;cursor:pointer;opacity:.55;
+  transition:opacity var(--t-fast),transform var(--t-fast) var(--ease)}
+.gh img{display:block;width:20px;height:20px;pointer-events:none;-webkit-user-drag:none;
+  filter:drop-shadow(0 2px 4px rgba(0,0,0,.4));animation:gh-bob 3.4s ease-in-out infinite alternate}
+.gh:hover,.gh:focus-visible{opacity:.95;transform:scale(1.12)}
+.gh:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.gh.is-caught{pointer-events:none}
+@keyframes gh-bob{from{transform:translateY(1.5px) rotate(-5deg)}to{transform:translateY(-2.5px) rotate(5deg)}}
+/* where they sit */
+.gh--desk{position:absolute;left:var(--sp-5);bottom:var(--sp-5);width:34px;height:34px}
+.gh--desk img{width:30px;height:30px}
+.gh--dock{align-self:center;margin-left:var(--sp-1)}
+.dock[data-pos="left"] .gh--dock,.dock[data-pos="right"] .gh--dock{margin:var(--sp-1) 0 0}
+.gh--top{margin-left:auto}
+.topbar>.gh--top+.topbar__tray{margin-left:0}
+.gh--side{margin-top:auto;align-self:flex-start}
+.gh--title{margin-left:calc(var(--sp-1) * -1)}
+.gh--cc{position:absolute;top:var(--sp-4);right:var(--sp-4)}
+/* the phone layout (js/shell/mobile.js) hides the Dock, puts its gesture bar
+   over the desktop's corner and makes the top bar inert: those three ghosts
+   could be seen but never caught there, so they wait for a bigger screen */
+body.is-mobile .gh--top,body.is-mobile .gh--desk,body.is-mobile .gh--dock{display:none}
+/* the poof */
+.gh-poof{position:absolute;z-index:var(--z-toast);width:0;height:0;pointer-events:none}
+.gh-poof i{position:absolute;left:-7px;top:-7px;width:14px;height:14px;border-radius:50%;
+  background:radial-gradient(circle at 40% 35%,#fff,rgba(220,214,255,.75));opacity:0;
+  animation:gh-puff .55s cubic-bezier(.16,1,.3,1) forwards}
+@keyframes gh-puff{0%{opacity:.95;transform:translate(0,0) scale(.5)}100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(1.4)}}
+@media (prefers-reduced-motion:reduce){
+  .gh img,.gh-poof i{animation:none}
+  .gh{transition:none}
+}
+body.reduce-motion .gh img,body.reduce-motion .gh-poof i{animation:none}
+body.reduce-motion .gh{transition:none}
+
+/* ---- Settings → Halloween fun: the hunt's progress ---- */
+.st-gh{display:flex;align-items:center;gap:var(--sp-3);min-width:150px}
+.st-gh__bar{position:relative;flex:1;min-width:90px;height:6px;border-radius:var(--r-pill);background:var(--fill-2);overflow:hidden}
+.st-gh__bar i{position:absolute;inset:0 auto 0 0;border-radius:inherit;background:linear-gradient(90deg,var(--accent-soft),var(--accent))}
+.st-gh b{font-size:var(--fs-11);font-weight:650;color:var(--ink-0);white-space:nowrap;font-variant-numeric:tabular-nums}
+.st-pp-wrap[hidden]{display:none}
+.st-pp{justify-content:flex-start;flex:1}

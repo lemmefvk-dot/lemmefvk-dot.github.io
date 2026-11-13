@@ -1,0 +1,190 @@
+/* ============================================================
+   feat-a11y.css — keyboard, screen reader and target-size
+   details for the shell (js/shell/a11y.js, js/core/layers.js,
+   js/core/roving.js). Nothing here changes how StaticOS looks
+   with a mouse, except that the window controls got a bigger
+   invisible hit area.
+   ============================================================ */
+
+/* ---- skip links: invisible until they get keyboard focus ------ */
+.skips{position:absolute;left:var(--sp-3);top:var(--sp-3);z-index:calc(var(--z-boot) + 1);display:flex;flex-direction:column;gap:var(--sp-2)}
+.skip{
+  position:absolute;left:0;top:0;white-space:nowrap;
+  padding:var(--sp-3) var(--sp-5);border-radius:var(--r-sm);
+  background:var(--bg-1);color:var(--ink-0);border:2px solid var(--accent);
+  font-size:var(--fs-12);font-weight:620;box-shadow:var(--sh-3);
+  transform:translateY(-200%);opacity:0;pointer-events:none;
+}
+.skip:focus,.skip:focus-visible{transform:none;opacity:1;pointer-events:auto;outline:none}
+
+/* ---- focus you can see ----------------------------------------- */
+/* A window that has keyboard focus itself (not a control inside it).
+   Windows take focus from script whenever they come to the front, and
+   Chrome counts script focus before any input as "focus-visible", which
+   put a ring round the first window on every boot. So the ring follows
+   the input actually in use (html[data-input], set by js/shell/a11y.js):
+   the keyboard gets it, a mouse or a finger sees the active-window look. */
+.win:focus,.win:focus-visible{outline:none}
+:root[data-input="keyboard"] .win:focus{outline:2px solid var(--accent);outline-offset:-2px;border-radius:var(--r-lg)}
+:root[data-input="keyboard"] .win.is-max:focus{border-radius:0}
+/* menu rows look the same focused as hovered */
+.menu__item:focus-visible{background:var(--fill-accent);color:var(--ink-0);outline:2px solid var(--accent);outline-offset:-2px}
+.menu__item:focus-visible .icon{color:var(--ink-0)}
+/* the dock's name tag shows for keyboard focus, as it does for hover */
+.dock__item:focus-visible{outline:none}
+.dock__item:focus-visible .glyph{box-shadow:0 0 0 2px var(--bg-0),0 0 0 4px var(--accent),var(--sh-2)}
+.dock__item:focus-visible .dock__tip{opacity:1;transform:translate(-50%,0)}
+.tip:focus-visible::after{opacity:1;transform:translate(-50%,0);transition-delay:.15s}
+/* shell surfaces that used a faint fill as their only focus cue */
+:is(.dw-tile,.dw-app,.dw-pick,.share__act,.ph-new__row,.notes__pickrow,.pin,.rec,.allapps__row,.desk-icon,.overview__item):focus-visible{
+  outline:2px solid var(--accent);outline-offset:1px;
+}
+.overview__item:focus-visible{transform:scale(1.03);border-color:var(--line-accent);box-shadow:var(--sh-4),var(--glow)}
+.desktop:focus-visible{outline:2px solid var(--accent);outline-offset:-4px}
+.noti__list:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* ---- the window menu button (the app icon in the title bar) ---- */
+.win__menu{
+  display:grid;place-items:center;flex:0 0 auto;
+  width:24px;height:24px;margin:0 -5px;border-radius:6px;color:inherit;
+  transition:background var(--t-fast);
+}
+.win__menu:hover{background:var(--fill-1)}
+.win__menu:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+
+/* ---- window controls: 24px targets (WCAG 2.5.8) --------------
+   The coloured dot stays 12px; the button around it is the size a
+   finger or a shaky hand can actually hit. */
+.win__lights{gap:0}
+.light{
+  width:24px;height:24px;border:0;border-radius:50%;box-shadow:none;
+  background:none !important;
+}
+.light::before{
+  content:"";position:absolute;left:6px;top:6px;width:12px;height:12px;border-radius:50%;
+  border:.5px solid rgba(0,0,0,.28);box-shadow:inset 0 1px 0 rgba(255,255,255,.4);
+  box-sizing:border-box;
+}
+.light .icon{inset:8px;width:8px;height:8px;z-index:1}
+.light--close::before{background:linear-gradient(180deg,#ff6b81,#ec3350)}
+.light--min::before{background:linear-gradient(180deg,#ffcf6b,#eba21f)}
+.light--max::before{background:linear-gradient(180deg,#7ce08a,#2fb14c)}
+.win:not(.is-active) .light::before{background:var(--fill-2);border-color:transparent;box-shadow:none}
+.light:focus-visible{outline:2px solid var(--accent);outline-offset:-1px}
+.light:focus-visible .icon{opacity:1}
+
+/* ---- the shell's sliders: a 24px tall hit area around a 4px track ----
+   (only the Control Centre's: apps paint their own slider fills with an
+   inline background, which a taller box would turn into a block) */
+.cc__slider .slider{height:24px;background:linear-gradient(var(--fill-2),var(--fill-2)) center/100% 4px no-repeat;border-radius:0}
+.slider:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-xs)}
+
+/* ---- keyboard move / size mode (window menu → Move / Size) ----- */
+.win.is-kbd{outline:2px dashed var(--accent);outline-offset:-2px}
+.win-kbd{
+  position:absolute;left:50%;bottom:var(--sp-4);transform:translateX(-50%);z-index:5;
+  display:flex;gap:var(--sp-3);align-items:center;max-width:calc(100% - 24px);
+  padding:var(--sp-3) var(--sp-5);border-radius:var(--r-pill);
+  background:var(--glass-3);border:1px solid var(--line-accent);box-shadow:var(--sh-3);
+  font-size:var(--fs-11);color:var(--ink-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;
+}
+.win-kbd b{color:var(--ink-0)}
+
+/* ---- the desktop widget head: its focus target is the title ---- */
+.dw-head__t[role="button"]:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-xs)}
+
+@media (prefers-reduced-motion:reduce){
+  .overview__item:focus-visible{transform:none}
+}
+
+/* ============================================================
+   Contrast — measured, not guessed: tests/suites/a11y.mjs runs
+   tests/contrast.mjs over the shell and the ten dock apps and
+   fails below WCAG AA (4.5:1 text, 3:1 large text).
+   ============================================================ */
+
+/* Light appearance: the top bar kept its dark glass while its text
+   turned dark with the theme (about 1.1:1 — unreadable). */
+:root[data-theme="light"] .topbar{
+  background:linear-gradient(180deg,rgba(255,255,255,.9),rgba(255,255,255,.74));
+  border-bottom-color:var(--line-1);
+}
+/* surfaces that are dark in either appearance (the browser's start page
+   and its tab strip) keep the dark-appearance text colours on them */
+:root[data-theme="light"] :is(.start,.brw__tab.is-on){
+  --ink-0:#f6eef1; --ink-1:#e4d8dd; --ink-2:#a79aa0; --ink-3:#978c92; --ink-4:#8d8288;
+  --line-0:rgba(255,255,255,.08); --line-1:rgba(255,255,255,.12);
+}
+:root[data-theme="light"][data-contrast="high"] :is(.start,.brw__tab.is-on){
+  --ink-0:#fff; --ink-1:#f3edf0; --ink-2:#d6ccd1; --ink-3:#b6abb1; --ink-4:#a39aa0;
+}
+/* the Store's headline was fixed white, for a dark hero */
+:root[data-theme="light"] .store__hero h3{color:var(--ink-0)}
+/* status badges: their pale dark-mode tints wash out on white */
+:root[data-theme="light"] .badge--ok{color:#047857}
+:root[data-theme="light"] .badge--warn{color:#8a5a00}
+:root[data-theme="light"] .badge--bad{color:#be123c}
+
+/* ---- Increased contrast (Settings › Accessibility) ------------- */
+/* text on a filled accent: dark ink reads on every built-in accent */
+:root[data-contrast="high"] body{--accent-ink:#14060a}
+/* violet is the one accent that both dark and light ink miss: lift it */
+:root[data-contrast="high"][data-accent="violet"] body{--accent:#a78bfa;--accent-rgb:167 139 250}
+:root[data-contrast="high"] .btn--primary{color:#14060a}
+/* the avatar gradient runs into a deep red that the dark initial loses on */
+:root[data-contrast="high"] .avatar{color:#14060a;background:linear-gradient(140deg,var(--aether-200),var(--aether-400))}
+/* Static Play's stand-in cover art prints the game's name over a
+   coloured gradient; give the name a backing it can be read on */
+:root[data-contrast="high"] .sp-art__mono{background:rgba(0,0,0,.6);border-radius:var(--r-xs);padding:0 .15em}
+/* Music's idle seek row was dimmed to 45% */
+:root[data-contrast="high"] .mu-hero.is-empty .mu-seekrow{opacity:1}
+
+/* On a light canvas the accents are light colours, so as text they fail
+   (Static Crimson's soft pink is 2.3:1 on white). Increased contrast
+   darkens the accent for everything drawn with it — text, fills that
+   carry text, outlines — and puts white text on it. */
+:root[data-theme="light"][data-contrast="high"] body{
+  --accent:color-mix(in srgb, var(--accent-base) 46%, #000);
+  --accent-soft:color-mix(in srgb, var(--accent-base) 52%, #000);
+  --accent-ink:#fff;
+}
+:root[data-theme="light"][data-contrast="high"] .btn--primary{color:#fff;background:var(--accent)}
+:root[data-theme="light"][data-contrast="high"] .avatar{color:#fff;background:var(--accent)}
+:root[data-theme="light"][data-contrast="high"] .ch-space.is-on{color:var(--ink-0)}
+:root[data-theme="light"][data-contrast="high"] :is(.code__gutter,.ch-who__r){color:var(--ink-3)}
+
+/* ---- read aloud (js/shell/readaloud.js) ------------------------- */
+/* a small floating player above the dock; it never takes focus */
+.ra{
+  position:fixed;left:50%;bottom:calc(var(--dock-h) + var(--sp-5));transform:translateX(-50%);
+  z-index:var(--z-panel);width:min(440px,calc(100vw - var(--sp-6)));
+  display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4);
+  border-radius:var(--r-lg);background:var(--glass-3);border:1px solid var(--line-1);box-shadow:var(--sh-3);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);
+}
+.ra__head{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-12)}
+.ra__head b{color:var(--ink-0);font-weight:650}
+.ra__g{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;
+  background:linear-gradient(180deg,var(--accent-soft),var(--accent));color:var(--accent-ink)}
+.ra__g .icon{width:12px;height:12px}
+.ra__count{font-size:var(--fs-11);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.ra__text{max-height:132px;overflow:auto;padding:var(--sp-3);border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0);
+  font-size:var(--fs-13);line-height:1.6;color:var(--ink-2)}
+.ra__s{cursor:pointer;border-radius:4px;transition:background var(--t-fast),color var(--t-fast)}
+.ra__s:hover{color:var(--ink-1)}
+.ra__s.is-read{color:var(--ink-3)}
+.ra__s.is-now{color:var(--ink-0);background:var(--fill-accent);box-shadow:0 0 0 2px var(--fill-accent)}
+.ra__w{background:var(--fill-accent-hi);color:var(--ink-0);border-radius:3px;text-decoration:underline;text-decoration-color:var(--accent-soft);text-underline-offset:3px}
+.ra__msg{font-size:var(--fs-11);line-height:1.5;color:var(--ink-2)}
+.ra__msg.is-bad{color:var(--ink-1);padding:var(--sp-3);border-radius:var(--r-md);background:var(--fill-1);border:1px solid var(--line-1)}
+.ra__bar{display:flex;align-items:center;gap:var(--sp-2)}
+.ra__btn{height:30px;min-width:30px;padding:0 var(--sp-3);border-radius:var(--r-pill);display:inline-flex;align-items:center;justify-content:center;gap:var(--sp-2);
+  font-size:var(--fs-11);font-weight:600;color:var(--ink-1);background:var(--fill-1);border:1px solid var(--line-0);transition:background var(--t-fast),color var(--t-fast)}
+.ra__btn .icon{width:13px;height:13px}
+.ra__btn:hover:not(:disabled){background:var(--fill-2);color:var(--ink-0)}
+.ra__btn:disabled{opacity:.45;cursor:default}
+.ra__head .ra__btn{height:26px;min-width:26px;padding:0;background:transparent;border-color:transparent}
+.ra__btn--main{background:linear-gradient(180deg,var(--accent-soft),var(--accent));color:var(--accent-ink);border-color:transparent;padding:0 var(--sp-4)}
+.ra__btn--main:hover:not(:disabled){box-shadow:var(--glow);color:var(--accent-ink)}
+.ra__word{font-size:var(--fs-10);color:var(--ink-3)}
+body.is-mobile .ra{bottom:var(--sp-5)}

@@ -1,0 +1,139 @@
+/* ==================================================================
+   Spooky season — html[data-spooky="on"], set by js/core/season.js
+   from October 24 to the end of November 1 unless Settings → Spooky
+   Season is off. Without the attribute nothing in this file applies
+   except the countdown widget's own classes, which only exist while
+   the widget does.
+
+   · the accent: pumpkin orange with a purple companion
+   · the haunted-house wallpaper (desktop.js .wp__spooky, three layers
+     drawn by tools/spooky-art.mjs, with the scene's parallax)
+   · the jack-o'-lantern pointer
+   · the leaves-and-bats canvas (shell/spooky.js .spooky-fx)
+   · the Halloween countdown (shell/deskwidgets.js .dw-hw)
+   · the Settings pane's header card (.st-spooky)
+   ================================================================== */
+
+/* ---- the accent ----------------------------------------------------
+   !important on purpose: themes.js, the boot drive and developer events
+   all write the accent as inline custom properties on <html>, and an
+   author !important outranks inline. So the season wins for its nine
+   days without touching any of them — and prefs.accent (the person's own
+   choice, which Settings keeps showing) is never rewritten. */
+:root[data-spooky="on"]{
+  --accent:#ff7a1a !important;
+  --accent-soft:#c9a2ff !important;
+  --accent-rgb:255 122 26 !important;
+  --accent-ink:#1f0a00 !important;
+  --spooky-orange:#ff8a1e;
+  --spooky-purple:#a66bff;
+}
+/* on a light shell the pale lavender companion would vanish into white */
+:root[data-spooky="on"][data-theme="light"]{--accent-soft:#7e3fd6 !important}
+
+/* ---- the wallpaper -------------------------------------------------- */
+.wp__spooky{position:absolute;inset:0;overflow:hidden;background:#140827}
+.wp__spooky > i{
+  position:absolute;inset:-14px;display:block;
+  background:transparent center bottom/cover no-repeat;
+  will-change:transform;transition:transform 600ms cubic-bezier(.22,1,.36,1);
+}
+/* furthest back moves least, as in the scene (features.css) */
+.wp__spooky > .wp__spooky-sky{background-image:url("../assets/spooky/sky.svg");transform:translate3d(calc(var(--px) * 3px),calc(var(--py) * 2px),0)}
+.wp__spooky > .wp__spooky-house{background-image:url("../assets/spooky/house.svg");transform:translate3d(calc(var(--px) * -6px),calc(var(--py) * -3px),0)}
+.wp__spooky > .wp__spooky-front{background-image:url("../assets/spooky/front.svg");transform:translate3d(calc(var(--px) * -13px),calc(var(--py) * -6px),0)}
+/* a band of ground fog that drifts through the graveyard: one tile, twice
+   as wide as the screen, sliding one tile's width — a seamless loop that
+   the compositor runs on its own */
+.wp__spooky > .wp__spooky-fog{
+  inset:auto;left:0;bottom:3%;width:200%;height:30%;
+  background:
+    radial-gradient(18% 34% at 10% 62%,rgba(214,196,255,.20),transparent 72%),
+    radial-gradient(14% 30% at 27% 48%,rgba(214,196,255,.14),transparent 72%),
+    radial-gradient(20% 36% at 46% 66%,rgba(214,196,255,.18),transparent 72%),
+    radial-gradient(16% 28% at 66% 52%,rgba(214,196,255,.13),transparent 72%),
+    radial-gradient(18% 34% at 86% 64%,rgba(214,196,255,.18),transparent 72%);
+  background-size:50% 100%;background-repeat:repeat-x;
+  animation:spooky-fog 140s linear infinite;
+}
+@keyframes spooky-fog{from{transform:translate3d(0,0,0)}to{transform:translate3d(-50%,0,0)}}
+/* the art is already a night scene: a lighter vignette keeps the
+   jack-o'-lanterns glowing instead of sinking into the corners */
+.wp__spooky ~ .wp__vig{opacity:.5}
+.wp--still .wp__spooky-fog{animation:none}
+@media (prefers-reduced-motion:reduce){
+  .wp__spooky-fog{animation:none}
+  .wp__spooky > i{transition:none}
+}
+/* the drive skins only dress the default wallpaper; the haunted house
+   replaces that, so they step aside — and the Linux desk terminal, which
+   relied on the skin's dark desk behind it, gets its own surface */
+:root[data-spooky="on"] .os-skin{display:none}
+:root[data-spooky="on"] body.has-deskterm .desk-term{
+  background:rgba(9,10,13,.76);border-color:rgba(255,255,255,.08);
+  -webkit-backdrop-filter:blur(12px) saturate(1.2);backdrop-filter:blur(12px) saturate(1.2);
+}
+
+/* ---- the cursor ------------------------------------------------------
+   The arrow becomes a jack-o'-lantern pointer; the tip (2,2) is still
+   exactly where you click. Text, resize and grab cursors are untouched,
+   and so is the hand over links and buttons. These are the places the
+   shell sets the plain arrow explicitly, so inheritance alone misses them. */
+:root[data-spooky="on"] body,
+:root[data-spooky="on"] .win__bar,
+:root[data-spooky="on"] .fx .tile,
+:root[data-spooky="on"] .fx .row-item{cursor:url("../assets/spooky/cursor.svg") 2 2,default}
+
+/* ---- leaves and bats ------------------------------------------------- */
+.spooky-fx{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+:root[data-gamemode="on"] .spooky-fx,
+body.is-mobile .spooky-fx{display:none}
+
+/* ---- the countdown widget ------------------------------------------- */
+.dw--season{
+  border-color:rgba(255,138,30,.26);
+  background:linear-gradient(160deg,rgba(46,16,60,.74),rgba(18,8,22,.68) 70%);
+  box-shadow:0 18px 44px -22px rgba(0,0,0,.8),0 0 30px -12px rgba(255,122,26,.35);
+}
+.dw--season .dw-head{color:#e9d6ff;border-bottom-color:rgba(255,138,30,.14)}
+.dw--season .dw-head .icon{color:var(--spooky-orange,#ff8a1e)}
+.dw-hw{flex:1;display:flex;flex-direction:column;justify-content:center;gap:var(--sp-3);min-height:0}
+.dw-hw__row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.dw-hw__u{display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 0 5px;border-radius:var(--r-sm);
+  background:rgba(255,138,30,.08);border:1px solid rgba(255,138,30,.18)}
+.dw-hw__n{font-size:calc(clamp(18px,2.2vw,24px) * var(--fs-k,1));font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;
+  color:#ffb257;text-shadow:0 0 14px rgba(255,138,30,.45)}
+.dw-hw__u small{font-size:calc(9px * var(--fs-k,1));font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:#c9a2ff}
+.dw-hw__sub{font-size:var(--fs-11);color:var(--ink-2);text-align:center}
+.dw-hw--done{align-items:center;text-align:center;gap:var(--sp-2)}
+.dw-hw__jack .icon{width:34px;height:34px;color:#ff8a1e;filter:drop-shadow(0 0 10px rgba(255,138,30,.6))}
+.dw-hw__hey{font-size:calc(20px * var(--fs-k,1));font-weight:750;letter-spacing:.01em;
+  background:linear-gradient(90deg,#ffc06a,#ff7a1a 48%,#c9a2ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+:root[data-theme="light"] .dw--season{background:linear-gradient(160deg,rgba(255,244,234,.9),rgba(246,236,255,.86));color:#1f0f24}
+:root[data-theme="light"] .dw--season .dw-head{color:#4a2a63}
+:root[data-theme="light"] .dw-hw__n{color:#d25a08;text-shadow:none}
+:root[data-theme="light"] .dw-hw__u small{color:#7a3fc2}
+
+/* ---- Settings → Spooky Season --------------------------------------- */
+.st-spooky{position:relative;overflow:hidden;display:flex;align-items:center;gap:var(--sp-5);
+  padding:var(--sp-5);border-radius:var(--r-lg);border:1px solid rgba(255,138,30,.22);
+  background:
+    radial-gradient(60% 120% at 100% 0%,rgba(255,122,26,.28),transparent 60%),
+    radial-gradient(70% 140% at 0% 100%,rgba(140,70,220,.30),transparent 62%),
+    linear-gradient(135deg,#1c0b26,#120716);
+  color:#f3e9ff}
+.st-spooky__art{width:58px;height:58px;flex:0 0 auto;border-radius:16px;display:grid;place-items:center;
+  background:radial-gradient(circle at 40% 35%,#ffb257,#e8601c 60%,#8a3208);
+  box-shadow:0 0 26px rgba(255,122,26,.45),inset 0 -6px 12px rgba(0,0,0,.25);color:#2a0d00}
+.st-spooky__art .icon{width:32px;height:32px}
+.st-spooky__t{min-width:0}
+.st-spooky__t b{display:block;font-size:var(--fs-15);font-weight:700}
+.st-spooky__t small{display:block;margin-top:3px;font-size:var(--fs-11);line-height:1.5;color:rgba(243,233,255,.74)}
+.st-spooky__state{margin-left:auto;flex:0 0 auto}
+.st-spooky.is-off{filter:saturate(.35);border-color:var(--line-1)}
+.set-row.is-dim{opacity:.5}
+/* "the season is painting this" — on the Appearance, Themes and Wallpaper panes */
+.st-note--season{align-items:center;border-color:rgba(255,138,30,.22);background:rgba(255,122,26,.06)}
+.st-note--season > .icon{color:var(--spooky-orange,#ff8a1e)}
+.st-note--season small{flex:1}
+.st-note--season .btn{flex:0 0 auto}

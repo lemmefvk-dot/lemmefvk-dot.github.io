@@ -1,0 +1,225 @@
+/* ==================================================================
+   Static Beats — .beats-*  (a step-sequencer drum machine)
+
+   Three stacked regions inside one column: a transport bar (play +
+   tempo + swing), a tools row (presets / save / load / random / clear)
+   and the sequencer itself. The sequencer is a fixed-width track head
+   beside a 16-column cell grid; the header row and every track row share
+   the same --bhead offset so the beat numbers line up over their cells.
+   Everything is token-driven, so it re-themes with the OS and inverts
+   cleanly in light mode. The active accent marks a placed hit; the
+   playhead brightens the whole current column from the audio clock.
+   ================================================================== */
+
+.beats{
+  --bhead:150px;
+  display:flex;flex-direction:column;height:100%;min-height:0;position:relative;
+  container:beats / inline-size;
+}
+
+/* ---- transport bar ------------------------------------------------ */
+.beats__bar{
+  display:flex;align-items:stretch;gap:var(--sp-4);flex-wrap:wrap;flex:0 0 auto;
+  padding:var(--sp-4) var(--sp-5);border-bottom:1px solid var(--line-0);
+  background:rgba(255,255,255,.014);
+}
+.beats__transport{display:flex;align-items:center;gap:var(--sp-4);flex:0 0 auto}
+.beats__play{
+  height:40px;min-width:104px;padding:0 var(--sp-5);border-radius:var(--r-md);
+  font-size:var(--fs-13);font-weight:650;
+}
+.beats__play.is-playing{
+  background:var(--fill-2);color:var(--ink-0);
+  border-color:var(--line-accent);box-shadow:none;
+}
+.beats__play .icon{width:16px;height:16px}
+.beats__pos{display:flex;flex-direction:column;justify-content:center;min-width:78px}
+.beats__posnum{font-size:var(--fs-11);color:var(--ink-2);font-variant-numeric:tabular-nums;font-weight:560}
+
+.beats__ctl{
+  display:flex;flex-direction:column;gap:var(--sp-2);justify-content:center;
+  flex:1 1 190px;min-width:150px;
+  padding:var(--sp-2) var(--sp-4);border-radius:var(--r-md);
+  background:var(--fill-0);border:1px solid var(--line-0);
+}
+.beats__ctlhead{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3)}
+.beats__ctllabel{display:flex;align-items:center;gap:6px;font-size:calc(9.5px * var(--fs-k,1));font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)}
+.beats__ctllabel .icon{width:12px;height:12px;color:var(--accent-soft)}
+.beats__stepper{display:flex;align-items:center;gap:2px}
+.beats__stepper .ibtn{height:22px;min-width:22px}
+.beats__stepper .ibtn .icon{width:13px;height:13px}
+.beats__bpmnum{
+  min-width:38px;text-align:center;font-size:var(--fs-15);font-weight:680;color:var(--ink-0);
+  font-variant-numeric:tabular-nums;letter-spacing:-.3px;
+}
+.beats__swnum{font-size:var(--fs-13);font-weight:650;color:var(--ink-0);font-variant-numeric:tabular-nums}
+.beats__ctl .slider{margin-top:2px}
+
+/* ---- tools row ---------------------------------------------------- */
+.beats__tools{
+  display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;flex:0 0 auto;
+  padding:var(--sp-3) var(--sp-5);border-bottom:1px solid var(--line-0);
+}
+.beats__tools .btn .icon{width:13px;height:13px}
+.beats__tools .btn [data-icon="chevron-down"]{margin-left:-2px;opacity:.7}
+
+/* ---- the sequencer ------------------------------------------------ */
+.beats__seq{
+  flex:1;min-height:0;overflow:auto;padding:var(--sp-4) var(--sp-5) var(--sp-6);
+  display:flex;flex-direction:column;gap:var(--sp-2);
+}
+.beats__seqhead{display:flex;align-items:center;gap:var(--sp-3);position:sticky;top:0;z-index:2;
+  padding-bottom:var(--sp-2);background:linear-gradient(180deg,var(--glass-2),transparent);}
+.beats__headspace{
+  width:var(--bhead);flex:0 0 auto;
+  font-size:calc(9px * var(--fs-k,1));font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-4);
+  padding-left:2px;
+}
+.beats__headsteps,.beats__cells{
+  flex:1;min-width:0;display:grid;grid-template-columns:repeat(16,1fr);gap:var(--sp-1);
+}
+.beats__num{
+  text-align:center;font-size:calc(9px * var(--fs-k,1));font-weight:600;color:var(--ink-4);
+  font-variant-numeric:tabular-nums;padding-bottom:2px;transition:color var(--t-fast);
+}
+.beats__num.is-down{color:var(--ink-2)}
+.beats__num.is-group{position:relative}
+.beats__num.is-play{color:var(--accent-soft)}
+
+.beats__rows{display:flex;flex-direction:column;gap:var(--sp-2)}
+.beats__row{display:flex;align-items:center;gap:var(--sp-3)}
+
+.beats__rowhead{
+  width:var(--bhead);flex:0 0 auto;display:flex;flex-direction:column;gap:5px;
+  padding:var(--sp-2) var(--sp-3);border-radius:var(--r-sm);
+  background:var(--fill-0);border:1px solid var(--line-0);
+}
+.beats__mute{
+  display:flex;align-items:center;gap:6px;width:100%;height:20px;color:var(--ink-1);
+  font-size:var(--fs-11);font-weight:580;text-align:left;border-radius:var(--r-xs);
+  transition:color var(--t-fast),opacity var(--t-fast);
+}
+.beats__mute .icon{width:14px;height:14px;color:var(--accent-soft);flex:0 0 auto}
+.beats__mutename{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.beats__mute:hover{color:var(--ink-0)}
+.beats__rowhead.is-muted{opacity:.55}
+.beats__rowhead.is-muted .beats__mute .icon{color:var(--ink-3)}
+.beats__rowhead.is-muted .beats__mute{text-decoration:line-through}
+.beats__vol{height:4px}
+
+/* ---- step cells --------------------------------------------------- */
+.beats__cell{
+  aspect-ratio:1/1;min-height:16px;border-radius:var(--r-xs);
+  background:var(--fill-0);border:1px solid var(--line-1);
+  transition:background var(--t-fast),border-color var(--t-fast),transform var(--t-fast),box-shadow var(--t-fast);
+  touch-action:none;
+}
+/* every downbeat (4n) sits a hair apart so the bar reads in 4s */
+.beats__cell.is-group,.beats__num.is-group{margin-left:5px}
+.beats__cell:nth-child(4n+1){background:var(--fill-1)}
+.beats__cell:hover{border-color:var(--line-2);background:var(--fill-2)}
+.beats__cell.is-on{
+  background:linear-gradient(160deg,var(--accent-soft),var(--accent));
+  border-color:rgba(255,255,255,.22);
+  box-shadow:0 1px 4px rgba(var(--accent-rgb)/.35),inset 0 1px 0 rgba(255,255,255,.3);
+}
+.beats__cell.is-play{box-shadow:inset 0 0 0 2px var(--accent-soft)}
+.beats__cell.is-on.is-play{
+  box-shadow:0 0 12px rgba(var(--accent-rgb)/.6),inset 0 0 0 2px #fff;
+  transform:scale(1.04);
+}
+.beats__cell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.beats__mute:focus-visible,.beats__tools .btn:focus-visible,.beats__play:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---- save sheet --------------------------------------------------- */
+.beats__scrim{
+  position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.4);-webkit-backdrop-filter:var(--blur-1);backdrop-filter:var(--blur-1);
+  animation:fade-in var(--t-fast) var(--ease-out);
+}
+.beats__sheet{
+  width:min(320px,calc(100% - 40px));display:flex;flex-direction:column;gap:var(--sp-4);
+  padding:var(--sp-5);border-radius:var(--r-lg);
+  background:var(--glass-3);border:1px solid var(--line-1);box-shadow:var(--sh-4);
+  animation:pop-in var(--t-med) var(--ease-out);
+}
+.beats__sheettitle{font-size:var(--fs-13);font-weight:650;color:var(--ink-0)}
+.beats__sheetin{
+  height:32px;padding:0 var(--sp-4);border-radius:var(--r-sm);
+  background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-0);font-size:var(--fs-12);
+}
+.beats__sheetin:focus-visible{outline:none;border-color:var(--line-accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb)/.12)}
+.beats__sheetrow{display:flex;justify-content:flex-end;gap:var(--sp-3)}
+
+/* window-tool state */
+.ibtn.is-warn{color:var(--accent-soft)}
+
+/* ---- Pattern | Song ------------------------------------------------ */
+.beats__seg{display:inline-flex;padding:2px;gap:2px;border-radius:var(--r-pill);background:var(--fill-0);border:1px solid var(--line-1)}
+.beats__segbtn{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 var(--sp-4);border-radius:var(--r-pill);
+  font-size:var(--fs-11);font-weight:600;color:var(--ink-2);transition:background var(--t-fast),color var(--t-fast)}
+.beats__segbtn .icon{width:13px;height:13px}
+.beats__segbtn:hover{color:var(--ink-0)}
+.beats__segbtn.is-on{background:var(--fill-accent-hi);color:var(--ink-0)}
+.beats__segbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.beats__ptools{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap}
+
+/* ---- song mode ---------------------------------------------------- */
+.beats__song{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4) var(--sp-5) var(--sp-5)}
+.beats__songhead{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap}
+.beats__songhead .btn .icon{width:13px;height:13px}
+.beats__songhead .btn [data-icon="chevron-down"]{margin-left:-2px;opacity:.7}
+.beats__songsum{font-size:var(--fs-12);font-weight:600;color:var(--ink-1);font-variant-numeric:tabular-nums}
+.beats__songprog{height:4px;border-radius:var(--r-pill);background:var(--fill-1);overflow:hidden;flex:0 0 auto}
+.beats__songprog i{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,var(--accent-soft),var(--accent))}
+.beats__songlist{flex:1;min-height:0;overflow:auto;margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:var(--sp-2)}
+.beats__songrow{display:grid;grid-template-columns:26px minmax(0,1fr) auto 58px auto;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-2) var(--sp-3);border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0);
+  transition:background var(--t-fast),border-color var(--t-fast),box-shadow var(--t-fast)}
+.beats__songrow:hover{background:var(--fill-1)}
+.beats__songrow.is-now{border-color:var(--line-accent);box-shadow:0 0 0 1px rgba(var(--accent-rgb)/.2);
+  background:linear-gradient(90deg,var(--fill-accent),var(--fill-0) 70%)}
+.beats__songrow.is-missing .beats__songname b{color:var(--ink-3);text-decoration:line-through}
+.beats__songnum{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--fill-1);
+  font-size:var(--fs-11);font-weight:650;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.beats__songrow.is-now .beats__songnum{background:linear-gradient(180deg,var(--accent-soft),var(--accent));color:var(--accent-ink)}
+.beats__songname{display:flex;flex-direction:column;min-width:0}
+.beats__songname b{font-size:var(--fs-12);font-weight:620;color:var(--ink-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.beats__songname small{font-size:var(--fs-10);color:var(--ink-3)}
+.beats__songtimes{display:flex;align-items:center;gap:2px}
+.beats__songx{min-width:30px;text-align:center;font-size:var(--fs-12);font-weight:680;color:var(--ink-0);font-variant-numeric:tabular-nums}
+.beats__songnow{font-size:var(--fs-10);font-weight:600;color:var(--accent-soft);text-align:center;font-variant-numeric:tabular-nums}
+.beats__songacts{display:flex;align-items:center;gap:2px}
+.beats__sib{height:24px;min-width:24px}
+.beats__sib .icon{width:13px;height:13px}
+.beats__sib:disabled{opacity:.35}
+.beats__songempty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--sp-2);
+  padding:var(--sp-6);text-align:center;border-radius:var(--r-lg);border:1px dashed var(--line-1)}
+.beats__songempty .icon{width:26px;height:26px;color:var(--accent-soft)}
+.beats__songempty b{font-size:var(--fs-13);color:var(--ink-0)}
+.beats__songempty small{max-width:46ch;font-size:var(--fs-11);line-height:1.5;color:var(--ink-2)}
+body.is-mobile .beats__song{padding:var(--sp-3) var(--sp-4) var(--sp-5)}
+@container beats (max-width:560px){
+  .beats__songrow{grid-template-columns:26px minmax(0,1fr) auto;grid-template-areas:"num name times" "now acts acts"}
+  .beats__songnum{grid-area:num}.beats__songname{grid-area:name}.beats__songtimes{grid-area:times}
+  .beats__songnow{grid-area:now}.beats__songacts{grid-area:acts;justify-content:flex-end}
+}
+:root[data-theme="light"] .beats__songnow{color:var(--accent)}
+
+/* ---- phone width: full-screen windows, tighter head -------------- */
+body.is-mobile .beats{--bhead:104px}
+body.is-mobile .beats__bar{padding:var(--sp-3) var(--sp-4)}
+body.is-mobile .beats__play{height:38px;min-width:92px}
+body.is-mobile .beats__seq{padding:var(--sp-3) var(--sp-4) var(--sp-6)}
+body.is-mobile .beats__mutename{font-size:var(--fs-10)}
+
+@media (max-width:460px){
+  .beats{--bhead:104px}
+  .beats__headsteps,.beats__cells{gap:3px}
+  .beats__cell.is-group,.beats__num.is-group{margin-left:3px}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .beats__cell,.beats__scrim,.beats__sheet{animation:none;transition:none}
+  .beats__cell.is-on.is-play{transform:none}
+}

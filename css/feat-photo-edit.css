@@ -1,0 +1,71 @@
+/* ============================================================
+   Photos › Edit (js/photos/edit.js): crop, rotate, straighten
+   and colour over the Photos window. Tokens only.
+   ============================================================ */
+.pe{
+  position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;
+  background:var(--ph-theatre,var(--bg-1));color:var(--ink-1);
+  animation:pe-in var(--t-med) var(--ease-out);
+}
+@keyframes pe-in{from{opacity:0}to{opacity:1}}
+.pe .grow{flex:1}
+.pe__top{display:flex;align-items:center;gap:var(--sp-2);flex:0 0 auto;min-height:48px;padding:var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-3);border-bottom:1px solid var(--line-0)}
+.pe__top .ibtn{height:30px;min-width:30px}
+.pe__top .ibtn .icon{width:16px;height:16px}
+.pe__t{display:flex;flex-direction:column;min-width:0;padding-left:var(--sp-1)}
+.pe__t b{font-size:var(--fs-13);font-weight:650;color:var(--ink-0)}
+.pe__t small{font-size:var(--fs-10);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.pe__sep{width:1px;height:20px;margin:0 var(--sp-1);background:var(--line-1)}
+.pe__before.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0)}
+.pe__replace{color:var(--ink-2)}
+.pe-mirror .icon{transform:scaleX(-1)}
+.pe .btn[disabled]{opacity:.45;pointer-events:none}
+
+.pe__body{flex:1;min-height:0;display:flex}
+.pe__stage{position:relative;flex:1;min-width:0;outline:none;touch-action:none;user-select:none;-webkit-user-select:none}
+.pe__stage:focus-visible{box-shadow:inset 0 0 0 2px rgba(var(--accent-rgb)/.3)}
+.pe__cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+.pe__status{position:absolute;inset:0;display:grid;place-items:center;padding:var(--sp-7);text-align:center;font-size:var(--fs-12);color:var(--ink-3);pointer-events:none}
+.pe__status:empty{display:none}
+.pe__status.is-err{color:var(--ink-1)}
+
+.pe__side{width:272px;flex:0 0 auto;overflow-y:auto;display:flex;flex-direction:column;gap:var(--sp-3);
+  padding:var(--sp-4) var(--sp-5) var(--sp-6);border-left:1px solid var(--line-0);background:var(--fill-0)}
+.pe__tabs{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:2px;border-radius:var(--r-sm);background:var(--fill-0);border:1px solid var(--line-0)}
+.pe__tab{display:flex;align-items:center;justify-content:center;gap:var(--sp-2);height:28px;border-radius:6px;font-size:var(--fs-11);font-weight:600;color:var(--ink-3)}
+.pe__tab .icon{width:14px;height:14px}
+.pe__tab:hover{color:var(--ink-1)}
+.pe__tab[aria-selected="true"]{background:var(--fill-2);color:var(--ink-0);box-shadow:var(--sh-1)}
+.pe__pane{display:flex;flex-direction:column;gap:var(--sp-3)}
+.pe__pane[hidden]{display:none}
+.pe__lbl{display:flex;align-items:center;gap:var(--sp-2);margin-top:var(--sp-2);font-size:var(--fs-10);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.pe__lbl .icon{width:13px;height:13px;flex:0 0 auto}
+.pe__val,.pe__size{margin-left:auto;font-size:var(--fs-11);font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink-1);font-variant-numeric:tabular-nums}
+.pe__aspects{flex-wrap:wrap}
+.pe__aspects button{height:24px;padding:0 var(--sp-3);font-size:var(--fs-11)}
+.pe__row{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.pe__row .btn{padding:0 var(--sp-3);gap:var(--sp-1)}
+.pe__slide{display:flex;align-items:center;gap:var(--sp-3)}
+.pe__range{flex:1;min-width:0}
+.pe__adj{display:flex;flex-direction:column;gap:var(--sp-2)}
+.pe__adj .pe__lbl{cursor:default}
+.pe__note{margin:var(--sp-2) 0 0;font-size:var(--fs-11);line-height:1.5;color:var(--ink-3)}
+.pe__note:empty{display:none}
+
+.pe__busy{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;gap:var(--sp-3);
+  background:rgba(0,0,0,.45);color:#fff;font-size:var(--fs-12);font-weight:600}
+.pe__busy[hidden]{display:none}
+
+@container ph (max-width: 720px){
+  .pe__body{flex-direction:column}
+  .pe__side{width:auto;max-height:46%;border-left:0;border-top:1px solid var(--line-0)}
+  .pe__replace span{font-size:var(--fs-10)}
+  .pe__t small{max-width:120px}
+}
+@container ph (max-width: 520px){
+  .pe__sep,.pe__before span,.pe__top .btn--ghost:not(.pe__replace) span{display:none}
+  .pe__top{gap:2px;padding:var(--sp-2)}
+}
+
+@media (prefers-reduced-motion:reduce){ .pe{animation:none} }
+body.reduce-motion .pe{animation:none}

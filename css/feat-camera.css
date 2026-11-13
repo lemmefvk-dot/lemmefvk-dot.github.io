@@ -1,0 +1,273 @@
+/* ==================================================================
+   Camera — .cam-*
+
+   A black viewfinder (a camera's own look, in both themes) above the
+   OS's glass controls. The picture box is sized to the stream's real
+   aspect ratio with container units, so the thirds grid and the flash
+   cover exactly the pixels a photo keeps, letterboxed in black.
+   HUD pills are dark glass with white type so they read on any scene.
+   Below: live look previews, the filmstrip of real captures, and the
+   deck — mode, shutter, timer/looks/switch. Existing tokens only;
+   the few fixed colours live inside the black stage.
+   ================================================================== */
+
+.cam{height:100%;min-height:0;gap:0;container-type:inline-size}
+.cam__grow{flex:1}
+
+/* ---------- the viewfinder ---------- */
+.cam__stage{
+  position:relative;flex:1 1 auto;min-height:150px;
+  margin:var(--sp-3) var(--sp-3) 0;border-radius:var(--r-lg);overflow:hidden;
+  background:#050506;border:1px solid var(--line-1);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.03),0 10px 30px -18px rgba(0,0,0,.8);
+  container-type:size;display:grid;place-items:center;isolation:isolate;
+}
+.cam__frame{
+  --ar:1.7778;
+  position:relative;
+  width:min(100cqw, calc(100cqh * var(--ar)));
+  height:min(100cqh, calc(100cqw / var(--ar)));
+}
+.cam__pic{position:absolute;inset:0;isolation:isolate;transition:transform var(--t-slow) var(--ease)}
+.cam__pic.is-mirror{transform:scaleX(-1)}
+.cam__video{display:block;width:100%;height:100%;object-fit:cover;background:#000;opacity:0;transition:opacity var(--t-slow) var(--ease)}
+.cam__stage.is-live .cam__video{opacity:1}
+.cam__tint{position:absolute;inset:0;pointer-events:none;mix-blend-mode:soft-light;opacity:0}
+
+.cam__grid{position:absolute;inset:0;pointer-events:none}
+.cam__grid[hidden]{display:none}
+.cam__grid i{position:absolute;background:rgba(255,255,255,.42);box-shadow:0 0 0 .5px rgba(0,0,0,.18)}
+.cam__grid i:nth-child(1),.cam__grid i:nth-child(2){top:0;bottom:0;width:1px}
+.cam__grid i:nth-child(3),.cam__grid i:nth-child(4){left:0;right:0;height:1px}
+.cam__grid i:nth-child(1){left:33.333%}
+.cam__grid i:nth-child(2){left:66.667%}
+.cam__grid i:nth-child(3){top:33.333%}
+.cam__grid i:nth-child(4){top:66.667%}
+.cam__stage:not(.is-live) .cam__grid{display:none}
+
+.cam__flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+
+/* ---------- HUD: real facts only ---------- */
+.cam__hud{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;padding:10px;pointer-events:none;z-index:2}
+.cam__hudrow{display:flex;align-items:flex-start;gap:6px;min-width:0}
+.cam__hudrow:last-child{align-items:flex-end}
+.cam-pill{
+  display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:var(--r-pill);
+  background:rgba(8,8,10,.58);color:#fff;border:1px solid rgba(255,255,255,.1);
+  font-size:calc(10.5px * var(--fs-k,1));font-weight:600;letter-spacing:.02em;white-space:nowrap;
+  -webkit-backdrop-filter:blur(10px) saturate(140%);backdrop-filter:blur(10px) saturate(140%);
+}
+.cam-pill[hidden]{display:none}
+.cam-pill .icon{width:12px;height:12px}
+.cam-pill.mono{font-family:var(--mono);font-size:calc(10px * var(--fs-k,1));letter-spacing:0}
+.cam-pill--rec{background:rgba(220,38,38,.9);border-color:rgba(255,255,255,.22)}
+.cam-pill--rec i{width:7px;height:7px;border-radius:50%;background:#fff;animation:cam-blink 1.1s steps(2,jump-none) infinite}
+@keyframes cam-blink{50%{opacity:.2}}
+.cam-pill--mic{pointer-events:auto;cursor:pointer;font:inherit;font-size:calc(10.5px * var(--fs-k,1));font-weight:600}
+.cam-pill--mic:disabled{cursor:default}
+.cam-pill--mic.is-off{background:rgba(120,53,15,.78);border-color:rgba(251,191,36,.35);color:#fde68a}
+.cam-pill--mic:not(:disabled):hover{background:rgba(146,64,14,.85)}
+.cam-meter{position:relative;width:38px;height:4px;border-radius:99px;background:rgba(255,255,255,.2);overflow:hidden}
+.cam-meter[hidden]{display:none}
+.cam-meter i{position:absolute;inset:0;background:linear-gradient(90deg,#4ade80 0%,#a3e635 65%,#facc15 85%,#f87171 100%);transform-origin:left center;transform:scaleX(0);transition:transform 70ms linear}
+.cam-pill--note{white-space:normal;height:auto;min-height:24px;padding:4px 10px;line-height:1.35;max-width:min(100%,380px)}
+
+/* ---------- self-timer ---------- */
+.cam__count{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;z-index:3;background:radial-gradient(closest-side,rgba(0,0,0,.28),transparent)}
+.cam__count[hidden]{display:none}
+.cam__countring{
+  width:132px;height:132px;border-radius:50%;display:grid;place-items:center;
+  border:3px solid rgba(255,255,255,.85);box-shadow:0 0 0 8px rgba(255,255,255,.12),0 10px 40px rgba(0,0,0,.45);
+}
+.cam__countring b{font-size:calc(64px * var(--fs-kd,1));font-weight:700;line-height:1;color:#fff;font-variant-numeric:tabular-nums;text-shadow:0 3px 24px rgba(0,0,0,.45)}
+.cam__count.is-tick:not(.is-still) .cam__countring{animation:cam-tick 1s var(--ease-out)}
+@keyframes cam-tick{0%{transform:scale(1.14);opacity:.4}25%{transform:scale(1);opacity:1}100%{transform:scale(.98)}}
+
+/* ---------- state cards (starting, blocked, no camera …) ---------- */
+.cam__state{position:absolute;inset:0;display:grid;place-items:center;padding:var(--sp-5);z-index:4;overflow:auto;
+  background:radial-gradient(120% 90% at 50% 0%,rgba(143,163,189,.16),transparent 60%),#070709}
+.cam__state[hidden]{display:none}
+.cam-card{max-width:380px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;color:#f4f4f6;animation:pop-in var(--t-slow) var(--ease-out)}
+.cam-card__ic{
+  width:54px;height:54px;border-radius:16px;display:grid;place-items:center;color:#fff;margin-bottom:4px;
+  background:linear-gradient(135deg,#8fa3bd,#3b465c);box-shadow:0 12px 30px -10px rgba(59,70,92,.9),inset 0 1px 0 rgba(255,255,255,.25);
+}
+.cam-card__ic .icon{width:24px;height:24px}
+.cam-card b{font-size:var(--fs-15);font-weight:680;letter-spacing:-.1px}
+.cam-card p{margin:0;font-size:var(--fs-12);line-height:1.55;color:rgba(244,244,246,.72)}
+.cam-card__acts{display:flex;flex-wrap:wrap;justify-content:center;gap:var(--sp-2);margin-top:6px}
+.cam-card .btn:not(.btn--primary){background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.16);color:#fff}
+.cam-card .btn:not(.btn--primary):hover{background:rgba(255,255,255,.16)}
+.cam-card__spin{width:30px;height:30px;border-radius:50%;border:2.5px solid rgba(255,255,255,.18);border-top-color:#fff;animation:spin .9s linear infinite;margin-bottom:4px}
+
+/* ---------- looks ---------- */
+.cam__looks{display:flex;padding:var(--sp-3) var(--sp-3) 0;overflow-x:auto;scrollbar-width:none;flex:0 0 auto}
+.cam__looks::-webkit-scrollbar{display:none}
+.cam__looksin{display:flex;align-items:flex-start;gap:var(--sp-3);margin:0 auto}
+.cam__looks[hidden]{display:none}
+.cam-look{display:flex;flex-direction:column;align-items:center;gap:4px;flex:0 0 auto;padding:2px;border-radius:var(--r-md);color:var(--ink-2);font-size:var(--fs-10);font-weight:600}
+.cam-look__pv{
+  position:relative;display:block;width:68px;height:42px;border-radius:9px;overflow:hidden;isolation:isolate;
+  background:#111;box-shadow:0 0 0 1px var(--line-1);transition:box-shadow var(--t-fast),transform var(--t-fast) var(--ease);
+}
+.cam-look__pv video{display:block;width:100%;height:100%;object-fit:cover}
+.cam-look__tint{position:absolute;inset:0;mix-blend-mode:soft-light}
+.cam-look:hover .cam-look__pv{transform:translateY(-1px);box-shadow:0 0 0 1px var(--line-2)}
+.cam-look.is-on{color:var(--ink-0)}
+.cam-look.is-on .cam-look__pv{box-shadow:0 0 0 2px var(--accent),0 6px 16px -8px rgba(var(--accent-rgb)/.8)}
+.cam-look:disabled{opacity:.45;cursor:default}
+.cam-look:disabled .cam-look__pv{transform:none}
+.cam__looksnote{align-self:center;color:var(--ink-3);font-size:var(--fs-10);max-width:180px;line-height:1.4}
+.cam__looksnote[hidden]{display:none}
+
+/* ---------- filmstrip ---------- */
+.cam__strip{display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-3) var(--sp-3) 0;overflow-x:auto;min-height:60px;flex:0 0 auto;scrollbar-width:thin}
+.cam-tile{
+  position:relative;flex:0 0 auto;width:72px;height:50px;border-radius:9px;overflow:hidden;
+  background:var(--fill-1);box-shadow:0 0 0 1px var(--line-1);
+  transition:transform var(--t-fast) var(--ease),box-shadow var(--t-fast);animation:cam-in var(--t-slow) var(--ease-out);
+}
+@keyframes cam-in{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:none}}
+.cam-tile:hover{transform:translateY(-1px);box-shadow:0 0 0 1px var(--line-accent)}
+.cam-tile__img{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink-3)}
+.cam-tile__img img,.cam-tile__img video{width:100%;height:100%;object-fit:cover;display:block;background:#000}
+.cam-tile__badge{position:absolute;left:4px;bottom:4px;display:inline-flex;align-items:center;gap:3px;height:15px;padding:0 5px;border-radius:5px;
+  background:rgba(0,0,0,.62);color:#fff;font:600 calc(9px * var(--fs-k,1))/1 var(--mono)}
+.cam-tile__badge .icon{width:9px;height:9px}
+.cam-tile.is-empty .cam-tile__img{gap:2px;align-content:center;background:repeating-linear-gradient(135deg,var(--fill-0) 0 6px,var(--fill-1) 6px 12px)}
+.cam-tile.is-empty .icon{width:14px;height:14px}
+.cam-tile.is-empty small{font-size:calc(9px * var(--fs-k,1));font-weight:600;color:var(--ink-3)}
+.cam-tile--more{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:var(--ink-1);font-weight:650;font-size:var(--fs-12)}
+.cam-tile--more small{font-size:calc(9px * var(--fs-k,1));color:var(--ink-3);font-weight:550}
+.cam-all{
+  flex:0 0 auto;width:40px;height:50px;border-radius:9px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  color:var(--ink-2);background:var(--fill-0);box-shadow:inset 0 0 0 1px var(--line-1);
+  transition:background var(--t-fast),color var(--t-fast);
+}
+.cam-all .icon{width:15px;height:15px}
+.cam-all b{font-size:var(--fs-11);font-weight:700;color:var(--ink-1);font-variant-numeric:tabular-nums}
+.cam-all:hover{background:var(--fill-1);color:var(--ink-0)}
+.cam__empty{display:flex;align-items:center;gap:var(--sp-3);color:var(--ink-3);font-size:var(--fs-11);padding:0 var(--sp-2)}
+.cam__empty .icon{width:16px;height:16px;flex:0 0 auto;color:var(--ink-4)}
+
+/* ---------- the deck ---------- */
+.cam__deck{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:var(--sp-4);padding:var(--sp-3) var(--sp-5) var(--sp-4);flex:0 0 auto}
+.cam__deckl{display:flex;min-width:0}
+.cam__deckr{display:flex;justify-content:flex-end;align-items:center;gap:var(--sp-2);min-width:0}
+.cam__seg button{height:30px;padding:0 12px;gap:6px}
+.cam__seg button:disabled{opacity:.5;cursor:default}
+
+.cam__shutter{
+  position:relative;width:66px;height:66px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;
+  background:var(--fill-1);box-shadow:inset 0 0 0 3px var(--ink-1),0 8px 22px -12px rgba(0,0,0,.7);
+  transition:transform var(--t-fast) var(--ease),box-shadow var(--t-med);
+}
+.cam__shutter i{
+  display:block;width:50px;height:50px;border-radius:50%;
+  background:radial-gradient(circle at 50% 30%,#fff,#e9e7ea 70%);box-shadow:0 1px 3px rgba(0,0,0,.35);
+  transition:width var(--t-med) var(--ease),height var(--t-med) var(--ease),border-radius var(--t-med) var(--ease),background var(--t-med);
+}
+.cam__shutter:hover:not(:disabled) i{filter:brightness(.97)}
+.cam__shutter:active:not(:disabled){transform:scale(.94)}
+.cam__shutter.is-video i{background:radial-gradient(circle at 50% 30%,#ff6b6b,#e11d48 72%)}
+.cam__shutter.is-rec i{width:24px;height:24px;border-radius:6px}
+.cam__shutter.is-rec{box-shadow:inset 0 0 0 3px #e11d48,0 0 0 6px rgba(225,29,72,.18)}
+.cam__shutter.is-count{box-shadow:inset 0 0 0 3px var(--accent),0 0 0 6px rgba(var(--accent-rgb)/.2)}
+.cam__shutter.is-count i{width:22px;height:22px;border-radius:6px;background:var(--ink-1)}
+.cam__shutter:disabled{opacity:.4;cursor:not-allowed}
+
+.cam-tool{
+  display:inline-flex;align-items:center;justify-content:center;gap:5px;height:34px;min-width:34px;padding:0 10px;
+  border-radius:var(--r-md);background:var(--fill-1);border:1px solid var(--line-0);color:var(--ink-1);
+  font-size:var(--fs-11);font-weight:600;white-space:nowrap;
+  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast),transform var(--t-fast);
+}
+.cam-tool[hidden]{display:none}
+.cam-tool .icon{width:15px;height:15px}
+.cam-tool:hover:not(:disabled){background:var(--fill-2);color:var(--ink-0)}
+.cam-tool:active:not(:disabled){transform:scale(.95)}
+.cam-tool.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--accent-soft)}
+.cam-tool:disabled{opacity:.45;cursor:default}
+
+/* title-bar camera picker */
+.cam-sel{
+  height:24px;max-width:170px;padding:0 22px 0 8px;border-radius:var(--r-sm);font-size:var(--fs-10);font-weight:600;
+  color:var(--ink-1);background:var(--fill-1);border:1px solid var(--line-1);text-overflow:ellipsis;cursor:pointer;
+  -webkit-appearance:none;appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:calc(100% - 11px) 10px,calc(100% - 7px) 10px;background-size:4px 4px;background-repeat:no-repeat;
+}
+.cam-sel[hidden]{display:none}
+.cam-sel option{background:var(--bg-2);color:var(--ink-0)}
+
+/* ---------- the spooky photo booth (js/core/booth.js, in season only) ----------
+   The canvas over the picture is what you see and what a photo keeps; the
+   sticker handles on top of it are invisible until hovered, focused or dragged. */
+.cam-booth{position:absolute;inset:0;z-index:1}
+.cam-booth[hidden],.cam-booth__cv[hidden],.cam__booth[hidden],.cam-chip[hidden]{display:none}
+.cam-booth__cv{position:absolute;inset:0;display:block;width:100%;height:100%}
+.cam-booth__stks{position:absolute;inset:0;overflow:hidden}
+.cam-stk{position:absolute;padding:0;border:0;border-radius:10px;background:none;cursor:grab;touch-action:none;
+  box-shadow:inset 0 0 0 1px transparent;transition:box-shadow var(--t-fast)}
+.cam-stk:hover,.cam-stk.is-drag{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.75),0 0 0 1px rgba(0,0,0,.35)}
+.cam-stk.is-drag{cursor:grabbing}
+.cam__booth{display:flex;padding:var(--sp-3) var(--sp-3) 0;overflow-x:auto;scrollbar-width:none;flex:0 0 auto}
+.cam__booth::-webkit-scrollbar{display:none}
+.cam-booth__in{display:flex;flex-direction:column;gap:var(--sp-2);margin:0 auto}
+.cam-booth__row{display:flex;align-items:center;gap:var(--sp-5)}
+.cam-booth__grp{display:flex;align-items:center;gap:var(--sp-2);flex:0 0 auto}
+.cam-booth__lbl{font-size:var(--fs-10);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-right:2px}
+.cam-chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:var(--r-pill);
+  background:var(--fill-1);border:1px solid var(--line-0);color:var(--ink-1);font-size:var(--fs-11);font-weight:600;white-space:nowrap;
+  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast)}
+.cam-chip .icon{width:13px;height:13px}
+.cam-chip:hover{background:var(--fill-2);color:var(--ink-0)}
+.cam-chip.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--accent-soft)}
+.cam-stkbtn{width:34px;height:34px;padding:3px;border-radius:var(--r-sm);background:var(--fill-0);border:1px solid var(--line-1);
+  transition:background var(--t-fast),border-color var(--t-fast),transform var(--t-fast) var(--ease)}
+.cam-stkbtn img{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none}
+/* the bat, cat and spider are near-black: a soft light behind every thumbnail */
+:root:not([data-theme="light"]) .cam-stkbtn{background:radial-gradient(circle at 50% 45%,rgba(255,255,255,.34),var(--fill-0) 72%)}
+.cam-stkbtn:hover:not(:disabled){background:var(--fill-2);border-color:var(--line-accent);transform:translateY(-1px)}
+.cam-stkbtn:disabled{opacity:.4;cursor:default}
+.cam-stk:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- focus: always visible ---------- */
+.cam button:focus-visible,.cam-sel:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cam__shutter:focus-visible{outline-offset:4px}
+.cam-look:focus-visible{outline-offset:1px}
+.cam-card .btn:focus-visible{outline:2px solid #fff;outline-offset:2px}
+
+/* ---------- light mode: the stage stays dark, the deck follows the OS ---------- */
+:root[data-theme="light"] .cam__stage{border-color:var(--line-2);box-shadow:0 10px 30px -18px rgba(60,20,35,.45)}
+:root[data-theme="light"] .cam__shutter{background:#fff;box-shadow:inset 0 0 0 3px var(--ink-1),0 8px 22px -14px rgba(60,20,35,.5)}
+:root[data-theme="light"] .cam__shutter i{box-shadow:0 1px 4px rgba(0,0,0,.28),inset 0 0 0 1px rgba(0,0,0,.06)}
+:root[data-theme="light"] .cam-tool.is-on{color:var(--accent)}
+
+/* ---------- narrow windows and the phone layout ---------- */
+@container (max-width:520px){
+  .cam__deck{gap:var(--sp-2);padding:var(--sp-3) var(--sp-3) var(--sp-4)}
+  .cam__seg button{padding:0 9px}
+  .cam-tool{padding:0 8px}
+  .cam-tool__lbl{display:none}
+  .cam__shutter{width:62px;height:62px}
+  .cam__shutter i{width:46px;height:46px}
+}
+@container (max-width:400px){
+  .cam__seg button .icon{display:none}
+}
+body.is-mobile .cam__stage{margin:var(--sp-2) var(--sp-2) 0;border-radius:var(--r-md)}
+body.is-mobile .cam__looks,body.is-mobile .cam__strip{padding-left:var(--sp-2);padding-right:var(--sp-2)}
+body.is-mobile .cam__deck{padding-bottom:var(--sp-5)}
+
+/* ---------- motion ---------- */
+@media (prefers-reduced-motion:reduce){
+  .cam__pic,.cam__video,.cam-tile,.cam-look__pv,.cam__shutter,.cam__shutter i,.cam-card,.cam-stkbtn,.cam-chip,.cam-stk{transition:none;animation:none}
+  .cam-pill--rec i,.cam__count .cam__countring{animation:none}
+  .cam-card__spin{animation-duration:2.4s}
+}
+body.reduce-motion .cam__pic,body.reduce-motion .cam__video,body.reduce-motion .cam-tile,body.reduce-motion .cam-look__pv,
+body.reduce-motion .cam__shutter,body.reduce-motion .cam__shutter i,body.reduce-motion .cam-card,
+body.reduce-motion .cam-stkbtn,body.reduce-motion .cam-chip,body.reduce-motion .cam-stk{transition:none;animation:none}
+body.reduce-motion .cam-pill--rec i,body.reduce-motion .cam__count .cam__countring{animation:none}
+body.reduce-motion .cam-card__spin{animation-duration:2.4s}

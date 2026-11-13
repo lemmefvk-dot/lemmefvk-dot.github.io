@@ -1,0 +1,155 @@
+/* ==================================================================
+   Winter — html[data-winter="on"], set by js/core/season.js from
+   December 1 to the end of January 1 unless Settings → Winter is off.
+   Without the attribute nothing in this file applies except the
+   classes of things that only exist in season (the snow canvas, the
+   countdown widget, the advent calendar, the Settings pane's card).
+
+   · the accent: a warm cranberry with a candle-gold companion
+   · the snowy village wallpaper (desktop.js .wp__winter, three layers
+     drawn by tools/winter-art.mjs, with the scene's parallax)
+   · the snow canvas (shell/winter.js .winter-fx)
+   · the Christmas countdown (shell/deskwidgets.js .dw-hw)
+   · the advent calendar (shell/winter.js .advent) and its dock gift
+   · the Settings pane's header card (.st-winter)
+   ================================================================== */
+
+/* ---- the accent ----------------------------------------------------
+   !important for the same reason as spooky season's (feat-spooky.css):
+   inline accents from themes.js and the boot drive would otherwise win,
+   and prefs.accent — the person's own choice — is never rewritten. */
+:root[data-winter="on"]{
+  --accent:#ff6a5c !important;
+  --accent-soft:#ffd28a !important;
+  --accent-rgb:255 106 92 !important;
+  --accent-ink:#2b0806 !important;
+  --winter-red:#ff6a5c;
+  --winter-gold:#ffd28a;
+  --winter-ice:#cfe8ff;
+}
+/* on a light shell the pale gold would vanish into white */
+:root[data-winter="on"][data-theme="light"]{--accent-soft:#a8600a !important}
+
+/* ---- the wallpaper -------------------------------------------------- */
+.wp__winter{position:absolute;inset:0;overflow:hidden;background:#101a38}
+.wp__winter > i{
+  position:absolute;inset:-14px;display:block;
+  background:transparent center bottom/cover no-repeat;
+  will-change:transform;transition:transform 600ms cubic-bezier(.22,1,.36,1);
+}
+.wp__winter > .wp__winter-sky{background-image:url("../assets/winter/sky.svg");transform:translate3d(calc(var(--px) * 3px),calc(var(--py) * 2px),0)}
+.wp__winter > .wp__winter-village{background-image:url("../assets/winter/village.svg");transform:translate3d(calc(var(--px) * -6px),calc(var(--py) * -3px),0)}
+.wp__winter > .wp__winter-front{background-image:url("../assets/winter/front.svg");transform:translate3d(calc(var(--px) * -13px),calc(var(--py) * -6px),0)}
+.wp__winter ~ .wp__vig{opacity:.45}
+@media (prefers-reduced-motion:reduce){.wp__winter > i{transition:none}}
+/* the drive skins dress only the default wallpaper; the village replaces it */
+:root[data-winter="on"] .os-skin{display:none}
+:root[data-winter="on"] body.has-deskterm .desk-term{
+  background:rgba(9,12,22,.76);border-color:rgba(255,255,255,.08);
+  -webkit-backdrop-filter:blur(12px) saturate(1.2);backdrop-filter:blur(12px) saturate(1.2);
+}
+
+/* ---- snow ------------------------------------------------------------ */
+.winter-fx{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+:root[data-gamemode="on"] .winter-fx,
+body.is-mobile .winter-fx{display:none}
+
+/* ---- the Christmas countdown (shares the .dw-hw layout) ------------- */
+.dw--season[data-type="christmas"]{
+  border-color:rgba(255,210,138,.26);
+  background:linear-gradient(160deg,rgba(26,38,78,.78),rgba(12,18,40,.7) 70%);
+  box-shadow:0 18px 44px -22px rgba(0,0,0,.8),0 0 30px -12px rgba(255,106,92,.32);
+}
+.dw--season[data-type="christmas"] .dw-head{color:#e6efff;border-bottom-color:rgba(255,210,138,.16)}
+.dw--season[data-type="christmas"] .dw-head .icon{color:var(--winter-red,#ff6a5c)}
+.dw--season[data-type="christmas"] .dw-hw__u{background:rgba(207,232,255,.07);border-color:rgba(207,232,255,.18)}
+.dw--season[data-type="christmas"] .dw-hw__n{color:#ffe1ae;text-shadow:0 0 14px rgba(255,210,138,.4)}
+.dw--season[data-type="christmas"] .dw-hw__u small{color:#a9cdf5}
+.dw--season[data-type="christmas"] .dw-hw__jack .icon{color:#ff6a5c;filter:drop-shadow(0 0 10px rgba(255,106,92,.55))}
+.dw--season[data-type="christmas"] .dw-hw__hey{background:linear-gradient(90deg,#ffe1ae,#ff6a5c 50%,#a9cdf5);-webkit-background-clip:text;background-clip:text}
+:root[data-theme="light"] .dw--season[data-type="christmas"]{background:linear-gradient(160deg,rgba(240,246,255,.92),rgba(255,243,236,.88));color:#14203f}
+:root[data-theme="light"] .dw--season[data-type="christmas"] .dw-head{color:#2a3a66}
+:root[data-theme="light"] .dw--season[data-type="christmas"] .dw-hw__n{color:#b3262f;text-shadow:none}
+:root[data-theme="light"] .dw--season[data-type="christmas"] .dw-hw__u small{color:#2f5d9c}
+
+/* ---- the dock gift ---------------------------------------------------- */
+.dock__item--advent .glyph{box-shadow:var(--sh-2),0 0 16px rgba(255,106,92,.35)}
+
+/* ---- the advent calendar ---------------------------------------------- */
+.advent{position:absolute;inset:0;z-index:var(--z-overlay);display:grid;place-items:center;padding:var(--sp-5);
+  background:rgba(6,8,18,.42);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.advent__card{width:min(560px,100%);max-height:calc(100% - var(--topbar-h));overflow:auto;border-radius:var(--r-xl);
+  padding:var(--sp-5);display:flex;flex-direction:column;gap:var(--sp-4);
+  background:
+    radial-gradient(70% 60% at 100% 0%,rgba(255,106,92,.18),transparent 62%),
+    radial-gradient(70% 70% at 0% 100%,rgba(120,170,255,.16),transparent 62%),
+    var(--glass-3);
+  border:1px solid var(--line-1);box-shadow:var(--sh-4);color:var(--ink-0);
+  animation:advent-in var(--t-slow) var(--ease-out) both}
+@keyframes advent-in{from{opacity:0;transform:translateY(12px) scale(.98)}}
+.advent__head{display:flex;align-items:center;gap:var(--sp-4)}
+.advent__badge{width:44px;height:44px;flex:0 0 auto;border-radius:14px;display:grid;place-items:center;color:#fff;
+  background:radial-gradient(circle at 40% 35%,#ff9a8a,#d93a3f 60%,#7a141c);box-shadow:0 0 22px rgba(255,106,92,.4)}
+.advent__badge .icon{width:24px;height:24px}
+.advent__t{min-width:0;flex:1}
+.advent__t b{display:block;font-size:var(--fs-15);font-weight:700}
+.advent__t small{display:block;margin-top:2px;font-size:var(--fs-11);color:var(--ink-2)}
+.advent__grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:var(--sp-2)}
+.advent__door{position:relative;aspect-ratio:1;border-radius:var(--r-md);cursor:pointer;overflow:hidden;
+  display:grid;place-items:center;padding:0;color:#fff;
+  border:1px solid rgba(255,210,138,.3);
+  background:linear-gradient(150deg,#c8323c,#7a1a26);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18),inset 0 -6px 12px rgba(0,0,0,.22);
+  transition:transform var(--t-fast) var(--ease-out),filter var(--t-fast)}
+.advent__door:nth-child(3n+2){background:linear-gradient(150deg,#2f8a57,#16452c)}
+.advent__door:nth-child(4n+3){background:linear-gradient(150deg,#2f5d9c,#152a52)}
+.advent__door:hover:not(.is-locked){transform:translateY(-2px);filter:brightness(1.08)}
+.advent__door:focus-visible{outline:2px solid var(--winter-gold,#ffd28a);outline-offset:2px}
+.advent__n{font-size:calc(18px * var(--fs-k,1));font-weight:760;text-shadow:0 1px 2px rgba(0,0,0,.4);font-variant-numeric:tabular-nums}
+.advent__door.is-today:not(.is-open){border-color:#ffd28a;box-shadow:0 0 0 2px rgba(255,210,138,.55),0 0 18px rgba(255,210,138,.45)}
+.advent__door.is-locked{cursor:not-allowed;filter:saturate(.45) brightness(.7)}
+.advent__lock{position:absolute;right:4px;bottom:3px;opacity:.75}
+.advent__lock .icon{width:11px;height:11px}
+.advent__door.is-open{background:rgba(255,255,255,.08);border-color:var(--line-1)}
+.advent__door.is-open img{position:absolute;inset:14%;width:72%;height:72%;object-fit:contain}
+.advent__door.is-open .advent__n{position:absolute;left:5px;top:3px;font-size:calc(10px * var(--fs-k,1));color:var(--ink-2);text-shadow:none}
+.advent__door.is-shown{border-color:var(--winter-gold,#ffd28a)}
+.advent__got{display:flex;align-items:center;gap:var(--sp-4);min-height:76px;padding:var(--sp-3) var(--sp-4);
+  border-radius:var(--r-lg);background:rgba(255,255,255,.05);border:1px solid var(--line-1)}
+.advent__art{width:72px;height:72px;flex:0 0 auto;object-fit:contain;border-radius:var(--r-md);background:rgba(255,255,255,.06)}
+.advent__what{min-width:0}
+.advent__what b{display:block;font-size:var(--fs-13)}
+.advent__what small{display:block;margin-top:2px;font-size:var(--fs-11);color:var(--ink-2)}
+.advent__acts{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)}
+.advent__hint{margin:0;font-size:var(--fs-11);color:var(--ink-2);line-height:1.5}
+@media (prefers-reduced-motion:reduce){.advent__card{animation:none}.advent__door{transition:none}}
+body.reduce-motion .advent__card{animation:none}
+body.is-mobile .advent__grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+
+/* ---- Settings → Winter ------------------------------------------------ */
+.st-winter{position:relative;overflow:hidden;display:flex;align-items:center;gap:var(--sp-5);
+  padding:var(--sp-5);border-radius:var(--r-lg);border:1px solid rgba(255,210,138,.22);
+  background:
+    radial-gradient(60% 120% at 100% 0%,rgba(255,106,92,.26),transparent 60%),
+    radial-gradient(70% 140% at 0% 100%,rgba(90,150,255,.28),transparent 62%),
+    linear-gradient(135deg,#14204a,#0b1230);
+  color:#eef4ff}
+.st-winter__art{width:58px;height:58px;flex:0 0 auto;border-radius:16px;display:grid;place-items:center;
+  background:radial-gradient(circle at 40% 35%,#ffffff,#cfe8ff 55%,#7fb3ea);
+  box-shadow:0 0 26px rgba(160,200,255,.45),inset 0 -6px 12px rgba(0,0,0,.18);color:#1e4f86}
+.st-winter__art .icon{width:32px;height:32px}
+.st-winter__t{min-width:0}
+.st-winter__t b{display:block;font-size:var(--fs-15);font-weight:700}
+.st-winter__t small{display:block;margin-top:3px;font-size:var(--fs-11);line-height:1.5;color:rgba(238,244,255,.78)}
+.st-winter__state{margin-left:auto;flex:0 0 auto}
+.st-winter.is-off{filter:saturate(.35);border-color:var(--line-1)}
+.st-wn__row{display:flex;flex-wrap:wrap;gap:var(--sp-2);justify-content:flex-end}
+.st-wn__pick{width:48px;height:48px;padding:4px;border-radius:var(--r-md);border:1px solid var(--line-1);background:rgba(255,255,255,.05);cursor:pointer}
+.st-wn__pick img{width:100%;height:100%;object-fit:contain;display:block}
+.st-wn__pick--wide{width:84px}
+.st-wn__pick--wide img{object-fit:cover;border-radius:calc(var(--r-md) - 4px)}
+.st-wn__pick.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.st-note--winter{align-items:center;border-color:rgba(255,210,138,.22);background:rgba(255,106,92,.06)}
+.st-note--winter > .icon{color:var(--winter-red,#ff6a5c)}
+.st-note--winter small{flex:1}
+.st-note--winter .btn{flex:0 0 auto}

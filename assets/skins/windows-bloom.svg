@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="58%" r="75%">
+      <stop offset="0" stop-color="#0b3aa8"/>
+      <stop offset=".38" stop-color="#062171"/>
+      <stop offset=".75" stop-color="#030d33"/>
+      <stop offset="1" stop-color="#01051a"/>
+    </radialGradient>
+    <linearGradient id="petal" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#0a3fd1"/>
+      <stop offset=".45" stop-color="#1f7df2"/>
+      <stop offset=".85" stop-color="#7cc7ff"/>
+      <stop offset="1" stop-color="#d7f0ff"/>
+    </linearGradient>
+    <linearGradient id="petal2" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#062a9e"/>
+      <stop offset=".6" stop-color="#1560e6"/>
+      <stop offset="1" stop-color="#5fb0ff"/>
+    </linearGradient>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#e9f6ff" stop-opacity=".95"/>
+      <stop offset=".25" stop-color="#8fd0ff" stop-opacity=".6"/>
+      <stop offset="1" stop-color="#1f6fff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="shade" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#020c3a" stop-opacity=".75"/>
+      <stop offset=".45" stop-color="#020c3a" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.2"/></filter>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="38"/></filter>
+    <!-- one petal: a long teardrop rising from the centre -->
+    <path id="p" d="M0 0 C -120 -90 -150 -300 -40 -430 C -10 -465 10 -465 40 -430 C 150 -300 120 -90 0 0 Z"/>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <!-- the bloom sits a little below centre, squashed for perspective -->
+  <!-- two faint light shafts behind the bloom -->
+  <g opacity=".16" filter="url(#glow)">
+    <path d="M760 -40 L1010 -40 L1060 620 L900 620 Z" fill="#6fb6ff"/>
+    <path d="M1180 -40 L1330 -40 L1040 620 L980 620 Z" fill="#6fb6ff"/>
+  </g>
+  <g transform="translate(960 610) scale(1 .78)">
+    <g filter="url(#glow)" opacity=".75">
+      <circle r="330" fill="#1c63ff" opacity=".55"/>
+    </g>
+    <g style="mix-blend-mode:screen" opacity=".92" filter="url(#soft)">
+      <use href="#p" fill="url(#petal2)" transform="rotate(-78) scale(.92)" opacity=".75"/>
+      <use href="#p" fill="url(#petal2)" transform="rotate(78) scale(.92)" opacity=".75"/>
+      <use href="#p" fill="url(#petal)" transform="rotate(-52)" opacity=".85"/>
+      <use href="#p" fill="url(#petal)" transform="rotate(52)" opacity=".85"/>
+      <use href="#p" fill="url(#petal)" transform="rotate(-24) scale(1.05)" opacity=".9"/>
+      <use href="#p" fill="url(#petal)" transform="rotate(24) scale(1.05)" opacity=".9"/>
+      <use href="#p" fill="url(#petal)" transform="scale(1.12)"/>
+    </g>
+    <g fill="url(#shade)" opacity=".9">
+      <use href="#p" transform="rotate(-52)"/><use href="#p" transform="rotate(52)"/>
+      <use href="#p" transform="rotate(-24) scale(1.05)"/><use href="#p" transform="rotate(24) scale(1.05)"/>
+      <use href="#p" transform="scale(1.12)"/>
+    </g>
+    <g fill="none" stroke="#cdeaff" stroke-width="1.6" opacity=".45">
+      <use href="#p" transform="rotate(-52)"/><use href="#p" transform="rotate(52)"/>
+      <use href="#p" transform="rotate(-24) scale(1.05)"/><use href="#p" transform="rotate(24) scale(1.05)"/>
+      <use href="#p" transform="scale(1.12)"/>
+    </g>
+    <circle r="120" fill="url(#core)" style="mix-blend-mode:screen"/>
+  </g>
+  <!-- light floor reflection -->
+  <ellipse cx="960" cy="1010" rx="760" ry="120" fill="#1b5cff" opacity=".18" filter="url(#glow)"/>
+</svg>

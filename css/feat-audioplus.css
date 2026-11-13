@@ -1,0 +1,64 @@
+/* ============================================================
+   feat-audioplus.css — Static Synth, Loop Station, Audio Editor.
+   Self-injected by each app. OS tokens only.
+   ============================================================ */
+
+/* ---- Static Synth ---- */
+.synth__top { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; justify-content: flex-end; }
+.synth__sel { height: 26px; padding: 0 var(--sp-3); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-1); font-size: var(--fs-11); color: var(--ink-0); }
+.synth__sel:focus-visible, .synth__name:focus-visible, .ae__num:focus-visible, .ae__name:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.synth__namerow { display: inline-flex; gap: var(--sp-2); align-items: center; }
+.synth__name, .ae__name, .ae__num { height: 26px; padding: 0 var(--sp-3); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-1); font-size: var(--fs-11); color: var(--ink-0); }
+.synth__name { width: 150px; }
+.synth__vol { display: inline-flex; align-items: center; gap: var(--sp-2); width: 120px; color: var(--ink-2); }
+.synth__panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--sp-3) var(--sp-5); padding: var(--sp-4) var(--sp-5); overflow-y: auto; min-height: 0; flex: 1 1 auto; border-bottom: 1px solid var(--line-0); }
+.synth__sec { display: flex; flex-direction: column; gap: var(--sp-2); }
+.synth__h { font-size: calc(9px * var(--fs-k,1)); font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin: 0; }
+.synth__ctl { display: grid; grid-template-columns: 78px 1fr 58px; align-items: center; gap: var(--sp-2); font-size: var(--fs-10); color: var(--ink-2); }
+.synth__ctl:has(select) { grid-template-columns: 78px 1fr; }
+.synth__val { text-align: right; color: var(--ink-1); }
+.synth__foot { display: flex; align-items: flex-end; flex-wrap: wrap; gap: var(--sp-3) var(--sp-5); padding: var(--sp-3) var(--sp-5); }
+.synth__voices { font-size: var(--fs-10); color: var(--ink-2); min-width: 78px; }
+.synth__err { padding: 0 var(--sp-5); font-size: var(--fs-10); color: var(--danger, #ff8c9f); }
+.synth__err:empty { display: none; }
+.synth .piano__stage { flex: 0 0 auto; height: 170px; padding-top: 0; }
+
+/* ---- Loop Station ---- */
+.lp__body { display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-5); overflow-y: auto; }
+.lp__warn { display: flex; gap: var(--sp-3); align-items: flex-start; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); background: var(--fill-1); border: 1px solid var(--line-1); font-size: var(--fs-11); color: var(--ink-1); line-height: 1.4; }
+.lp__warn .icon { flex: 0 0 auto; width: 15px; height: 15px; color: var(--warn, #ffc266); }
+.lp__btns { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.lp__big { min-width: 130px; height: 38px; }
+.lp__pill { display: inline-flex; align-items: center; gap: var(--sp-2); height: 22px; padding: 0 var(--sp-3); border-radius: var(--r-pill); background: var(--fill-1); color: var(--ink-1); font-size: var(--fs-10); font-weight: 600; }
+.lp__pill--rec { background: rgba(255,60,80,.18); color: #ff8c9f; }
+.lp__pill--rec::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #ff5064; animation: piano-blink 1s steps(1) infinite; }
+.lp__bar { height: 8px; border-radius: var(--r-pill); background: var(--fill-2); overflow: hidden; }
+.lp__fill { height: 100%; width: 0; background: var(--accent); }
+.lp__note, .ae__note { min-height: 1.4em; font-size: var(--fs-11); color: var(--ink-1); }
+.lp__note.is-bad, .ae__note.is-bad { color: var(--danger, #ff8c9f); }
+.lp__layers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.lp__layer { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); background: var(--fill-1); }
+.lp__lname { flex: 1; font-size: var(--fs-11); }
+.lp__state { font-size: var(--fs-10); color: var(--ink-3); min-width: 40px; }
+.lp__nudge { display: grid; grid-template-columns: 50px 1fr 54px; align-items: center; gap: var(--sp-3); font-size: var(--fs-10); color: var(--ink-2); }
+.lp__lat { font-size: var(--fs-10); color: var(--ink-2); line-height: 1.4; }
+@media (prefers-reduced-motion: reduce) { .lp__pill--rec::before { animation: none; } }
+
+/* ---- Audio Editor ---- */
+.ae__body { display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-5); overflow-y: auto; }
+.ae__files { display: flex; flex-direction: column; gap: var(--sp-2); }
+.ae__fhead { font-size: var(--fs-11); color: var(--ink-2); }
+.ae__file { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); background: var(--fill-1); text-align: left; font-size: var(--fs-11); }
+.ae__file:hover { background: var(--fill-2); }
+.ae__file:focus-visible { outline: 2px solid var(--accent); }
+.ae__file .icon { width: 14px; height: 14px; }
+.ae__fdir { margin-left: auto; color: var(--ink-3); font-size: var(--fs-10); }
+.ae__editor { display: flex; flex-direction: column; gap: var(--sp-3); }
+.ae__wave { width: 100%; height: 160px; border-radius: var(--r-sm); background: var(--fill-0); border: 1px solid var(--line-1); touch-action: none; cursor: crosshair; display: block; }
+.ae__wave:focus-visible { outline: 2px solid var(--accent); }
+.ae__info { font-size: var(--fs-10); color: var(--ink-2); }
+.ae__selrow, .ae__tools, .ae__save { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+.ae__lab { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-10); color: var(--ink-2); }
+.ae__num { width: 76px; }
+.ae__name { width: 240px; max-width: 100%; }
+.ae__fmts { font-size: var(--fs-10); color: var(--ink-3); line-height: 1.4; }

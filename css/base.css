@@ -1,0 +1,345 @@
+/* ============================================================
+   StaticOS 3.0 — reset, canvas, wallpaper, primitives
+   ============================================================ */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;overflow:hidden;
+  font-family:var(--font);
+  font-size:var(--fs-12);
+  color:var(--ink-1);
+  background:var(--bg-0);
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  user-select:none;
+  cursor:default;
+}
+h1,h2,h3,h4,p{margin:0}
+ul,ol{margin:0;padding:0;list-style:none}
+button,input,select,textarea{font:inherit;color:inherit;background:none;border:0;margin:0;outline:0}
+button{cursor:pointer}
+input,textarea{user-select:text;cursor:text}
+a{color:var(--accent-soft);text-decoration:none}
+img,svg{display:block;max-width:100%}
+::selection{background:rgba(var(--accent-rgb)/.35);color:#fff}
+
+/* focus ring — visible only for keyboard users. Inputs wrapped in a
+   .field get their ring from the field itself, so suppress the inner one. */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-xs)}
+.field :focus-visible,.field input:focus,.spot__in :focus-visible,
+.term__in :focus-visible,textarea:focus-visible,.notes__title:focus-visible{outline:none}
+
+/* ---- scrollbars -------------------------------------------- */
+*{scrollbar-width:thin;scrollbar-color:var(--fill-2) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--fill-2);border-radius:var(--r-pill);border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--fill-3);background-clip:content-box}
+::-webkit-scrollbar-corner{background:transparent}
+.scroll-none{scrollbar-width:none}
+.scroll-none::-webkit-scrollbar{display:none}
+
+/* ============================================================
+   Desktop canvas + wallpaper
+   ============================================================ */
+/* clip, not just hidden: a hidden box can still be scrolled by focus() or
+   scrollIntoView, which slid the whole desktop sideways */
+#os{position:fixed;inset:0;overflow:hidden;overflow:clip;isolation:isolate}
+
+/* the desktop too: the wallpaper's film grain (inset -50%) overflows it, so
+   as a hidden box it could be scrolled — scrollIntoView on a sticker slid
+   wallpaper, icons and stickers hundreds of px aside, and that scroll closed
+   any menu that was open */
+.desktop{position:absolute;inset:0;z-index:var(--z-desktop);overflow:hidden;overflow:clip}
+
+/* layered, fully procedural wallpaper: sky, planet, cloud deck,
+   ridgelines, lake and its reflection — no image assets. */
+.wp{position:absolute;inset:0;pointer-events:none}
+.wp__sky{
+  position:absolute;inset:0;
+  background:
+    radial-gradient(82% 40% at 48% 61%,rgba(255,176,198,.26),rgba(255,110,150,.07) 44%,transparent 72%),
+    radial-gradient(120% 72% at 68% -12%,rgba(120,94,158,.20),transparent 58%),
+    radial-gradient(76% 46% at 10% 4%,rgba(96,54,108,.20),transparent 62%),
+    linear-gradient(174deg,#1e1224 0%,#190f1f 20%,#140a18 40%,#1c0d1a 58%,#2c1420 74%,#150a11 100%);
+}
+.wp__stars{
+  position:absolute;inset:0;top:0;height:62%;opacity:.55;
+  background-image:
+    radial-gradient(1.1px 1.1px at 12% 14%,rgba(255,255,255,.95),transparent),
+    radial-gradient(1px 1px at 28% 8%,rgba(255,235,245,.8),transparent),
+    radial-gradient(1.4px 1.4px at 41% 22%,rgba(255,255,255,.7),transparent),
+    radial-gradient(1px 1px at 57% 6%,rgba(255,255,255,.75),transparent),
+    radial-gradient(1.2px 1.2px at 73% 17%,rgba(255,225,240,.85),transparent),
+    radial-gradient(1px 1px at 86% 11%,rgba(255,255,255,.65),transparent),
+    radial-gradient(1px 1px at 92% 26%,rgba(255,255,255,.6),transparent),
+    radial-gradient(1.1px 1.1px at 8% 31%,rgba(255,255,255,.55),transparent),
+    radial-gradient(1px 1px at 35% 35%,rgba(255,255,255,.45),transparent),
+    radial-gradient(1px 1px at 66% 33%,rgba(255,255,255,.5),transparent),
+    radial-gradient(1px 1px at 20% 44%,rgba(255,255,255,.35),transparent),
+    radial-gradient(1px 1px at 79% 41%,rgba(255,255,255,.4),transparent);
+  mask-image:linear-gradient(180deg,#000,rgba(0,0,0,.35) 70%,transparent);
+  animation:twinkle 7s var(--ease) infinite alternate;
+}
+@keyframes twinkle{from{opacity:.4}to{opacity:.68}}
+
+/* the huge crescent planet hanging over the horizon */
+.wp__planet{
+  position:absolute;left:-7%;top:-47vh;width:94vh;height:94vh;border-radius:50%;
+  background:
+    /* limb terminator: a bright crescent along the lower-left edge */
+    radial-gradient(circle at 46% 92%,rgba(255,231,242,.62) 0 2%,rgba(255,188,212,.26) 11%,transparent 30%),
+    /* banded cloud detail */
+    repeating-linear-gradient(172deg,rgba(255,220,235,.045) 0 3%,transparent 3% 7%),
+    radial-gradient(circle at 34% 70%,rgba(255,200,220,.13),transparent 52%),
+    radial-gradient(circle at 62% 40%,rgba(120,90,140,.35),transparent 58%),
+    radial-gradient(circle at 30% 34%,#59405f,#39253f 46%,#221527 70%,#160d1a 88%);
+  box-shadow:
+    inset -10px 26px 120px rgba(255,196,220,.20),
+    inset 26px -26px 96px rgba(0,0,0,.5),
+    0 0 140px rgba(255,150,190,.15);
+  opacity:.95;
+}
+.wp__planet::after{ /* atmosphere rim */
+  content:"";position:absolute;inset:-2px;border-radius:50%;
+  box-shadow:inset 0 0 26px rgba(255,205,225,.22);
+  mix-blend-mode:screen;
+}
+/* the bright cloud deck / horizon glow the ridges sit in */
+.wp__haze{
+  position:absolute;left:-12%;right:-12%;top:36%;height:30%;
+  background:
+    radial-gradient(58% 100% at 33% 72%,rgba(255,212,230,.20),transparent 70%),
+    radial-gradient(66% 88% at 72% 44%,rgba(255,176,208,.14),transparent 72%),
+    linear-gradient(180deg,transparent,rgba(255,193,214,.13) 54%,rgba(255,150,185,.06) 78%,transparent);
+  filter:blur(24px);
+}
+
+/* ridgelines — layered clip-paths, distance read as haze + value,
+   with mist banding between the ranges (::before) and a near-black
+   foreground ridge (::after) */
+.wp__ridge{position:absolute;left:-2%;right:-2%;bottom:24%;height:38%}
+.wp__ridge i{position:absolute;inset:0;display:block}
+.wp__ridge i:nth-child(1){
+  background:linear-gradient(180deg,#584664,#302341);
+  clip-path:polygon(0 58%,7% 42%,14% 51%,22% 27%,31% 45%,39% 24%,48% 41%,57% 19%,66% 39%,75% 26%,84% 45%,92% 34%,100% 51%,100% 100%,0 100%);
+  opacity:.34;filter:blur(2.4px);
+}
+.wp__ridge i:nth-child(2){
+  background:linear-gradient(180deg,#3b2c47,#1d1326);
+  clip-path:polygon(0 74%,9% 58%,18% 69%,27% 47%,37% 65%,46% 43%,56% 63%,65% 45%,74% 65%,83% 51%,92% 67%,100% 58%,100% 100%,0 100%);
+  opacity:.72;filter:blur(1px);
+}
+.wp__ridge i:nth-child(3){
+  background:linear-gradient(180deg,#221528,#0e0712);
+  clip-path:polygon(0 88%,12% 74%,24% 86%,36% 68%,48% 84%,60% 70%,72% 86%,84% 74%,96% 88%,100% 81%,100% 100%,0 100%);
+  opacity:.96;
+}
+.wp__ridge::before{ /* valley mist caught between the ranges */
+  content:"";position:absolute;left:0;right:0;top:46%;height:34%;
+  background:
+    linear-gradient(180deg,transparent,rgba(255,206,224,.15) 40%,rgba(255,180,205,.07) 72%,transparent),
+    radial-gradient(50% 100% at 30% 60%,rgba(255,215,232,.14),transparent 70%);
+  filter:blur(13px);
+}
+.wp__ridge::after{ /* foreground ridge, nearly black */
+  content:"";position:absolute;left:-4%;right:-4%;bottom:-6%;top:60%;
+  background:linear-gradient(180deg,#140b16,#07040a);
+  clip-path:polygon(0 42%,10% 24%,21% 40%,33% 18%,45% 38%,57% 20%,70% 40%,82% 25%,93% 42%,100% 34%,100% 100%,0 100%);
+}
+/* the lake: a lit band right under the horizon, then its smeared reflection */
+.wp__lake{
+  position:absolute;left:0;right:0;bottom:0;height:24%;
+  background:
+    radial-gradient(56% 90% at 38% -4%,rgba(255,198,220,.17),transparent 66%),
+    linear-gradient(180deg,rgba(255,170,200,.07),transparent 26%),
+    linear-gradient(180deg,#17101a 0%,#0c070e 44%,#060308 100%);
+}
+.wp__lake::before{ /* horizontal ripple bands over the reflection */
+  content:"";position:absolute;inset:0;
+  background:repeating-linear-gradient(180deg,rgba(255,235,245,.05) 0 1px,transparent 1px 6px);
+  mask-image:linear-gradient(180deg,rgba(0,0,0,.95),transparent 72%);
+}
+.wp__lake::after{ /* specular streak from the planet */
+  content:"";position:absolute;left:31%;right:54%;top:0;bottom:34%;
+  background:linear-gradient(180deg,rgba(255,224,240,.16),transparent 76%);
+  filter:blur(11px);
+}
+.wp__vig{
+  position:absolute;inset:0;
+  background:
+    radial-gradient(130% 112% at 50% 42%,transparent 32%,rgba(5,2,4,.60) 100%),
+    linear-gradient(180deg,rgba(5,2,4,.50),transparent 16%,transparent 58%,rgba(5,2,4,.58));
+}
+/* the signature dot grid, kept as the OS overlay texture */
+.wp__grid{
+  position:absolute;inset:0;opacity:.17;
+  background-image:radial-gradient(rgba(255,255,255,.3) .6px,transparent .6px);
+  background-size:19px 19px;
+}
+.wp__grain{
+  position:absolute;inset:-50%;opacity:.03;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation:grain 1.2s steps(3) infinite;
+}
+@keyframes grain{0%{transform:translate(0,0)}33%{transform:translate(-2%,1%)}66%{transform:translate(1%,-2%)}100%{transform:translate(0,0)}}
+
+/* ============================================================
+   Shared primitives used by shell *and* apps
+   ============================================================ */
+.glass{
+  background:var(--glass-2);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);
+  border:1px solid var(--line-1);
+  box-shadow:var(--sh-3),inset 0 1px 0 var(--glass-hi);
+}
+.icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:currentColor}
+.icon svg{width:100%;height:100%;stroke-width:1.85;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
+.icon[data-icon^="brand-"] svg{stroke:none}
+.icon--fill svg{fill:currentColor;stroke:none}
+
+/* icon button — the OS's workhorse control */
+.ibtn{
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--sp-2);
+  height:26px;min-width:26px;padding:0 5px;border-radius:var(--r-sm);
+  color:var(--ink-2);transition:background var(--t-fast),color var(--t-fast),transform var(--t-fast);
+}
+.ibtn .icon{width:15px;height:15px}
+.ibtn:hover{background:var(--fill-1);color:var(--ink-0)}
+.ibtn:active{transform:scale(.94)}
+.ibtn.is-on{background:var(--fill-accent);color:var(--accent-soft)}
+.ibtn[disabled]{color:var(--ink-4);pointer-events:none}
+
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--sp-3);
+  height:30px;padding:0 var(--sp-5);border-radius:var(--r-sm);
+  background:var(--fill-1);color:var(--ink-0);font-size:var(--fs-11);font-weight:560;
+  border:1px solid var(--line-1);
+  transition:background var(--t-fast),border-color var(--t-fast),transform var(--t-fast),box-shadow var(--t-fast);
+}
+.btn .icon{width:14px;height:14px}
+.btn:hover{background:var(--fill-2);border-color:var(--line-2)}
+.btn:active{transform:translateY(1px)}
+.btn--primary{
+  background:linear-gradient(180deg,var(--accent-soft),var(--accent));
+  border-color:rgba(255,255,255,.18);color:#2a0310;font-weight:650;
+  box-shadow:var(--glow),inset 0 1px 0 rgba(255,255,255,.35);
+}
+/* keep the fill on hover: plain .btn:hover would otherwise outrank these */
+.btn--primary:hover{background:linear-gradient(180deg,var(--accent-soft),var(--accent));border-color:rgba(255,255,255,.18);filter:brightness(1.07)}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--ink-2)}
+.btn--ghost:hover{background:var(--fill-1);color:var(--ink-0)}
+.btn--danger{background:rgba(255,60,80,.14);border-color:rgba(255,60,80,.3);color:#ff8c9f}
+.btn--danger:hover{background:rgba(255,60,80,.22);border-color:rgba(255,60,80,.42)}
+.btn--sm{height:24px;padding:0 var(--sp-4);font-size:var(--fs-10)}
+.btn--block{width:100%}
+
+.field{
+  display:flex;align-items:center;gap:var(--sp-3);
+  height:30px;padding:0 var(--sp-4);border-radius:var(--r-sm);
+  background:var(--bg-2);border:1px solid var(--line-1);
+  transition:border-color var(--t-fast),box-shadow var(--t-fast);
+}
+.field:focus-within{border-color:var(--line-accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb)/.12)}
+.field .icon{width:14px;height:14px;color:var(--ink-3)}
+.field input{flex:1;min-width:0;font-size:var(--fs-11);color:var(--ink-0)}
+.field input::placeholder{color:var(--ink-3)}
+
+.chip{
+  display:inline-flex;align-items:center;gap:var(--sp-2);
+  height:22px;padding:0 var(--sp-3);border-radius:var(--r-pill);
+  background:var(--fill-1);color:var(--ink-2);font-size:var(--fs-10);font-weight:550;
+  border:1px solid var(--line-0);
+}
+.chip .icon{width:11px;height:11px}
+.chip--accent{background:var(--fill-accent);color:var(--accent-soft);border-color:var(--line-accent)}
+
+.switch{
+  position:relative;width:34px;height:19px;border-radius:var(--r-pill);flex:0 0 auto;
+  background:var(--fill-2);border:1px solid var(--line-1);transition:background var(--t-med),border-color var(--t-med);
+}
+.switch::after{
+  content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;
+  background:var(--ink-2);transition:transform var(--t-med) var(--spring),background var(--t-med);
+}
+.switch.is-on{background:var(--accent);border-color:rgba(255,255,255,.22);box-shadow:var(--glow)}
+.switch.is-on::after{transform:translateX(15px);background:#fff}
+
+.slider{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:var(--r-pill);background:var(--fill-2);cursor:pointer}
+.slider::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:#fff;box-shadow:0 0 0 3px rgba(var(--accent-rgb)/.30),var(--sh-1);cursor:grab}
+.slider::-webkit-slider-thumb:active{cursor:grabbing}
+
+.sep{height:1px;background:var(--line-0);margin:var(--sp-3) 0;flex:0 0 auto}
+.sep--v{width:1px;height:auto;align-self:stretch;margin:0 var(--sp-3)}
+
+.tip{position:relative}
+.tip::after{
+  content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 8px);transform:translate(-50%,4px);
+  padding:4px 8px;border-radius:var(--r-xs);white-space:nowrap;pointer-events:none;
+  background:var(--glass-3);border:1px solid var(--line-1);box-shadow:var(--sh-2);
+  color:var(--ink-0);font-size:var(--fs-10);font-weight:550;
+  opacity:0;transition:opacity var(--t-fast),transform var(--t-fast);z-index:var(--z-menu);
+  -webkit-backdrop-filter:var(--blur-1);backdrop-filter:var(--blur-1);
+}
+.tip:hover::after{opacity:1;transform:translate(-50%,0);transition-delay:.35s}
+.tip--below::after{top:calc(100% + 8px);bottom:auto}
+
+.mono{font-family:var(--mono);font-variant-ligatures:none}
+.muted{color:var(--ink-2)}
+.dim{color:var(--ink-3)}
+.grow{flex:1 1 auto;min-width:0;min-height:0}
+.row{display:flex;align-items:center;gap:var(--sp-3)}
+.col{display:flex;flex-direction:column}
+.center{display:flex;align-items:center;justify-content:center}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hidden{display:none!important}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+.label{font-size:var(--fs-10);font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)}
+.h-sec{font-size:var(--fs-13);font-weight:640;color:var(--ink-0)}
+
+/* animated entrance used by panels + toasts */
+@keyframes pop-in{from{opacity:0;transform:scale(.96) translateY(6px)}to{opacity:1;transform:none}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@keyframes slide-left{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--fill-2);border-top-color:var(--accent);animation:spin .7s linear infinite}
+
+/* narrow viewports: the OS is a desktop metaphor, so we scale
+   the whole stage down rather than reflowing it into nonsense */
+#os{transform-origin:top left}
+body.is-scaled{background:var(--bg-0)}
+
+/* ============================================================
+   Responsive guards
+   StaticOS is a desktop metaphor. Rather than pretending to be
+   a phone UI, it drops the widget rail on narrow screens and
+   shows an honest notice on very small ones.
+   ============================================================ */
+@media (max-width:1040px){
+  .widgets{display:none}
+  .launcher{width:min(392px,calc(100vw - 32px))}
+}
+@media (max-width:760px){
+  .topbar__clock{display:none}
+  .dock{gap:2px;padding:var(--sp-2) var(--sp-3)}
+  .dock__item .glyph{--gs:38px}
+}
+#too-small{
+  position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:var(--bg-0);
+}
+#too-small.hidden{display:none!important}
+.ts__card{
+  display:flex;flex-direction:column;align-items:center;gap:var(--sp-4);text-align:center;
+  max-width:340px;padding:var(--sp-8) var(--sp-6);border-radius:var(--r-xl);
+  background:var(--glass-2);border:1px solid var(--line-1);box-shadow:var(--sh-4);
+}
+.ts__logo{
+  width:56px;height:56px;border-radius:var(--r-lg);
+  background:linear-gradient(150deg,var(--aether-300),var(--aether-600));box-shadow:var(--glow-lg);
+}
+.ts__card b{font-size:var(--fs-15);color:var(--ink-0)}
+.ts__card small{font-size:var(--fs-11);color:var(--ink-2);line-height:1.6}

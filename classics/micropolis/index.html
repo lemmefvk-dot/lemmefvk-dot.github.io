@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Micropolis: licence and source</title><style>:root{color-scheme:dark}body{margin:0 auto;max-width:720px;padding:32px 20px 64px;background:#0c0913;color:#e1d6e6;font:16px/1.6 system-ui,sans-serif}
+h1{font-size:28px;line-height:1.2;color:#fff;margin:0 0 4px}h2{font-size:20px;color:#fff;margin:32px 0 8px}a{color:#9fd8ff}code{font-size:.88em;overflow-wrap:anywhere;color:#d4f0c8}
+.sub{color:#b5a9bd;margin:0 0 24px}li{margin:8px 0}</style></head>
+<body>
+<h1>StaticOS Free Classics: Micropolis</h1>
+<p class="sub">Electronic Arts · JavaScript port by Graeme McCutcheon, 1989. Licence and source for the copy on StaticOS’s Free Classics shelf.</p>
+<p><b>Micropolis</b> is a city simulator from 1989, released as free software by Electronic Arts for the One Laptop Per Child
+    project. This is <a href="https://github.com/graememcc/micropolisJS">micropolisJS</a>, a JavaScript port by Graeme McCutcheon, modified to
+    run inside StaticOS. StaticOS did not make this game. This is <b>a modified version and not the original program</b>, and it has
+    no affiliation or association with Electronic Arts Inc. or its employees.</p>
+    <p>Micropolis is a registered trademark of <a href="https://www.micropolis.com">Micropolis Corporation (Micropolis GmbH)</a> and is licensed here
+    as a courtesy of the owner under the <a href="name_license.html">Micropolis Public Name License</a> (<a href="MicropolisPublicNameLicense.txt">plain text</a>).</p>
+<h2 id="licence">Licences</h2>
+<ul>
+      <li><b>The game and its graphics:</b> GNU General Public License, version 3: <a href="COPYING.txt">COPYING.txt</a>, with Electronic Arts’ additional
+      terms under section 7: <a href="LICENSE.txt">LICENSE.txt</a>. Copyright © 1989–2007 Electronic Arts Inc. Port © 2013 Graeme McCutcheon.</li>
+      <li><b>The name:</b> the <a href="name_license.html">Micropolis Public Name License</a>, which allows non-commercial use.</li>
+      <li><b>Also inside:</b> jQuery, MIT (<a href="jquery-license.txt">notice</a>); the Chunk typeface, SIL Open Font License (<a href="css/FONT_LICENSE.txt">licence</a>).</li>
+    </ul>
+    <p>THE ADDITIONAL TERMS IN LICENSE.txt INCLUDE A DISCLAIMER OF WARRANTY: this program is provided “as is”, with all faults, and your use is at your sole risk.</p>
+    <p>Upstream’s own <a href="about.html">About page</a> is kept here too.</p>
+
+<h2 id="source">Source code</h2>
+<p>This build is micropolisJS at commit <code>f13a1624d111d235e804bd80f48ba7c9f66a8e0f</code>, built with webpack as upstream’s
+    <code>package-lock.json</code> says, then packed into one page.</p>
+    <ul>
+      <li><a href="source/micropolisJS-f13a1624d111d235e804bd80f48ba7c9f66a8e0f.tar.gz">The complete source at that commit</a> (0.5 MB), hosted here.</li>
+      <li><a href="source/pack-micropolis.mjs">Our packing script</a>, which holds every change: everything goes inline; the Google Fonts import, the
+      Twitter button, one autofocus and the page description come out; a “modified” notice goes in. We modified it on 2026-10-31.</li>
+      <li><a href="source/build.sh">The exact build script</a>.</li>
+      <li>Upstream: <a href="https://github.com/graememcc/micropolisJS/tree/f13a1624d111d235e804bd80f48ba7c9f66a8e0f">github.com/graememcc/micropolisJS</a>.</li>
+    </ul>
+</body></html>

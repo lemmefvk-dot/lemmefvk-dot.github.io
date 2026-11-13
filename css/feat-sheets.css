@@ -1,0 +1,136 @@
+/* ============================================================
+   feat-sheets.css — Static Sheets (js/apps/sheets.js)
+   Self-injected by the app. Colour comes from tokens only, so light
+   mode, every accent and Increased contrast follow on their own. The
+   grid's geometry (24px rows, 24px header, 52px row numbers) is
+   mirrored in the JS — change both together.
+   ============================================================ */
+
+.ss { position: relative; min-height: 0; }
+.ss-sep { width: 1px; height: 18px; background: var(--line-1); flex: 0 0 auto; margin: 0 2px; }
+.ss-grow { flex: 1 1 auto; }
+
+/* ---- toolbar ------------------------------------------------- */
+.ss-bar { gap: var(--sp-1); flex-wrap: wrap; row-gap: 2px; min-height: 38px; padding: var(--sp-2) var(--sp-3); position: relative; z-index: 6; }
+.ss-bar .ibtn { flex: 0 0 auto; }
+.ss-bar .ibtn[aria-pressed="true"] { background: var(--fill-accent); color: var(--accent-soft); }
+.ss-bar .select { height: 26px; flex: 0 0 auto; padding-left: var(--sp-3); }
+.ss-dec { font: 650 calc(10px * var(--fs-k,1)) / 1 var(--mono); letter-spacing: -.02em; }
+.ss-bar__count { font-size: calc(9.5px * var(--fs-k,1)); font-weight: 700; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* ---- formula bar ---------------------------------------------- */
+.ss-fx { display: flex; align-items: stretch; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--line-0); flex: 0 0 auto; }
+.ss-name { width: 96px; flex: 0 0 auto; height: 26px; padding: 0 var(--sp-3); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-1); color: var(--ink-0); font: 600 var(--fs-11) var(--mono); }
+.ss-fxlabel { display: grid; place-items: center; width: 22px; flex: 0 0 auto; color: var(--ink-3); font: italic 650 var(--fs-12) / 1 Georgia, serif; }
+.ss-input { flex: 1 1 auto; min-width: 0; height: 26px; max-height: 92px; resize: none; overflow: hidden; padding: 4px var(--sp-3); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-1); color: var(--ink-0); font: var(--fs-12) / 16px var(--mono); white-space: pre; }
+.ss-name:focus, .ss-input:focus { outline: none; border-color: var(--line-accent); box-shadow: 0 0 0 3px rgba(var(--accent-rgb)/.12); }
+
+/* ---- find bar -------------------------------------------------- */
+.ss-find { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--line-0); flex: 0 0 auto; }
+.ss-find .field { height: 26px; flex: 0 1 260px; }
+.ss-find input { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--ink-0); font-size: var(--fs-11); }
+.ss-find[hidden], .ss-banner[hidden] { display: none; }
+.ss-find__n { font-size: var(--fs-10); color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 64px; }
+
+/* ---- banner (recovered edits, read-only files) ------------------ */
+.ss-banner { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-4); background: var(--fill-accent); border-bottom: 1px solid var(--line-accent); color: var(--ink-0); font-size: var(--fs-11); flex: 0 0 auto; }
+.ss-banner .icon { width: 14px; height: 14px; color: var(--accent-soft); flex: 0 0 auto; }
+
+/* ---- the grid ---------------------------------------------------- */
+.ss-mid { display: flex; flex: 1 1 auto; min-height: 0; }
+.ss-wrap { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; }
+.ss-scroll { position: relative; flex: 1 1 auto; overflow: auto; background: var(--bg-1); outline: none; font-size: var(--fs-12); color: var(--ink-0); overscroll-behavior: contain; }
+.ss-scroll:focus-visible { box-shadow: inset 0 0 0 2px var(--line-accent); border-radius: 0; outline: none; }
+.ss-head { position: sticky; top: 0; z-index: 3; height: 24px; background: var(--bg-2); }
+.ss-body { position: relative; }
+.ss-row { position: absolute; left: 0; height: 24px; }
+.ss-corner, .ss-ch, .ss-rh {
+  background: var(--bg-2); color: var(--ink-2); font: 600 var(--fs-10) / 24px var(--font); text-align: center;
+  border-right: 1px solid var(--line-1); border-bottom: 1px solid var(--line-1); user-select: none; cursor: default;
+}
+.ss-corner { position: sticky; left: 0; z-index: 2; width: 52px; height: 24px; display: block; padding: 0; }
+.ss-corner::after { content: ""; position: absolute; right: 3px; bottom: 3px; border: 4px solid transparent; border-right-color: var(--ink-4); border-bottom-color: var(--ink-4); }
+.ss-ch { position: absolute; top: 0; height: 24px; overflow: hidden; white-space: nowrap; }
+.ss-ch.is-sel, .ss-rh.is-sel { background: var(--fill-accent-hi); color: var(--ink-0); }
+.ss-grip { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; z-index: 1; }
+.ss-grip:hover, .ss-grip.is-on { background: var(--accent); opacity: .6; }
+.ss-rh { position: sticky; left: 0; z-index: 2; width: 52px; height: 24px; font-variant-numeric: tabular-nums; }
+.ss-c {
+  position: absolute; top: 0; height: 24px; padding: 0 6px; line-height: 23px;
+  border-right: 1px solid var(--line-0); border-bottom: 1px solid var(--line-0);
+  overflow: hidden; white-space: pre; text-overflow: ellipsis; text-align: left;
+}
+.ss-c.is-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ss-c.is-bool, .ss-c.is-err { text-align: center; }
+.ss-c.is-err { color: var(--accent-soft); font-weight: 600; }
+.ss-c.al-l { text-align: left; } .ss-c.al-c { text-align: center; } .ss-c.al-r { text-align: right; }
+.ss-c.is-b { font-weight: 700; }
+.ss-c.is-i { font-style: italic; }
+.ss-c.is-hit { background: rgba(var(--accent-rgb)/.1); }
+.ss-c.is-hit.is-now { background: rgba(var(--accent-rgb)/.24); }
+
+/* selection: one rectangle over the cells, one ring for the active cell */
+.ss-sel, .ss-cur, .ss-clip, .ss-pt { position: absolute; pointer-events: none; z-index: 1; display: none; }
+.ss-sel { background: rgba(var(--accent-rgb)/.12); border: 1px solid var(--accent); }
+.ss-cur { border: 2px solid var(--accent); }
+.ss-clip { border: 1px dashed var(--accent-soft); }
+.ss-pt { border: 2px dashed var(--chart-1); background: color-mix(in srgb, var(--chart-1) 9%, transparent); }
+.ss-scroll:not(:focus-within) .ss-cur { border-color: var(--ink-3); }
+
+/* the in-cell editor sits over the grid, outside its accessibility tree */
+.ss-editor {
+  position: absolute; z-index: 4; display: none; resize: none; overflow: hidden;
+  min-height: 24px; padding: 3px 5px; margin: 0; border: 2px solid var(--accent); border-radius: 0;
+  background: var(--bg-1); color: var(--ink-0); font: var(--fs-12) / 16px var(--font); white-space: pre; box-shadow: var(--sh-2);
+}
+.ss-editor:focus-visible { outline: none; }
+.ss-editor.is-formula { font-family: var(--mono); }
+
+/* ---- charts panel -------------------------------------------------- */
+.ss-charts { width: min(340px, 44%); flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-4); overflow-y: auto; border-left: 1px solid var(--line-0); background: rgba(0,0,0,.12); }
+.ss-charts[hidden] { display: none; }
+.ss-charts__head { display: flex; align-items: center; gap: var(--sp-2); }
+.ss-charts__head b { font-size: var(--fs-12); color: var(--ink-0); font-weight: 650; }
+.ss-chart { position: relative; display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); border-radius: var(--r-md); background: var(--chart-surface); border: 1px solid var(--line-1); flex: 0 0 auto; }
+.ss-chart.is-on { border-color: var(--line-accent); }
+.ss-chart__top { display: flex; align-items: center; gap: var(--sp-2); }
+.ss-chart__title { flex: 1; min-width: 0; height: 24px; padding: 0 var(--sp-2); border-radius: var(--r-xs); background: transparent; border: 1px solid transparent; color: var(--ink-0); font-size: var(--fs-11); font-weight: 600; }
+.ss-chart__title:hover { border-color: var(--line-1); }
+.ss-chart__title:focus { outline: none; border-color: var(--line-accent); background: var(--bg-2); }
+.ss-chart canvas { width: 100%; height: 210px; display: block; border-radius: var(--r-sm); cursor: crosshair; }
+.ss-chart__foot { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-10); color: var(--ink-2); }
+.ss-chart__foot code { font-family: var(--mono); color: var(--ink-1); }
+.ss-tip { position: absolute; z-index: 5; pointer-events: none; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); background: var(--glass-3); border: 1px solid var(--line-2); box-shadow: var(--sh-2); font-size: var(--fs-10); color: var(--ink-1); white-space: nowrap; }
+.ss-tip b { display: block; color: var(--ink-0); font-weight: 650; margin-bottom: 2px; }
+.ss-tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.ss-tip[hidden] { display: none; }
+
+/* ---- footer: sheet tabs + status ------------------------------------ */
+.ss-foot { gap: var(--sp-2); padding: 0 var(--sp-3); min-height: 32px; }
+.ss-tabs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.ss-tabs::-webkit-scrollbar { display: none; }
+.ss-tab { flex: 0 0 auto; height: 24px; padding: 0 var(--sp-4); border-radius: var(--r-xs); font-size: var(--fs-11); font-weight: 560; color: var(--ink-2); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-tab:hover { background: var(--fill-1); color: var(--ink-0); }
+.ss-tab[aria-selected="true"] { background: var(--fill-2); color: var(--ink-0); box-shadow: inset 0 -2px 0 var(--accent); }
+.ss-tabin { height: 24px; width: 120px; padding: 0 var(--sp-2); border-radius: var(--r-xs); background: var(--bg-2); border: 1px solid var(--line-accent); color: var(--ink-0); font-size: var(--fs-11); }
+.ss-status { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; font-size: var(--fs-10); color: var(--ink-2); white-space: nowrap; }
+.ss-status b { color: var(--ink-0); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ss-status .icon { width: 12px; height: 12px; }
+.ss-status__err { color: var(--accent-soft); overflow: hidden; text-overflow: ellipsis; }
+.ss-status__file { overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+
+/* ---- dialogs inside the window (Save as, shortcuts) ------------------ */
+.ss-dlg { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0,0,0,.32); }
+.ss-dlg__card { width: min(380px, 92%); display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-6); border-radius: var(--r-lg); background: var(--glass-3); border: 1px solid var(--line-2); box-shadow: var(--sh-4); }
+.ss-dlg__card h2 { margin: 0; font-size: var(--fs-15); font-weight: 650; color: var(--ink-0); }
+.ss-dlg__card label { display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-10); font-weight: 650; color: var(--ink-2); }
+.ss-dlg__card input, .ss-dlg__card select { height: 30px; padding: 0 var(--sp-3); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-1); color: var(--ink-0); font-size: var(--fs-12); }
+.ss-dlg__card input:focus, .ss-dlg__card select:focus { outline: none; border-color: var(--line-accent); }
+.ss-dlg__why { font-size: var(--fs-11); color: var(--accent-soft); min-height: 1em; }
+.ss-dlg__btns { display: flex; justify-content: flex-end; gap: var(--sp-3); }
+
+:root[data-theme="light"] .ss-charts { background: rgba(20,8,12,.03); }
+:root[data-theme="light"] .ss-dlg { background: rgba(20,8,12,.18); }
+/* error text in the accent: the soft accent is for dark glass; on a light
+   canvas it is darkened toward the ink so it still reads at 4.5:1 */
+:root[data-theme="light"] :is(.ss-c.is-err, .ss-status__err, .ss-dlg__why) { color: color-mix(in srgb, var(--accent) 42%, var(--ink-0)); }

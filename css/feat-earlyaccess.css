@@ -1,0 +1,31 @@
+/* ==================================================================
+   Early access — .ea-banner, .ea-gate (beta site), .ea-card (stable)
+   ================================================================== */
+.ea-banner{
+  position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:calc(var(--z-overlay) + 40);
+  display:flex;align-items:center;gap:8px;height:22px;padding:0 12px;border-radius:0 0 12px 12px;
+  background:var(--glass-3);border:1px solid var(--line-accent);border-top:0;box-shadow:var(--sh-2);
+  font-size:calc(11px * var(--fs-k,1));color:var(--ink-1);white-space:nowrap;max-width:calc(100vw - 16px);
+  backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);
+}
+.ea-banner .icon,.ea-banner svg{width:12px;height:12px;color:var(--accent-soft)}
+.ea-banner b{color:var(--ink-0);font-weight:640}
+.ea-banner a{color:var(--accent-soft);text-decoration:underline;text-underline-offset:2px}
+@media (max-width:560px){.ea-banner span{display:none}}
+
+.ea-gate{
+  position:fixed;inset:0;z-index:calc(var(--z-overlay) + 50);display:grid;place-items:center;padding:16px;overflow:auto;
+  background:rgba(8,10,16,.88);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);color:var(--ink-1);
+}
+.ea-gate__card{width:min(420px,100%);padding:22px;border-radius:var(--r-lg);background:var(--glass-3);border:1px solid var(--line-1);box-shadow:var(--sh-3)}
+.ea-gate__brand{display:flex;align-items:center;gap:8px;color:var(--accent-soft);font-size:var(--fs-12)}
+.ea-gate__brand svg{width:16px;height:16px}
+.ea-gate__t{margin:10px 0 6px;font-size:calc(20px * var(--fs-k,1));color:var(--ink-0)}
+.ea-gate__card p{margin:0 0 12px;font-size:var(--fs-13,13px);line-height:1.5}
+.ea-gate__form{display:flex;flex-direction:column;gap:10px}
+.ea-gate__err{min-height:18px;margin-top:8px;font-size:var(--fs-12);color:var(--danger,#ff7a7a)}
+.ea-gate__small{margin:10px 0 0!important;font-size:var(--fs-11,11px)!important;color:var(--ink-2)}
+
+.ea-card{display:flex;flex-direction:column;gap:10px}
+.ea-card__p{margin:0;font-size:var(--fs-12);line-height:1.5;color:var(--ink-1)}
+.ea-card__acts{display:flex;gap:8px}

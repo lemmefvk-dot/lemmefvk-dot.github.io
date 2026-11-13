@@ -1,0 +1,38 @@
+StaticOS: remove two title-menu items that would do nothing here. The game runs
+in a sandboxed frame with no popups, so it can neither open the manual in a new
+tab nor offer to install itself as an app. StaticOS's game card links the manual.
+
+--- a/src/swtitle.c
++++ b/src/swtitle.c
+@@ -231,20 +231,6 @@ static enum menu_action StartVsComputer(const struct menuitem *item)
+ 	return MENU_ACTION_RETURN;
+ }
+
+-#ifdef __EMSCRIPTEN__
+-static enum menu_action OpenManual(const struct menuitem *item)
+-{
+-	emscripten_run_script("openManual()");
+-	return MENU_ACTION_NONE;
+-}
+-
+-static enum menu_action InstallApp(const struct menuitem *item)
+-{
+-	emscripten_run_script("promptForInstall()");
+-	return MENU_ACTION_NONE;
+-}
+-#endif
+-
+ #ifndef NO_EXIT
+ static enum menu_action QuitGame(const struct menuitem *item)
+ {
+@@ -260,10 +246,6 @@ static const struct menuitem main_menu_items[] = {
+ 	{'N', "network game", SubMenu, &netgame_menu},
+ #endif
+ 	{'O', "game options", SubMenu, &options_menu},
+-#ifdef __EMSCRIPTEN__
+-	{'M', "open manual", OpenManual},
+-	{'I', "install as app", InstallApp},
+-#endif
+ #ifndef NO_EXIT
+ 	{'Q', "quit game", QuitGame},
+ #endif

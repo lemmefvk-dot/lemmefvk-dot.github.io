@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+<defs><radialGradient id="p" cx=".42" cy=".36" r=".75"><stop offset="0" stop-color="#ffa340"/><stop offset=".7" stop-color="#ef6c12"/><stop offset="1" stop-color="#a8420a"/></radialGradient></defs>
+<path d="M2 2V20.5L6.6 16.4L9.6 23.2L12.8 21.8L9.8 15.2H15.8Z" fill="#ff8a1e" stroke="#1a0700" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M3.6 5.6V16.6L6.4 14" stroke="#ffd29a" stroke-width="1" fill="none" stroke-linecap="round" opacity=".8"/>
+<g transform="translate(21.5 23)">
+<ellipse cx="-4.4" cy=".6" rx="4.2" ry="5.6" fill="url(#p)" stroke="#1a0700" stroke-width="1.2"/>
+<ellipse cx="4.4" cy=".6" rx="4.2" ry="5.6" fill="url(#p)" stroke="#1a0700" stroke-width="1.2"/>
+<ellipse cx="0" cy="0" rx="4.8" ry="6.4" fill="url(#p)" stroke="#1a0700" stroke-width="1.2"/>
+<path d="M-.6 -6.2C-.8 -7.8 0 -8.8 1.6 -9.4" stroke="#2f3a12" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+<path d="M-4.6 -1.6L-2.2 -1.8L-3.4 -3.8ZM2.2 -1.8L4.6 -1.6L3.4 -3.8ZM-4.4 1.6L-2.6 2.6L-1.2 1.6L0 2.8L1.2 1.6L2.6 2.6L4.4 1.6Q3 5 0 5Q-3 5 -4.4 1.6Z" fill="#ffe27a"/>
+</g></svg>

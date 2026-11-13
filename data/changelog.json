@@ -1,0 +1,1313 @@
+[
+  {
+    "version": "4.10",
+    "name": "New icons, films and manga",
+    "date": "2026-11-03",
+    "summary": "Every app has a new icon. Watch Together gets camera, mic and YouTube, Static Watch gets free films, Static Manga arrives with a free comic to read, and Flex Battle lets two friends show off on camera.",
+    "highlights": [
+      {
+        "icon": "sparkles",
+        "title": "New icons for every app",
+        "text": "Every app icon has been redrawn, so the dock, the launcher and your desktop look fresh and match each other."
+      },
+      {
+        "icon": "camera",
+        "title": "Camera and mic in Watch Together",
+        "app": "watch-together",
+        "text": "Turn on your camera and mic while you watch with a friend, and see and hear each other beside the video. Both are off until you press the button."
+      },
+      {
+        "icon": "video",
+        "title": "YouTube in Watch Together",
+        "app": "watch-together",
+        "text": "Paste a YouTube link and everyone in the room watches it in sync."
+      },
+      {
+        "icon": "film",
+        "title": "Free films",
+        "app": "watch",
+        "text": "Static Watch has a Free films section of full-length films from archive.org that you can play right away, with Continue Watching."
+      },
+      {
+        "icon": "bookmark",
+        "title": "Static Manga",
+        "app": "manga",
+        "text": "A new app for reading comics, with a library that comes with it. It includes all of Pepper&Carrot by David Revoy, free to read under the CC BY licence."
+      },
+      {
+        "icon": "camera",
+        "title": "Flex Battle",
+        "app": "flex-battle",
+        "text": "Show a friend your coolest item on camera and let an AI guess what it is worth. It is for friends only, you join with a room code, and the AI only guesses, so the numbers are not real prices."
+      },
+      {
+        "icon": "cloud",
+        "title": "Static Cloud, simplified",
+        "app": "aether-cloud",
+        "text": "The Roblox, Android and Xbox entries that ran through a proxy are gone from Static Cloud."
+      }
+    ],
+    "notes": [
+      "Geometry Dash and the other MadKidGames titles now open on madkidgames.com in a new tab: MadKidGames blanks its games when another site embeds them",
+      "Static Games could get stuck showing only its 110 built-in games until StaticOS was reloaded. It now always loads the whole catalogue, and tries again if the download fails",
+      "Game names and descriptions that showed codes like \"Paint &amp; Escape\" now read properly"
+    ]
+  },
+  {
+    "version": "4.9",
+    "name": "Markets, polished",
+    "date": "2026-11-03",
+    "summary": "Static Markets is easier to use: a starter watchlist, a key check, clearer charts, and an order preview that shows the cost before you place it. Developers get an early-access build.",
+    "highlights": [
+      {
+        "icon": "trending-up",
+        "title": "A starter watchlist",
+        "app": "markets",
+        "text": "Static Markets opens with a few well-known stocks and coins to look at, and a clear place to add your own."
+      },
+      {
+        "icon": "bar-chart",
+        "title": "See the cost before you trade",
+        "app": "markets",
+        "text": "Practice orders show the price used, the cost, and your cash before and after. An order that can't go through says why."
+      },
+      {
+        "icon": "line-chart",
+        "title": "Clearer charts",
+        "app": "markets",
+        "text": "The crosshair shows the price and date on the axes, each indicator has its colour in the legend, and the colours read well in light theme."
+      },
+      {
+        "icon": "activity",
+        "title": "Your key, checked",
+        "app": "markets",
+        "opts": {
+          "tab": "settings"
+        },
+        "text": "Paste your free Twelve Data key and Static Markets tests it with one request, so you know straight away whether it works."
+      },
+      {
+        "icon": "zap",
+        "title": "Early access for developers",
+        "text": "Signed in with the developer account, the account menu opens the early-access build, where finished features arrive before they reach everyone."
+      }
+    ],
+    "notes": [
+      "Static Markets no longer shows a stray “null” on the Trade tab, and the indicator colour swatches now appear"
+    ]
+  },
+  {
+    "version": "4.8",
+    "name": "Markets",
+    "date": "2026-11-03",
+    "summary": "Static Markets: real stock and crypto charts, practice trading with real prices, an AI that explains charts, and a scan of your whole watchlist. Plus one AI model choice for every app.",
+    "highlights": [
+      {
+        "icon": "trending-up",
+        "title": "Static Markets",
+        "app": "markets",
+        "text": "Real stock and crypto charts from TradingView, plus your own charts with moving averages, Bollinger Bands, RSI and MACD. Prices come from Twelve Data with your own free key."
+      },
+      {
+        "icon": "bar-chart",
+        "title": "Practice trading",
+        "app": "markets",
+        "text": "Buy and sell at real prices with practice money, tracked to the cent. Limit orders fill only when the real price reaches them. StaticOS never trades with real money."
+      },
+      {
+        "icon": "eye",
+        "title": "An AI that explains charts",
+        "app": "markets",
+        "text": "Ask about any chart and get the trend, key levels and what the indicators mean, in plain words. It explains; it never predicts prices."
+      },
+      {
+        "icon": "search",
+        "title": "Scan all",
+        "app": "markets",
+        "text": "Check your whole watchlist against five rules, from RSI extremes to moving-average crosses, each one explained."
+      },
+      {
+        "icon": "sparkles",
+        "title": "Choose your AI model",
+        "app": "settings",
+        "opts": {
+          "section": "ai"
+        },
+        "text": "One choice in Settings for Lens, Static Markets and the other AI apps. Free models with no setup are listed live, and a free OpenRouter key adds more."
+      }
+    ],
+    "notes": [
+      "Market data and TradingView charts need the internet; the free data key stays on this device",
+      "Friend codes: opening Friends on a busy computer could make two codes and show the one it then replaced, so requests to it never arrived. Fixed."
+    ]
+  },
+  {
+    "version": "4.7",
+    "name": "Everything Drawn",
+    "date": "2026-11-02",
+    "summary": "A new icon for every app, plus Geometry, Physics, Drills, Life, Contacts, Synth, Loop Station and an Audio Editor, exam countdowns, a timetable and reading list in Study, a document and QR scanner, a Countdown widget, and a sharper Lens and Forge.",
+    "highlights": [
+      {
+        "icon": "palette",
+        "title": "A new icon for every app",
+        "app": "settings",
+        "opts": {
+          "section": "appearance"
+        },
+        "text": "Every app now has its own drawing on one consistent tile, in the dock, the launcher, Spotlight and the window title bars."
+      },
+      {
+        "icon": "calendar",
+        "title": "Exams, with a study plan",
+        "app": "study",
+        "opts": {
+          "tab": "exams"
+        },
+        "text": "Add an exam in Static Study and get a countdown and a plan of what to revise each day. A reminder can come from Automations while StaticOS is open."
+      },
+      {
+        "icon": "globe",
+        "title": "Vocab with spoken pronunciation",
+        "app": "study",
+        "opts": {
+          "tab": "vocab"
+        },
+        "text": "Train words in another language in Static Study and hear them spoken, using the voices your browser already has."
+      },
+      {
+        "icon": "bookmark",
+        "title": "Reading list and timetable",
+        "app": "study",
+        "opts": {
+          "tab": "timetable"
+        },
+        "text": "Keep the books you want to read, are reading and have finished, and your class timetable, in Static Study. The Now and Next widget shows which class is on and which is next."
+      },
+      {
+        "icon": "bar-chart",
+        "title": "Fractions and statistics",
+        "app": "study",
+        "opts": {
+          "tab": "stats"
+        },
+        "text": "Two new Static Study tabs: add, subtract and simplify fractions, and get the mean, median, spread and a line of best fit for your numbers. Static Graph also draws polar and parametric curves, with tables and intersections."
+      },
+      {
+        "icon": "compass",
+        "title": "Geometry",
+        "app": "geometry",
+        "text": "Construct points, lines, circles and polygons, drag them, and read off lengths, angles and areas."
+      },
+      {
+        "icon": "zap",
+        "title": "Physics",
+        "app": "physics",
+        "text": "Launch projectiles, swing pendulums and bounce springs, with sliders for the real variables."
+      },
+      {
+        "icon": "check",
+        "title": "Static Drills",
+        "app": "drills",
+        "text": "Short rounds of times tables, Morse code, flags and capitals, and spelling, with a record of how you do."
+      },
+      {
+        "icon": "heart",
+        "title": "Static Life",
+        "app": "life",
+        "text": "Habit streaks, a budget, a recipe box and a workout timer, all kept on this device."
+      },
+      {
+        "icon": "users",
+        "title": "Contacts",
+        "app": "contacts",
+        "text": "A simple address book that stays on this device. Import and export vCards."
+      },
+      {
+        "icon": "check-circle",
+        "title": "Better Tasks",
+        "app": "tasks",
+        "text": "Subtasks up to three levels deep, smart lists, reminders, and Undo after deleting a task."
+      },
+      {
+        "icon": "edit-3",
+        "title": "Outline and goals in Notes",
+        "app": "notes",
+        "text": "An outline of the current note, a word goal and a writing timer, next to the editor."
+      },
+      {
+        "icon": "calculator",
+        "title": "Programmer calculator and meeting planner",
+        "app": "calculator",
+        "text": "The Calculator has a Programmer mode for hex, binary and bits, and Clock has a Meet tab for finding a time that works across time zones."
+      },
+      {
+        "icon": "scan",
+        "title": "Scan documents and QR codes",
+        "app": "picturetools",
+        "opts": {
+          "tool": "scan"
+        },
+        "text": "Scan pages to a PDF in Picture Tools, and read a QR code from your camera or a picture in Static QR. Nothing leaves this device."
+      },
+      {
+        "icon": "calendar",
+        "title": "Countdown widget",
+        "text": "Days left to any date you pick, then days since. Add as many as you like to the desktop."
+      },
+      {
+        "icon": "music",
+        "title": "Synth, Loop Station and Audio Editor",
+        "app": "synth",
+        "text": "Play a synthesizer from the keys or a MIDI keyboard (the Piano takes one too), record loops and layer them, and trim or fade a sound file."
+      },
+      {
+        "icon": "sparkles",
+        "title": "Lens and Forge, tidied up",
+        "app": "lens",
+        "text": "Lens lets you adjust your selection, copy the text in it, retry, and get a hint when it can’t answer. Forge has quick-start games ahead of the key box, a genre filter, and undo and versions of your game."
+      }
+    ],
+    "notes": [
+      "Coast Dash’s car no longer gets stuck when pulling away",
+      "Gem Hopper’s jump press is no longer lost when you press it as the game starts",
+      "The start-up screen no longer shows a made-up version or the old internal names"
+    ]
+  },
+  {
+    "version": "4.6",
+    "name": "Together",
+    "date": "2026-11-01",
+    "summary": "Friends with private codes and game nights, a desktop for each person and a guest mode, notes you write together, Python and templates in VS Code, a new Dev Tools app, free Old Games, 25 new Arcade games, and new celebrations, screensavers, stickers and achievements.",
+    "highlights": [
+      {
+        "icon": "users",
+        "title": "A desktop for each person",
+        "app": "settings",
+        "opts": {
+          "section": "users"
+        },
+        "text": "Add people in Settings › Users. Each has their own settings, files, projects and saved games, with a PIN if they want one. The PIN keeps people out of each other's desktops in StaticOS; it isn't encryption."
+      },
+      {
+        "icon": "user",
+        "title": "Guest mode",
+        "app": "settings",
+        "opts": {
+          "section": "users"
+        },
+        "text": "Lend the computer without sharing your stuff. A guest gets an empty desktop and nothing of theirs is kept once the session ends. Sign-ins made through the proxy are the exception: those stay in this browser."
+      },
+      {
+        "icon": "heart",
+        "title": "Friends",
+        "app": "social",
+        "opts": {
+          "friends": true
+        },
+        "text": "Add friends in Static Social with a private code you pass on yourself. There is no search and no list of people, and what goes to a friend is encrypted for them alone."
+      },
+      {
+        "icon": "message-circle",
+        "title": "Your status",
+        "app": "social",
+        "opts": {
+          "friends": true
+        },
+        "text": "Set a status with an emoji, see which friends are online, or go invisible. Friends only see the game you're playing if you switch that on."
+      },
+      {
+        "icon": "calendar",
+        "title": "Game nights",
+        "app": "social",
+        "opts": {
+          "friends": true
+        },
+        "text": "Plan a night with your friends, pick a game and collect yes, maybe and no. Reminders come 15 minutes before and at the start, as long as StaticOS is open."
+      },
+      {
+        "icon": "edit-3",
+        "title": "Write together in Notes",
+        "app": "notes",
+        "text": "Press Write together in Notes and pass on the code. You both type in the same note live, with each other's cursor on show, and a dropped connection catches up by itself."
+      },
+      {
+        "icon": "code",
+        "title": "Python in VS Code",
+        "app": "code",
+        "text": "Open a .py file and press Run. Real Python runs in a sealed sandbox on this device. It downloads the first time you run it, so that first run needs a connection."
+      },
+      {
+        "icon": "file-text",
+        "title": "Templates and shared projects in VS Code",
+        "app": "code",
+        "text": "Start from a website, canvas game, quiz page or Python template, preview Markdown as you type, and share a web project as a link. A shared project or a public GitHub Gist opens for you to read, and nothing runs until you press Run."
+      },
+      {
+        "icon": "wrench",
+        "title": "Dev Tools",
+        "app": "dev-tools",
+        "text": "A new app with a regex tester, a JSON viewer and a password generator. Everything stays on this device."
+      },
+      {
+        "icon": "droplet",
+        "title": "Pick a colour from your screen",
+        "app": "palette",
+        "text": "Static Color can pick a colour from anywhere on your screen, in browsers that allow it."
+      },
+      {
+        "icon": "flame",
+        "title": "Five new Static Forge games",
+        "app": "forge",
+        "text": "Racing, platformer, shooter, puzzle and rhythm games to start from and remix: Coast Dash, Gem Hopper, Star Lane, Glow Grid and Beat Lanes. No AI model or key needed."
+      },
+      {
+        "icon": "disk",
+        "title": "Old Games",
+        "app": "arcade",
+        "text": "Free Classics at the bottom of Static Arcade: three old games their makers or rights-holders released for free, among them Beneath a Steel Sky and Sopwith. StaticOS didn't make them. Each downloads once, when you first press Play."
+      },
+      {
+        "icon": "activity",
+        "title": "Sports in the Arcade",
+        "app": "arcade",
+        "opts": {
+          "game": "bowling"
+        },
+        "text": "Bowling, Basketball, Darts 501, Around the Clock, 8-Ball Pool and Archery, plus Lap Rush, where your best lap comes back as a ghost to race. Air Hockey and Snake Battle also play online with a friend."
+      },
+      {
+        "icon": "grid",
+        "title": "Go, Gomoku, Dominoes and Five Dice",
+        "app": "arcade",
+        "opts": {
+          "game": "go"
+        },
+        "text": "Four tabletop games with a computer opponent. Go and Gomoku also play online, and friends can watch those two like the other board games."
+      },
+      {
+        "icon": "layers",
+        "title": "Mancala, Crazy Eights and Blackjack",
+        "app": "arcade",
+        "opts": {
+          "game": "mancala"
+        },
+        "text": "Mancala plays online too, Crazy Eights is against the computer or passing the screen between friends, and Blackjack is for points only."
+      },
+      {
+        "icon": "edit-3",
+        "title": "Sketch & Guess",
+        "app": "arcade",
+        "opts": {
+          "game": "sketch"
+        },
+        "text": "Two or more friends online take turns drawing a secret word while the others type guesses."
+      },
+      {
+        "icon": "type",
+        "title": "Word and number puzzles",
+        "app": "arcade",
+        "opts": {
+          "game": "lettergrid"
+        },
+        "text": "Letter Grid, Unscramble, Mini Crosswords and Sum Grid."
+      },
+      {
+        "icon": "image",
+        "title": "Pipe Link, Photo Jigsaw and Static Clicker",
+        "app": "arcade",
+        "opts": {
+          "game": "pipelink"
+        },
+        "text": "Join the pipes in 100 levels, turn a picture from your files into a jigsaw (it never leaves this device), or tune a signal out of the static in a clicker with a real ending and no ads."
+      },
+      {
+        "icon": "gamepad",
+        "title": "Pixel Jumper and its level editor",
+        "app": "arcade",
+        "opts": {
+          "game": "jumper"
+        },
+        "text": "Twenty platform levels in four worlds, then build your own and share it as a link. A level link opens on a preview, and nothing starts until you press Play."
+      },
+      {
+        "icon": "calendar",
+        "title": "New Year, birthdays, Valentine's and spring",
+        "app": "settings",
+        "opts": {
+          "section": "celebrations"
+        },
+        "text": "A countdown and fireworks at New Year, a card and confetti on your birthday if you tell Settings › Celebrations the date, hearts in February and blossoms in spring. You can turn each one off there."
+      },
+      {
+        "icon": "moon",
+        "title": "Three new screensavers",
+        "app": "settings",
+        "opts": {
+          "section": "desktop"
+        },
+        "text": "An aquarium, 3D pipes and a slow night sky, under Settings › Desktop."
+      },
+      {
+        "icon": "star",
+        "title": "20 more achievements",
+        "text": "New badges for things you really did on this device. See them under the bell in the top bar, on the Achievements tab."
+      },
+      {
+        "icon": "sparkles",
+        "title": "30 desktop stickers",
+        "app": "settings",
+        "opts": {
+          "section": "desktop"
+        },
+        "text": "Put a sticker on the desktop from Settings › Desktop, drag it where you like, and right-click it to remove it."
+      },
+      {
+        "icon": "palette",
+        "title": "Sakura and Neon Arcade",
+        "app": "settings",
+        "opts": {
+          "section": "themes"
+        },
+        "text": "Two new theme packs, each with its own wallpaper, in Settings › Themes."
+      },
+      {
+        "icon": "grid-9",
+        "title": "Pixel icons and a fuller 8-Bit sound",
+        "app": "settings",
+        "opts": {
+          "section": "appearance"
+        },
+        "text": "Draw every icon on a coarse pixel grid from Settings › Appearance, and pair it with the fuller 8-Bit sound pack in Settings › Sound."
+      }
+    ]
+  },
+  {
+    "version": "4.5",
+    "name": "Make It Yours",
+    "date": "2026-10-31",
+    "summary": "Window tabs, dock folders and hot corners, wallpapers that follow the clock and the weather, a notification summary and Do Not Disturb on a schedule, colour tags and note history, your own keyboard shortcuts and a magnifier, where to play a game in the cloud, polls, shared playlists and two new games to play online.",
+    "highlights": [
+      {
+        "icon": "window",
+        "title": "Window tabs",
+        "text": "Drag a window onto another window's title bar and they become one window with tabs. Click a tab to switch, and drag it off the strip to pull it out again."
+      },
+      {
+        "icon": "pin",
+        "title": "Keep a window on top",
+        "text": "Right-click a title bar and choose Keep on Top, or press Ctrl+Alt+P. That window stays above the others, with a pin in its title bar to take it off again."
+      },
+      {
+        "icon": "folder",
+        "title": "Folders in the dock",
+        "text": "Drag a dock icon onto another one and hold it there to make a folder. Click the folder for a grid of its apps, and type at the top to rename it."
+      },
+      {
+        "icon": "mouse-pointer",
+        "title": "Hot corners",
+        "app": "settings",
+        "opts": {
+          "section": "desktop"
+        },
+        "text": "Push the pointer into a corner of the screen to open the overview, the launcher, Static Search and more. Every corner does nothing until you choose an action in Settings › Desktop."
+      },
+      {
+        "icon": "image",
+        "title": "Wallpapers that change by themselves",
+        "app": "settings",
+        "opts": {
+          "section": "wallpaper"
+        },
+        "text": "A new picture every 15 minutes, hour or day, or each time StaticOS starts, from a folder in Files or the wallpapers you tick. Find it under Settings › Wallpaper › Rotation."
+      },
+      {
+        "icon": "sun",
+        "title": "Day and Night wallpaper",
+        "app": "settings",
+        "opts": {
+          "section": "wallpaper"
+        },
+        "text": "A lake and a cabin in dawn, day, dusk and night light that follows your clock, or the real sun times for the place you set in Weather."
+      },
+      {
+        "icon": "cloud-rain",
+        "title": "Weather on your wallpaper",
+        "app": "settings",
+        "opts": {
+          "section": "wallpaper"
+        },
+        "text": "Rain, snow, cloud, fog or sun glare over the wallpaper, matching the place you set in Weather. It stays off until you turn it on in Settings › Wallpaper."
+      },
+      {
+        "icon": "palette",
+        "title": "An accent colour from your wallpaper",
+        "app": "settings",
+        "opts": {
+          "section": "themes"
+        },
+        "text": "Choose Auto in Settings › Themes and the accent colour comes from your wallpaper and follows it, adjusted so text on it stays easy to read."
+      },
+      {
+        "icon": "bell",
+        "title": "Notification summary",
+        "app": "settings",
+        "opts": {
+          "section": "notifications"
+        },
+        "text": "Pick the apps whose notifications can wait. They go to the notification centre without a pop-up and arrive together as one card, at up to four times a day. Reminders are never held back."
+      },
+      {
+        "icon": "moon",
+        "title": "Do Not Disturb on a schedule",
+        "app": "settings",
+        "opts": {
+          "section": "notifications"
+        },
+        "text": "School hours, night or your own times: Do Not Disturb turns itself on and off, and the top bar says until when. Homework reminders still pop up."
+      },
+      {
+        "icon": "volume-2",
+        "title": "Start-up chimes",
+        "app": "settings",
+        "opts": {
+          "section": "sound"
+        },
+        "text": "Choose Glass, Classic, Synth, Soft, Retro or silence for when StaticOS starts, in Settings › Sound."
+      },
+      {
+        "icon": "tag",
+        "title": "Colour tags in Files",
+        "app": "files",
+        "text": "Tag files and folders with a colour or a name of your own, see everything with one tag, and find tagged files from Static Search."
+      },
+      {
+        "icon": "clock",
+        "title": "Note history",
+        "app": "notes",
+        "text": "Notes keeps earlier versions of each note as you write. Open History to read one, copy its text or restore it."
+      },
+      {
+        "icon": "trash",
+        "title": "A Trash that empties itself",
+        "app": "settings",
+        "opts": {
+          "section": "storage"
+        },
+        "text": "Turn it on in Settings › Storage and anything that has been in the Trash for 30 days is deleted for good. It is off unless you choose it."
+      },
+      {
+        "icon": "sparkles",
+        "title": "Tip of the day and a guided tour",
+        "app": "settings",
+        "opts": {
+          "section": "desktop"
+        },
+        "text": "One short tip a day about something StaticOS can do, with a button that shows you. Help › Take the Tour walks you around the desktop, and tips turn off in Settings › Desktop."
+      },
+      {
+        "icon": "cast",
+        "title": "Where can I play it?",
+        "app": "aether-cloud",
+        "text": "Static Cloud searches more than 10,000 games on GeForce NOW, Xbox Cloud Gaming, Boosteroid, Antstream Arcade and Blacknut, and shows which services carry each one and what they ask for. Play opens that service's own page in a new tab."
+      },
+      {
+        "icon": "bar-chart",
+        "title": "Polls in Social",
+        "app": "social",
+        "text": "Make a poll in a live room. Votes count up as they come in, you can change yours, and a poll can allow several choices or leave names off the results."
+      },
+      {
+        "icon": "list-music",
+        "title": "Shared playlists",
+        "app": "music",
+        "opts": {
+          "view": "lists"
+        },
+        "text": "Share a Music playlist with a friend using a code, then add, remove and reorder songs together. A song your friend doesn't have can be sent with Drop."
+      },
+      {
+        "icon": "grid-9",
+        "title": "Tic-Tac-Toe and Dots and Boxes",
+        "app": "arcade",
+        "opts": {
+          "game": "ttt"
+        },
+        "text": "Two new Arcade games: play the computer at three levels, a friend on the same screen, or a friend online. Tic-Tac-Toe also has Ultimate on a 9×9 board."
+      },
+      {
+        "icon": "eye",
+        "title": "Watch a friend's game",
+        "app": "arcade",
+        "text": "Press Let friends watch in the Arcade and share the code. Up to 8 friends can follow along live, and you can see who is watching. Six board games show the board; the others show the score."
+      },
+      {
+        "icon": "keyboard",
+        "title": "Your own keyboard shortcuts",
+        "app": "settings",
+        "opts": {
+          "section": "shortcuts"
+        },
+        "text": "Change StaticOS's shortcuts in Settings › Shortcuts. It tells you when keys are already taken, offers to swap them, and warns you when the browser may keep them."
+      },
+      {
+        "icon": "zoom-in",
+        "title": "Magnifier",
+        "app": "settings",
+        "opts": {
+          "section": "accessibility"
+        },
+        "text": "A lens that follows your pointer or keyboard focus and zooms up to 6×. Press Ctrl+Alt+L to turn it on."
+      },
+      {
+        "icon": "type",
+        "title": "Colour filters and reading fonts",
+        "app": "settings",
+        "opts": {
+          "section": "accessibility"
+        },
+        "text": "Grayscale and colour-blindness filters for the whole screen, the OpenDyslexic and Atkinson Hyperlegible fonts, and line, letter and word spacing, all in Settings › Accessibility."
+      }
+    ],
+    "notes": [
+      "The PS5 app is gone: Static Cloud points you to the services where you can really play",
+      "Roblox favourites, Browser bookmarks, and Static Cloud's favourites and history now survive a reload",
+      "System Monitor remembers which tab you were on",
+      "Tasks no longer shows the word “null” in a list"
+    ]
+  },
+  {
+    "version": "4.4",
+    "name": "Study and Play",
+    "date": "2026-10-31",
+    "summary": "Static Study, Static Sheets and four more apps for school, 24 new Arcade games, picture, video and sound tools, sending files and watching or drawing with a friend, a desktop pet, a weekly recap and, in December, winter.",
+    "highlights": [
+      {
+        "icon": "grid-9",
+        "title": "Eight new puzzles",
+        "app": "arcade",
+        "opts": {
+          "game": "sudoku"
+        },
+        "text": "Sudoku at three levels with notes and hints, Nonograms with 31 pictures to uncover, Word Search, Gem Swap, Hangman, Mahjong Solitaire (every deal can be cleared), Lights Out and the Sliding Puzzle."
+      },
+      {
+        "icon": "circle",
+        "title": "Reversi, Checkers, Battleship and Tower Defense",
+        "app": "arcade",
+        "opts": {
+          "game": "reversi"
+        },
+        "text": "Play Reversi and Checkers against the computer at three levels, with a friend on the same screen, or with a friend online. Battleship works against the computer or online, where every hit and miss is checked so nobody can fib. In Tower Defense, build darts, cannons and frost towers to hold back ten waves."
+      },
+      {
+        "icon": "zap",
+        "title": "Arcade classics",
+        "app": "arcade",
+        "opts": {
+          "game": "pinball"
+        },
+        "text": "Stacker, Space Defenders, Road Hopper and Bubble Pop, a Pinball table with flippers, bumpers and a ramp, Sky Hop, and nine holes of Mini Golf with slopes, sand, water and a windmill."
+      },
+      {
+        "icon": "music",
+        "title": "Quick reflexes and rhythm",
+        "app": "arcade",
+        "opts": {
+          "game": "rhythm"
+        },
+        "text": "Tap D, F, J and K to three original songs in Rhythm Tap. Clear the maze in Dot Chaser before four ghosts catch you, then try Endless Runner, Whack-a-Mole and Fruit Slice."
+      },
+      {
+        "icon": "layers",
+        "title": "Static Study",
+        "app": "study",
+        "opts": {
+          "tab": "cards"
+        },
+        "text": "A new app for school: flashcards that bring each card back just before you would forget it, a homework planner with reminders, and a GPA calculator that also works out what you need on the final."
+      },
+      {
+        "icon": "type",
+        "title": "Words, citations and a dictionary",
+        "app": "study",
+        "opts": {
+          "tab": "words"
+        },
+        "text": "In Static Study, count words and see reading and speaking time, change case, and find and replace. Make MLA, APA and Chicago citations that keep their italics when you paste them, and look up any word in the dictionary."
+      },
+      {
+        "icon": "users",
+        "title": "Live quizzes and an equation solver",
+        "app": "study",
+        "opts": {
+          "tab": "quiz"
+        },
+        "text": "Write a quiz and practise it, or host it live: up to 30 friends join with a code and answer on their own screens. The Equations tab solves linear and quadratic equations exactly, step by step."
+      },
+      {
+        "icon": "table",
+        "title": "Static Sheets",
+        "app": "sheets",
+        "text": "A spreadsheet with formulas, bar, line and pie charts that update as you type, undo, find and number formats. It opens and saves CSV files and stays smooth with 10,000 rows."
+      },
+      {
+        "icon": "network",
+        "title": "Mind Maps",
+        "app": "mindmap",
+        "text": "Drag bubbles, connect ideas, and save the map or export it as a picture."
+      },
+      {
+        "icon": "grid",
+        "title": "Periodic Table",
+        "app": "periodic",
+        "text": "All 118 elements with their facts from PubChem. Search, filter, and slide the temperature to see which ones are solid, liquid or gas."
+      },
+      {
+        "icon": "calculator",
+        "title": "Scientific calculator",
+        "app": "calculator",
+        "text": "Calculator has a Scientific mode with trig in degrees or radians, logs, powers and memory."
+      },
+      {
+        "icon": "keyboard",
+        "title": "Typing Lessons",
+        "app": "typing",
+        "text": "Learn to touch-type in eight lessons, from the home row to whole sentences. The keyboard on screen lights the next key and names the finger, 90% accuracy opens the next lesson, and a chart shows your speed growing."
+      },
+      {
+        "icon": "send",
+        "title": "Static Drop",
+        "app": "drop",
+        "text": "Send files to a friend's StaticOS with a six-character code. They go straight from one device to the other, and nothing arrives until your friend presses Accept. Drop can also move everything you have saved from one StaticOS link to another."
+      },
+      {
+        "icon": "users",
+        "title": "Watch Together",
+        "app": "watch-together",
+        "text": "Play a video in sync with a friend, with chat beside it. If they don't have the video, you can hand it over with Drop."
+      },
+      {
+        "icon": "edit-3",
+        "title": "Draw Together",
+        "app": "paint",
+        "text": "Static Paint can share its canvas: invite a friend with a code and draw at the same time. Undo only takes back your own strokes, and anyone who joins late sees the picture so far."
+      },
+      {
+        "icon": "image",
+        "title": "Picture Tools",
+        "app": "picturetools",
+        "opts": {
+          "tool": "meme"
+        },
+        "text": "A new app for quick picture jobs: memes, collages, ASCII art, and converting or resizing pictures to PNG, JPG or WebP. Photos and Files have a Picture tools menu to start from the picture you're looking at."
+      },
+      {
+        "icon": "message-circle",
+        "title": "Stickers and comics",
+        "app": "picturetools",
+        "opts": {
+          "tool": "comic"
+        },
+        "text": "Cut a sticker out of any picture with a lasso, a shape or a magic wand, give it a white outline, and stick it on your desktop. Make a comic page with up to six panels, speech and thought bubbles with tails you can drag, stickers and shapes."
+      },
+      {
+        "icon": "film",
+        "title": "GIFs, slideshows and animation",
+        "app": "picturetools",
+        "opts": {
+          "tool": "gif"
+        },
+        "text": "Turn pictures or a video clip into a looping GIF, or pictures into a slideshow video. Asset Lab can animate pixel sprites with onion skin and export a GIF or a sprite sheet, and Videos can trim a clip and save it as a copy."
+      },
+      {
+        "icon": "palette",
+        "title": "Colours from a picture",
+        "app": "palette",
+        "text": "Static Color's From picture tab finds the main colours in any picture, lets you pick more with an eyedropper, and saves them as a palette."
+      },
+      {
+        "icon": "gauge",
+        "title": "Tuner",
+        "app": "music",
+        "opts": {
+          "view": "tuner"
+        },
+        "text": "Music has a tuner under Tools for guitar, drop D, ukulele or any note. It listens through your microphone, records nothing, and turns the microphone off when you leave."
+      },
+      {
+        "icon": "mic",
+        "title": "Voice effects",
+        "app": "recorder",
+        "text": "Turn a voice recording into a robot, a chipmunk or a deep voice, or add echo, reverb or an old-radio sound. Listen first, then save it as a new recording."
+      },
+      {
+        "icon": "volume-2",
+        "title": "Soundboard",
+        "app": "soundboard",
+        "text": "Buttons for your own sounds, from files, the microphone or Asset Lab. Play them with a click or a key, set each button's volume, and keep as many boards as you like."
+      },
+      {
+        "icon": "cat",
+        "title": "A desktop pet",
+        "app": "settings",
+        "opts": {
+          "section": "desktop"
+        },
+        "text": "A little cat walks along the top of the dock, sits when you stop moving, naps after a while, and jumps when you click it. At Halloween it is a little ghost. Hide it in Settings › Desktop."
+      },
+      {
+        "icon": "bar-chart",
+        "title": "Your week",
+        "app": "settings",
+        "opts": {
+          "section": "screentime"
+        },
+        "text": "On Sundays a card sums up your week from what StaticOS actually measured: screen time and your top apps and games, focus sessions, the things you made and the badges you earned. Turn it off in Settings › Screen Time."
+      },
+      {
+        "icon": "snowflake",
+        "title": "Winter, from December 1",
+        "text": "From December 1 to January 1 StaticOS dresses up: a snowy village wallpaper, falling snow, a Christmas countdown, and an advent calendar in the dock with a treat behind each of its 24 doors. Settings › Winter turns any of it off."
+      }
+    ],
+    "notes": [
+      "Restoring a backup can no longer be overwritten by a save that was still waiting to happen",
+      "Ctrl and the arrow keys move around a spreadsheet instead of switching desktops",
+      "Dot Chaser's maze takes your accent colour"
+    ]
+  },
+  {
+    "version": "4.3",
+    "name": "Play and Write",
+    "date": "2026-10-30",
+    "summary": "A puzzle every day, chess, Connect Four and card games, photo editing, ambient sounds and read-aloud, songs in Static Beats, and a much better Notes.",
+    "highlights": [
+      {
+        "icon": "star",
+        "title": "Daily Stars",
+        "app": "arcade",
+        "text": "One new logic puzzle every day, the same for everyone: put a star in every row, column and region, with no two stars touching. Your time and your streak are kept on this device.",
+        "opts": {
+          "game": "daily"
+        }
+      },
+      {
+        "icon": "chess",
+        "title": "Chess",
+        "app": "arcade",
+        "text": "Full chess rules against the computer at three levels (it thinks without freezing the page), two players on one screen, or a friend online with a room code.",
+        "opts": {
+          "game": "chess"
+        }
+      },
+      {
+        "icon": "connect4",
+        "title": "Connect Four",
+        "app": "arcade",
+        "text": "Against the computer at three levels, on one screen, or with a friend online.",
+        "opts": {
+          "game": "connect4"
+        }
+      },
+      {
+        "icon": "grid",
+        "title": "Solitaire, Spider and FreeCell",
+        "app": "arcade",
+        "text": "Three classic card games in the Arcade: Solitaire with Draw 1 or Draw 3, Spider with one, two or four suits, and FreeCell with numbered deals (deal #1 is the famous one). Drag, click or use the keyboard; undo as much as you like.",
+        "opts": {
+          "game": "solitaire"
+        }
+      },
+      {
+        "icon": "cloud-rain",
+        "title": "Ambient sounds",
+        "app": "music",
+        "text": "Rain, fireplace, wind, café and brown noise, made live in the browser and mixed with sliders, with presets and a sleep timer. Find it in Music under Live; it keeps playing with Music closed.",
+        "opts": {
+          "view": "ambient"
+        }
+      },
+      {
+        "icon": "volume-2",
+        "title": "Read aloud",
+        "app": "settings",
+        "opts": {
+          "section": "accessibility"
+        },
+        "text": "Select text and right-click, or press Ctrl+Alt+S, and StaticOS reads it to you, highlighting each sentence. Pick the voice, speed and pitch in Settings › Accessibility."
+      },
+      {
+        "icon": "music",
+        "title": "Songs in Static Beats",
+        "app": "beats",
+        "text": "Chain your patterns into a whole song with repeats, play it through, and save it as a WAV file."
+      },
+      {
+        "icon": "image",
+        "title": "Edit your photos",
+        "app": "photos",
+        "text": "Crop, rotate, flip and straighten, and adjust exposure, brightness, contrast, saturation and warmth, with Before/After and undo. Save a copy, or replace the original after it asks."
+      },
+      {
+        "icon": "notes",
+        "title": "A better Notes",
+        "app": "notes",
+        "text": "Headings, bold and italic, lists and tick-box checklists, pictures and folders, with search across every note. Type # or [ ] to format as you go. Export a note as a PDF through the print window."
+      },
+      {
+        "icon": "window",
+        "title": "Reopen closed windows",
+        "text": "Bring back the last window you closed, where it was and showing what it showed: Ctrl+Alt+Shift+T, Window › Reopen Closed Window, or Spotlight. It remembers the last ten."
+      },
+      {
+        "icon": "search",
+        "title": "Spotlight looks inside your notes and files",
+        "text": "Search finds words inside your notes and text files, shows the matching line, and opens the file right there."
+      }
+    ],
+    "notes": [
+      "Beats’ “Delete a pattern…” opens again",
+      "Help › Keyboard Shortcuts and Settings › Shortcuts list read aloud and reopen"
+    ]
+  },
+  {
+    "version": "4.2",
+    "name": "Everyday",
+    "date": "2026-10-29",
+    "summary": "Tools for every day: see your screen time, focus with a Pomodoro timer, zip and unzip files, mark up screenshots, a screensaver, a keyboard shortcut sheet and an emoji picker.",
+    "highlights": [
+      {
+        "icon": "bar-chart",
+        "title": "Screen Time",
+        "app": "settings",
+        "opts": {
+          "section": "screentime"
+        },
+        "text": "How long you have used each app and game today and over the last 7 days, measured on this device while StaticOS is open and you are using it. Clear it any time."
+      },
+      {
+        "icon": "flame",
+        "title": "Focus timer",
+        "app": "clock",
+        "opts": {
+          "tab": "focus"
+        },
+        "text": "Pomodoro sessions in Clock’s new Focus tab, with your own lengths, a time-left indicator in the top bar, the option to silence notifications while you focus, and your focus history."
+      },
+      {
+        "icon": "package",
+        "title": "Zip files",
+        "app": "files",
+        "text": "Right-click files or folders in Files and choose Compress to make a real .zip. Double-click a .zip to look inside, then extract it. Files can now select several items at once."
+      },
+      {
+        "icon": "edit-3",
+        "title": "Mark up screenshots",
+        "text": "Draw arrows, boxes, freehand lines and text on a screenshot, or blur part of it, then save a copy or replace the original. It is in the screenshot notification, Photos and Files."
+      },
+      {
+        "icon": "moon",
+        "title": "Screensaver",
+        "app": "settings",
+        "opts": {
+          "section": "desktop"
+        },
+        "text": "Bubbles or a starfield after the time you choose (ghosts in spooky season). It never starts while a video or music plays or a game is in front, and any key or pointer move brings the desktop back."
+      },
+      {
+        "icon": "keyboard",
+        "title": "Keyboard shortcut sheet",
+        "text": "Hold Ctrl (⌘ on a Mac) on its own for a moment to see every shortcut for the app in front and for StaticOS. Let go and it is gone."
+      },
+      {
+        "icon": "heart",
+        "title": "Emoji and symbols",
+        "text": "Press Ctrl+. (⌘. on a Mac) while typing anywhere for an emoji and symbol picker with search and your recently used ones."
+      }
+    ],
+    "notes": [
+      "Clock’s timer ring and System Monitor’s gauges draw again (shapes inside them were created the wrong way and stayed invisible)",
+      "The lock shortcut is listed correctly as Ctrl+Q",
+      "Menus no longer close by themselves when opening one scrolls the page a little"
+    ]
+  },
+  {
+    "version": "4.1",
+    "name": "Halloween",
+    "date": "2026-10-28",
+    "summary": "Spooky season comes to StaticOS, with a big round of upgrades alongside it: faster start-up and an offline copy, multiple desktops and snap layouts, a real phone mode, online Arcade play, widgets and theme packs, playlists, a screen recorder with an editor, a music visualizer and more.",
+    "highlights": [
+      {
+        "icon": "pumpkin",
+        "title": "Spooky Season",
+        "app": "settings",
+        "opts": {
+          "section": "spooky"
+        },
+        "text": "Until the end of November 1: an orange-and-purple theme, a haunted-house wallpaper, a Halloween countdown, falling leaves and bats, and spooky sounds you can switch on. All of it can be turned off in Settings › Spooky Season."
+      },
+      {
+        "icon": "candy",
+        "title": "Trick or treat",
+        "text": "During the season, click the pumpkin in the dock once a day for a trick or a treat. Treats are wallpapers, pointers and desktop stickers that keep working all year. Type “boo” on the desktop. Jump-scare mode is there too, off unless you turn it on."
+      },
+      {
+        "icon": "pumpkin",
+        "title": "Pumpkin Carver",
+        "app": "pumpkin",
+        "text": "Carve with a knife or stamps, light the candle, then set it as your wallpaper or save it to Pictures."
+      },
+      {
+        "icon": "ghost",
+        "title": "Three spooky Arcade games",
+        "app": "arcade",
+        "text": "Ghost Hunt, Candy Catcher and Haunted Maze, playable all year. In season, Static Play’s Home has a Halloween shelf."
+      },
+      {
+        "icon": "ghost",
+        "title": "Ghost hunt",
+        "app": "settings",
+        "opts": {
+          "section": "halloween"
+        },
+        "text": "13 little ghosts are hiding around StaticOS until the end of November 1: on the desktop, in the dock and menus, and in a few apps. Click one to catch it; catch all 13 for the Ghost Hunter badge. Your count is in Settings › Halloween fun, which can also turn the hunt off."
+      },
+      {
+        "icon": "camera",
+        "title": "Spooky photo booth",
+        "app": "camera",
+        "text": "In spooky season, Camera has night vision, ghostly glow and blood moon filters, Halloween frames and stickers you can drag onto the picture. The saved photo is exactly what the preview shows."
+      },
+      {
+        "icon": "star",
+        "title": "Achievements",
+        "text": "Small rewards for what you really do on this device, including three Halloween badges in season, in a new Achievements tab in the Notification Centre."
+      },
+      {
+        "icon": "sparkles",
+        "title": "Forge templates and Remix",
+        "app": "forge",
+        "text": "Nine complete games to start from that need no AI and no key, three of them for Halloween. Remix changes a game’s name and settings with a live preview and saves it as a new game."
+      },
+      {
+        "icon": "user",
+        "title": "Profiles and share links",
+        "app": "profile",
+        "text": "Pick or upload a profile picture and try on a costume. A game made in Forge or Studio can be shared as a link that opens in StaticOS."
+      },
+      {
+        "icon": "pin",
+        "title": "Board: pins, reactions and pictures",
+        "app": "board",
+        "text": "Pin a card to the top of its column, react to it with an emoji, and add pictures to cards."
+      },
+      {
+        "icon": "layers",
+        "title": "Studio layers, history and export",
+        "app": "studio",
+        "text": "A Layers panel to reorder, hide and lock objects, an undo history you can jump back through, and export to a single .html file. Asset Lab can send a sprite straight to Studio."
+      },
+      {
+        "icon": "code",
+        "title": "Live preview in VS Code",
+        "app": "code",
+        "text": "Your HTML, CSS and JavaScript run beside the editor as you type, with a console for logs and errors."
+      },
+      {
+        "icon": "upload",
+        "title": "Drop files in, look inside",
+        "app": "files",
+        "text": "Drag files from your computer onto Files or the desktop. Quick Look shows PDFs and zooms into pictures."
+      },
+      {
+        "icon": "list-music",
+        "title": "Playlists and favourite stations",
+        "app": "music",
+        "text": "Make, reorder and shuffle playlists in Music. Your favourite radio stations are listed first in Music and Static Radio."
+      },
+      {
+        "icon": "film",
+        "title": "Continue watching",
+        "app": "watch",
+        "text": "Static Watch picks up where you left off, with a Next episode button. Static Anime remembers which episode you were on, and the exact minute when its player can report it."
+      },
+      {
+        "icon": "tag",
+        "title": "Saved TikToks",
+        "app": "tiktok",
+        "text": "The bookmark keeps a video on a Saved shelf, even after it leaves your feed. On phones you can swipe between videos."
+      },
+      {
+        "icon": "video",
+        "title": "Screen recording with an editor",
+        "app": "recorder",
+        "text": "Static Recorder records your screen, with your voice if you like. You can then trim it, add a caption and export an edited copy."
+      },
+      {
+        "icon": "search",
+        "title": "Answers in Spotlight",
+        "text": "Maths, unit conversions, word definitions, “who is…” from Wikipedia and the time in a city, right in Spotlight."
+      },
+      {
+        "icon": "clipboard",
+        "title": "Clipboard history",
+        "app": "clipboard",
+        "text": "Search for any word in your clips and pin the ones you keep using. Pinned clips show up in Spotlight too."
+      },
+      {
+        "icon": "zap",
+        "title": "Startup apps and reminders",
+        "app": "automations",
+        "text": "Static Automations can open your chosen apps after start-up, and remind you once, every day or on weekdays while StaticOS is open."
+      },
+      {
+        "icon": "gamepad",
+        "title": "Backup servers for games",
+        "text": "1,386 games now have at least one checked backup copy. If a game won’t load, try the next server from its page."
+      },
+      {
+        "icon": "zap",
+        "title": "Starts faster, works offline",
+        "text": "Apps now load the first time you open them, so on a slow connection the desktop is up in about 2 seconds instead of 10. After your first visit StaticOS keeps a copy of itself, so it opens without internet and its built-in apps and Arcade games still work."
+      },
+      {
+        "icon": "window",
+        "title": "Multiple desktops and snap layouts",
+        "text": "Make extra desktops and slide between them with ⌃← / ⌃→ or a swipe; each keeps its own windows. Drag a window to an edge or corner to tile it, or rest on the maximise button for halves, thirds and quarters. Window animations are smoother too."
+      },
+      {
+        "icon": "apps",
+        "title": "A real phone mode",
+        "text": "On a phone StaticOS starts on a home screen and apps open full screen. Swipe up to go home, swipe up and hold for the app switcher, and pull down from the top for notifications and controls."
+      },
+      {
+        "icon": "keyboard",
+        "title": "Keyboard and screen readers",
+        "text": "The whole shell works from the keyboard: arrow keys move through the dock and lists, Escape closes only the top menu, and Ctrl+Alt+Space opens a window menu to move, resize or snap. Text size and contrast now reach every part of StaticOS."
+      },
+      {
+        "icon": "gamepad",
+        "title": "Block Fit, 2048 undo, and play a friend online",
+        "app": "arcade",
+        "text": "A new block puzzle, one undo per round in 2048, and online rooms: race a friend at Block Fit or 2048 with the same pieces, or play a Pong duel. Share a 6-letter code or an invite link."
+      },
+      {
+        "icon": "search",
+        "title": "Search that forgives typos",
+        "app": "play",
+        "text": "“subwy surfrs” finds Subway Surfers. Give games your own thumbs-up or thumbs-down (on this device only): thumbs-down hides a game everywhere, with Undo, and Home gets shelves for your favorites and thumbs-ups."
+      },
+      {
+        "icon": "palette",
+        "title": "Widgets, theme packs and Calendar",
+        "app": "calendar",
+        "text": "Desktop widgets for a clock in any time zone, the weather, Now Playing, to-dos and coming events. Five theme packs (Night Drive, Glacier, Autumn Grove, Deep Sea, Matcha) change the accent, wallpaper and icons in one click. Calendar events can repeat weekly and remind you."
+      },
+      {
+        "icon": "video",
+        "title": "The StaticOS video at start-up",
+        "app": "settings",
+        "opts": {
+          "section": "desktop"
+        },
+        "text": "A card in the corner offers the StaticOS video when the desktop starts: during spooky season it is the new Halloween video, narrated by Will, the rest of the year the two-minute bubbles one. Both are in ~/Videos. It never plays by itself, and Settings › Desktop › Startup turns the card off or on."
+      },
+      {
+        "icon": "activity",
+        "title": "A music visualizer on the wallpaper",
+        "app": "settings",
+        "opts": {
+          "section": "wallpaper"
+        },
+        "text": "Bars, a wave or particles that move with Music and Static Radio, behind your icons. It’s off until you turn it on in Settings › Wallpaper."
+      },
+      {
+        "icon": "volume-2",
+        "title": "Sound settings",
+        "app": "settings",
+        "opts": {
+          "section": "sound"
+        },
+        "text": "A volume of its own for UI sounds, optional click sounds, and notification sounds that stay quiet in Do Not Disturb. Choose from five sound packs in Settings › Sound."
+      }
+    ],
+    "notes": [
+      "After an update, What’s New appears once to show what changed since you last looked. “Don’t show this after updates” turns that off, and Settings › About turns it back on",
+      "Games no longer show invented play counts or ratings",
+      "Static Arcade now has 15 games",
+      "Static Radio tries SomaFM’s CORS servers first, so the visualizer can read its stations. Where it can’t, Settings › Wallpaper says so",
+      "PDFs open in Files’ viewer instead of Notes",
+      "Menus open their submenus to the left when there’s no room on the right"
+    ]
+  },
+  {
+    "version": "4.0",
+    "name": "Play",
+    "date": "2026-09-29",
+    "summary": "StaticOS becomes a gaming computer: a home for your games, instant arcade games, and tools to make your own.",
+    "highlights": [
+      "Static Play — the gaming centre: Continue Playing, Featured, Discover, a Multiplayer view and Quick Play",
+      "Static Arcade — 12 built-in games that load instantly, with best scores and clip recording",
+      "Static Forge — describe a game and the AI builds a playable version; change it by chatting, with undo, redo and version history",
+      "Static Studio — a small game engine with a scene editor, code view, console and an AI helper that only changes things when you say so",
+      "Asset Lab — pixel sprites and sound effects for your games",
+      "Controller Center — test controllers, keyboards and mice, and play keyboard games with a controller",
+      "Library — collections, created games, clips and achievements",
+      "Static Store, rebuilt — every item is real: themes, wallpapers, icon styles, sound packs, widgets, desktop layouts, games and apps, plus shareable look codes",
+      "Discord in Static Chat — a server's real channels and messages, once the free WidgetBot bot is added to it"
+    ],
+    "notes": [
+      "Announcements, events and featured sites from the developer can appear on everyone's desktop — each one approved by the developer first, dismissible, and events can be turned off in Settings › Desktop",
+      "Game Mode really turns off blur, shadows, animations, the wallpaper video and widget updates; it can switch on by itself while a game is in front",
+      "The desktop suggests the game you played last and a Quick Play button under the clock (Settings › Desktop to turn it off)",
+      "Five sound packs and five icon styles, also in Settings",
+      "Creator Profile with your published games and this device's activity",
+      "Achievements: small rewards for exploring",
+      "The menu bar shows only what a web page can really know: this tab's connection and, when the browser shares it, the battery",
+      "Calendar keeps your events and no longer invents any; Static Chat no longer shows made-up people online",
+      "The free AI model is shared fairly between apps: requests queue instead of failing when it's busy",
+      "What's New (this window) shows every release",
+      "Camera, Photos, Videos, Music and Weather are next: they still use sample content, and will switch to your real files and a real forecast in an update"
+    ]
+  },
+  {
+    "version": "3.4",
+    "name": "Accounts",
+    "date": "2026-09-28",
+    "summary": "Accounts, the Linux wallpaper terminal, and a safer proxy.",
+    "highlights": [
+      "Sign in or create an account from the bottom-right corner; widgets are for signed-in users",
+      "The Linux drive's desktop is a real terminal built into the wallpaper",
+      "Feedback app: send ideas and bugs straight to the developer",
+      "Boot sounds and a keyboard-only boot manager"
+    ],
+    "notes": [
+      "A failing proxied page or game can no longer blank out the whole site; a recovery screen appears if start-up ever breaks",
+      "Wallpapers are now sharp 1080p video"
+    ]
+  },
+  {
+    "version": "3.2",
+    "name": "Drives",
+    "date": "2026-09-28",
+    "summary": "Choose a drive at boot, new wallpapers, and Lens.",
+    "highlights": [
+      "Boot into Linux, Windows or StaticOS — each with its own animation and look",
+      "Earthrise, Lamplight and Sakura Moon wallpapers with matching themes",
+      "Lens: select part of your screen and ask about it"
+    ],
+    "notes": []
+  },
+  {
+    "version": "3.0",
+    "name": "StaticOS",
+    "date": "2026-09-27",
+    "summary": "AetherOS becomes StaticOS.",
+    "highlights": [
+      "New name and home: staticos.surge.sh",
+      "Static Games, Anime, Cloud, Roblox and the in-window proxy",
+      "Custom accent colours, the Clock app, a phone layout and UI sounds"
+    ],
+    "notes": []
+  }
+]

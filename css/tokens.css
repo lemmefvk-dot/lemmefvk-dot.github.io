@@ -1,0 +1,181 @@
+/* ============================================================
+   StaticOS 3.0 — design tokens (Static shell)
+   Every colour, radius, shadow and timing in the OS comes from
+   here. Apps must never hardcode a colour.
+   ============================================================ */
+:root{
+  /* --- brand ------------------------------------------------ */
+  --aether-50:#fff0f4;
+  --aether-100:#ffd6e0;
+  --aether-200:#ffaec2;
+  --aether-300:#ff7a98;
+  --aether-400:#ff4d74;
+  --aether-500:#ff456d;
+  --aether-600:#e02a52;
+  --aether-700:#a81b3a;
+  --aether-800:#6d1026;
+  --aether-900:#3a0813;
+
+  /* the old names still resolve, so nothing breaks if you miss one */
+  --cherri-50:var(--aether-50);   --cherri-100:var(--aether-100);
+  --cherri-200:var(--aether-200); --cherri-300:var(--aether-300);
+  --cherri-400:var(--aether-400); --cherri-500:var(--aether-500);
+  --cherri-600:var(--aether-600); --cherri-700:var(--aether-700);
+  --cherri-800:var(--aether-800); --cherri-900:var(--aether-900);
+
+  --accent:var(--aether-500);
+  --accent-soft:var(--aether-300);
+  --accent-ink:#fff;
+  /* the theme's own accent, kept under a second name: Increased contrast on
+     a light canvas derives a darker text accent from it (css/feat-a11y.css),
+     and --accent itself is set inline on <html> by js/core/themes.js */
+  --accent-base:var(--accent);
+  --accent-rgb:255 69 109;
+
+  /* --- canvas ----------------------------------------------- */
+  --bg-0:#060203;          /* deepest — behind everything     */
+  --bg-1:#0b0407;          /* desktop base                    */
+  --bg-2:#130709;          /* sunken panels                   */
+
+  /* --- glass surfaces --------------------------------------- */
+  --glass-1:rgba(19,8,12,.56);   /* widgets, dock              */
+  --glass-2:rgba(23,9,14,.72);   /* windows, menus             */
+  --glass-3:rgba(29,11,17,.88);  /* popovers, tooltips         */
+  --glass-hi:rgba(255,255,255,.045); /* inner top highlight    */
+
+  --fill-0:rgba(255,255,255,.03);
+  --fill-1:rgba(255,255,255,.06);
+  --fill-2:rgba(255,255,255,.10);
+  --fill-3:rgba(255,255,255,.15);
+  --fill-accent:rgba(var(--accent-rgb)/.16);
+  --fill-accent-hi:rgba(var(--accent-rgb)/.26);
+
+  /* --- lines ------------------------------------------------ */
+  --line-0:rgba(255,255,255,.045);
+  --line-1:rgba(255,255,255,.075);
+  --line-2:rgba(255,255,255,.12);
+  --line-accent:rgba(var(--accent-rgb)/.45);
+
+  /* --- type ------------------------------------------------- */
+  --ink-0:#f6eef1;   /* headings            */
+  --ink-1:#e4d8dd;   /* body                */
+  --ink-2:#a79aa0;   /* secondary           */
+  --ink-3:#978c92;   /* muted / captions — 4.5:1 or better on every shell
+                        surface, the accent-tinted selection rows included
+                        (was #7d7379, 3.3–4.3:1; tests/suites/a11y.mjs) */
+  --ink-4:#544b50;   /* disabled            */
+
+  --font:"Inter",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono","SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+
+  --fs-10:10px; --fs-11:11px; --fs-12:12px; --fs-13:13px;
+  --fs-15:15px; --fs-18:18px; --fs-24:24px; --fs-34:34px; --fs-48:48px;
+  /* Settings › Accessibility › Text size multiplies every literal pixel size
+     in the stylesheets by these (calc(13px * var(--fs-k,1))), so apps that
+     never adopted the --fs-* steps still follow it. --fs-kd is the gentler
+     factor for display numbers of 30px and up. See css/features.css. */
+  --fs-k:1; --fs-kd:1;
+
+  /* --- file-kind tints: the only place file glyphs get colour */
+  --kind-dir:#8fbcff;
+  --kind-text:#cfd6e4;
+  --kind-config:#b9a6ff;
+  --kind-code:#8fd4ff;
+  --kind-image:#ffc07a;
+  --kind-audio:#ff89a6;
+  --kind-video:#c3a6ff;
+  --kind-archive:#ffd979;
+  --kind-doc:#9ce6b4;
+  --kind-theme:#ff9fb4;
+  --kind-bin:#a79aa0;
+  --kind-sheet:#7fe0a6;
+
+  /* --- chart series (Static Sheets): a fixed categorical order, checked
+         for colour-blind separation and 3:1 against --chart-surface. Use
+         them in order; never cycle past 8. Light mode has its own steps. */
+  --chart-surface:#130709;
+  --chart-1:#3987e5; --chart-2:#d95926; --chart-3:#199e70; --chart-4:#c98500;
+  --chart-5:#d55181; --chart-6:#008300; --chart-7:#9085e9; --chart-8:#e66767;
+
+  /* --- geometry --------------------------------------------- */
+  --r-xs:5px; --r-sm:8px; --r-md:11px; --r-lg:15px; --r-xl:20px; --r-2xl:28px; --r-pill:999px;
+  --sp-1:4px; --sp-2:6px; --sp-3:8px; --sp-4:12px; --sp-5:16px; --sp-6:20px; --sp-7:28px; --sp-8:36px;
+
+  --topbar-h:34px;
+  --dock-h:74px;
+  --rail-w:44px;
+  --widget-w:280px;
+
+  /* --- depth ------------------------------------------------ */
+  --sh-1:0 1px 2px rgba(0,0,0,.4);
+  --sh-2:0 6px 18px -6px rgba(0,0,0,.55);
+  --sh-3:0 18px 45px -12px rgba(0,0,0,.7),0 2px 10px rgba(0,0,0,.4);
+  --sh-4:0 34px 90px -20px rgba(0,0,0,.82),0 4px 16px rgba(0,0,0,.5);
+  --glow:0 0 22px rgba(var(--accent-rgb)/.30);
+  --glow-lg:0 0 48px rgba(var(--accent-rgb)/.34),0 0 14px rgba(var(--accent-rgb)/.30);
+
+  --blur-1:blur(12px) saturate(150%);
+  --blur-2:blur(26px) saturate(165%);
+  --blur-3:blur(44px) saturate(180%);
+
+  /* --- motion ----------------------------------------------- */
+  --t-fast:110ms;
+  --t-med:200ms;
+  --t-slow:340ms;
+  --ease:cubic-bezier(.32,.72,0,1);
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --spring:cubic-bezier(.34,1.46,.64,1);
+
+  /* widgets are desktop furniture, so windows must cover them */
+  --z-desktop:0; --z-rail:50; --z-win:100; --z-dock:700; --z-topbar:800;
+  --z-panel:900; --z-menu:1000; --z-toast:1100; --z-overlay:1200; --z-boot:1300;
+}
+
+/* ---- alternate accents, switchable from Settings ---------- */
+/* The themes. Only the accent set changes between them — the canvas,
+   the glass, the spacing and the motion are shared, which is what keeps
+   a themed Static recognisably Static. Kept in step with js/core/themes.js,
+   which is what the picker renders from. */
+:root[data-accent="aether"],
+:root[data-accent="Static"]{ --accent:#ff456d; --accent-soft:#ff7a98; --accent-rgb:255 69 109; --accent-ink:#fff; }
+:root[data-accent="azure"] { --accent:#3b82f6; --accent-soft:#93c5fd; --accent-rgb:59 130 246;  --accent-ink:#fff; }
+:root[data-accent="violet"]{ --accent:#8b5cf6; --accent-soft:#c4b5fd; --accent-rgb:139 92 246;  --accent-ink:#fff; }
+:root[data-accent="mint"]  { --accent:#10b981; --accent-soft:#6ee7b7; --accent-rgb:16 185 129;  --accent-ink:#04211a; }
+:root[data-accent="amber"] { --accent:#f59e0b; --accent-soft:#fcd34d; --accent-rgb:245 158 11;  --accent-ink:#241500; }
+:root[data-accent="pink"]  { --accent:#ec4899; --accent-soft:#f9a8d4; --accent-rgb:236 72 153;  --accent-ink:#fff; }
+:root[data-accent="mono"]  { --accent:#e7e2e4; --accent-soft:#b9b1b5; --accent-rgb:231 226 228; --accent-ink:#0b0407; }
+:root[data-accent="moonwalk"] { --accent:#e4d41f; --accent-soft:#f3ea8c; --accent-rgb:228 212 31; --accent-ink:#1d1a00; }
+:root[data-accent="nocturne"] { --accent:#cfd6e0; --accent-soft:#9ba5b3; --accent-rgb:207 214 224; --accent-ink:#0b0d11; }
+:root[data-accent="sakura"]   { --accent:#eea3c3; --accent-soft:#f7cadc; --accent-rgb:238 163 195; --accent-ink:#2a0d19; }
+/* the theme packs (js/core/packs.js) */
+:root[data-accent="drive"]    { --accent:#22d3ee; --accent-soft:#a5f3fc; --accent-rgb:34 211 238;  --accent-ink:#03222a; }
+:root[data-accent="glacier"]  { --accent:#8ab4ff; --accent-soft:#c7dbff; --accent-rgb:138 180 255; --accent-ink:#0a1530; }
+:root[data-accent="grove"]    { --accent:#e8613c; --accent-soft:#f6a58a; --accent-rgb:232 97 60;   --accent-ink:#250a03; }
+:root[data-accent="abyss"]    { --accent:#2dd4bf; --accent-soft:#99f6e4; --accent-rgb:45 212 191;  --accent-ink:#022c27; }
+:root[data-accent="matcha"]   { --accent:#a3e635; --accent-soft:#d9f99d; --accent-rgb:163 230 53;  --accent-ink:#1a2e05; }
+:root[data-accent="arcade"]   { --accent:#ff4fd8; --accent-soft:#ffa3ec; --accent-rgb:255 79 216;  --accent-ink:#2a0624; }
+
+/* ---- light mode: the OS ships dark, but the shell is
+        token-driven so a light theme is one attribute away --- */
+:root[data-theme="light"]{
+  --bg-0:#f7f2f4; --bg-1:#fbf7f8; --bg-2:#efe6ea;
+  --glass-1:rgba(255,255,255,.66); --glass-2:rgba(255,255,255,.82); --glass-3:rgba(255,255,255,.94);
+  --glass-hi:rgba(255,255,255,.7);
+  --fill-0:rgba(20,8,12,.03); --fill-1:rgba(20,8,12,.06); --fill-2:rgba(20,8,12,.10); --fill-3:rgba(20,8,12,.15);
+  --line-0:rgba(20,8,12,.07); --line-1:rgba(20,8,12,.11); --line-2:rgba(20,8,12,.17);
+  --ink-0:#1a0e13; --ink-1:#301c23; --ink-2:#6a555d; --ink-3:#74616a; --ink-4:#b3a5ab;
+  --sh-3:0 18px 45px -14px rgba(60,20,35,.28),0 2px 8px rgba(60,20,35,.10);
+  --sh-4:0 34px 90px -24px rgba(60,20,35,.32),0 4px 14px rgba(60,20,35,.12);
+  --kind-sheet:#1f9b62;
+  --chart-surface:#fbf7f8;
+  --chart-1:#2a78d6; --chart-2:#eb6834; --chart-3:#1baf7a; --chart-4:#eda100;
+  --chart-5:#e87ba4; --chart-6:#008300; --chart-7:#6250d6; --chart-8:#e34948;
+}
+
+/* ---- density: Settings can tighten the whole shell -------- */
+:root[data-density="compact"]{ --topbar-h:30px; --dock-h:64px; --widget-w:256px; }
+:root[data-density="roomy"]  { --topbar-h:38px; --dock-h:82px; --widget-w:300px; }
+
+@media (prefers-reduced-motion:reduce){
+  :root{ --t-fast:1ms; --t-med:1ms; --t-slow:1ms; }
+}

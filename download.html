@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Download StaticOS</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.6 system-ui, sans-serif; background: #111; color: #f5f5f5; }
+    body { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 48px 24px; }
+    main { padding: clamp(24px, 6vw, 48px); border: 1px solid #393939; border-radius: 24px; background: #1b1b1b; }
+    h1 { margin-top: 0; font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.1; }
+    p, li { color: #c8c8c8; }
+    a { color: #92c9ff; }
+    .download { display: inline-block; margin: 12px 0; padding: 12px 18px; border-radius: 12px; background: #ff5275; color: #1d0710; font-weight: 700; text-decoration: none; }
+    code { padding: 2px 6px; border-radius: 5px; background: #292929; color: #fff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Download StaticOS</h1>
+    <p>Download the offline website bundle, extract it, and run it on your computer. No installation or account is required.</p>
+    <a class="download" id="download-link" href="takeout-staticos.zip" download hidden>Download StaticOS (.zip)</a>
+    <p id="download-status" role="status">Checking for the downloadable bundle…</p>
+    <h2>Run the downloaded website</h2>
+    <ol>
+      <li>Extract the ZIP file.</li>
+      <li>Open a terminal in the extracted folder and run <code>./serve.sh</code> on macOS/Linux.</li>
+      <li>On Windows, run <code>py -m http.server 8000</code> in that folder instead.</li>
+      <li>Open <a href="http://localhost:8000">http://localhost:8000</a> in your browser.</li>
+    </ol>
+    <p>StaticOS uses browser modules and service workers, so serve the extracted files over HTTP instead of opening <code>index.html</code> directly.</p>
+  </main>
+  <script>
+    const link = document.getElementById('download-link');
+    const status = document.getElementById('download-status');
+    fetch('takeout-staticos.zip', { method: 'HEAD' })
+      .then(response => {
+        if (!response.ok) throw new Error('Bundle not found');
+        link.hidden = false;
+        status.hidden = true;
+      })
+      .catch(() => {
+        status.textContent = 'This copy is already extracted. Visit the hosted download page to download another bundle.';
+      });
+  </script>
+</body>
+</html>

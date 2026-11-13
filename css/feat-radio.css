@@ -1,0 +1,255 @@
+/* ============================================================
+   feat-radio.css — Static Radio (js/apps/radio.js)
+   A sidebar of views, a list of stations and a now-playing bar,
+   built from the shared kit (.app/.app__side/.side__item/.btn/
+   .ibtn/.empty/.label/.glyph). The window is a container: below
+   600px the sidebar folds into a row of chips, so the same markup
+   works as a phone sheet. Colour comes from tokens; the only
+   literal colours are the error and offline tints, which have
+   light-mode twins at the bottom, and the white used on top of
+   station artwork.
+   ============================================================ */
+.rd{position:relative;container-type:inline-size;container-name:rd}
+.rd-main{position:relative}
+
+/* ---------------- sidebar ---------------- */
+.rd-side{gap:var(--sp-5)}
+.rd-side .side__item small{font-variant-numeric:tabular-nums}
+.rd-about{display:flex;flex-direction:column;gap:var(--sp-2)}
+.rd-about small{line-height:1.45}
+.rd-about .rd-link{align-self:flex-start;font-size:var(--fs-10)}
+
+/* ---------------- phone / narrow: chips replace the sidebar ---------------- */
+.rd-chips{display:none}
+.rd-chip{
+  flex:0 0 auto;display:inline-flex;align-items:center;gap:var(--sp-2);
+  height:30px;padding:0 var(--sp-4);border-radius:var(--r-pill);
+  font-size:var(--fs-11);font-weight:600;color:var(--ink-2);white-space:nowrap;
+  background:var(--fill-0);border:1px solid var(--line-0);
+  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast);
+}
+.rd-chip .icon{width:13px;height:13px}
+.rd-chip:hover{background:var(--fill-1);color:var(--ink-0)}
+.rd-chip.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0)}
+.rd-chip.is-on .icon{color:var(--accent-soft)}
+.rd-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-pill)}
+
+/* ---------------- header ---------------- */
+.rd-head{gap:var(--sp-4);min-height:52px}
+.rd-head__glyph{--gs:32px}
+.rd-head__txt{display:flex;flex-direction:column;min-width:0}
+.rd-head__title{margin:0;font-size:var(--fs-15);font-weight:650;color:var(--ink-0);letter-spacing:-.2px;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd-head__kicker{font-size:var(--fs-11);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd-head__count{font-size:var(--fs-11);color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
+.rd-random{flex:0 0 auto}
+
+/* ---------------- list ---------------- */
+.rd-list{padding:var(--sp-3) var(--sp-4) var(--sp-6)}
+.rd-note{display:flex;align-items:flex-start;gap:var(--sp-3);margin:var(--sp-2) var(--sp-2) var(--sp-4);
+  font-size:var(--fs-11);line-height:1.5;color:var(--ink-2);max-width:78ch}
+.rd-note .icon{width:13px;height:13px;margin-top:2px;color:var(--accent-soft)}
+.rd-banner{display:flex;align-items:center;gap:var(--sp-3);margin:var(--sp-2) var(--sp-2) var(--sp-3);padding:var(--sp-3) var(--sp-4);
+  border-radius:var(--r-md);font-size:var(--fs-11);color:var(--ink-1);background:rgba(255,190,60,.10);border:1px solid rgba(255,190,60,.3)}
+.rd-banner .icon{width:14px;height:14px;color:#ffc766}
+
+.rd-rows{display:flex;flex-direction:column;gap:2px}
+/* favourites lead every list, under their own heading */
+.rd-group{display:flex;align-items:center;gap:var(--sp-2);margin:var(--sp-4) var(--sp-2) var(--sp-2);font-size:var(--fs-11)}
+.rd-group:first-of-type{margin-top:0}
+.rd-group>.icon{width:12px;height:12px;color:var(--accent-soft)}
+.rd-group__note{font-size:var(--fs-10);color:var(--ink-3)}
+.rd-row{display:flex;align-items:center;gap:var(--sp-2);padding:3px var(--sp-2) 3px 3px;border-radius:var(--r-md);
+  border:1px solid transparent;transition:background var(--t-fast),border-color var(--t-fast)}
+.rd-row:hover{background:var(--fill-0)}
+.rd-row.is-cur{border-color:var(--line-accent);
+  background:linear-gradient(100deg,rgba(var(--accent-rgb)/.14),rgba(var(--accent-rgb)/.03) 70%),var(--fill-0)}
+
+.rd-row__main{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:var(--sp-4);padding:6px;
+  border-radius:var(--r-md);text-align:left;color:inherit}
+.rd-row__main:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:var(--r-md)}
+
+/* station artwork, with a play / stop / live overlay */
+.rd-logo{position:relative;width:52px;height:52px;flex:0 0 auto;border-radius:10px;overflow:hidden;display:grid;place-items:center;
+  background:var(--bg-2);border:1px solid var(--line-1);box-shadow:var(--sh-1)}
+.rd-logo img{width:100%;height:100%;object-fit:cover;display:block}
+.rd-logo>.icon{width:20px;height:20px;color:var(--ink-3)}
+.rd-logo__ov{position:absolute;inset:0;display:grid;place-items:center;background:rgba(8,3,6,.52);color:#fff;
+  opacity:0;transition:opacity var(--t-fast)}
+.rd-logo__ov .icon{width:18px;height:18px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
+.rd-logo__ov>*{grid-area:1/1}
+.rd-row__main:hover .rd-logo__ov,.rd-row__main:focus-visible .rd-logo__ov,.rd-logo.is-on .rd-logo__ov,.rd-logo.is-busy .rd-logo__ov{opacity:1}
+.rd-logo.is-on .rd-logo__ov .icon{opacity:0}
+.rd-row__main:hover .rd-logo.is-on .rd-logo__ov .icon,.rd-row__main:focus-visible .rd-logo.is-on .rd-logo__ov .icon{opacity:1}
+.rd-row__main:hover .rd-logo.is-on .rd-eq,.rd-row__main:focus-visible .rd-logo.is-on .rd-eq{opacity:0}
+.rd-logo.is-busy .rd-logo__ov::after{content:"";grid-area:1/1;width:26px;height:26px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.28);border-top-color:#fff;animation:spin .8s linear infinite}
+
+/* three live bars */
+.rd-eq{display:inline-flex;align-items:flex-end;gap:2px;height:14px;transition:opacity var(--t-fast)}
+.rd-eq i{display:block;width:3px;height:100%;border-radius:2px;background:currentColor;transform-origin:bottom;animation:rd-eq 1s ease-in-out infinite}
+.rd-eq i:nth-child(2){animation-delay:-.35s}
+.rd-eq i:nth-child(3){animation-delay:-.7s}
+@keyframes rd-eq{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+
+.rd-row__txt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.rd-row__name{display:flex;align-items:center;gap:var(--sp-3);min-width:0}
+.rd-row__name b{font-size:var(--fs-13);font-weight:650;color:var(--ink-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd-row__blurb{font-size:var(--fs-11);line-height:1.45;color:var(--ink-2);
+  display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.rd-row__meta{display:flex;align-items:center;flex-wrap:wrap;gap:2px var(--sp-4);font-size:var(--fs-10);color:var(--ink-3);min-width:0}
+.rd-row__meta>span:first-child{white-space:nowrap}
+.rd-row__air{display:inline-flex;align-items:center;gap:var(--sp-2);min-width:0;max-width:100%}
+.rd-onair{flex:0 0 auto;font-size:calc(8.5px * var(--fs-k,1));font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--accent-soft)}
+.rd-row__song{color:var(--ink-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+.rd-row__acts{display:flex;align-items:center;gap:1px;flex:0 0 auto}
+.rd-row__acts .ibtn{width:28px;height:28px;min-width:28px}
+.rd-row .rd-more,.rd-row .rd-fav:not(.is-on){opacity:0;transition:opacity var(--t-fast)}
+.rd-row:hover .rd-more,.rd-row:hover .rd-fav,.rd-row:focus-within .rd-more,.rd-row:focus-within .rd-fav{opacity:1}
+.rd-fav.is-on{color:var(--accent-soft);background:transparent}
+.rd-fav.is-on:hover{color:var(--accent);background:var(--fill-1)}
+@media (hover:none){ .rd-row .rd-more,.rd-row .rd-fav:not(.is-on){opacity:1} }
+
+/* a small state tag next to a name */
+.rd-tag{flex:0 0 auto;display:inline-flex;align-items:center;height:17px;padding:0 7px;border-radius:var(--r-pill);
+  font-size:calc(9.5px * var(--fs-k,1));font-weight:650;letter-spacing:.02em;white-space:nowrap;background:var(--fill-2);color:var(--ink-2)}
+.rd-tag.is-playing,.rd-tag.is-music{background:var(--fill-accent);color:var(--accent-soft)}
+.rd-tag.is-loading,.rd-tag.is-buffering{background:var(--fill-1);color:var(--ink-1)}
+.rd-tag.is-error{background:rgba(255,80,100,.16);color:#ff97a7}
+
+.rd-empty{height:auto;padding:var(--sp-7) var(--sp-5)}
+.rd-empty .btn{margin-top:var(--sp-2)}
+
+/* the plain-words footer */
+.rd-foot{margin:var(--sp-6) var(--sp-2) 0;padding-top:var(--sp-4);border-top:1px solid var(--line-0);font-size:var(--fs-11);color:var(--ink-3)}
+.rd-foot p{margin:0 0 var(--sp-3);line-height:1.55;max-width:78ch}
+.rd-foot__row{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-2) var(--sp-4);font-size:var(--fs-10)}
+.rd-foot__row .spinner{width:11px;height:11px}
+.rd-link{display:inline-flex;align-items:center;gap:4px;color:var(--ink-2);text-decoration:none;border-radius:var(--r-xs);padding:1px 2px}
+.rd-link .icon{width:10px;height:10px}
+.rd-link:hover{color:var(--ink-0);text-decoration:underline}
+
+/* ---------------- now playing ---------------- */
+.rd-np{flex:0 0 auto;display:flex;flex-direction:column;border-top:1px solid var(--line-1);
+  background:linear-gradient(180deg,rgba(var(--accent-rgb)/.07),transparent 80%),rgba(255,255,255,.014)}
+.rd-np.is-idle{background:rgba(255,255,255,.014)}
+.rd-np__bar{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-3) var(--sp-5);min-height:66px}
+.rd-np__art{position:relative;flex:0 0 auto;width:46px;height:46px;border-radius:10px;display:grid;place-items:center}
+.rd-np__art .rd-logo{width:46px;height:46px}
+.rd-np__art.is-idle{background:var(--fill-1);border:1px solid var(--line-1);color:var(--ink-3)}
+.rd-np__art.is-idle .icon{width:20px;height:20px}
+.rd-np__art .rd-eq{position:absolute;right:-5px;bottom:-5px;height:18px;padding:3px 4px;gap:2px;border-radius:7px;
+  background:linear-gradient(180deg,var(--accent-soft),var(--accent));color:var(--accent-ink);box-shadow:var(--sh-2)}
+.rd-np__art .rd-eq i{width:2.5px}
+.rd-np__txt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.rd-np__title{display:flex;align-items:center;gap:var(--sp-3);min-width:0}
+.rd-np__title b{font-size:var(--fs-13);font-weight:650;color:var(--ink-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd-np__song{display:flex;align-items:baseline;gap:var(--sp-3);min-width:0;font-size:var(--fs-11);color:var(--ink-1)}
+.rd-np__songt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.rd-np__ago{flex:0 0 auto;font-size:var(--fs-10);color:var(--ink-3)}
+.rd-np__status{font-size:var(--fs-10);line-height:1.45;color:var(--ink-3);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rd-np__status.is-err{color:#ff97a7}
+.rd-np__ctl{flex:0 0 auto;display:flex;align-items:center;gap:var(--sp-2)}
+.rd-np__ctl .ibtn{width:30px;height:30px;min-width:30px}
+
+.rd-play{position:relative;width:40px;height:40px;flex:0 0 auto;border-radius:50%;display:grid;place-items:center;
+  background:linear-gradient(180deg,var(--accent-soft),var(--accent));color:var(--accent-ink);
+  box-shadow:var(--glow),inset 0 1px 0 rgba(255,255,255,.3);
+  transition:transform var(--t-fast),filter var(--t-fast)}
+.rd-play .icon{width:15px;height:15px}
+.rd-play:hover{filter:brightness(1.07)}
+.rd-play:active{transform:scale(.94)}
+.rd-play:focus-visible{outline:2px solid var(--accent-soft);outline-offset:3px;border-radius:50%}
+.rd-play.is-busy::after{content:"";position:absolute;inset:-4px;border-radius:50%;
+  border:2px solid transparent;border-top-color:var(--accent-soft);animation:spin .9s linear infinite}
+
+/* songs played earlier on this station */
+.rd-hist{padding:var(--sp-3) var(--sp-5) var(--sp-2);border-bottom:1px solid var(--line-0);max-height:190px;overflow-y:auto}
+.rd-hist__head{display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-2)}
+.rd-hist__head .rd-link{font-size:var(--fs-10)}
+.rd-hist__list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.rd-hist__list li{display:flex;align-items:baseline;gap:var(--sp-4);padding:4px 0;border-top:1px solid var(--line-0);font-size:var(--fs-11);color:var(--ink-2)}
+.rd-hist__list li:first-child{border-top:0}
+.rd-hist__t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd-hist__t b{font-weight:600;color:var(--ink-1)}
+.rd-hist__list small{flex:0 0 auto;font-size:var(--fs-10);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.rd-hist__none{margin:var(--sp-2) 0 var(--sp-3);font-size:var(--fs-11);color:var(--ink-3)}
+
+/* ---------------- narrow window / phone sheet ---------------- */
+@container rd (max-width: 760px){
+  .rd-np__musiclbl{display:none}
+  .rd-np__music{width:30px;height:30px;padding:0}
+}
+@container rd (max-width: 600px){
+  .rd-side{display:none}
+  .rd-chips{display:flex;gap:var(--sp-2);padding:var(--sp-3) var(--sp-4);overflow-x:auto;scrollbar-width:none;
+    border-bottom:1px solid var(--line-0)}
+  .rd-chips::-webkit-scrollbar{display:none}
+  .rd-head{padding:var(--sp-3) var(--sp-4);min-height:48px}
+  .rd-head__glyph{--gs:28px}
+  .rd-head__count{display:none}
+  .rd-random__lbl{display:none}
+  .rd-random{width:30px;height:30px;padding:0;border-radius:50%}
+  .rd-random:focus-visible{border-radius:50%}
+  .rd-list{padding:var(--sp-2) var(--sp-2) var(--sp-5)}
+  .rd-note{margin:var(--sp-2) var(--sp-3) var(--sp-3)}
+  .rd-row{padding:2px 2px 2px 1px}
+  .rd-row__main{gap:var(--sp-3);padding:5px}
+  .rd-logo{width:46px;height:46px}
+  .rd-row__blurb{-webkit-line-clamp:2}
+  .rd-row .rd-more,.rd-row .rd-fav:not(.is-on){opacity:1}
+  .rd-foot{margin:var(--sp-5) var(--sp-3) 0}
+  .rd-np__bar{padding:var(--sp-3) var(--sp-4);gap:var(--sp-3)}
+  .rd-np__art,.rd-np__art .rd-logo{width:42px;height:42px}
+  /* no room for the "played earlier" toggle here — so the panel it opens
+     goes too, rather than staying open with nothing left to close it */
+  .rd-np__histbtn,.rd-hist{display:none}
+}
+@container rd (max-width: 400px){
+  .rd-np .rd-fav{display:none}
+  .rd-np__ago{display:none}
+}
+
+/* On a phone the account button floats over the bottom-right of every
+   sheet, which is exactly where a bottom player's buttons would be. The
+   player goes to the top instead, and the list gets room to scroll its
+   last lines clear of the button. */
+body.is-mobile .rd-np{order:-1;border-top:0;border-bottom:1px solid var(--line-1)}
+body.is-mobile .rd-np__status.is-err{-webkit-line-clamp:3}
+body.is-mobile .rd-list{padding-bottom:88px}
+
+/* ---------------- motion ---------------- */
+@media (prefers-reduced-motion:reduce){
+  .rd-eq i{animation:none;transform:scaleY(.7)}
+  .rd-eq i:nth-child(2){transform:scaleY(1)}
+  .rd-eq i:nth-child(3){transform:scaleY(.5)}
+  .rd-logo.is-busy .rd-logo__ov::after,.rd-play.is-busy::after{animation:none}
+  .rd-row,.rd-logo__ov,.rd-chip,.rd-play,.rd-eq,.rd-row .rd-more,.rd-row .rd-fav{transition:none}
+}
+body.reduce-motion .rd-eq i{animation:none;transform:scaleY(.7)}
+body.reduce-motion .rd-eq i:nth-child(2){transform:scaleY(1)}
+body.reduce-motion .rd-eq i:nth-child(3){transform:scaleY(.5)}
+body.reduce-motion .rd-logo.is-busy .rd-logo__ov::after,
+body.reduce-motion .rd-play.is-busy::after{animation:none}
+body.reduce-motion .rd-row,body.reduce-motion .rd-logo__ov,body.reduce-motion .rd-chip,
+body.reduce-motion .rd-play,body.reduce-motion .rd-eq{transition:none}
+
+/* ---------------- light mode ---------------- */
+:root[data-theme="light"] .rd-side .side__item.is-on{color:var(--ink-0)}
+:root[data-theme="light"] .rd-group>.icon{color:color-mix(in srgb,var(--accent) 72%,#000)}
+:root[data-theme="light"] .rd-side .side__item.is-on .icon,
+:root[data-theme="light"] .rd-chip.is-on .icon,
+:root[data-theme="light"] .rd-note .icon,
+:root[data-theme="light"] .rd-onair,
+:root[data-theme="light"] .rd-fav.is-on,
+:root[data-theme="light"] .rd-tag.is-playing,
+:root[data-theme="light"] .rd-tag.is-music{color:color-mix(in srgb,var(--accent) 72%,#000)}
+:root[data-theme="light"] .rd-banner{background:rgba(200,130,0,.09);border-color:rgba(200,130,0,.3)}
+:root[data-theme="light"] .rd-banner .icon{color:#9a6400}
+:root[data-theme="light"] .rd-np__status.is-err,
+:root[data-theme="light"] .rd-tag.is-error{color:#b3213e}
+:root[data-theme="light"] .rd-tag.is-error{background:rgba(200,30,55,.09)}
+:root[data-theme="light"] .rd-np,
+:root[data-theme="light"] .rd-np.is-idle{background:linear-gradient(180deg,rgba(var(--accent-rgb)/.06),transparent 80%),var(--fill-0)}

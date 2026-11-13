@@ -1,0 +1,460 @@
+/* ============================================================
+   feat-mobile.css — StaticOS as a phone (js/shell/mobile.js)
+   Everything here is scoped under body.is-mobile, which mobile.js
+   only sets on phone-sized screens, so the desktop is untouched.
+   The window manager keeps writing inline left/top/width/height
+   (and a transform on minimise); the sheets neutralise those with
+   !important, so no wm.js change is needed. Gestures move a sheet
+   with the individual `translate` / `scale` properties, which the
+   transform lock does not touch.
+   ============================================================ */
+body.is-mobile{
+  /* status bar (the top bar) and gesture bar, plus the notch / home
+     indicator areas the browser reports (viewport-fit=cover) */
+  /* 44px, not the desktop's 34: the whole status bar is the shade's
+     pull handle, so it gets a finger-sized target */
+  --mob-top:calc(44px + env(safe-area-inset-top, 0px));
+  --mob-gest:calc(44px + env(safe-area-inset-bottom, 0px));
+  --mob-dock-h:96px;
+  --mob-l:env(safe-area-inset-left, 0px);
+  --mob-r:env(safe-area-inset-right, 0px);
+  /* nothing on a phone may scroll sideways */
+  overflow-x:hidden;
+}
+body.is-mobile #os{overflow:hidden;overflow:clip}
+
+/* ---- hide the desktop-only surfaces ---- */
+body.is-mobile .dock,
+body.is-mobile .widgets,
+body.is-mobile .wg-lock,
+body.is-mobile .desk-icons,
+body.is-mobile .deskclock,
+body.is-mobile .dw,
+body.is-mobile .hotkeys,
+body.is-mobile .snap-ghost,
+body.is-mobile .skips a:nth-child(4){ display:none !important; }
+
+/* ============================================================
+   Status bar — the desktop's top bar, trimmed to time + status.
+   It is inert on a phone; .mob-status lies over it and is the one
+   control: tap or pull down for the shade.
+   ============================================================ */
+body.is-mobile .topbar{
+  height:var(--mob-top);
+  padding:env(safe-area-inset-top, 0px) calc(var(--sp-5) + var(--mob-r)) 0 calc(var(--sp-5) + var(--mob-l));
+  gap:var(--sp-3);
+  background:linear-gradient(180deg,rgba(9,3,6,.86),rgba(9,3,6,.6));
+}
+body.is-mobile .topbar__menu,
+body.is-mobile .topbar__name,
+body.is-mobile .topbar__brand{ display:none !important; }
+/* the clock moves to the left, time only, like a phone's */
+body.is-mobile .topbar__clock{
+  display:flex !important;position:static;transform:none;order:-1;padding:0;
+  font-size:var(--fs-13);font-weight:650;color:var(--ink-0);font-variant-numeric:tabular-nums;
+}
+body.is-mobile .topbar__clock span:first-child{display:none}
+body.is-mobile .topbar__clock::after{display:none}
+/* status icons only: the tray's popover buttons live in the shade */
+body.is-mobile .tray-btn[data-pop="sound"],
+body.is-mobile .tray-btn[data-pop="cc"],
+body.is-mobile .tray-btn:not([data-pop]):first-child{ display:none; }
+body.is-mobile .tray-btn{padding:0 4px}
+body.is-mobile .tray-btn::after{display:none}
+
+.mob-status{
+  position:absolute;left:0;right:0;top:0;height:var(--mob-top);
+  z-index:calc(var(--z-topbar) + 1);background:transparent;
+  touch-action:none;cursor:pointer;
+}
+.mob-status:focus-visible{outline:2px solid var(--accent);outline-offset:-3px;border-radius:0 0 var(--r-md) var(--r-md)}
+
+/* ============================================================
+   Apps: full-screen sheets between the status bar and gesture bar
+   ============================================================ */
+body.is-mobile .win{
+  left:var(--mob-l) !important;
+  top:var(--mob-top) !important;
+  right:var(--mob-r) !important;
+  bottom:var(--mob-gest) !important;
+  width:auto !important;
+  height:auto !important;
+  /* wm sets min-width/height inline from win.minW/minH (e.g. Files=420);
+     that would overflow a 390px phone, so drop the floor on mobile. */
+  min-width:0 !important;
+  min-height:0 !important;
+  transform:none !important;
+  border-radius:0;
+  border:0;
+  box-shadow:none;
+  filter:none !important;                 /* inactive-window dimming off */
+  -webkit-backdrop-filter:none; backdrop-filter:none;
+  background:var(--bg-1);
+  transform-origin:50% 50%;
+  overflow:hidden;
+}
+/* one sheet at a time — only the focused window shows */
+body.is-mobile .win:not(.is-active){ display:none; }
+/* the switcher is up: the sheet steps back behind it */
+body.is-mobile.mob-switching .win{ visibility:hidden; }
+/* dragging/resizing a sheet is meaningless on touch */
+body.is-mobile .win__grip{ display:none !important; }
+body.is-mobile .win__bar{ cursor:default; }
+
+/* the title bar becomes an app bar: 44px tall, wraps instead of
+   overflowing, a 44px close button; minimise is the Home gesture and a
+   full-screen sheet has nothing to maximise */
+body.is-mobile .win__bar{
+  height:auto;min-height:44px;flex-wrap:wrap;row-gap:0;
+  padding:0 var(--sp-2) 0 var(--sp-2);
+}
+body.is-mobile .win__bar--tall{min-height:48px}
+body.is-mobile .light--min,
+body.is-mobile .light--max,
+body.is-mobile .win__menu{ display:none; }
+body.is-mobile .light{width:44px;height:44px}
+body.is-mobile .light::before{left:14px;top:14px;width:16px;height:16px}
+body.is-mobile .light .icon{inset:17px;width:10px;height:10px;opacity:1}
+body.is-mobile .win__title{flex:1 1 120px;min-width:0;font-size:var(--fs-13)}
+body.is-mobile .win__tools{margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+body.is-mobile .win__lead{flex-wrap:wrap}
+
+/* ============================================================
+   Touch targets: 44px for the shared controls apps are built from
+   ============================================================ */
+body.is-mobile :is(.ibtn,.seg button,.tabs button,.side__item,.menu__item,.allapps__row,.toast__x,.noti__x){
+  min-height:44px;
+}
+body.is-mobile :is(.ibtn,.toast__x,.noti__x){min-width:44px}
+body.is-mobile .seg button{min-width:44px}
+body.is-mobile .btn{min-height:44px;padding-inline:var(--sp-5)}
+body.is-mobile .btn--sm{min-height:40px}
+body.is-mobile .field{min-height:44px}
+body.is-mobile .chip{min-height:32px}
+body.is-mobile .switch{transform:scale(1.15)}
+body.is-mobile .cc__slider .slider{height:44px;background-size:100% 6px}
+body.is-mobile .slider::-webkit-slider-thumb{width:22px;height:22px}
+body.is-mobile .menu{min-width:min(240px,calc(100vw - 24px));max-width:calc(100vw - 16px);max-height:calc(100vh - var(--mob-top) - var(--mob-gest));overflow-y:auto}
+
+/* two-pane apps (.app > .app__side + .app__main): at 390px the split
+   is unusable, so the side rail becomes a scrollable strip above the
+   content, which gets the full width */
+body.is-mobile .app{ flex-direction:column !important; }
+body.is-mobile .app__side{
+  width:auto !important;max-width:none !important;max-height:34vh;overflow:auto;
+  border-right:0 !important;border-bottom:1px solid var(--line-1) !important;
+  flex:0 0 auto !important;
+}
+body.is-mobile .app__side .side__group{ display:inline-flex; }
+
+/* ---- the ten dock apps, audited at 390×844 ---- */
+/* Settings: two screens — the list of panes, then the pane
+   (js/apps/settings.js setPane); "Settings" in the breadcrumbs goes back */
+body.is-mobile .st-app.is-list>.app__main{display:none}
+body.is-mobile .st-app.is-detail>.app__side{display:none}
+body.is-mobile .st-app.is-list>.app__side{flex:1 1 auto !important;max-height:none;border-bottom:0 !important}
+body.is-mobile .st-app .app__side .side__group{display:flex;flex-direction:column}
+body.is-mobile .st-app .crumbs .st-crumb-home::before{content:"‹";margin-right:6px;font-size:1.3em;line-height:0}
+/* Chat: the people list slides over the conversation instead of
+   squeezing it to half a screen; it starts folded on a phone */
+body.is-mobile .ch__body{position:relative}
+body.is-mobile .ch__rail{
+  position:absolute;top:0;right:0;bottom:0;width:min(260px,80%);z-index:3;
+  background:var(--bg-1);box-shadow:var(--sh-4);
+}
+body.is-mobile .ch__strip{flex-wrap:wrap;padding-inline:var(--sp-3)}
+/* Staticum: its prompt list stacks above the conversation, which keeps
+   its composer on screen (min-height:0 lets the column shrink) */
+body.is-mobile .ae__side{width:auto;max-height:24vh;border-right:0;border-bottom:1px solid var(--line-1)}
+body.is-mobile .app>:is(.app__main,.ae__main){min-height:0}
+/* Code: the file tree stays on screen; long names clip, not overflow */
+body.is-mobile .code .app__side,body.is-mobile .app__side{overflow-x:hidden}
+body.is-mobile :is(.code__status,.app__bar--foot){flex-wrap:wrap;row-gap:2px}
+
+/* 44px targets for the controls these apps draw themselves */
+body.is-mobile .field>:is(input,textarea){align-self:stretch}
+body.is-mobile .btn--sm{min-height:44px}
+body.is-mobile :is(.sp-tab,.sp-search__in,.sp-qpbar__go,.sp-qpbar__more,.sp-btn,.sp-more,.sp-more-btn,.sp-hero__pause,
+  .st-more,.start__discord,.ch-space,.ch-chan,.ae-chip,.lens__chip,.lens__input,.mu-tab,.mu-linkbtn,.brw__tab){min-height:44px}
+body.is-mobile :is(.sp-qpbar__go,.sp-qpbar__more,.sp-btn--icon,.sp-more-btn,.sp-hero__pause,.ch__send,.lens__send){min-width:44px}
+body.is-mobile :is(.ch__send,.lens__send){min-height:44px}
+/* hero dots: a 44px finger target around the same 26px (46px when showing)
+   bar; the gap moves into the padding, the progress bar stays on the track */
+body.is-mobile .sp-hero__dots{gap:0}
+body.is-mobile .sp-hero__dot{height:44px;width:44px;padding:0 9px}
+body.is-mobile .sp-hero__dot.is-on{width:64px}
+body.is-mobile .sp-hero__dot i{left:9px;top:calc(50% - 2px)}
+body.is-mobile .sp-hero__dot.is-on i{width:calc(100% - 18px)}
+body.is-mobile .sp-hero.is-tick:not(.is-paused) .sp-hero__dot.is-on i{animation-name:sp-prog-phone}
+@keyframes sp-prog-phone{from{width:0}to{width:calc(100% - 18px)}}
+body.is-mobile .brw__url{height:44px}
+/* tab strips (Browser, Code): the label fills the tab; the × is set
+   inline at 18px, so only !important reaches it */
+body.is-mobile .brw__tab>button:not(.ibtn){align-self:stretch}
+body.is-mobile .brw__tab .ibtn{min-width:44px !important;height:44px !important}
+body.is-mobile .brw__url input{align-self:stretch;height:100%}
+body.is-mobile .ch__box textarea{min-height:44px}
+body.is-mobile .mu-vol{height:44px;background-size:100% 4px;background-position:center;background-repeat:no-repeat}
+
+/* hover tooltips have no hover to wait for on a touch screen (a tap left
+   them stuck on) — and laid out off the edge they widened the sheets */
+body.is-mobile .tip::after{display:none}
+body.is-mobile .sp-tab{min-width:44px}
+
+/* one banner at a time on a phone; the rest wait in the shade */
+body.is-mobile .toast:not(:last-child){display:none}
+body.is-mobile .toast{touch-action:none}
+
+/* ============================================================
+   Home screen
+   ============================================================ */
+.mob-home{
+  position:absolute;
+  left:0; right:0;
+  top:var(--mob-top);
+  bottom:calc(var(--mob-gest) + var(--mob-dock-h));
+  z-index:var(--z-rail);              /* under the app sheets */
+  overflow-y:auto;overflow-x:hidden;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  padding:var(--sp-5) calc(var(--sp-5) + var(--mob-r)) var(--sp-6) calc(var(--sp-5) + var(--mob-l));
+  scrollbar-width:none;
+}
+.mob-home::-webkit-scrollbar{display:none}
+.mob-search{
+  display:flex;align-items:center;gap:var(--sp-4);width:100%;max-width:520px;margin:0 auto var(--sp-6);
+  min-height:48px;padding:0 var(--sp-5);border-radius:var(--r-pill);
+  background:var(--glass-2);border:1px solid var(--line-1);color:var(--ink-1);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);
+  font-size:var(--fs-13);text-align:left;box-shadow:var(--sh-2);
+}
+.mob-search .icon{width:18px;height:18px;color:var(--ink-2)}
+.mob-search:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.mob-home__grid{
+  display:grid;
+  grid-template-columns:repeat(4, minmax(0, 1fr));
+  gap:var(--sp-5) var(--sp-2);
+  max-width:520px;
+  margin:0 auto;
+}
+@media (min-width:600px){ .mob-home__grid{ grid-template-columns:repeat(5, minmax(0, 1fr)); } }
+@media (max-height:500px){ .mob-home__grid{ grid-template-columns:repeat(auto-fill, minmax(84px, 1fr)); max-width:none; } }
+.mob-app{
+  display:flex;flex-direction:column;align-items:center;gap:var(--sp-2);
+  min-width:44px;min-height:44px;padding:var(--sp-2) 0;
+  background:none;border:0;border-radius:var(--r-md);
+  cursor:pointer;color:var(--ink-1);
+  transition:transform var(--t-fast) var(--ease-out);
+  -webkit-tap-highlight-color:transparent;
+}
+.mob-app .glyph{ --gs:58px; }
+.mob-app:active{ transform:scale(.9); }
+.mob-app__name{
+  font-size:var(--fs-11);
+  line-height:1.25;
+  text-align:center;
+  color:#fff;
+  text-shadow:0 1px 3px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.6);
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.mob-app:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; }
+
+/* the dock: four favourites on a glass shelf, above the gesture bar */
+.mob-dock{
+  position:absolute;
+  left:calc(var(--sp-4) + var(--mob-l));right:calc(var(--sp-4) + var(--mob-r));
+  bottom:calc(var(--mob-gest) + var(--sp-2));
+  height:calc(var(--mob-dock-h) - var(--sp-4));
+  z-index:var(--z-rail);
+  display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));align-items:center;
+  max-width:520px;margin:0 auto;padding:0 var(--sp-3);
+  border-radius:var(--r-2xl);
+  background:var(--glass-1);
+  -webkit-backdrop-filter:var(--blur-3);backdrop-filter:var(--blur-3);
+  border:1px solid var(--line-1);
+  box-shadow:var(--sh-3),inset 0 1px 0 var(--glass-hi);
+}
+.mob-dock:empty{display:none}
+.mob-app--dock .mob-app__name{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.mob-app--dock .glyph{--gs:56px}
+
+/* the account chip sits at the top of the home screen */
+body.is-mobile .acct{
+  top:calc(var(--mob-top) + var(--sp-3));bottom:auto;right:calc(var(--sp-4) + var(--mob-r));
+  z-index:calc(var(--z-rail) + 1);height:44px;
+}
+body.is-mobile .mob-search{max-width:calc(100% - 64px);margin-left:0}
+body.is-mobile .acct__name{display:none}
+body.is-mobile .acct{padding:0 8px}
+body.is-mobile.mob-has-win .acct,
+body.is-mobile.mob-switching .acct{display:none}
+body.is-mobile .acct-menu{
+  top:calc(var(--mob-top) + 64px);bottom:auto;right:calc(var(--sp-3) + var(--mob-r));
+  width:min(300px, calc(100vw - 24px));
+}
+body.is-mobile .acct-menu__item{min-height:44px}
+
+/* ============================================================
+   Gesture bar: recent apps · home · last app
+   ============================================================ */
+.mob-nav{
+  position:absolute;
+  left:0; right:0; bottom:0;
+  height:var(--mob-gest);
+  padding:0 calc(var(--sp-3) + var(--mob-r)) env(safe-area-inset-bottom, 0px) calc(var(--sp-3) + var(--mob-l));
+  z-index:var(--z-panel);             /* above the sheets and the switcher */
+  display:grid;grid-template-columns:44px 1fr 44px;align-items:center;gap:var(--sp-3);
+  background:var(--bg-0);
+  border-top:1px solid var(--line-0);
+  touch-action:none;
+  user-select:none;-webkit-user-select:none;
+}
+body.is-mobile:not(.mob-has-win) .mob-nav{background:linear-gradient(0deg,rgba(6,2,3,.72),rgba(6,2,3,.35));border-top-color:transparent}
+.mob-nav__btn{
+  width:44px;height:44px;display:grid;place-items:center;border-radius:var(--r-md);
+  color:var(--ink-2);background:none;border:0;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.mob-nav__btn .icon{width:20px;height:20px}
+.mob-nav__btn:active{background:var(--fill-2);color:var(--ink-0)}
+.mob-nav__btn[disabled]{color:var(--ink-4);cursor:default}
+.mob-nav__btn[aria-expanded="true"]{color:var(--accent-soft)}
+.mob-nav__home{
+  justify-self:center;width:min(200px, 100%);height:44px;display:grid;place-items:center;
+  background:none;border:0;border-radius:var(--r-pill);cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.mob-nav__pill{
+  display:block;width:134px;max-width:100%;height:5px;border-radius:var(--r-pill);
+  background:var(--ink-1);opacity:.85;
+  transition:width var(--t-fast) var(--ease-out),opacity var(--t-fast);
+}
+.mob-nav.is-hold .mob-nav__pill,
+.mob-nav__home:active .mob-nav__pill{width:96px;opacity:1}
+:is(.mob-nav__btn,.mob-nav__home):focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* ============================================================
+   The shade: the notification centre, pulled down full-width,
+   with the Control Centre on top
+   ============================================================ */
+body.is-mobile .noti.noti--shade{
+  left:0;right:0;top:0;width:auto;
+  max-height:calc(100% - var(--mob-gest));
+  padding-top:env(safe-area-inset-top, 0px);
+  border-radius:0 0 var(--r-2xl) var(--r-2xl);
+  border-width:0 0 1px;
+  background:var(--glass-3);
+  transform-origin:top center;
+  animation:mob-shade-in var(--t-slow) var(--ease-out) both;
+  overflow-y:auto;overflow-x:hidden;
+  touch-action:pan-y;
+}
+@keyframes mob-shade-in{from{translate:0 -40%;opacity:0}to{translate:0 0;opacity:1}}
+.mob-shade__head{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-5) var(--sp-5) var(--sp-3)}
+/* the top of the shade is its handle: a swipe up there closes it rather
+   than scrolling (the notification list below still scrolls) */
+.mob-shade__head,.mob-qs{touch-action:none}
+.mob-shade__time{display:flex;flex-direction:column}
+.mob-shade__time b{font-size:var(--fs-24);font-weight:640;color:var(--ink-0);font-variant-numeric:tabular-nums;line-height:1.1}
+.mob-shade__time small{font-size:var(--fs-12);color:var(--ink-2)}
+.mob-shade__btn{width:44px;height:44px;display:grid;place-items:center;border-radius:50%;background:var(--fill-1);color:var(--ink-1)}
+.mob-shade__btn .icon{width:18px;height:18px}
+.mob-qs{padding:0 var(--sp-4) var(--sp-4);border-bottom:1px solid var(--line-1)}
+.mob-qs .menu__label{display:none}
+.mob-qs .cc__grid{gap:var(--sp-3)}
+.mob-qs .cc__tile{min-height:56px}
+.mob-qs [data-cc="network"],
+.mob-qs [data-cc="widgets"]{display:none}
+.mob-qs .cc__more{min-height:44px}
+.mob-qs .cc__slider{min-height:52px}
+.mob-qs .cc__mbtn{width:44px;height:44px}
+body.is-mobile .noti--shade .noti__head,
+body.is-mobile .noti--shade .noti__bar{padding-inline:var(--sp-5)}
+body.is-mobile .noti--shade .noti__list{overflow:visible;flex:0 0 auto}
+
+/* toasts drop in from the top, full width, like a phone's banners */
+body.is-mobile .toasts{
+  left:calc(var(--sp-3) + var(--mob-l));right:calc(var(--sp-3) + var(--mob-r));
+  top:calc(var(--mob-top) + var(--sp-3));bottom:auto;width:auto;
+  flex-direction:column;
+}
+body.is-mobile .toast{animation:mob-toast-in var(--t-slow) var(--ease-out) both}
+body.is-mobile .toast.is-out{transform:translateY(-30px)}
+body.is-mobile .toast__x{opacity:1}
+@keyframes mob-toast-in{from{opacity:0;transform:translateY(-24px)}to{opacity:1;transform:none}}
+
+/* ============================================================
+   The app switcher
+   ============================================================ */
+.mob-switch{
+  position:absolute;left:0;right:0;top:var(--mob-top);bottom:var(--mob-gest);
+  z-index:calc(var(--z-panel) - 1);
+  display:flex;flex-direction:column;
+  padding:var(--sp-4) calc(var(--sp-4) + var(--mob-r)) var(--sp-4) calc(var(--sp-4) + var(--mob-l));
+  background:rgba(6,2,3,.72);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);
+  animation:fade-in var(--t-med) var(--ease) both;
+}
+.mob-switch__top{display:flex;align-items:center;gap:var(--sp-4);padding:0 var(--sp-2) var(--sp-4)}
+.mob-switch__top b{flex:1;font-size:var(--fs-15);font-weight:650;color:var(--ink-0)}
+.mob-switch__list{
+  flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
+  display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:var(--sp-5) var(--sp-4);
+  align-content:start;padding:var(--sp-2);
+  overscroll-behavior:contain;
+}
+@media (max-height:500px){ .mob-switch__list{grid-template-columns:repeat(auto-fill, minmax(150px, 1fr))} }
+.mob-card{display:flex;flex-direction:column;gap:var(--sp-2);min-width:0;transition:opacity var(--t-med),translate var(--t-med) var(--ease)}
+.mob-card.is-gone{opacity:0;translate:0 -40px}
+.mob-card__head{display:flex;align-items:center;gap:var(--sp-3);min-width:0}
+.mob-card__head .glyph{--gs:24px}
+.mob-card__name{flex:1;min-width:0;font-size:var(--fs-12);font-weight:600;color:var(--ink-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mob-card__x{width:44px;height:44px;margin:-10px -10px -10px 0;display:grid;place-items:center;border-radius:50%;color:var(--ink-1)}
+.mob-card__x .icon{width:16px;height:16px}
+.mob-card__x:active{background:var(--fill-2)}
+.mob-card__open{
+  display:block;width:100%;padding:0;border-radius:var(--r-lg);overflow:hidden;
+  border:1px solid var(--line-1);background:var(--bg-1);box-shadow:var(--sh-3);
+  touch-action:none;text-align:left;
+}
+.mob-card__open:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.mob-card__shot{position:relative;width:100%;aspect-ratio:9/16;overflow:hidden;pointer-events:none}
+body.is-mobile .mob-card .win.mob-card__clone{
+  position:absolute !important;left:0 !important;top:0 !important;right:auto !important;bottom:auto !important;
+  width:var(--cw) !important;height:var(--ch) !important;
+  display:flex !important;visibility:visible !important;opacity:1 !important;
+  transform:scale(var(--k,.45)) !important;transform-origin:top left;
+  animation:none !important;transition:none !important;translate:none;scale:none;
+}
+.mob-card__ph{flex:1;min-height:60px;background:repeating-linear-gradient(135deg,var(--fill-0) 0 10px,var(--fill-1) 10px 20px)}
+.mob-switch__empty{
+  grid-column:1/-1;display:flex;flex-direction:column;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-8) var(--sp-5);text-align:center;color:var(--ink-2);
+}
+.mob-switch__empty .icon{width:32px;height:32px;color:var(--ink-3)}
+.mob-switch__empty b{font-size:var(--fs-15);color:var(--ink-0)}
+.mob-switch__empty small{font-size:var(--fs-12)}
+
+/* ============================================================
+   Shell sheets on a phone
+   ============================================================ */
+body.is-mobile .launcher{
+  left:var(--sp-3);right:var(--sp-3);width:auto;top:calc(var(--mob-top) + var(--sp-3));
+  max-height:calc(100% - var(--mob-top) - var(--mob-gest) - var(--sp-5));
+}
+body.is-mobile .spot-wrap{padding-top:calc(var(--mob-top) + var(--sp-4));padding-inline:var(--sp-3);align-items:flex-start}
+body.is-mobile .spot{width:100%}
+body.is-mobile .spot__row{min-height:48px}
+body.is-mobile .overview__hint{display:none}
+
+@media (prefers-reduced-motion:reduce){
+  .mob-app,.mob-nav__pill,.mob-card{ transition:none; }
+  .mob-app:active{ transform:none; }
+  body.is-mobile .noti.noti--shade,body.is-mobile .toast,.mob-switch{animation:none}
+}
+:root[data-motion="reduced"] body.is-mobile .noti.noti--shade,
+:root[data-motion="reduced"] .mob-switch{animation:none}

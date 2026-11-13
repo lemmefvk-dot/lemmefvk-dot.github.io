@@ -1,0 +1,38 @@
+/* ==================================================================
+   Game Mode — js/core/gamemode.js sets html[data-gamemode="on"].
+   Everything here removes work; nothing adds any.
+   ================================================================== */
+:root[data-gamemode="on"] *{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+:root[data-gamemode="on"] .win{box-shadow:0 0 0 1px var(--line-1)!important}
+:root[data-gamemode="on"] .dock,
+:root[data-gamemode="on"] .topbar,
+:root[data-gamemode="on"] .widgets .wg,
+:root[data-gamemode="on"] .toast{box-shadow:none!important}
+/* shell motion off; app content (the game) is left alone */
+:root[data-gamemode="on"] .desktop *,
+:root[data-gamemode="on"] .dock *,
+:root[data-gamemode="on"] .topbar *,
+:root[data-gamemode="on"] .widgets *{animation:none!important;transition:none!important}
+:root[data-gamemode="on"] .deskclock{display:none!important}
+:root[data-gamemode="on"] .wp__grain,
+:root[data-gamemode="on"] .wp__grid{display:none!important}
+/* glass surfaces need an opaque fill once the blur is gone */
+:root[data-gamemode="on"] .dock,
+:root[data-gamemode="on"] .topbar{background:var(--bg-1,#140c10)!important}
+
+/* Games widget: the Continue Playing caption and glyph tiles for Arcade
+   games and creations without cover art (widgets.js) */
+.wg-shelf__cap{font-size:var(--fs-10);text-transform:uppercase;letter-spacing:.6px;color:var(--ink-3);margin:0 0 var(--sp-2)}
+.wg-shelf__art--glyph{display:grid;place-items:center;color:#fff;
+  background:linear-gradient(135deg,hsl(var(--h,330) 80% 58%),hsl(calc(var(--h,330) + 40) 70% 32%))}
+.wg-shelf__art--glyph svg{width:22px;height:22px}
+
+/* Static Labs (js/core/labs.js) */
+.lab-fps{position:fixed;left:10px;bottom:10px;z-index:var(--z-toast);pointer-events:none;
+  padding:3px 8px;border-radius:7px;font:600 calc(11px * var(--fs-k,1))/1.4 var(--font-mono,ui-monospace,Menlo,monospace);
+  color:#e8f5ec;background:rgba(0,0,0,.62);border:1px solid rgba(255,255,255,.12)}
+.lab-fps[data-band="good"]{color:#86efac}
+.lab-fps[data-band="ok"]{color:#fde68a}
+.lab-fps[data-band="low"]{color:#fca5a5}
+:root[data-titlebars="compact"] .win__bar{height:28px}
+:root[data-titlebars="compact"] .win__bar .light{transform:scale(.86)}

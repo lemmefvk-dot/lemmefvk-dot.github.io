@@ -1,0 +1,422 @@
+{
+ "version": 1,
+ "works": [
+  {
+   "id": "peppercarrot",
+   "title": "Pepper&Carrot",
+   "author": "David Revoy",
+   "year": "2014-2025",
+   "summary": "A young witch, Pepper, and her cat Carrot muddle through a magical world in this free, all-ages fantasy webcomic.",
+   "licence": "CC BY 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+   "attribution": "Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). English text by the Pepper&Carrot translators and proofreaders named at https://www.peppercarrot.com/en/about/index.html#credits. Pages downscaled to 720 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/index.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "witch",
+    "cc-by"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "ep01",
+     "title": "Episode 1: The Potion of Flight",
+     "file": "comics/peppercarrot/ep01_Potion-of-Flight.cbz",
+     "bytes": 204631,
+     "sha256": "8281130d3d782125e6a69207d6ec2501b3f9e9df14136396c8ecf77ac879d732",
+     "pages": 5
+    },
+    {
+     "id": "ep02",
+     "title": "Episode 2: Rainbow Potions",
+     "file": "comics/peppercarrot/ep02_Rainbow-potions.cbz",
+     "bytes": 459772,
+     "sha256": "5b13eecbb6790451b57703589c495729dc0aca9a0d0719bfef5dec47e3552e03",
+     "pages": 7
+    },
+    {
+     "id": "ep03",
+     "title": "Episode 3: The Secret Ingredients",
+     "file": "comics/peppercarrot/ep03_The-secret-ingredients.cbz",
+     "bytes": 832604,
+     "sha256": "10131202ca345132cf97bc39d4b9eb54e9f17bd3f85d94b3ce43c6cbcdc13c4f",
+     "pages": 9
+    },
+    {
+     "id": "ep04",
+     "title": "Episode 4: Stroke of Genius",
+     "file": "comics/peppercarrot/ep04_Stroke-of-genius.cbz",
+     "bytes": 571218,
+     "sha256": "1bf62ded42b2f1a83042c578d61740447adad949cddb96310ab25e5dba33abd6",
+     "pages": 8
+    },
+    {
+     "id": "ep05",
+     "title": "Episode 5: Special holiday episode",
+     "file": "comics/peppercarrot/ep05_Special-holiday-episode.cbz",
+     "bytes": 359387,
+     "sha256": "33b36bf11422ae74d7c1670bfac58d04842f9f2374823bffaa06e71eb30e9506",
+     "pages": 6
+    },
+    {
+     "id": "ep06",
+     "title": "Episode 6: The Potion Contest",
+     "file": "comics/peppercarrot/ep06_The-Potion-Contest.cbz",
+     "bytes": 1104901,
+     "sha256": "276de7454dc386f83bea258bcd94476e8aed150a2e0220b5d26cff289344f580",
+     "pages": 11
+    },
+    {
+     "id": "ep07",
+     "title": "Episode 7: The Wish",
+     "file": "comics/peppercarrot/ep07_The-Wish.cbz",
+     "bytes": 514386,
+     "sha256": "7058e6d49e484c97f76290fb2bf8e8f85fd0d214b077a12df2d1646bba61071b",
+     "pages": 7
+    },
+    {
+     "id": "ep08",
+     "title": "Episode 8: Pepper's Birthday Party",
+     "file": "comics/peppercarrot/ep08_Pepper-s-Birthday-Party.cbz",
+     "bytes": 661313,
+     "sha256": "2af55f699173ca76fd86f7b3ba02fb003773c6e617e8b74bc1e6040d02668b7b",
+     "pages": 8
+    },
+    {
+     "id": "ep09",
+     "title": "Episode 9: The Remedy",
+     "file": "comics/peppercarrot/ep09_The-Remedy.cbz",
+     "bytes": 682341,
+     "sha256": "fa109bb50e389404e926e0f0e1cf4e6289bfd139bd2ecc89b259de879b10ac14",
+     "pages": 9
+    },
+    {
+     "id": "ep10",
+     "title": "Episode 10: Summer Special",
+     "file": "comics/peppercarrot/ep10_Summer-Special.cbz",
+     "bytes": 548098,
+     "sha256": "b3367867f7aacabd83cfa38fa69f093bccc56d2e4ea7ec3055e205f935b62a03",
+     "pages": 7
+    },
+    {
+     "id": "ep11",
+     "title": "Episode 11: The Witches of Chaosah",
+     "file": "comics/peppercarrot/ep11_The-Witches-of-Chaosah.cbz",
+     "bytes": 745255,
+     "sha256": "38d4b8fa8d2555a9e24518dbc4504f3093e8ee73351892941a7473876f8a322d",
+     "pages": 8
+    },
+    {
+     "id": "ep12",
+     "title": "Episode 12: Autumn Clearout",
+     "file": "comics/peppercarrot/ep12_Autumn-Clearout.cbz",
+     "bytes": 838129,
+     "sha256": "7034217516f43e5383e123dde6fa9840b770afdd006830d578876706ff9a8602",
+     "pages": 8
+    },
+    {
+     "id": "ep13",
+     "title": "Episode 13: The Pyjama Party",
+     "file": "comics/peppercarrot/ep13_The-Pyjama-Party.cbz",
+     "bytes": 750696,
+     "sha256": "db11660845dd16f05128f4fbadefb2aa1c0a316e7589026139a36d3d0382fad3",
+     "pages": 8
+    },
+    {
+     "id": "ep14",
+     "title": "Episode 14: The Dragon's Tooth",
+     "file": "comics/peppercarrot/ep14_The-Dragon-s-Tooth.cbz",
+     "bytes": 645202,
+     "sha256": "cd9856052d25ff62a887a54975eca843e8ed52a3f5cebd8321823c15110f9f23",
+     "pages": 8
+    },
+    {
+     "id": "ep15",
+     "title": "Episode 15: The Crystal Ball",
+     "file": "comics/peppercarrot/ep15_The-Crystal-Ball.cbz",
+     "bytes": 792551,
+     "sha256": "9b956e907a8e4f8a88ba9635eb8f7199f19238e6f7c4122d4ef40ab487152e3a",
+     "pages": 10
+    },
+    {
+     "id": "ep16",
+     "title": "Episode 16: The Sage of the Mountain",
+     "file": "comics/peppercarrot/ep16_The-Sage-of-the-Mountain.cbz",
+     "bytes": 741880,
+     "sha256": "5ce843263c2de077a35e7e50fea555adbc602f67180f4c584a589925f3469552",
+     "pages": 8
+    },
+    {
+     "id": "ep17",
+     "title": "Episode 17: A Fresh Start",
+     "file": "comics/peppercarrot/ep17_A-Fresh-Start.cbz",
+     "bytes": 749023,
+     "sha256": "393161ec989c34e57ddbfe4ab53cfb33eb2e77077838db8c763ccdf0dd0cc515",
+     "pages": 9
+    },
+    {
+     "id": "ep18",
+     "title": "Episode 18: The Encounter",
+     "file": "comics/peppercarrot/ep18_The-Encounter.cbz",
+     "bytes": 728883,
+     "sha256": "75e6d41842c4a1873c86ab24fac774a1f372386806ef770434268bec47e9a221",
+     "pages": 9
+    },
+    {
+     "id": "ep19",
+     "title": "Episode 19: Pollution",
+     "file": "comics/peppercarrot/ep19_Pollution.cbz",
+     "bytes": 860999,
+     "sha256": "20239c143ce89c3d3ee27e606e4103a451c11b0a690a87bd082efbc86b43d406",
+     "pages": 9
+    },
+    {
+     "id": "ep20",
+     "title": "Episode 20: The Picnic",
+     "file": "comics/peppercarrot/ep20_The-Picnic.cbz",
+     "bytes": 664996,
+     "sha256": "61fb48c2b8b8f123bb531f3f4c05de12fc3ffce5492e732896794b7a41d9ef72",
+     "pages": 8
+    },
+    {
+     "id": "ep21",
+     "title": "Episode 21: The Magic Contest",
+     "file": "comics/peppercarrot/ep21_The-Magic-Contest.cbz",
+     "bytes": 919743,
+     "sha256": "09c06a6434739c2f70378cbea2c948eeb3e85c9b183885ed4e9bcfbe19fb0ea8",
+     "pages": 9
+    },
+    {
+     "id": "ep22",
+     "title": "Episode 22: The Voting System",
+     "file": "comics/peppercarrot/ep22_The-Voting-System.cbz",
+     "bytes": 1323806,
+     "sha256": "9839e008800f5302e821e595a703aaad3af432a650524301606ef3efc47d1dce",
+     "pages": 12
+    },
+    {
+     "id": "ep23",
+     "title": "Episode 23: Take a Chance",
+     "file": "comics/peppercarrot/ep23_Take-a-Chance.cbz",
+     "bytes": 828167,
+     "sha256": "efc6972d1f5e88787e6e32d169ff9a40a41d86e39fe8ced2bbd70687aab41a8f",
+     "pages": 9
+    },
+    {
+     "id": "ep24",
+     "title": "Episode 24: The Unity Tree",
+     "file": "comics/peppercarrot/ep24_The-Unity-Tree.cbz",
+     "bytes": 869424,
+     "sha256": "b2e322ba8b3a2f1e44503cc020941e0fd11dd3f915e4773642fcecc19fd18d42",
+     "pages": 9
+    },
+    {
+     "id": "ep25",
+     "title": "Episode 25: There Are No Shortcuts",
+     "file": "comics/peppercarrot/ep25_There-are-no-Shortcuts.cbz",
+     "bytes": 989757,
+     "sha256": "e93d0a0dc1ea5bab5098cebe0afef50218de67708890a05dcb79c25284583a9e",
+     "pages": 11
+    },
+    {
+     "id": "ep26",
+     "title": "Episode 26: Books Are Great",
+     "file": "comics/peppercarrot/ep26_Books-Are-Great.cbz",
+     "bytes": 876280,
+     "sha256": "6483a4bbc61313b17a0197dc86a54afb3305200fd659bc94aab8e23f1f73282c",
+     "pages": 8
+    },
+    {
+     "id": "ep27",
+     "title": "Episode 27: Coriander's Invention",
+     "file": "comics/peppercarrot/ep27_Coriander-s-Invention.cbz",
+     "bytes": 823514,
+     "sha256": "85c531d6725a6bf71f251dc984a7bdb1f233013db18ec57156f03e85c14acae6",
+     "pages": 8
+    },
+    {
+     "id": "ep28",
+     "title": "Episode 28: The Festivities",
+     "file": "comics/peppercarrot/ep28_The-Festivities.cbz",
+     "bytes": 915617,
+     "sha256": "4e44d0c41ae4d92d18e9afd2a4bba9f27ca09585fe66c853845e65465cde3e4c",
+     "pages": 10
+    },
+    {
+     "id": "ep29",
+     "title": "Episode 29: Destroyer of Worlds",
+     "file": "comics/peppercarrot/ep29_Destroyer-of-Worlds.cbz",
+     "bytes": 1018109,
+     "sha256": "5cee6fa419940374fdad6d570b3ec2634d138a7a190ded4b57884775338e761a",
+     "pages": 10
+    },
+    {
+     "id": "ep30",
+     "title": "Episode 30: Need a Hug",
+     "file": "comics/peppercarrot/ep30_Need-a-Hug.cbz",
+     "bytes": 729521,
+     "sha256": "5b01f89641acc96cae90c69fe94968ee6401c9ca5dc0d146a6c5b357ae756666",
+     "pages": 8
+    },
+    {
+     "id": "ep31",
+     "title": "Episode 31: The Fight",
+     "file": "comics/peppercarrot/ep31_The-Fight.cbz",
+     "bytes": 909023,
+     "sha256": "7a096866a0f50fda5bd4db6e1ecf45da7eb3101cd51218af6df23c5945e3b71d",
+     "pages": 9
+    },
+    {
+     "id": "ep32",
+     "title": "Episode 32: The Battlefield",
+     "file": "comics/peppercarrot/ep32_The-Battlefield.cbz",
+     "bytes": 947431,
+     "sha256": "32b6bc6453ecceda354fee7dff93f9205096bc01ebeb59aa2a674b83bbadbd97",
+     "pages": 9
+    },
+    {
+     "id": "ep33",
+     "title": "Episode 33: Spell of War",
+     "file": "comics/peppercarrot/ep33_Spell-of-War.cbz",
+     "bytes": 989213,
+     "sha256": "91a8c97cd20ed7b9a872507404b2908c3fea177c0cda68e33a0567568bfe7779",
+     "pages": 10
+    },
+    {
+     "id": "ep34",
+     "title": "Episode 34: The Knighting of Shichimi",
+     "file": "comics/peppercarrot/ep34_The-Knighting-of-Shichimi.cbz",
+     "bytes": 1375234,
+     "sha256": "6dc66a14252e9aa54bc21c5345e48f28bbf11cf027858c2e8582187db4c5c922",
+     "pages": 12
+    },
+    {
+     "id": "ep35",
+     "title": "Episode 35: The Reflection",
+     "file": "comics/peppercarrot/ep35_The-Reflection.cbz",
+     "bytes": 1201121,
+     "sha256": "c3ad914c483b73210e5c430bb6b520356f5da9943a3edbfcf59495d1d9b2d313",
+     "pages": 14
+    },
+    {
+     "id": "ep36",
+     "title": "Episode 36: The Surprise Attack",
+     "file": "comics/peppercarrot/ep36_The-Surprise-Attack.cbz",
+     "bytes": 1604590,
+     "sha256": "94425207cef6823e4f3875a8bffd98248c423b04f61653e8285fd4c7fed0bac7",
+     "pages": 17
+    },
+    {
+     "id": "ep37",
+     "title": "Episode 37: The Tears of the Phoenix",
+     "file": "comics/peppercarrot/ep37_The-Tears-of-the-Phoenix.cbz",
+     "bytes": 1066939,
+     "sha256": "25bbc12e777db3cc3c45b91e4c72d4f7640c80192c55df61234d7cc36b157d9a",
+     "pages": 10
+    },
+    {
+     "id": "ep38",
+     "title": "Episode 38: The Healer",
+     "file": "comics/peppercarrot/ep38_The-Healer.cbz",
+     "bytes": 961100,
+     "sha256": "5080f6d86bc16aac7a7245a3396d13a12fe4fb8ba15323cfaddf6e998db1a59c",
+     "pages": 10
+    },
+    {
+     "id": "ep39",
+     "title": "Episode 39: The Tavern",
+     "file": "comics/peppercarrot/ep39_The-Tavern.cbz",
+     "bytes": 1430552,
+     "sha256": "822ede7326af66a386ddb24511580d27be2f912a726d246b3a30cf0005710f66",
+     "pages": 13
+    }
+   ]
+  },
+  {
+   "id": "minifantasytheater",
+   "title": "Mini Fantasy Theater",
+   "author": "David Revoy",
+   "year": "2015-2025",
+   "summary": "Short single-page gag strips set in the Pepper&Carrot universe of Hereva.",
+   "licence": "CC BY-SA 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+   "attribution": "Mini Fantasy Theater by David Revoy, www.peppercarrot.com/en/webcomics/miniFantasyTheater.html, licensed under CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/miniFantasyTheater.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "gag-strips",
+    "cc-by-sa"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "mft",
+     "title": "Mini Fantasy Theater: all strips",
+     "file": "comics/minifantasytheater/minifantasytheater.cbz",
+     "bytes": 5350609,
+     "sha256": "945f82cda5ba989e986703625fde19f455559561dabdc4120a2b8e613c0b9d1a",
+     "pages": 77
+    }
+   ]
+  },
+  {
+   "id": "max-und-moritz",
+   "title": "Max und Moritz",
+   "author": "Wilhelm Busch",
+   "year": "1865",
+   "summary": "The classic German picture story, in seven pranks, of two mischievous boys and their comeuppance (German text).",
+   "licence": "Public domain (author died 1908)",
+   "licenceUrl": "https://commons.wikimedia.org/wiki/Category:Max_und_Moritz_(1865)",
+   "attribution": "Max und Moritz by Wilhelm Busch (1865), public domain. Page scans from Wikimedia Commons, Category:Max und Moritz (1865), files \"Max und Moritz (Busch) 001-093\". Downscaled to 800 px wide for StaticOS.",
+   "source": "https://commons.wikimedia.org/wiki/Category:Max_und_Moritz_(1865)",
+   "tags": [
+    "classic",
+    "all-ages",
+    "german",
+    "public-domain",
+    "picture-story"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "mum",
+     "title": "Max und Moritz",
+     "file": "comics/max-und-moritz/max-und-moritz.cbz",
+     "bytes": 6762789,
+     "sha256": "95c51dbd9cbfebae9a02337846cc6e6ac60fdaad0fabce14606800b289bb0a52",
+     "pages": 93
+    }
+   ]
+  },
+  {
+   "id": "all-negro-comics",
+   "title": "All-Negro Comics",
+   "author": "Orrin C. Evans (publisher) and contributors",
+   "year": "1947",
+   "summary": "The complete single issue of the 1947 all-ages anthology, the first comic book written and drawn by African American creators.",
+   "licence": "Public domain (copyright not renewed)",
+   "licenceUrl": "https://onlinebooks.library.upenn.edu/webbin/cinfo/allnegrocomics",
+   "attribution": "All-Negro Comics no. 1 (Orrin C. Evans, 1947), public domain. Scan: Wikimedia Commons, File:All-Negro Comics.pdf (source comicbookplus.com/?dlid=37543). Pages rendered by Commons at 960 px and re-encoded to 720 px wide for StaticOS.",
+   "source": "https://commons.wikimedia.org/wiki/File:All-Negro_Comics.pdf",
+   "tags": [
+    "golden-age",
+    "anthology",
+    "public-domain",
+    "usa"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "issue1",
+     "title": "All-Negro Comics #1 (1947)",
+     "file": "comics/all-negro-comics/all-negro-comics-1.cbz",
+     "bytes": 6111413,
+     "sha256": "4b60a2114f2423a51758e11000a40da821f62a1a712bc17c25df2f36ac307d47",
+     "pages": 51
+    }
+   ]
+  }
+ ]
+}

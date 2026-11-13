@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sopwith: licence and source</title><style>:root{color-scheme:dark}body{margin:0 auto;max-width:720px;padding:32px 20px 64px;background:#0c0913;color:#e1d6e6;font:16px/1.6 system-ui,sans-serif}
+h1{font-size:28px;line-height:1.2;color:#fff;margin:0 0 4px}h2{font-size:20px;color:#fff;margin:32px 0 8px}a{color:#9fd8ff}code{font-size:.88em;overflow-wrap:anywhere;color:#d4f0c8}
+.sub{color:#b5a9bd;margin:0 0 24px}li{margin:8px 0}</style></head>
+<body>
+<h1>StaticOS Free Classics: Sopwith</h1>
+<p class="sub">David L. Clark, BMB Compuscience · SDL port by Simon Howard, 1984. Licence and source for the copy on StaticOS’s Free Classics shelf.</p>
+<p><b>Sopwith</b> was written by David L. Clark at BMB Compuscience Canada in 1984. He later released its source under the GNU GPL.
+    This is <a href="https://fragglet.github.io/sdl-sopwith/">SDL Sopwith</a>, a port by Simon Howard and contributors, slightly modified to run
+    inside StaticOS. StaticOS did not make this game.</p>
+<h2 id="licence">Licences</h2>
+<ul>
+      <li><b>The game:</b> GNU General Public License, version 2 or later: <a href="COPYING.txt">COPYING.txt</a>. Its graphics are part of the source.
+      Authors: <a href="AUTHORS.txt">AUTHORS.txt</a>.</li>
+      <li><b>Libraries built in:</b> <a href="../THIRD-PARTY-NOTICES.txt">SDL and Emscripten’s runtime</a>.</li>
+    </ul>
+
+<h2 id="source">Source code</h2>
+<p>This build is SDL Sopwith <a href="https://github.com/fragglet/sdl-sopwith/tree/sdl-sopwith-2.9.0">tag sdl-sopwith-2.9.0</a>,
+    commit <code>d364bc2641043f6dc5f47e8534b2742f3efeaddb</code>, with one patch, built with Emscripten 4.0.10 (emsdk commit d7b4130688bfa348392b921ab04015aa15c4f154).</p>
+    <ul>
+      <li><a href="source/sdl-sopwith-2.9.0.tar.gz">The complete source at that tag</a> (0.9 MB), hosted here.</li>
+      <li><a href="source/sopwith-menu.patch">Our patch</a>: it takes out two menu items that cannot work in a sandboxed frame. We modified it on 2026-10-31.</li>
+      <li><a href="source/build.sh">The exact build script</a>.</li>
+    </ul>
+</body></html>

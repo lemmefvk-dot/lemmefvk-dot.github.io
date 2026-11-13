@@ -1,0 +1,162 @@
+/* ============================================================
+   feat-tiktok.css — the vertical short-video feed.
+   One video fills the pane; snap scrolling moves between them.
+   ============================================================ */
+
+.tt{display:flex;flex-direction:column;height:100%;min-height:0;background:#0a0509}
+:root[data-theme="light"] .tt{background:var(--bg-2)}
+
+/* ---- top bar ---------------------------------------------- */
+.tt__bar{flex:0 0 auto;display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);
+  border-bottom:1px solid var(--line-0);background:var(--fill-0)}
+.tt__brand{display:flex;align-items:center;gap:var(--sp-2);flex:0 0 auto}
+.tt__brand .icon{width:17px;height:17px;color:var(--accent-soft)}
+.tt__brand b{font-size:var(--fs-13);font-weight:650;color:var(--ink-0)}
+
+/* Feed | Saved */
+.tt__tabs{display:flex;gap:2px;padding:2px;border-radius:var(--r-pill);background:var(--fill-1);border:1px solid var(--line-0);flex:0 0 auto}
+.tt__tab{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:var(--r-pill);
+  font-size:var(--fs-11);font-weight:600;color:var(--ink-2);transition:background var(--t-fast),color var(--t-fast)}
+.tt__tab .icon{width:12px;height:12px}
+.tt__tab:hover{color:var(--ink-0)}
+.tt__tab.is-on{background:var(--fill-accent);color:var(--accent-soft)}
+.tt__tab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.tt__tabn{font-size:calc(9.5px * var(--fs-k,1));font-weight:700;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.tt__tab.is-on .tt__tabn{color:var(--accent-soft)}
+.tt__tabn:empty{display:none}
+.tt__addrow{display:flex;align-items:center;gap:var(--sp-2);flex:1 1 auto;min-width:0;justify-content:flex-end}
+.tt__input{flex:1 1 auto;min-width:0;max-width:340px;height:30px;padding:0 10px;border-radius:var(--r-sm);
+  background:var(--fill-1);border:1px solid var(--line-1);color:var(--ink-0);font-size:var(--fs-12)}
+.tt__input:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+.tt__add{flex:0 0 auto}
+.tt__add .icon{width:13px;height:13px}
+
+/* ---- status line ------------------------------------------ */
+.tt__status{display:none}
+.tt__status.is-info,.tt__status.is-ok,.tt__status.is-error{
+  display:flex;align-items:center;gap:var(--sp-2);flex:0 0 auto;
+  padding:var(--sp-2) var(--sp-4);font-size:var(--fs-11);border-bottom:1px solid var(--line-0)}
+.tt__status .icon{width:13px;height:13px;flex:0 0 auto}
+.tt__status.is-info{color:var(--ink-2);background:var(--fill-0)}
+.tt__status.is-ok{color:var(--accent-soft);background:rgba(var(--accent-rgb),.1)}
+.tt__status.is-error{color:#ffb4c0;background:rgba(220,60,90,.14)}
+:root[data-theme="light"] .tt__status.is-error{color:#9b1230;background:rgba(220,60,90,.1)}
+
+/* ---- the feed --------------------------------------------- */
+.tt__feed{flex:1 1 auto;min-height:0;overflow-y:auto;scroll-snap-type:y mandatory;
+  scrollbar-width:none;outline:none}
+.tt__feed::-webkit-scrollbar{width:0}
+/* while a finger drags or a glide runs, the feed is moved by hand: no snapping under it */
+.tt__feed.is-gliding{scroll-snap-type:none;scroll-behavior:auto}
+.tt__feed[hidden],.tt__shelf[hidden]{display:none}
+.tt__slide{position:relative;height:100%;min-height:100%;scroll-snap-align:start;scroll-snap-stop:always;
+  display:grid;place-items:center;padding:var(--sp-4);overflow:hidden}
+
+.tt__player{position:relative;width:100%;height:100%;max-width:min(100%,420px);
+  border-radius:var(--r-lg);overflow:hidden;background:#000;display:grid;place-items:center;
+  border:1px solid var(--line-1)}
+.tt__frame{width:100%;height:100%;border:0;display:block}
+.tt__thumb{width:100%;height:100%;object-fit:cover;display:block;opacity:.55;filter:saturate(.85)}
+.tt__thumb--none{display:grid;place-items:center;background:var(--fill-1);opacity:1}
+.tt__thumb--none .icon{width:34px;height:34px;color:var(--ink-4)}
+
+/* Touch screens only: the layer that turns a drag on the video into a swipe
+   (a cross-origin player would swallow it). It stops short of the bottom
+   strip, where TikTok draws its own controls. */
+.tt__touch{position:absolute;z-index:1;left:50%;transform:translateX(-50%);top:var(--sp-4);
+  width:min(calc(100% - 2 * var(--sp-4)),420px);bottom:calc(var(--sp-4) + 72px);pointer-events:none;touch-action:none}
+.tt--touch .tt__touch{pointer-events:auto}
+body.is-mobile .tt__touch{top:0;width:100%;bottom:72px}
+
+/* caption + creator, over the bottom of the player */
+.tt__overlay{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(var(--sp-4) + 10px);
+  width:min(100%,420px);padding:0 56px var(--sp-3) var(--sp-4);pointer-events:none;
+  background:linear-gradient(to top,rgba(0,0,0,.72),transparent);border-radius:0 0 var(--r-lg) var(--r-lg)}
+.tt__who{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
+.tt__who b{font-size:var(--fs-13);font-weight:650;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.6)}
+.tt__dim{opacity:.75}
+.tt__badge{font-size:calc(9.5px * var(--fs-k,1));padding:1px 7px;border-radius:var(--r-pill);
+  background:rgba(255,255,255,.16);color:#fff;border:1px solid rgba(255,255,255,.2)}
+.tt__cap{margin:3px 0 0;font-size:var(--fs-11);line-height:1.45;color:rgba(255,255,255,.9);
+  text-shadow:0 1px 6px rgba(0,0,0,.6);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+
+/* right-hand action rail, like the real thing */
+.tt__side{position:absolute;z-index:2;right:calc(50% - min(50%,210px) + 8px);bottom:calc(var(--sp-4) + 22px);
+  display:flex;flex-direction:column;gap:var(--sp-3)}
+.tt__overlay{z-index:2}
+.tt__sbtn{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.16);color:#fff;
+  -webkit-backdrop-filter:var(--blur-1);backdrop-filter:var(--blur-1);transition:background var(--t-fast),transform .08s}
+.tt__sbtn:hover{background:rgba(0,0,0,.68)}
+.tt__sbtn:active{transform:scale(.93)}
+.tt__sbtn:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.tt__sbtn .icon{width:16px;height:16px}
+.tt__sbtn:disabled{opacity:.35;cursor:default}
+.tt__sbtn:disabled:hover{background:rgba(0,0,0,.45)}
+.tt__save.is-on{color:#ffd166;border-color:rgba(255,209,102,.45)}
+.tt__mute[hidden]{display:none}
+/* arrows are for mice and keyboards; on a touch screen you swipe, and get a sound button */
+.tt--touch .tt__nav{display:none}
+.tt__mute{display:none}
+.tt--touch .tt__mute:not([hidden]){display:grid}
+
+/* ---- the Saved shelf -------------------------------------- */
+.tt__shelf{flex:1 1 auto;min-height:0;overflow-y:auto;padding:var(--sp-4)}
+.tt__shelfhead{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-3);margin:0 0 var(--sp-3)}
+.tt__shelfhead b{font-size:var(--fs-13);font-weight:650;color:var(--ink-0)}
+.tt__shelfhead small{font-size:var(--fs-10);color:var(--ink-3)}
+.tt__grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:var(--sp-3)}
+.tt__card{position:relative;border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0);overflow:hidden;
+  transition:border-color var(--t-fast),background var(--t-fast)}
+.tt__card:hover{border-color:var(--line-2);background:var(--fill-1)}
+.tt__cardmain{display:flex;flex-direction:column;width:100%;text-align:left;color:inherit}
+.tt__cardmain:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:var(--r-md)}
+/* no thumbnail exists to show, so the tile is plainly a placeholder */
+.tt__cardart{position:relative;display:grid;place-items:center;aspect-ratio:9/14;
+  background:radial-gradient(80% 60% at 30% 20%,rgba(105,232,223,.16),transparent 60%),radial-gradient(70% 60% at 80% 90%,rgba(209,44,99,.2),transparent 62%),#0d0a0c}
+.tt__cardart>.icon{width:28px;height:28px;color:var(--ink-4)}
+.tt__cardplay{position:absolute;inset:auto auto 10px 10px;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.18);color:#fff;opacity:.85;transition:opacity var(--t-fast),transform var(--t-fast)}
+.tt__cardplay .icon{width:13px;height:13px;margin-left:2px}
+.tt__card:hover .tt__cardplay{opacity:1;transform:scale(1.06)}
+.tt__cardtxt{display:flex;flex-direction:column;gap:2px;padding:var(--sp-2) var(--sp-3) var(--sp-3);min-width:0}
+.tt__cardtxt b{font-size:var(--fs-12);font-weight:650;color:var(--ink-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tt__cardtxt small{font-size:var(--fs-10);color:var(--ink-3)}
+.tt__unsave{position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;
+  opacity:0;transition:opacity var(--t-fast)}
+.tt__unsave .icon{width:13px;height:13px}
+.tt__card:hover .tt__unsave,.tt__card:focus-within .tt__unsave,.tt--touch .tt__unsave{opacity:1}
+.tt__back{flex:0 0 auto;height:24px}
+.tt__back[hidden]{display:none}
+
+/* ---- empty ------------------------------------------------ */
+.tt__empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:var(--sp-3);text-align:center;padding:var(--sp-7) var(--sp-6);color:var(--ink-2)}
+.tt__empty>.icon{width:40px;height:40px;color:var(--ink-4)}
+.tt__empty b{font-size:var(--fs-15);font-weight:650;color:var(--ink-0)}
+.tt__empty p{margin:0;max-width:40ch;font-size:var(--fs-12);line-height:1.6;color:var(--ink-2)}
+.tt__fine{font-size:var(--fs-11)!important;color:var(--ink-3)!important}
+
+/* ---- footer ----------------------------------------------- */
+.tt__foot{flex:0 0 auto;display:flex;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-2) var(--sp-4);border-top:1px solid var(--line-0);background:var(--fill-0)}
+.tt__meta{display:flex;align-items:center;gap:var(--sp-3);min-width:0}
+.tt__pos{font-size:var(--fs-11);color:var(--ink-1);font-variant-numeric:tabular-nums}
+.tt__added{font-size:var(--fs-10);color:var(--ink-3)}
+.tt__note{font-size:calc(9.5px * var(--fs-k,1));color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---- phone ------------------------------------------------ */
+body.is-mobile .tt__bar{flex-wrap:wrap;gap:var(--sp-2)}
+body.is-mobile .tt__tabs{margin-left:auto}
+body.is-mobile .tt__addrow{width:100%;justify-content:stretch}
+body.is-mobile .tt__input{max-width:none}
+body.is-mobile .tt__slide{padding:0}
+body.is-mobile .tt__player{max-width:none;border-radius:0;border:0}
+body.is-mobile .tt__overlay{width:100%;border-radius:0;bottom:var(--sp-4)}
+body.is-mobile .tt__side{right:10px;bottom:calc(var(--sp-6) + 30px)}
+body.is-mobile .tt__note{display:none}
+
+@media (prefers-reduced-motion:reduce){
+  .tt__feed{scroll-behavior:auto}
+  .tt__sbtn,.tt__card,.tt__cardplay,.tt__tab{transition:none}
+}

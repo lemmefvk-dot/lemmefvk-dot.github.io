@@ -1,0 +1,146 @@
+/* Notes — the formatted editor, folders, pictures and the PDF sheet
+   (js/apps/notes.js loads this file the first time Notes opens). The
+   older Notes rules (title, toolbar, view mode, pickers) stay in apps.css. */
+
+/* ---- sidebar: folders ---------------------------------------------- */
+.notes__side{gap:var(--sp-3)}
+.notes__fhead{flex:0 0 auto;min-height:22px}
+.notes__fhead .side__label{padding:0}
+.notes__folders{flex:0 1 auto;max-height:36%;overflow-y:auto;display:flex;flex-direction:column;gap:1px}
+.notes__folders .side__item{width:100%;text-align:left}
+.notes__folder.is-drop{background:var(--fill-accent);box-shadow:inset 0 0 0 1px var(--line-accent)}
+.notes__fin{width:100%;height:28px;padding:0 8px;border-radius:var(--r-sm);background:var(--fill-1);border:1px solid var(--line-accent);color:var(--ink-0);font-size:var(--fs-12)}
+.notes__fin:focus-visible{outline:none}
+.notes__item small.notes__in{display:inline-flex;align-items:center;gap:3px;margin-top:3px;color:var(--accent-soft)}
+.notes__item small.notes__in .icon{width:10px;height:10px;color:currentColor}
+
+/* ---- above the title: which folder ---------------------------------- */
+.notes__where{display:inline-flex;align-items:center;gap:5px;align-self:flex-start;flex:0 0 auto;height:22px;max-width:100%;
+  padding:0 8px 0 6px;margin-bottom:var(--sp-2);border-radius:var(--r-pill);font-size:var(--fs-10);color:var(--ink-3);background:var(--fill-0)}
+.notes__where span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes__where:hover{color:var(--ink-1);background:var(--fill-1)}
+.notes__where:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.notes__where .icon{width:12px;height:12px;flex:0 0 auto}
+
+/* ---- toolbar text buttons (B, I, 1.) -------------------------------- */
+.notes__fmt{font-weight:750;font-size:var(--fs-12);color:var(--ink-2);min-width:28px;font-family:var(--font)}
+.notes__fmt.is-i{font-style:italic;font-weight:600}
+.notes__fmt.is-num{font-size:var(--fs-11);letter-spacing:-.02em}
+
+/* ---- the note itself: editor, view and print share these ------------ */
+.notes__wrap{flex:1;min-height:0;display:flex;position:relative;border-radius:var(--r-sm)}
+.notes__wrap.is-drop{box-shadow:inset 0 0 0 2px var(--accent);background:var(--fill-accent)}
+.notes__doc{font-size:var(--fs-13);line-height:1.7;color:var(--ink-1)}
+.notes__doc p{margin:0;min-height:1.7em}
+.notes__doc h1,.notes__doc h2,.notes__doc h3{color:var(--ink-0);font-weight:680;line-height:1.35;margin:.45em 0 .2em}
+.notes__doc h1{font-size:var(--fs-18)}
+.notes__doc h2{font-size:var(--fs-15)}
+.notes__doc h3{font-size:var(--fs-13)}
+.notes__doc ul,.notes__doc ol{margin:.1em 0;padding-left:1.5em}
+.notes__doc li::marker{color:var(--ink-3)}
+.notes__doc ul.notes__checks{list-style:none;padding-left:0}
+.notes__doc b{font-weight:700;color:var(--ink-0)}
+
+.notes__rich{flex:1;min-height:0;overflow-y:auto;outline:none;white-space:pre-wrap;overflow-wrap:anywhere;
+  padding:0 var(--sp-2) var(--sp-7) 0;caret-color:var(--accent);position:relative}
+.notes__rich.is-empty::before{content:attr(data-placeholder);position:absolute;left:0;top:0;color:var(--ink-4);pointer-events:none}
+.notes__rich ul.notes__checks>li{position:relative;padding-left:26px}
+.notes__rich li[data-done="true"]{color:var(--ink-3);text-decoration:line-through;text-decoration-color:var(--ink-4)}
+.notes__box{position:absolute;left:1px;top:calc((1.7em - 16px) / 2);display:flex;user-select:none}
+.notes__box input{-webkit-appearance:none;appearance:none;margin:0;width:16px;height:16px;cursor:pointer;display:grid;place-items:center;
+  border-radius:5px;border:1.5px solid var(--line-2);background:var(--fill-0);transition:background .12s,border-color .12s}
+.notes__box input::after{content:'';width:8px;height:4px;border:solid var(--accent-ink);border-width:0 0 2px 2px;transform:translateY(-1px) rotate(-45deg) scale(0);transition:transform .12s}
+.notes__box input:checked{background:var(--accent);border-color:var(--accent)}
+.notes__box input:checked::after{transform:translateY(-1px) rotate(-45deg) scale(1)}
+.notes__box input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.notes__box input,.notes__box input::after{transition:none}}
+
+.notes__fig{margin:.7em 0 .45em;position:relative;display:block;width:fit-content;max-width:100%;border-radius:var(--r-md);line-height:0;user-select:none}
+.notes__fig img{display:block;max-width:100%;max-height:340px;border-radius:var(--r-md);background:var(--fill-0)}
+.notes__fig.is-sel{outline:2px solid var(--accent);outline-offset:2px}
+/* on the corner, not over the picture: a small picture stays clickable */
+.notes__figx{position:absolute;top:-9px;right:-9px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+  background:var(--glass-3);color:var(--ink-0);box-shadow:var(--sh-1);opacity:0;transition:opacity var(--t-fast)}
+.notes__figx .icon{width:12px;height:12px}
+.notes__fig:hover .notes__figx,.notes__fig.is-sel .notes__figx,.notes__figx:focus-visible{opacity:1}
+.notes__fig.is-missing{line-height:1.5;padding:10px 12px;border:1px dashed var(--line-2);color:var(--ink-3);font-size:var(--fs-11)}
+.notes__figmiss{display:flex;align-items:center;gap:8px}
+.notes__figmiss .icon{width:14px;height:14px;flex:0 0 auto}
+.notes__view ul.notes__checks>li{list-style:none}
+
+/* ---- picture picker -------------------------------------------------- */
+.notes__picpick{width:330px}
+.notes__pickres.notes__pics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.notes__pic{display:flex;flex-direction:column;gap:4px;padding:4px;border-radius:var(--r-sm);text-align:left;min-width:0}
+.notes__pic:hover,.notes__pic:focus-visible{background:rgba(var(--accent-rgb)/.16);outline:none}
+.notes__pic img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:var(--r-xs);background:var(--fill-1)}
+.notes__pic small{font-size:var(--fs-10);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes__pickfoot{display:flex;align-items:center;gap:6px;margin-top:var(--sp-2)}
+.notes__pickfoot small{color:var(--ink-3);font-size:var(--fs-10)}
+
+/* ---- Export as PDF: the browser prints this sheet and nothing else ---
+   Paper is white whatever the theme, so the sheet uses ink and paper
+   colours rather than the theme's tokens. */
+.notes-print{display:none}
+@media print{
+  html.notes-printing,html.notes-printing body{background:#fff !important;height:auto !important;min-height:0 !important;overflow:visible !important;position:static !important}
+  html.notes-printing body>:not(.notes-print){display:none !important}
+  html.notes-printing .notes-print{display:block !important;color:#000;font-size:12pt;line-height:1.55}
+  .notes-print *{color:#000 !important}
+  .notes-print .notes-print__title{font-size:20pt;margin:0 0 2pt}
+  .notes-print .notes-print__meta{font-size:9pt;color:#555 !important;margin-bottom:14pt}
+  .notes-print h1{font-size:17pt}.notes-print h2{font-size:14pt}.notes-print h3{font-size:12pt}
+  .notes-print h1,.notes-print h2,.notes-print h3{break-after:avoid}
+  .notes-print p:empty{min-height:1em}
+  .notes-print ul.notes__checks li{display:flex;gap:8px;align-items:baseline}
+  .notes-print .notes__fig{break-inside:avoid;margin:8pt 0}
+  .notes-print .notes__fig img{max-width:100%;max-height:9cm}
+}
+
+/* ---- Write together (js/apps/notes-coop.js) -------------------------- */
+.win[data-app="notes"] .app__main{position:relative}
+.notes-co{
+  position:absolute;top:var(--sp-3);right:var(--sp-3);z-index:4;width:min(300px,calc(100% - 24px));max-height:calc(100% - 24px);overflow-y:auto;
+  display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4);
+  border-radius:var(--r-lg);border:1px solid var(--line-1);background:var(--glass-3);box-shadow:var(--sh-3);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);font-size:var(--fs-11);color:var(--ink-1);line-height:1.45;
+}
+.notes-co[hidden]{display:none}
+.notes-co p{margin:0}
+.notes-co__head{display:flex;align-items:center;gap:var(--sp-2)}
+.notes-co__head>.icon{width:15px;height:15px;color:var(--accent-soft)}
+.notes-co__head b{flex:1;font-size:var(--fs-13);color:var(--ink-0)}
+.notes-co__or{color:var(--ink-3);font-size:var(--fs-10);text-align:center}
+.notes-co__join{display:flex;gap:var(--sp-2)}
+.notes-co__in{flex:1;min-width:0;height:28px;padding:0 var(--sp-3);border-radius:var(--r-sm);background:var(--fill-1);border:1px solid var(--line-1);color:var(--ink-0);font-family:var(--mono);font-size:var(--fs-13);letter-spacing:.1em;text-transform:uppercase}
+.notes-co__in::placeholder{letter-spacing:0;text-transform:none;font-family:var(--font);font-size:var(--fs-11);color:var(--ink-3)}
+.notes-co__in:focus,.notes-co__link:focus{outline:none;border-color:var(--line-accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb)/.14)}
+.notes-co__link{height:26px;padding:0 var(--sp-2);border-radius:var(--r-sm);background:var(--fill-1);border:1px solid var(--line-1);color:var(--ink-1);font-size:var(--fs-10);font-family:var(--mono)}
+.notes-co__code{display:flex;gap:4px}
+.notes-co__code span{display:grid;place-items:center;width:32px;height:40px;border-radius:var(--r-sm);background:var(--fill-2);border:1px solid var(--line-2);font-family:var(--mono);font-size:var(--fs-18);font-weight:700;color:var(--ink-0)}
+.notes-co__wait{display:flex;align-items:center;gap:var(--sp-2);color:var(--ink-2)}
+.notes-co__spin{width:13px;height:13px;flex:none;border-radius:50%;border:2px solid rgba(var(--accent-rgb)/.25);border-top-color:var(--accent);animation:notes-co-spin .8s linear infinite}
+@keyframes notes-co-spin{to{transform:rotate(360deg)}}
+.notes-co__with{display:flex;align-items:center;gap:var(--sp-2);font-weight:600;color:var(--ink-0)}
+.notes-co__with i,.notes-co__who i{width:9px;height:9px;flex:none;border-radius:50%;background:hsl(var(--h,200) 85% 60%)}
+.notes-co__note{padding:var(--sp-2) var(--sp-3);border-radius:var(--r-sm);background:var(--fill-1)}
+.notes-co__err{padding:var(--sp-2) var(--sp-3);border-radius:var(--r-sm);background:rgba(255,60,80,.12);color:#ffb3bf}
+:root[data-theme="light"] .notes-co__err{color:#b4233c}
+.notes-co__fine{color:var(--ink-3);font-size:var(--fs-10)}
+.notes-co__leave{align-self:flex-start}
+/* who is connected, above the page */
+.notes-co__bar{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-2) var(--sp-3);flex:0 0 auto;min-height:28px;padding:2px var(--sp-3);margin-bottom:var(--sp-2);
+  border-radius:var(--r-sm);background:var(--fill-accent);border:1px solid var(--line-accent);font-size:var(--fs-11);color:var(--ink-1)}
+.notes-co__bar[hidden]{display:none}
+.notes-co__who{display:inline-flex;align-items:center;gap:5px;font-weight:600;color:var(--ink-0);min-width:0}
+.notes-co__who span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes-co__state{color:var(--ink-2)}
+/* the friend's caret and selection, over the page (nothing here takes a click) */
+.notes-co__layer{position:absolute;inset:0;z-index:2;overflow:hidden;pointer-events:none;--h:200}
+.notes-co__layer[hidden]{display:none}
+.notes-co__marks i{position:absolute;background:hsl(var(--h) 85% 55% / .28);border-radius:2px}
+.notes-co__caret{position:absolute;width:2px;background:hsl(var(--h) 85% 50%);border-radius:1px}
+.notes-co__name{position:absolute;left:-1px;bottom:100%;padding:0 5px;border-radius:var(--r-sm) var(--r-sm) var(--r-sm) 0;white-space:nowrap;
+  background:hsl(var(--h) 70% 34%);color:#fff;font-size:var(--fs-10);font-weight:600;line-height:1.5}
+.notes-co__caret.is-low .notes-co__name{bottom:auto;top:100%;border-radius:0 var(--r-sm) var(--r-sm) var(--r-sm)}
+@media (prefers-reduced-motion:reduce){.notes-co__spin{animation-duration:2.4s}}

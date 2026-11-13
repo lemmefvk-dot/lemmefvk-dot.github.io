@@ -1,0 +1,2032 @@
+/* ============================================================
+   features.css — styles for the newer app work.
+
+   Kept apart from apps.css so the individual feature builds do
+   not all rewrite the same file. Everything here uses the same
+   tokens as the rest of the system; nothing redefines a token.
+   ============================================================ */
+
+/* ==================================================================
+   System Monitor  — .mon-*
+
+   Every figure here is read from a real browser API. The layout
+   leans on that: plenty of room for the honest "cannot be
+   measured" panel, because naming the gap is the point.
+   ================================================================== */
+
+.mon{display:flex;flex-direction:column;height:100%;min-height:0}
+.mon__tabs{
+  display:flex;gap:2px;flex:0 0 auto;padding:var(--sp-3) var(--sp-4) 0;
+  border-bottom:1px solid var(--line-1);overflow-x:auto;scrollbar-width:none;
+}
+.mon__tabs::-webkit-scrollbar{display:none}
+.mon__tab{
+  display:flex;align-items:center;gap:6px;padding:7px 11px;flex:none;cursor:pointer;
+  border:0;background:transparent;color:var(--ink-3);font-size:var(--fs-11);
+  border-bottom:2px solid transparent;
+  transition:color var(--t-fast),border-color var(--t-fast);
+}
+.mon__tab:hover{color:var(--ink-1)}
+.mon__tab.is-on{color:var(--ink-0);border-bottom-color:var(--accent)}
+.mon__tab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.mon__body{flex:1;min-height:0;overflow:auto;padding:var(--sp-4)}
+
+.mon__grid{display:grid;gap:var(--sp-4);grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.mon__card{
+  padding:var(--sp-4);border-radius:var(--r-md);
+  background:var(--fill-0);border:1px solid var(--line-0);
+  display:flex;flex-direction:column;gap:var(--sp-3);min-width:0;
+}
+.mon__cardh{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-11);color:var(--ink-0)}
+.mon__cardh .icon{color:var(--accent-soft)}
+.mon__big{font-size:var(--fs-24);font-weight:720;color:var(--ink-0);letter-spacing:-.5px;line-height:1.1}
+.mon__row{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-3);font-size:var(--fs-10);color:var(--ink-3)}
+.mon__row b{color:var(--ink-1);font-weight:600;text-align:right;min-width:0}
+.mon__card small.dim{font-size:var(--fs-10);color:var(--ink-3);line-height:1.5}
+.mon__wait{display:grid;place-items:center;min-height:80px}
+.mon__chips{display:flex;flex-wrap:wrap;gap:5px}
+
+/* rings */
+.mon__ring{position:relative;display:grid;place-items:center;width:100%;min-height:84px}
+.mon__ring svg{width:84px;height:84px;transform:rotate(-90deg)}
+.mon__ringbg{fill:none;stroke:var(--fill-2);stroke-width:6}
+.mon__ringfg{
+  fill:none;stroke:var(--accent);stroke-width:6;stroke-linecap:round;
+  transition:stroke-dashoffset var(--t-slow) var(--ease-out);
+}
+.mon__ringin{position:absolute;display:flex;flex-direction:column;align-items:center;line-height:1.1}
+.mon__ringin b{font-size:var(--fs-15);color:var(--ink-0);font-weight:700}
+.mon__ringin small{font-size:var(--fs-10);color:var(--ink-3)}
+.mon__ringsub{position:absolute;bottom:-2px;font-size:var(--fs-10);color:var(--ink-3)}
+
+/* sparklines */
+.mon__sparkwrap{width:100%}
+.mon__spark{width:100%;display:block;overflow:visible}
+.mon__sparkline{fill:none;stroke:var(--accent);stroke-width:1.6;vector-effect:non-scaling-stroke}
+.mon__sparkfill{fill:rgba(var(--accent-rgb)/.14);stroke:none}
+.mon__fps{display:flex;flex-direction:column;gap:var(--sp-3)}
+
+/* transferred-by-type bars */
+.mon__bars{display:flex;flex-direction:column;gap:6px}
+.mon__bar{display:grid;grid-template-columns:70px 1fr auto;align-items:center;gap:var(--sp-3);font-size:var(--fs-10);color:var(--ink-3)}
+.mon__bar i{display:block;height:4px;border-radius:2px;background:var(--fill-2);overflow:hidden}
+.mon__bar u{display:block;height:100%;background:var(--accent);border-radius:2px;text-decoration:none;
+  transition:width var(--t-slow) var(--ease-out)}
+.mon__bar b{color:var(--ink-1);font-weight:600}
+
+/* the honest panel */
+.mon__cant{display:flex;flex-direction:column;gap:7px}
+.mon__cantrow{display:flex;flex-direction:column;gap:1px;padding-left:var(--sp-3);border-left:2px solid var(--line-1)}
+.mon__cantrow b{font-size:var(--fs-10);color:var(--ink-2);font-weight:600}
+.mon__cantrow small{font-size:var(--fs-10);color:var(--ink-3)}
+.mon__missing{display:flex;gap:var(--sp-3);align-items:flex-start;padding:var(--sp-3);
+  border-radius:var(--r-sm);background:var(--fill-0);border:1px dashed var(--line-1)}
+.mon__missing .icon{color:var(--ink-3);flex:none;margin-top:1px}
+.mon__missing b{display:block;font-size:var(--fs-10);color:var(--ink-1)}
+.mon__missing small{font-size:var(--fs-10);color:var(--ink-3);line-height:1.5}
+
+/* windows table */
+.mon__procs{display:flex;flex-direction:column;gap:2px}
+.mon__prochead,.mon__proc{
+  display:grid;grid-template-columns:minmax(80px,1fr) minmax(0,1.4fr) 82px 82px;
+  gap:var(--sp-3);align-items:center;padding:6px var(--sp-3);font-size:var(--fs-10);
+}
+.mon__prochead{color:var(--ink-3);border-bottom:1px solid var(--line-1);text-transform:uppercase;letter-spacing:.6px}
+.mon__proc{color:var(--ink-2);border-radius:var(--r-sm)}
+.mon__proc:hover{background:var(--fill-1)}
+.mon__proc b{color:var(--ink-0);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mon__proc span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+@media (prefers-reduced-motion:reduce){
+  .mon__ringfg,.mon__bar u{transition:none}
+}
+
+/* ==================================================================
+   Static Cloud  — .cl-*
+
+   Two kinds of thing share this page: streamed surfaces someone
+   else runs, and emulated titles the Internet Archive serves.
+   They are styled differently on purpose — a stream is a service
+   with caveats, an emulated game is just a game.
+   ================================================================== */
+
+.cl__hero{min-height:auto}
+
+.cl-card{
+  display:flex;align-items:center;gap:var(--sp-4);flex:0 0 300px;
+  padding:var(--sp-4);border-radius:var(--r-md);text-align:left;cursor:pointer;
+  background:var(--fill-0);border:1px solid var(--line-1);
+  transition:background var(--t-fast),border-color var(--t-fast),transform var(--t-med) var(--ease);
+}
+.cl-card:hover{background:var(--fill-1);border-color:var(--line-accent);transform:translateY(-3px)}
+.cl-card:active{transform:translateY(-1px) scale(.99)}
+.cl-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cl-card__ic{
+  display:grid;place-items:center;width:44px;height:44px;flex:none;border-radius:var(--r-md);
+  background:var(--fill-accent);color:var(--accent-soft);border:1px solid var(--line-accent);
+}
+.cl-card__b{flex:1;min-width:0}
+.cl-card__t{font-size:var(--fs-12);font-weight:660;color:var(--ink-0)}
+.cl-card__d{font-size:var(--fs-10);color:var(--ink-3);line-height:1.45;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cl-rbxb{padding-top:5px}
+
+/* skeletons while the archive answers */
+.cl-skel{
+  aspect-ratio:1/1;border-radius:var(--r-md);background:var(--fill-1);
+  position:relative;overflow:hidden;
+}
+.cl-skel::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent);
+  animation:cl-shim 1.3s var(--ease) infinite;
+}
+@keyframes cl-shim{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+/* the play stage */
+.cl__stage{display:flex;flex-direction:column;height:100%;min-height:0}
+.cl__bar{
+  display:flex;align-items:center;gap:var(--sp-3);flex:0 0 auto;
+  padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--line-1);background:var(--bg-0);
+}
+.cl__title{font-size:var(--fs-12);color:var(--ink-0);flex:none}
+.cl__note{font-size:var(--fs-10);color:var(--ink-3);min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.cl__stagewrap{position:relative;flex:1;min-height:420px;background:#000}
+.cl__frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
+.cl__stage.is-full .cl__bar{
+  position:absolute;top:0;left:0;right:0;z-index:5;opacity:0;
+  background:var(--glass-3);backdrop-filter:blur(12px);transition:opacity var(--t-fast);
+}
+.cl__stage.is-full:hover .cl__bar,.cl__stage.is-full .cl__bar:focus-within{opacity:1}
+
+/* the honest "these refuse" table */
+.cl__blocked{display:flex;flex-direction:column;gap:var(--sp-3);margin-top:var(--sp-3)}
+.cl__blockedrow{
+  display:grid;grid-template-columns:minmax(120px,160px) minmax(140px,200px) 1fr;
+  gap:var(--sp-3);align-items:baseline;padding-left:var(--sp-3);
+  border-left:2px solid var(--line-1);
+}
+.cl__blockedrow b{font-size:var(--fs-11);color:var(--ink-1);font-weight:600}
+.cl__blockedrow code{font-size:var(--fs-10);color:var(--accent-soft);
+  font-family:var(--font-mono,ui-monospace,Menlo,monospace)}
+.cl__blockedrow small{font-size:var(--fs-10);color:var(--ink-3);line-height:1.5}
+
+@media (max-width:640px){
+  .cl__blockedrow{grid-template-columns:1fr}
+  .cl-card{flex-basis:100%}
+}
+@media (prefers-reduced-motion:reduce){
+  .cl-skel::after{animation:none}
+  .cl-card{transition:none}
+}
+
+/* ==================================================================
+   About This Static — .ab-*
+   ================================================================== */
+
+.ab{display:flex;flex-direction:column;height:100%;min-height:0;overflow:auto;padding:var(--sp-5)}
+.ab__head{display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-5)}
+.ab__mark{
+  display:grid;place-items:center;width:54px;height:54px;flex:none;
+  border-radius:var(--r-lg);border:1px solid var(--line-accent);
+  background:var(--fill-accent);color:var(--accent);cursor:pointer;
+  transition:transform var(--t-fast) var(--spring),box-shadow var(--t-med);
+}
+.ab__mark:hover{transform:scale(1.04);box-shadow:var(--glow)}
+.ab__mark:active{transform:scale(.95)}
+.ab__mark:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.ab__name{font-size:var(--fs-15);font-weight:720;color:var(--ink-0);letter-spacing:-.3px}
+.ab__tag{font-size:var(--fs-10);color:var(--ink-3)}
+
+.ab__list{display:flex;flex-direction:column;gap:2px}
+.ab__sec{
+  font-size:var(--fs-10);color:var(--ink-3);text-transform:uppercase;letter-spacing:.8px;
+  margin:var(--sp-4) 0 var(--sp-2);
+}
+.ab__sec:first-child{margin-top:0}
+.ab__row{
+  display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-4);
+  padding:5px var(--sp-3);border-radius:var(--r-sm);font-size:var(--fs-11);color:var(--ink-3);
+}
+.ab__row:hover{background:var(--fill-0)}
+.ab__row b{color:var(--ink-1);font-weight:600;text-align:right;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.ab__credit{display:flex;flex-direction:column;gap:1px;padding:5px var(--sp-3);
+  border-left:2px solid var(--line-1);margin-left:var(--sp-2)}
+.ab__credit b{font-size:var(--fs-11);color:var(--ink-1);font-weight:600}
+.ab__credit small{font-size:var(--fs-10);color:var(--ink-3)}
+
+.ab__phil{display:flex;gap:var(--sp-3);align-items:flex-start;padding:var(--sp-3);
+  font-size:var(--fs-11);color:var(--ink-1);line-height:1.55}
+.ab__phil .icon{color:var(--accent);flex:none;margin-top:3px}
+.ab__note{
+  margin-top:var(--sp-4);padding:var(--sp-4);border-radius:var(--r-md);
+  background:var(--fill-0);border:1px solid var(--line-0);
+  font-size:var(--fs-10);color:var(--ink-3);line-height:1.6;
+}
+.ab__btns{display:flex;gap:var(--sp-3);margin-top:var(--sp-5)}
+.ab__back{display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-4);
+  font-size:var(--fs-12);color:var(--ink-0)}
+
+@media (prefers-reduced-motion:reduce){ .ab__mark{transition:none} }
+
+/* ============================================================
+   SHELL · WIDGET RAIL  (js/shell/widgets.js)
+   The rail is user-arranged: a grip on every card opens its menu
+   or drags it, and the cards that scroll get a resize handle.
+   ============================================================ */
+.wgr__bar{display:flex;align-items:center;gap:var(--sp-2);flex:0 0 auto;
+  min-height:22px;margin-bottom:calc(var(--sp-4) * -1 + 2px)}
+.wgr__manage{opacity:0;transition:opacity var(--t-fast)}
+.widgets:hover .wgr__manage,.wgr__manage:focus-visible{opacity:1}
+
+.wg{position:relative}
+.widgets.is-settled .wg{animation:none}
+
+/* grip — options + drag handle, quiet until the card is touched */
+.wg__grip{
+  position:absolute;top:6px;right:6px;z-index:3;
+  width:22px;height:22px;display:grid;place-items:center;border-radius:var(--r-sm);
+  color:var(--ink-3);background:var(--glass-2);opacity:0;cursor:grab;touch-action:none;
+  transition:opacity var(--t-fast),color var(--t-fast),background var(--t-fast);
+}
+.wg__grip .icon{width:14px;height:14px}
+.wg:hover .wg__grip,.wg:focus-within .wg__grip{opacity:1}
+.wg__grip:hover{color:var(--ink-0);background:var(--fill-2)}
+.wg__grip:focus-visible{opacity:1}
+.wg.is-drag{
+  z-index:5;cursor:grabbing;border-color:var(--line-accent);
+  box-shadow:var(--sh-3),var(--glow);transition:none;
+}
+.wg.is-drag .wg__grip{cursor:grabbing}
+.widgets.is-sorting{cursor:grabbing}
+
+/* scrolling body + its resize handle */
+.wg__scroll{height:var(--wg-h,150px);overflow-y:auto;overscroll-behavior:contain;
+  scrollbar-width:thin;margin-right:calc(var(--sp-2) * -1);padding-right:var(--sp-2)}
+.wg__scroll::-webkit-scrollbar{width:5px}
+.wg__scroll::-webkit-scrollbar-thumb{background:var(--fill-2);border-radius:var(--r-pill)}
+.wg__grab{
+  height:11px;margin:2px calc(var(--sp-5) * -1) calc(var(--sp-5) * -1 + 2px);
+  display:grid;place-items:center;cursor:ns-resize;touch-action:none;
+}
+.wg__grab::after{
+  content:"";width:26px;height:2px;border-radius:var(--r-pill);
+  background:var(--fill-2);transition:background var(--t-fast),width var(--t-fast);
+}
+.wg:hover .wg__grab::after{background:var(--fill-3)}
+.wg__grab:hover::after,.wg__grab.is-on::after{background:var(--accent);width:40px}
+.wg__grab:focus-visible::after{background:var(--accent);width:40px}
+
+/* shared small states */
+.wg__empty{font-size:var(--fs-11);color:var(--ink-3);line-height:1.5}
+.wg__note{font-size:var(--fs-10);color:var(--ink-3);line-height:1.45;margin-top:var(--sp-3)}
+.wg__warn{font-size:var(--fs-10);color:var(--ink-2);margin-bottom:var(--sp-3)}
+.wg-kv{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);
+  padding:5px 0;font-size:var(--fs-11);color:var(--ink-2);border-top:1px solid var(--line-0)}
+.wg-kv b{color:var(--ink-0);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* clock + weather open buttons fill their card */
+.wg-clock__btn,.wg-wx__open{display:block;width:100%;padding:0;text-align:left}
+.wg-wx__ask .field{margin-top:var(--sp-3)}
+
+/* calendar */
+.wg-cal__head{display:flex;align-items:baseline;gap:var(--sp-3);margin-bottom:var(--sp-3)}
+.wg-cal__m{font-size:var(--fs-12);font-weight:620;color:var(--ink-0)}
+.wg-cal__sub{font-size:var(--fs-10);color:var(--ink-3)}
+.wg-cal__grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.wg-cal__dow{font-size:calc(9px * var(--fs-k,1));color:var(--ink-4);text-align:center;padding-bottom:2px}
+.wg-cal__pad{height:22px}
+.wg-cal__d{
+  height:22px;border-radius:var(--r-sm);font-size:var(--fs-10);color:var(--ink-2);
+  display:grid;place-items:center;font-variant-numeric:tabular-nums;
+  transition:background var(--t-fast),color var(--t-fast);
+}
+.wg-cal__d:hover{background:var(--fill-1);color:var(--ink-0)}
+.wg-cal__d.is-today{background:var(--accent);color:var(--accent-ink);font-weight:700}
+/* a day with something in Calendar */
+.wg-cal__d.has-ev{position:relative}
+.wg-cal__d.has-ev::after{content:"";position:absolute;bottom:2px;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--accent-soft)}
+.wg-cal__d.is-today.has-ev::after{background:var(--accent-ink)}
+
+/* battery */
+.wg-bat{display:flex;align-items:center;gap:var(--sp-4)}
+.wg-bat__n{font-size:var(--fs-24);font-weight:600;color:var(--ink-0);font-variant-numeric:tabular-nums;line-height:1.1}
+.wg-bat__s{font-size:var(--fs-11);color:var(--ink-1)}
+.wg-bat__sub{font-size:var(--fs-10);color:var(--ink-3)}
+.wg-bat__bar{height:4px;border-radius:var(--r-pill);background:var(--fill-1);margin-top:var(--sp-4);overflow:hidden}
+.wg-bat__bar i{display:block;height:100%;border-radius:inherit;background:var(--accent);
+  transition:width var(--t-slow) var(--ease)}
+
+/* network */
+.wg-net__top{display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-3)}
+.wg-net__top .icon{width:18px;height:18px;color:var(--accent-soft);flex:0 0 auto}
+.wg-net__s{font-size:var(--fs-12);font-weight:620;color:var(--ink-0)}
+.wg-net__sub{font-size:var(--fs-10);color:var(--ink-3)}
+
+/* list widgets (recent files, notes) */
+.wg-add{margin-bottom:var(--sp-3)}
+.wg-list{display:flex;flex-direction:column;gap:1px}
+.wg-row{
+  display:flex;align-items:center;gap:var(--sp-3);width:100%;text-align:left;
+  padding:5px var(--sp-3);border-radius:var(--r-sm);font-size:var(--fs-11);color:var(--ink-1);
+  transition:background var(--t-fast);
+}
+.wg-row:hover{background:var(--fill-1)}
+.wg-row .icon{color:var(--ink-3);flex:0 0 auto}
+.wg-row small{font-size:calc(9px * var(--fs-k,1));color:var(--ink-4);flex:0 0 auto}
+
+/* games + anime shelves */
+.wg-shelf{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp-3)}
+.wg-shelf__i{display:flex;flex-direction:column;gap:3px;text-align:left;
+  font-size:calc(9px * var(--fs-k,1));color:var(--ink-2);min-width:0}
+.wg-shelf__art{
+  aspect-ratio:1;border-radius:var(--r-sm);background:var(--fill-1) center/cover no-repeat;
+  border:1px solid var(--line-0);transition:transform var(--t-med) var(--ease),border-color var(--t-fast);
+}
+.wg-shelf__i:hover .wg-shelf__art{transform:translateY(-2px);border-color:var(--line-accent)}
+.wg-shelf__i:hover{color:var(--ink-0)}
+
+@media (prefers-reduced-motion:reduce){
+  .wgr__manage,.wg__grip,.wg__grab::after,.wg-cal__d,.wg-row,
+  .wg-bat__bar i,.wg-shelf__art{transition:none}
+  .wg-shelf__i:hover .wg-shelf__art{transform:none}
+  .widgets .wg{animation:none}
+}
+
+/* ==================================================================
+   Static Games  — .ag-*   (js/portal/games.js)
+
+   The catalogue is ~5,900 rows, so the layout is built around the
+   two things that keep it cheap: horizontal shelves that hold at
+   most 18 cards, and a paged grid. Nothing here renders a figure
+   the catalogue does not actually carry, so cards deliberately
+   have empty corners where a fake rating would otherwise sit.
+   ================================================================== */
+
+/* ---- the Home / Browse switch ---------------------------------- */
+.ag-tabs__hold{padding:var(--sp-4) var(--sp-6) 0}
+.ag-tabs{
+  display:flex;align-items:center;gap:var(--sp-2);
+  padding-bottom:var(--sp-3);border-bottom:1px solid var(--line-0);
+}
+.ag-tab{
+  display:flex;align-items:center;gap:6px;height:28px;padding:0 var(--sp-4);flex:0 0 auto;
+  border-radius:var(--r-pill);border:1px solid transparent;background:transparent;
+  font-size:var(--fs-11);font-weight:620;color:var(--ink-2);cursor:pointer;
+  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast);
+}
+.ag-tab .icon{width:13px;height:13px}
+.ag-tab:hover{background:var(--fill-1);color:var(--ink-0)}
+.ag-tab.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--accent-soft)}
+.ag-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ag-tabs__note{font-size:var(--fs-10);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.ag-body{display:flex;flex-direction:column}
+
+/* ---- hero ------------------------------------------------------- */
+.ag-hero{margin:var(--sp-5) var(--sp-6) 0;min-height:264px}
+.ag-hero .cx__hero-in{max-width:560px}
+.ag-hero__dots{
+  position:absolute;right:var(--sp-5);bottom:var(--sp-5);z-index:2;
+  display:flex;gap:6px;
+}
+.ag-hero__dot{
+  width:22px;height:4px;border-radius:var(--r-pill);border:0;padding:0;cursor:pointer;
+  background:rgba(255,255,255,.28);
+  transition:background var(--t-fast),width var(--t-med) var(--ease);
+}
+.ag-hero__dot:hover{background:rgba(255,255,255,.5)}
+.ag-hero__dot.is-on{background:var(--accent-soft);width:30px}
+.ag-hero__dot:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+/* ---- shelves ---------------------------------------------------- */
+.ag-shelf{padding-top:var(--sp-6)}
+.ag-shelf__sub{
+  font-size:var(--fs-10);color:var(--ink-3);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.ag-rail{scroll-snap-type:x proximity;padding-bottom:var(--sp-4);padding-top:2px}
+.ag-rail>*{flex:0 0 172px;scroll-snap-align:start}
+.ag-rail__nav{width:24px;min-width:24px;height:24px;border-radius:var(--r-pill);flex:0 0 auto}
+.ag-rail__nav .icon{width:13px;height:13px}
+.ag-foot{
+  display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap;
+  padding:var(--sp-6);margin-top:var(--sp-4);border-top:1px solid var(--line-0);
+  font-size:var(--fs-10);color:var(--ink-3);
+}
+
+/* ---- card ------------------------------------------------------- */
+.ag-card{position:relative}
+/* The whole card is one button so a heart can sit on top of it — a button
+   inside a button is invalid and the inner one is unreachable by keyboard. */
+.ag-card__go{
+  position:absolute;inset:0;z-index:4;padding:0;border:0;cursor:pointer;
+  background:transparent;border-radius:var(--r-md);
+}
+.ag-card__go:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.ag-card__fav{
+  position:absolute;z-index:5;top:var(--sp-3);right:var(--sp-3);
+  width:26px;height:26px;min-width:26px;padding:0;cursor:pointer;
+  display:grid;place-items:center;border-radius:var(--r-pill);
+  border:1px solid var(--line-1);background:var(--glass-2);color:var(--ink-1);
+  -webkit-backdrop-filter:var(--blur-1);backdrop-filter:var(--blur-1);
+  opacity:0;transform:scale(.9);
+  transition:opacity var(--t-fast),transform var(--t-fast) var(--spring),color var(--t-fast);
+}
+.ag-card__fav .icon{width:13px;height:13px}
+.ag-card:hover .ag-card__fav,
+.ag-card__fav:focus-visible,
+.ag-card__fav.is-on{opacity:1;transform:none}
+.ag-card__fav:hover{color:var(--ink-0);border-color:var(--line-accent)}
+.ag-card__fav.is-on{color:var(--accent-soft);border-color:var(--line-accent);background:var(--fill-accent)}
+.ag-card__fav:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ag-dot{flex:0 0 auto}
+.ag-nowrap{flex:0 0 auto;white-space:nowrap}
+
+/* host cover art, layered over the procedural gradient */
+.ag-cover{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+  opacity:0;transition:opacity var(--t-med) var(--ease);
+}
+.ag-cover.is-in{opacity:1}
+
+/* ---- browse bar ------------------------------------------------- */
+.ag-bar{flex-wrap:wrap;align-items:flex-start}
+.ag-bar .cx__cats{flex:1 1 320px}
+.ag-bar__tools{display:flex;align-items:center;gap:var(--sp-3);flex:0 0 auto}
+.ag-find{flex:0 0 220px;height:26px}
+.ag-cat__n{
+  text-decoration:none;font-size:calc(9px * var(--fs-k,1));font-weight:700;opacity:.62;
+  padding-left:4px;font-variant-numeric:tabular-nums;
+}
+.cx-cat:focus-visible,.cx-pages button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---- empty states ----------------------------------------------- */
+.ag-empty{height:auto;padding:var(--sp-7) var(--sp-5)}
+.ag-empty__acts{display:flex;gap:var(--sp-3);flex-wrap:wrap;justify-content:center;margin-top:var(--sp-2)}
+
+/* ---- the play stage --------------------------------------------- */
+.ag-stage{
+  position:relative;display:flex;flex-direction:column;gap:var(--sp-3);
+  margin:var(--sp-5) var(--sp-6) 0;
+}
+.ag-stage__bar{
+  display:flex;align-items:center;gap:var(--sp-3);flex:0 0 auto;
+  padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);
+  border:1px solid var(--line-1);background:var(--glass-1);
+}
+.ag-stage__t{
+  font-size:var(--fs-12);font-weight:620;color:var(--ink-0);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.ag-stage__screen{
+  position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;
+  border-radius:var(--r-lg);border:1px solid var(--line-1);
+  background:var(--bg-0);box-shadow:var(--sh-3);
+}
+.ag-stage:not(.is-playing) .ag-stage__screen{max-height:460px}
+.ag-stage.is-playing .ag-stage__screen{aspect-ratio:auto;height:var(--stage-h,66vh);min-height:320px}
+.ag-stage__poster{position:absolute;inset:0;background:var(--art,var(--fill-1));background-size:cover}
+.ag-stage__poster::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(0deg,rgba(6,2,5,.72),rgba(6,2,5,.24) 60%);
+}
+.ag-stage__start{
+  position:absolute;inset:0;z-index:2;display:flex;gap:var(--sp-3);
+  align-items:center;justify-content:center;cursor:pointer;
+  border:0;background:transparent;color:#fff;font-size:var(--fs-13);font-weight:680;
+}
+.ag-stage__start i{
+  display:grid;place-items:center;width:54px;height:54px;border-radius:50%;
+  background:linear-gradient(180deg,var(--accent-soft),var(--accent));
+  box-shadow:var(--glow-lg),inset 0 1px 0 rgba(255,255,255,.4);
+  transition:transform var(--t-med) var(--spring);
+}
+.ag-stage__start .icon{width:20px;height:20px;color:#2a0310;margin-left:3px}
+.ag-stage__start:hover i{transform:scale(1.07)}
+.ag-stage__start:focus-visible{outline:2px solid var(--accent);outline-offset:-4px;border-radius:var(--r-lg)}
+.ag-stage__frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;z-index:3}
+
+.ag-stage__load{position:absolute;inset:0;z-index:2}
+.ag-stage__shimmer{position:absolute;inset:0;border-radius:0}
+.ag-stage__loadtext{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:var(--sp-3);
+  padding:var(--sp-6);text-align:center;
+}
+.ag-stage__loadtext b{font-size:var(--fs-13);color:var(--ink-0);font-weight:640}
+.ag-stage__loadtext small{font-size:var(--fs-11);color:var(--ink-2);line-height:1.6;max-width:420px}
+.ag-stage__err{
+  position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:var(--sp-3);
+  padding:var(--sp-6);text-align:center;background:var(--bg-0);
+}
+.ag-stage__err .icon{width:28px;height:28px;color:#ff97a7}
+.ag-stage__err b{font-size:var(--fs-13);color:#ffc2cc;font-weight:640}
+.ag-stage__err small{font-size:var(--fs-11);color:var(--ink-2);line-height:1.6;max-width:460px}
+
+/* real browser fullscreen: the bar rides on top of the frame */
+.ag-stage:fullscreen{margin:0;gap:0;background:#000}
+.ag-stage:fullscreen .ag-stage__screen{
+  height:100%;min-height:0;border:0;border-radius:0;box-shadow:none;
+}
+.ag-servers{display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;min-width:0}
+.ag-servers::-webkit-scrollbar{display:none}
+.ag-server{
+  display:inline-flex;align-items:center;gap:4px;flex:none;padding:4px 9px;border-radius:99px;cursor:pointer;
+  font-size:var(--fs-10);color:var(--ink-2);background:var(--fill-0);border:1px solid var(--line-1);
+  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast);
+}
+.ag-server:hover{color:var(--ink-0);background:var(--fill-1)}
+.ag-server.is-on{color:var(--accent-ink);background:var(--accent);border-color:transparent}
+.ag-server svg{width:12px;height:12px}
+.ag-stage:fullscreen .ag-stage__bar{
+  position:absolute;left:var(--sp-4);right:var(--sp-4);top:var(--sp-4);z-index:5;
+  opacity:0;transition:opacity var(--t-fast);
+}
+.ag-stage:fullscreen:hover .ag-stage__bar,
+.ag-stage:fullscreen .ag-stage__bar:focus-within{opacity:1}
+
+/* ---- detail ----------------------------------------------------- */
+.ag-detail__hold{display:flex;flex-direction:column}
+/* Poster on the left, facts on the right; once the game is running the poster
+   column goes full width and the facts drop underneath it. */
+.ag-detail__top{
+  display:grid;gap:var(--sp-6);align-items:start;
+  grid-template-columns:minmax(0,1.3fr) minmax(280px,1fr);
+  padding:var(--sp-5) var(--sp-6) 0;
+}
+.ag-detail__top.is-playing{grid-template-columns:minmax(0,1fr)}
+.ag-detail__top .ag-stage{margin:0}
+.ag-detail{padding:0}
+.ag-detail__in{display:flex;flex-direction:column;gap:var(--sp-4);max-width:860px}
+.ag-detail__head{display:flex;align-items:center;gap:var(--sp-3)}
+.ag-detail__t{font-size:var(--fs-18);font-weight:720;letter-spacing:-.4px;color:var(--ink-0);min-width:0}
+.ag-detail__chips{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.ag-chip{cursor:pointer;transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast)}
+.ag-chip:hover{background:var(--fill-accent);color:var(--accent-soft);border-color:var(--line-accent)}
+.ag-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ag-detail__desc{font-size:var(--fs-11);color:var(--ink-1);line-height:1.68;max-width:70ch}
+.ag-detail__desc.is-missing{color:var(--ink-3);font-style:italic}
+.ag-detail__facts{display:flex;flex-wrap:wrap;gap:var(--sp-5)}
+.ag-fact{display:flex;align-items:center;gap:var(--sp-3);min-width:0}
+.ag-fact .icon{width:14px;height:14px;color:var(--accent-soft);flex:0 0 auto}
+.ag-fact u{display:block;text-decoration:none;font-size:calc(9.5px * var(--fs-k,1));letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-3)}
+.ag-fact b{display:block;font-size:var(--fs-11);color:var(--ink-0);font-weight:620}
+.ag-detail__acts{display:flex;flex-wrap:wrap;gap:var(--sp-3);margin-top:var(--sp-2)}
+.ag-detail__warn{
+  display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);
+  border-radius:var(--r-md);border:1px solid var(--line-1);background:var(--fill-0);
+}
+.ag-detail__warn .icon{width:14px;height:14px;color:#fcd34d;flex:0 0 auto}
+.ag-detail__warn small{font-size:var(--fs-10);color:var(--ink-2)}
+
+/* ---- narrow windows --------------------------------------------- */
+/* the chip rail scrolls, so show that its right edge continues */
+.ag-bar .cx__cats{
+  -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 24px),transparent);
+  mask-image:linear-gradient(90deg,#000 calc(100% - 24px),transparent);
+}
+
+@media (max-width:980px){
+  .ag-detail__top{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:720px){
+  .ag-detail__top{padding:var(--sp-4) var(--sp-5) 0;gap:var(--sp-5)}
+  .ag-hero{margin:var(--sp-4) var(--sp-5) 0;min-height:212px}
+  .ag-bar__tools{width:100%}
+  .ag-find{flex:1 1 auto}
+  .ag-stage{margin:var(--sp-4) var(--sp-5) 0}
+  .ag-rail>*{flex:0 0 146px}
+}
+
+/* ---- motion off -------------------------------------------------
+   The portal's own shelf/hero animations live in apps.css with
+   literal durations, so the token collapse does not reach them.
+   Scoped to .ag so only Static Games is affected from here. */
+@media (prefers-reduced-motion:reduce){
+  .ag .cx-skel::after,
+  .ag .cx__grid>*,
+  .ag .cx__grid--rail>*,
+  .ag .cx__hero-art,
+  .ag .cx__hero-art img,
+  .ag .cx-stage__frame{animation:none}
+  .ag-hero__dot,
+  .ag-card__fav,
+  .ag-cover,
+  .ag-chip,
+  .ag-tab,
+  .ag-stage__start i,
+  .ag-stage:fullscreen .ag-stage__bar{transition:none}
+  .ag-cover{opacity:1}
+  .ag-rail{scroll-behavior:auto}
+}
+
+/* ==================================================================
+   Command K / Spotlight  — .spot-*
+
+   The palette grew a grouped result list and a Raycast-style action
+   bar, so it needs a little more width and height than the original
+   single-list version in shell.css. Everything here overrides that
+   file rather than replacing it; features.css is linked last.
+   ================================================================== */
+
+.spot{width:min(660px,94vw)}
+.spot__list{max-height:min(48vh,430px)}
+
+/* the scope pill: "roblox tower" searches Roblox only */
+.spot__scopes{display:flex;gap:var(--sp-2);flex:0 0 auto}
+.spot__scope{
+  display:inline-flex;align-items:center;gap:4px;padding:3px 6px 3px 8px;
+  border-radius:var(--r-pill);border:1px solid var(--line-accent);
+  background:var(--fill-accent);color:var(--ink-0);
+  font-size:var(--fs-10);font-weight:600;cursor:pointer;
+  transition:background var(--t-fast) var(--ease);
+}
+.spot__scope:hover{background:var(--fill-accent-hi)}
+.spot__scope .icon{width:11px;height:11px;color:var(--ink-2)}
+.spot__scope:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* group header + its honest count */
+.spot__gh{
+  display:flex;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-3) var(--sp-3) var(--sp-2);
+  font-size:calc(9px * var(--fs-k,1));letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:700;
+}
+.spot__count{
+  margin-left:auto;padding:1px 6px;border-radius:var(--r-pill);
+  background:var(--fill-1);border:1px solid var(--line-0);
+  letter-spacing:0;font-weight:600;color:var(--ink-2);
+}
+
+/* streaming + failure states for the lazy catalogues */
+.spot__load{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4)}
+.spot__load small{font-size:var(--fs-10);color:var(--ink-3)}
+.spot__note{padding:var(--sp-2) var(--sp-4) var(--sp-3);font-size:var(--fs-10);color:var(--ink-3)}
+
+/* .spot__row is a <button>: without these it shrink-wraps and centres its
+   own text, which the kit's plain rows never do. */
+.spot__row{width:100%;text-align:left}
+.spot__row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* the action bar — what Enter does, and what else is possible */
+/* wraps rather than scrolling sideways: a scroll strip whose chips are
+   reached by Spotlight's own Tab handling (tabindex -1) is a region a
+   keyboard cannot scroll, and on a phone nothing should scroll sideways */
+.spot__acts{
+  display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-2);
+  padding:var(--sp-3) var(--sp-4);border-top:1px solid var(--line-0);
+}
+.spot__acts[hidden]{display:none}
+.spot__acts::-webkit-scrollbar{display:none}
+.spot__acts-for{
+  flex:0 1 auto;max-width:150px;margin-right:var(--sp-2);
+  font-size:var(--fs-10);color:var(--ink-3);
+}
+.spot__act{
+  display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
+  padding:4px 7px;border-radius:var(--r-sm);border:1px solid transparent;
+  background:transparent;color:var(--ink-2);font-size:var(--fs-10);cursor:pointer;
+  transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease);
+}
+.spot__act .icon{width:13px;height:13px}
+.spot__act .kbd{min-width:16px;height:16px;font-size:calc(9px * var(--fs-k,1))}
+.spot__act:hover{background:var(--fill-1);color:var(--ink-0)}
+.spot__act.is-primary{
+  background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0);font-weight:600;
+}
+.spot__act.is-primary .icon{color:var(--accent-soft)}
+.spot__act:focus-visible{outline:2px solid var(--accent);outline-offset:1px;color:var(--ink-0)}
+
+/* the instant answer: math, a conversion, a time, a definition. It is the
+   top row, read rather than scanned — so a big result, lines that wrap, and
+   the source named underneath. Enter copies it (see the action bar). */
+.spot__ans{
+  align-items:flex-start;gap:var(--sp-4);padding:var(--sp-4);margin-bottom:var(--sp-1);
+  border:1px solid rgba(var(--accent-rgb)/.18);
+  background:linear-gradient(135deg,rgba(var(--accent-rgb)/.10),rgba(var(--accent-rgb)/.02) 65%),var(--fill-0);
+}
+.spot__ans.is-sel{border-color:var(--line-accent)}
+.spot__ans .spot__ans-g{--gs:34px;margin-top:2px;flex:0 0 auto}
+.spot__ans .spot__ans-g .spinner{width:15px;height:15px}
+.spot__ans-b{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
+.spot__ans .spot__ans-cap{font-size:var(--fs-11);color:var(--ink-2);line-height:1.4;overflow-wrap:anywhere}
+.spot__ans .spot__ans-t{
+  display:block;font-size:var(--fs-24);font-weight:650;letter-spacing:-.3px;line-height:1.2;
+  color:var(--ink-0);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;
+}
+.spot__ans.is-pending .spot__ans-t{color:var(--ink-2);font-weight:560}
+.spot__ans-line{display:block;font-size:var(--fs-12);line-height:1.5;color:var(--ink-1);overflow-wrap:anywhere}
+.spot__ans-line.is-dim{font-size:var(--fs-11);color:var(--ink-3)}
+.spot__ans-pos{font-style:italic;color:var(--ink-3);margin-right:6px}
+.spot__ans .spot__ans-src{font-size:calc(9.5px * var(--fs-k,1));color:var(--ink-3);margin-top:2px}
+html[data-theme="light"] .spot__ans{border-color:rgba(var(--accent-rgb)/.28)}
+
+@media (max-width:520px){
+  .spot__acts-for{display:none}
+  .spot__ans .spot__ans-t{font-size:var(--fs-18)}
+}
+@media (prefers-reduced-motion:reduce){
+  .spot__scope,.spot__act{transition:none}
+}
+
+/* ==================================================================
+   Dock — reordering, placement and auto-hide.
+
+   Adds to the dock in css/shell.css rather than replacing it, so the
+   existing magnification and launch animation keep working.
+   ================================================================== */
+
+/* size, spacing and opacity are preferences, so they are tokens the
+   dock sets on itself from prefs rather than constants in the sheet */
+.dock{
+  --dock-scale:1;
+  --dock-gap:6px;
+  --dock-alpha:1;
+  gap:var(--dock-gap);
+  opacity:var(--dock-alpha);
+}
+.dock .dock__item{width:calc(44px * var(--dock-scale));height:calc(44px * var(--dock-scale))}
+
+/* while reordering, tooltips and magnification would both fight the drag */
+.dock.is-reordering .dock__tip{display:none}
+/* magnification (dock.js): while the pointer is in the dock the icons
+   follow it closely; when it leaves they settle on the spring in shell.css */
+.dock.is-mag .dock__item{transition:transform var(--t-fast) linear}
+body.reduce-motion .dock .dock__item{transition:none}
+.dock.is-reordering .dock__item{transition:none}
+.dock__item.is-dragging{
+  opacity:.9;cursor:grabbing;z-index:3;
+  transform:scale(1.06) translateY(-6px) !important;
+  filter:drop-shadow(0 10px 18px rgba(0,0,0,.5));
+}
+
+/* vertical placement: the dock becomes a column pinned to one edge */
+.dock[data-pos="left"],.dock[data-pos="right"]{
+  flex-direction:column;
+  left:auto;right:auto;bottom:auto;
+  top:50%;transform:translateY(-50%);
+}
+.dock[data-pos="left"]{left:var(--sp-4)}
+.dock[data-pos="right"]{right:var(--sp-4)}
+.dock[data-pos="left"] .dock__sep,.dock[data-pos="right"] .dock__sep{width:60%;height:1px;margin:2px auto}
+.dock[data-pos="left"] .dock__tip{left:calc(100% + 10px);bottom:auto;top:50%;transform:translateY(-50%)}
+.dock[data-pos="right"] .dock__tip{right:calc(100% + 10px);left:auto;bottom:auto;top:50%;transform:translateY(-50%)}
+.dock[data-pos="left"] .dock__item,.dock[data-pos="right"] .dock__item{transform-origin:0 50%}
+
+/* auto-hide: slides away, and comes back on hover or keyboard focus, so
+   it never becomes unreachable without a pointer */
+.dock.is-autohide{transition:transform var(--t-med) var(--ease-out),opacity var(--t-fast)}
+.dock.is-autohide:not(:hover):not(:focus-within){transform:translate(-50%,calc(100% + 16px));opacity:0}
+.dock[data-pos="left"].is-autohide:not(:hover):not(:focus-within){transform:translate(calc(-100% - 16px),-50%);opacity:0}
+.dock[data-pos="right"].is-autohide:not(:hover):not(:focus-within){transform:translate(calc(100% + 16px),-50%);opacity:0}
+/* an invisible strip along the edge, so there is something to hover */
+.dock.is-autohide::before{
+  content:"";position:absolute;left:-24px;right:-24px;bottom:-20px;height:28px;
+}
+.dock[data-pos="left"].is-autohide::before,.dock[data-pos="right"].is-autohide::before{
+  left:-20px;right:-20px;top:-24px;bottom:-24px;height:auto;width:auto;
+}
+
+@media (prefers-reduced-motion:reduce){
+  .dock.is-autohide{transition:none}
+  .dock__item.is-dragging{transform:none !important}
+}
+
+/* ============================================================
+   Static Anime + Manga — cinematic library (js/portal/anime.js)
+
+   Layered on top of the shared .cx__ portal chrome in apps.css:
+   this file only adds the pieces the library needs (hero deck,
+   library views, episode grid, detail hero) and never restyles
+   a shared class other pages also use. Scrims are built from
+   --bg-0 so they invert with the light theme instead of
+   painting a dark wash over a light page.
+   ============================================================ */
+
+/* ---- first paint ------------------------------------------- */
+.cxa-load{display:flex;flex-direction:column;gap:var(--sp-6);padding-bottom:var(--sp-7)}
+.cxa-skel-hero{
+  margin:var(--sp-6) var(--sp-6) 0;height:clamp(220px,34vh,360px);border-radius:var(--r-lg);
+}
+.cxa-load__row{padding:0 var(--sp-6);display:flex;flex-direction:column;gap:var(--sp-4)}
+.cxa-skel-rail{display:flex;gap:var(--sp-4);overflow:hidden}
+.cxa-skel-card{flex:0 0 160px}
+
+/* ---- hero deck --------------------------------------------- */
+.cxa-hero{
+  min-height:clamp(300px,44vh,460px);align-items:stretch;
+  margin:var(--sp-6) var(--sp-6) var(--sp-2);
+}
+.cxa-hero__layer{position:absolute;inset:0;overflow:hidden;border-radius:inherit}
+.cxa-hero__art{animation:cxa-hero-in var(--t-slow) var(--ease-out) both,
+               cx-drift 26s var(--ease) infinite alternate}
+@keyframes cxa-hero-in{from{opacity:0}to{opacity:1}}
+/* a second scrim: the panel is taller here, so the art needs more floor */
+.cxa-hero__art::before{
+  content:"";position:absolute;inset:0;z-index:1;
+  background:linear-gradient(0deg,var(--bg-0),transparent 62%),
+             linear-gradient(90deg,var(--bg-0) 4%,transparent 78%);
+  opacity:.92;
+}
+.cxa-hero__body{
+  position:relative;z-index:1;width:100%;display:flex;flex-direction:column;
+  justify-content:flex-end;gap:var(--sp-5);padding:var(--sp-7) var(--sp-6) var(--sp-6);
+}
+.cxa-hero__in{display:flex;flex-direction:column;gap:var(--sp-3);max-width:min(620px,74%)}
+.cxa-hero__kick{color:var(--accent-soft)}
+.cxa-hero__t{color:var(--ink-0);font-size:clamp(var(--fs-24),3.4vw,var(--fs-34))}
+.cxa-hero__ja{font-size:var(--fs-11);color:var(--ink-2);margin-top:-2px}
+.cxa-hero__s{
+  color:var(--ink-1);max-width:560px;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;
+}
+.cxa-hero__rail{display:flex;align-items:center;gap:var(--sp-4)}
+.cxa-hero__dots{display:flex;align-items:center;gap:var(--sp-2)}
+.cxa-hero__dot{
+  width:22px;height:4px;border-radius:var(--r-pill);background:var(--fill-2);
+  transition:background var(--t-fast),width var(--t-med) var(--ease);
+}
+.cxa-hero__dot:hover{background:var(--fill-3)}
+.cxa-hero__dot.is-on{width:38px;background:var(--accent);box-shadow:var(--glow)}
+.cxa-hero__nav{display:flex;gap:var(--sp-2);margin-left:auto}
+.cxa-hero__nav .ibtn{background:var(--glass-2);border:1px solid var(--line-1)}
+.cxa-hero__nav .ibtn:hover{border-color:var(--line-accent)}
+
+/* ---- library views (Home / Browse / Watchlist / History) ---- */
+.cxa-bar{flex-wrap:wrap;row-gap:var(--sp-3)}
+.cxa-views{margin-left:0;flex:0 0 auto}
+.cxa-views__n{
+  font-size:calc(9px * var(--fs-k,1));font-weight:700;color:var(--ink-3);font-variant-numeric:tabular-nums;
+}
+.cxa-views button.is-on .cxa-views__n{color:var(--accent-soft)}
+.cxa-views__n:empty{display:none}
+
+/* ---- section notes ------------------------------------------
+   Every rail states what it is ranked by. This line is the whole
+   reason a row can be called "Popular" without claiming a count
+   the catalogue does not have. */
+.cxa-sec__note{
+  font-size:var(--fs-10);color:var(--ink-3);line-height:1.5;
+  margin:calc(var(--sp-4) * -1) 0 var(--sp-4);max-width:70ch;
+}
+.cxa-rail-note{font-size:var(--fs-10);color:var(--ink-3);padding:var(--sp-4) 0}
+.cxa-foot{
+  padding:var(--sp-7) var(--sp-6);text-align:center;font-size:var(--fs-10);
+  color:var(--ink-2);display:flex;flex-direction:column;gap:4px;
+}
+.cxa-empty{gap:var(--sp-3)}
+
+/* ---- card extras ------------------------------------------- */
+.cxa-card__save{
+  position:absolute;top:var(--sp-3);right:var(--sp-3);z-index:2;
+  width:20px;height:20px;border-radius:var(--r-pill);display:grid;place-items:center;
+  background:var(--glass-3);border:1px solid var(--line-accent);
+}
+.cxa-card__save .icon{width:10px;height:10px;color:var(--accent-soft)}
+.cxa-card__prog{
+  position:absolute;left:0;right:0;bottom:0;z-index:2;height:3px;background:var(--fill-2);
+}
+.cxa-card__prog u{display:block;height:100%;background:var(--accent);box-shadow:var(--glow)}
+
+/* ---- episode list ------------------------------------------ */
+.cxa-eps{
+  display:grid;gap:var(--sp-2);grid-template-columns:repeat(auto-fill,minmax(86px,1fr));
+}
+.cxa-ep{
+  display:flex;align-items:center;justify-content:center;gap:5px;height:32px;
+  border-radius:var(--r-sm);border:1px solid var(--line-0);background:var(--fill-0);
+  font-size:var(--fs-11);color:var(--ink-2);font-variant-numeric:tabular-nums;
+  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast),transform var(--t-fast) var(--spring);
+}
+.cxa-ep:hover{background:var(--fill-1);color:var(--ink-0);border-color:var(--line-2)}
+.cxa-ep:active{transform:scale(.96)}
+.cxa-ep .icon{width:11px;height:11px}
+.cxa-ep.is-done{
+  background:var(--fill-accent);border-color:var(--line-accent);color:var(--accent-soft);font-weight:640;
+}
+.cxa-ep__n::before{content:"#";opacity:.45;margin-right:1px}
+/* the one in the player box */
+.cxa-ep.is-now{border-color:var(--accent);color:var(--ink-0);box-shadow:inset 0 0 0 1px var(--accent)}
+.cxa-ep.is-now .icon:first-child{color:var(--accent-soft)}
+
+/* ---- the player box: episode, prev / next / mark, and what is remembered */
+.cxa-stage .cx-stage__top{flex-wrap:wrap;row-gap:var(--sp-2)}
+.cxa-stage__ep{font-size:var(--fs-11);font-weight:650;color:var(--accent-soft);font-variant-numeric:tabular-nums;white-space:nowrap}
+.cxa-stage__ctl{display:flex;align-items:center;gap:var(--sp-2);flex:0 0 auto}
+.cxa-stage__next .icon{margin-left:2px}
+.cxa-stage__mark[aria-pressed="true"]{color:var(--accent-soft)}
+.cxa-stage .cx-stage__bar{padding-top:0}
+.cxa-stage__status{font-size:var(--fs-10);line-height:1.55;color:var(--ink-2);max-width:78ch}
+.cxa-stage__status:empty{display:none}
+
+/* ---- detail ------------------------------------------------- */
+.cxa-det{position:relative;overflow:hidden}
+.cxa-det__bg{
+  position:absolute;inset:0 0 auto;height:100%;z-index:0;pointer-events:none;overflow:hidden;
+  background:var(--art,var(--fill-1));background-size:cover;background-position:center;
+  transform:scale(1.15);opacity:.62;
+}
+/* the blur lives on the image, not the box, so the scrim above stays sharp */
+.cxa-det__bg img{filter:blur(44px) saturate(140%)}
+.cxa-det__bg::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(0deg,var(--bg-0) 6%,transparent 72%),
+             linear-gradient(90deg,var(--bg-0) 1%,transparent 52%);
+}
+/* wrap on width, not on viewport: the page lives in a window that can be
+   narrow while the screen is wide, and a media query cannot see that */
+.cxa-det__top{
+  position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:var(--sp-6);
+  align-items:flex-start;padding:var(--sp-7) var(--sp-6) var(--sp-6);
+}
+.cxa-det__top .cx-detail__in{flex:1 1 340px;min-width:0}
+.cxa-det__art{flex:0 0 clamp(150px,18vw,200px)}
+/* a 1,400px window would otherwise smear seven facts across the whole page */
+.cxa-det__top .cx-detail__in{max-width:980px}
+.cxa-det__kick{
+  font-size:calc(9.5px * var(--fs-k,1));font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-soft);
+}
+.cxa-det__ja{font-size:var(--fs-11);color:var(--ink-2);margin-top:-6px}
+.cxa-det__synbox{display:flex;flex-direction:column;align-items:flex-start;gap:var(--sp-2)}
+.cxa-det__syn{
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:5;overflow:hidden;
+}
+.cxa-det__syn.is-open{display:block;overflow:visible;-webkit-line-clamp:unset}
+
+/* ---- narrow windows ---------------------------------------- */
+@media (max-width:760px){
+  .cxa-hero__in{max-width:100%}
+  .cxa-hero{min-height:280px}
+  .cxa-det__top{flex-direction:column}
+  .cxa-det__art{flex:0 0 auto;width:min(160px,44vw)}
+}
+
+/* Motion off: the OS setting writes body.reduce-motion (js/main.js), and the
+   media query covers the same choice made in the browser itself. */
+@media (prefers-reduced-motion:reduce){
+  .cxa-hero__art,.cxa-skel-hero::after,.cxa-skel-card .cx-skel::after{animation:none}
+  .cxa-hero__dot,.cxa-ep,.cxa-card__prog u,.cxa-views button{transition:none}
+}
+body.reduce-motion .cxa-hero__art,
+body.reduce-motion .cxa-skel-hero::after,
+body.reduce-motion .cxa-skel-card .cx-skel::after{animation:none}
+body.reduce-motion .cxa-hero__dot,
+body.reduce-motion .cxa-ep,
+body.reduce-motion .cxa-card__prog u{transition:none}
+
+/* ==================================================================
+   Settings  — .st-*  plus the system-wide preference blocks
+
+   The blocks at the bottom are the whole reason the accessibility
+   pane is real: js/apps/settings.js puts a data attribute on <html>
+   and CSS does the rest, so text size, contrast, transparency, blur
+   and focus outlines are correct on the first painted frame after a
+   reload instead of after a script has run.
+
+   Those blocks redefine existing tokens — exactly the way
+   tokens.css redefines them for light mode and for density — which
+   is also the only place in this file that carries a literal colour.
+   ================================================================== */
+
+/* an honest aside: why a thing is missing, or what a control really does */
+.st-note{
+  display:flex;gap:var(--sp-3);align-items:flex-start;
+  padding:var(--sp-4);border-radius:var(--r-md);
+  background:var(--fill-0);border:1px solid var(--line-0);
+}
+.st-note .icon{width:14px;height:14px;color:var(--ink-3);flex:none;margin-top:1px}
+.st-note small{color:var(--ink-2);line-height:1.55;font-size:var(--fs-10)}
+
+.st-async{min-height:22px}
+
+/* live figures */
+.st-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:var(--sp-3)}
+.st-stat{
+  display:flex;flex-direction:column;gap:2px;padding:var(--sp-4);
+  border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0);
+}
+.st-stat__v{font-size:var(--fs-18);font-weight:640;color:var(--ink-0);font-variant-numeric:tabular-nums}
+.st-stat__k{font-size:var(--fs-10);color:var(--ink-3)}
+
+/* what the browser refuses to report */
+.st-cant{display:flex;flex-direction:column;gap:var(--sp-3)}
+.st-cantrow{display:flex;flex-direction:column;gap:1px;padding-left:var(--sp-3);border-left:2px solid var(--line-1)}
+.st-cantrow b{font-size:var(--fs-10);color:var(--ink-1);font-weight:620}
+.st-cantrow small{font-size:var(--fs-10);color:var(--ink-3)}
+
+/* the appearance preview stage */
+.st-preview{
+  position:relative;flex:0 0 auto;width:248px;height:152px;
+  border-radius:var(--r-md);overflow:hidden;border:1px solid var(--line-1);
+  background:linear-gradient(176deg,var(--bg-2),var(--bg-0));
+}
+
+/* the themes pane */
+.st-themes{display:grid;grid-template-columns:repeat(auto-fill,minmax(184px,1fr));gap:var(--sp-4)}
+.st-theme{
+  display:flex;flex-direction:column;gap:0;text-align:left;overflow:hidden;
+  border-radius:var(--r-md);border:1px solid var(--line-1);background:var(--fill-0);
+  transition:border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease);
+}
+.st-theme:hover{border-color:var(--line-2);transform:translateY(-2px)}
+.st-theme:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.st-theme.is-on{border-color:var(--accent);box-shadow:var(--glow)}
+.st-theme__art{display:block;height:54px;width:100%}
+.st-theme__b{display:flex;flex-direction:column;gap:3px;padding:var(--sp-4);align-items:flex-start}
+.st-theme__b b{font-size:var(--fs-11);color:var(--ink-0);font-weight:620}
+.st-theme__b small{font-size:var(--fs-10);color:var(--ink-3);line-height:1.45}
+
+/* theme packs (js/core/packs.js): each card carries its own pack's accent
+   as custom properties, so its button and icon sample preview the pack */
+.st-packs{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:var(--sp-4)}
+.st-pack{display:flex;flex-direction:column;overflow:hidden;border-radius:var(--r-md);border:1px solid var(--line-1);background:var(--fill-0);
+  transition:border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease)}
+.st-pack:hover{border-color:var(--line-2);transform:translateY(-2px)}
+.st-pack.is-on{border-color:var(--accent);box-shadow:0 0 22px rgba(var(--accent-rgb)/.28)}
+.st-pack__art{position:relative;height:112px;background:#0b0b0e center/cover no-repeat}
+.st-pack__icons{position:absolute;left:var(--sp-4);bottom:var(--sp-4);display:flex;gap:6px}
+.st-pack__b{display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--sp-4);align-items:flex-start;flex:1}
+.st-pack__b > b{font-size:var(--fs-12);color:var(--ink-0);font-weight:650}
+.st-pack__b > small{font-size:var(--fs-10);color:var(--ink-3);line-height:1.45}
+.st-pack__parts{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 var(--sp-2)}
+.st-pack__parts .chip{height:20px;font-size:calc(9.5px * var(--fs-k,1))}
+.st-pack__dot{width:9px;height:9px;border-radius:50%;background:linear-gradient(140deg,var(--accent-soft),var(--accent));flex:0 0 auto}
+.st-pack__go,.st-pack__on{margin-top:auto}
+.st-pack-back{align-items:center}
+.st-pack-back small{flex:1}
+.st-pack-back .btn{flex:0 0 auto}
+
+/* key tester */
+.st-key{display:flex;flex-direction:column;gap:var(--sp-3);align-items:flex-start}
+.st-key__k{
+  font-family:var(--mono);font-size:var(--fs-24);color:var(--ink-0);
+  padding:var(--sp-3) var(--sp-5);border-radius:var(--r-sm);
+  background:var(--fill-1);border:1px solid var(--line-1);min-width:120px;text-align:center;
+}
+
+/* accessibility sample */
+.st-sample p{font-size:var(--fs-11);color:var(--ink-2);line-height:1.6;margin:0 0 var(--sp-4)}
+.st-sample b{display:block;font-size:var(--fs-15);color:var(--ink-0);margin-bottom:var(--sp-2)}
+
+/* sidebar extras */
+.st-recent small{color:var(--ink-4)}
+.st-mini{
+  font-size:calc(9px * var(--fs-k,1));font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-3);padding:1px 4px;border-radius:4px;transition:color var(--t-fast) var(--ease);
+}
+.st-mini:hover{color:var(--accent-soft);background:var(--fill-1)}
+
+/* a row jumped to from search */
+.st-flash{animation:st-flash 1.6s var(--ease-out)}
+@keyframes st-flash{
+  0%{background:var(--fill-accent-hi)}
+  100%{background:transparent}
+}
+
+/* ---- text scaling -------------------------------------------------
+   Two halves, so the setting reaches every app: the --fs-* steps for
+   everything built on the type scale, and --fs-k / --fs-kd for the
+   literal pixel sizes apps still carry (written as
+   calc(13px * var(--fs-k,1)) — tests/suites/a11y.mjs fails on any new
+   bare px font size). Code editors whose line height is fixed in px
+   (and mirrored in their JS) keep their geometry. */
+:root[data-textscale="small"]{
+  --fs-10:9px; --fs-11:10px; --fs-12:11px; --fs-13:12px;
+  --fs-15:14px; --fs-18:16px; --fs-24:21px; --fs-34:30px; --fs-48:42px;
+  --fs-k:.9; --fs-kd:.95;
+}
+:root[data-textscale="large"]{
+  --fs-10:11px; --fs-11:12px; --fs-12:14px; --fs-13:15px;
+  --fs-15:17px; --fs-18:20px; --fs-24:27px; --fs-34:38px; --fs-48:54px;
+  --fs-k:1.15; --fs-kd:1.08;
+}
+:root[data-textscale="larger"]{
+  --fs-10:12px; --fs-11:13px; --fs-12:15px; --fs-13:17px;
+  --fs-15:19px; --fs-18:23px; --fs-24:30px; --fs-34:42px; --fs-48:60px;
+  --fs-k:1.3; --fs-kd:1.15;
+}
+
+/* ---- increased contrast ------------------------------------------ */
+:root[data-contrast="high"]{
+  --ink-0:#ffffff; --ink-1:#f3edf0; --ink-2:#d6ccd1; --ink-3:#b6abb1; --ink-4:#a39aa0;
+  --line-0:rgba(255,255,255,.16); --line-1:rgba(255,255,255,.26); --line-2:rgba(255,255,255,.38);
+  --fill-0:rgba(255,255,255,.06); --fill-1:rgba(255,255,255,.12);
+  --fill-2:rgba(255,255,255,.19); --fill-3:rgba(255,255,255,.27);
+  --glass-1:rgba(10,4,7,.93); --glass-2:rgba(12,5,8,.96); --glass-3:rgba(14,6,9,.98);
+}
+:root[data-theme="light"][data-contrast="high"]{
+  --ink-0:#0a0407; --ink-1:#1c1015; --ink-2:#3b2b32; --ink-3:#55414a; --ink-4:#5f4c55;
+  --line-0:rgba(20,8,12,.22); --line-1:rgba(20,8,12,.32); --line-2:rgba(20,8,12,.46);
+  --fill-0:rgba(20,8,12,.05); --fill-1:rgba(20,8,12,.10);
+  --fill-2:rgba(20,8,12,.17); --fill-3:rgba(20,8,12,.25);
+  --glass-1:rgba(255,255,255,.95); --glass-2:rgba(255,255,255,.98); --glass-3:rgba(255,255,255,1);
+}
+
+/* ---- reduced transparency ----------------------------------------
+   Glass becomes the canvas underneath it. Blurring a surface nothing
+   shows through is wasted work, so it goes at the same time. */
+:root[data-transparency="reduced"]{
+  --glass-1:var(--bg-1); --glass-2:var(--bg-2); --glass-3:var(--bg-2);
+  --glass-hi:transparent;
+}
+:root[data-transparency="reduced"] *,
+:root[data-blur="off"] *{
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+
+/* ---- shallow shadows ---------------------------------------------- */
+:root[data-shadows="off"]{
+  --sh-2:0 1px 3px rgba(0,0,0,.42);
+  --sh-3:0 2px 6px rgba(0,0,0,.46);
+  --sh-4:0 3px 10px rgba(0,0,0,.5);
+}
+
+/* ---- always-visible focus outline --------------------------------- */
+:root[data-focusrings="always"] :is(a,button,input,select,textarea,summary,[tabindex]):focus{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+
+/* ---- reduced motion, asked for from inside Static ------------------
+   tokens.css already does this for the system-level media query; this
+   is the same thing for the switch in Settings. Durations rather than
+   `none` so anything waiting on transitionend still gets its event. */
+:root[data-motion="reduced"]{ --t-fast:1ms; --t-med:1ms; --t-slow:1ms; }
+:root[data-motion="reduced"] *,
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after{
+  animation-duration:1ms !important;
+  animation-delay:0ms !important;
+  animation-iteration-count:1 !important;
+  transition-duration:1ms !important;
+  transition-delay:0ms !important;
+  scroll-behavior:auto !important;
+}
+
+@media (prefers-reduced-motion:reduce){
+  .st-theme{transition:none}
+  .st-theme:hover{transform:none}
+  .st-flash{animation:none;background:var(--fill-accent)}
+  .st-mini{transition:none}
+}
+
+/* ============================================================
+   SHELL · NOTIFICATIONS  (js/shell/notifications.js)
+   Toast extras (progress, click target) and the grouped centre.
+   ============================================================ */
+.toast__open{display:block;width:100%;text-align:left}
+.noti__prog{height:3px;border-radius:var(--r-pill);background:var(--fill-2);overflow:hidden;margin-top:var(--sp-3)}
+.noti__prog i{display:block;height:100%;border-radius:inherit;background:var(--accent);
+  transition:width var(--t-med) var(--ease-out)}
+
+.noti__new{font-size:var(--fs-10);color:var(--accent-soft);font-weight:600}
+.noti__g{display:flex;flex-direction:column;gap:var(--sp-2)}
+.noti__g+.noti__g{margin-top:var(--sp-3)}
+.noti__ghead{
+  display:flex;align-items:center;gap:var(--sp-3);padding:2px var(--sp-3);
+  font-size:calc(9.5px * var(--fs-k,1));letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-weight:700;
+}
+.noti__ghead .ibtn{width:18px;height:18px;opacity:0;transition:opacity var(--t-fast)}
+.noti__ghead .ibtn .icon{width:11px;height:11px}
+.noti__g:hover .noti__ghead .ibtn,.noti__ghead .ibtn:focus-visible{opacity:1}
+.noti__gn{color:var(--ink-3);font-weight:600}   /* a count, not a disabled control: ink-4 was 2.3:1 */
+.noti__ghead .chip{text-transform:none;letter-spacing:0;font-weight:500}
+
+.noti__item{position:relative}
+.noti__item.is-new{border-color:var(--line-accent);background:var(--fill-accent)}
+.noti__item.is-click{cursor:pointer}
+.noti__item.is-click:hover{background:var(--fill-1)}
+.noti__x{position:absolute;top:4px;right:4px;width:20px;height:20px;opacity:0;transition:opacity var(--t-fast)}
+.noti__x .icon{width:11px;height:11px}
+.noti__item:hover .noti__x,.noti__x:focus-visible{opacity:1}
+
+@media (prefers-reduced-motion:reduce){
+  .noti__prog i,.noti__x,.noti__ghead .ibtn{transition:none}
+}
+
+/* ============================================================
+   SHELL · ONBOARDING  (js/shell/onboarding.js)
+   A card over the live desktop: every choice is visible behind it.
+   ============================================================ */
+.ob{
+  position:absolute;inset:0;z-index:var(--z-overlay);display:grid;place-items:center;
+  padding:var(--sp-6);background:rgba(6,2,3,.52);
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
+  animation:fade-in var(--t-med) var(--ease-out) both;
+}
+.ob.is-out{opacity:0;transition:opacity var(--t-med) var(--ease)}
+.ob__card{
+  position:relative;width:min(440px,100%);max-height:100%;overflow-y:auto;
+  padding:var(--sp-7);border-radius:var(--r-xl);
+  background:var(--glass-2);-webkit-backdrop-filter:var(--blur-3);backdrop-filter:var(--blur-3);
+  border:1px solid var(--line-1);box-shadow:var(--sh-4);
+  animation:pop-in var(--t-slow) var(--ease-out) both;
+}
+.ob__skip{
+  position:absolute;top:var(--sp-5);right:var(--sp-5);
+  font-size:var(--fs-11);color:var(--ink-3);padding:var(--sp-2) var(--sp-3);border-radius:var(--r-sm);
+}
+.ob__skip:hover{color:var(--ink-0);background:var(--fill-1)}
+.ob__mark{
+  width:34px;height:34px;border-radius:var(--r-md);display:grid;place-items:center;
+  background:var(--fill-accent);border:1px solid var(--line-accent);margin-bottom:var(--sp-5);
+}
+.ob__mark .icon{width:17px;height:17px;color:var(--accent-soft)}
+.ob__h{font-size:var(--fs-24);font-weight:640;color:var(--ink-0);letter-spacing:-.4px;line-height:1.15}
+.ob__p{font-size:var(--fs-12);color:var(--ink-2);line-height:1.55;margin-top:var(--sp-3)}
+.ob__body{margin-top:var(--sp-6)}
+.ob__foot{display:flex;align-items:center;gap:var(--sp-3);margin-top:var(--sp-6)}
+.ob__dots{display:flex;gap:5px}
+.ob__dots i{width:5px;height:5px;border-radius:50%;background:var(--fill-3);transition:background var(--t-med),width var(--t-med)}
+.ob__dots i.is-on{width:16px;border-radius:var(--r-pill);background:var(--accent)}
+
+.ob__hello{display:flex;flex-direction:column;gap:var(--sp-3)}
+.ob__pill{
+  display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-4);
+  border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0);
+  font-size:var(--fs-11);color:var(--ink-1);
+}
+.ob__pill .icon{width:15px;height:15px;color:var(--accent-soft);flex:0 0 auto}
+
+.ob__rows{display:flex;flex-direction:column;gap:var(--sp-3)}
+.ob__row{
+  display:flex;align-items:flex-start;gap:var(--sp-4);width:100%;text-align:left;
+  padding:var(--sp-4);border-radius:var(--r-md);background:var(--fill-0);
+  border:1px solid var(--line-0);transition:border-color var(--t-fast),background var(--t-fast);
+}
+.ob__row:hover{background:var(--fill-1)}
+.ob__row.is-on{border-color:var(--line-accent);background:var(--fill-accent)}
+.ob__row b{display:block;font-size:var(--fs-12);font-weight:600;color:var(--ink-0)}
+.ob__row small{display:block;font-size:var(--fs-10);color:var(--ink-3);margin-top:1px;line-height:1.45}
+.ob__tick{
+  width:16px;height:16px;border-radius:50%;flex:0 0 auto;margin-top:1px;
+  display:grid;place-items:center;border:1px solid var(--line-2);color:transparent;
+}
+.ob__tick .icon{width:10px;height:10px}
+.ob__row.is-on .ob__tick{background:var(--accent);border-color:transparent;color:var(--accent-ink)}
+
+.ob__swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--sp-3)}
+.ob__sw{
+  height:54px;border-radius:var(--r-md);border:2px solid transparent;position:relative;
+  display:flex;align-items:flex-end;padding:var(--sp-2);overflow:hidden;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18);transition:transform var(--t-fast) var(--ease);
+}
+.ob__sw:hover{transform:translateY(-2px)}
+.ob__sw.is-on{border-color:var(--ink-0)}
+.ob__swn{font-size:calc(8.5px * var(--fs-k,1));font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+
+.ob__wps{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-3)}
+.ob__wp{
+  height:66px;border-radius:var(--r-md);border:2px solid var(--line-1);overflow:hidden;
+  background-size:cover;background-position:center;display:flex;align-items:flex-end;
+  padding:var(--sp-3);transition:border-color var(--t-fast),transform var(--t-fast) var(--ease);
+}
+.ob__wp--scene{background:
+  radial-gradient(90% 70% at 50% 0%,rgba(var(--accent-rgb)/.42),transparent 62%),
+  linear-gradient(175deg,#1b1020,#08050b)}
+.ob__wp:hover{transform:translateY(-2px)}
+.ob__wp.is-on{border-color:var(--accent)}
+.ob__wpn{font-size:calc(9px * var(--fs-k,1));font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+
+@media (prefers-reduced-motion:reduce){
+  .ob,.ob__card{animation:none}
+  .ob.is-out,.ob__dots i,.ob__row,.ob__sw,.ob__wp{transition:none}
+  .ob__sw:hover,.ob__wp:hover{transform:none}
+}
+
+/* ==================================================================
+   Desktop parallax.
+
+   The wallpaper layers shift a few pixels with the pointer, by
+   different amounts, so the scene reads as having depth instead of
+   being a flat image behind the UI. The planet moves least because
+   it is furthest away; the foreground ridge moves most.
+
+   desktop.js writes --px/--py (each -1…1) once per frame, so the
+   compositor does all the work and nothing here reads layout.
+   The whole effect is bounded to single-digit pixels — the brief
+   asks for "alive when you stare at it", not a screensaver.
+   ================================================================== */
+
+.wp{--px:0;--py:0}
+
+.wp__stars,
+.wp__planet,
+.wp__haze,
+.wp__ridge,
+.wp__lake{
+  will-change:transform;
+  transition:transform 600ms cubic-bezier(.22,1,.36,1);
+}
+
+/* furthest back, barely moves */
+.wp__stars{transform:translate3d(calc(var(--px) * 3px), calc(var(--py) * 2px), 0)}
+.wp__planet{transform:translate3d(calc(var(--px) * -5px), calc(var(--py) * -3px), 0)}
+.wp__haze{transform:translate3d(calc(var(--px) * 7px), calc(var(--py) * 4px), 0)}
+/* the ranges, nearer */
+.wp__ridge{transform:translate3d(calc(var(--px) * -11px), calc(var(--py) * -5px), 0)}
+/* the water, nearest — and it takes the reflection with it */
+.wp__lake{transform:translate3d(calc(var(--px) * 15px), calc(var(--py) * 7px), 0)}
+
+/* The music visualizer (js/shell/visualizer.js): one canvas over the
+   wallpaper, under the spooky leaves, the clock and the icons. It fades in
+   so a song starting doesn't make the desktop jump. */
+.wp-vis{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;animation:wp-vis-in .6s ease-out}
+@keyframes wp-vis-in{from{opacity:0}to{opacity:1}}
+:root[data-gamemode="on"] .wp-vis,
+body.is-mobile .wp-vis{display:none}
+
+/* A media wallpaper is somebody's picture or video; shifting it would
+   crop it unpredictably, so parallax applies to the drawn scene only. */
+.wp > video,
+.wp > img,
+.wp__media{transform:none !important}
+
+@media (prefers-reduced-motion:reduce){
+  .wp__stars,.wp__planet,.wp__haze,.wp__ridge,.wp__lake{
+    transform:none !important;transition:none;will-change:auto;
+  }
+}
+
+/* ============================================================
+   SHELL · EASTER EGGS  (js/shell/eggs.js)
+   The colophon card and the cold-boot screen. Both dismiss on
+   Escape, both are plain text on a dark field.
+   ============================================================ */
+.egg{
+  position:absolute;inset:0;z-index:var(--z-overlay);display:grid;place-items:center;
+  padding:var(--sp-6);background:rgba(4,1,2,.62);
+  -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);
+  animation:fade-in var(--t-med) var(--ease-out) both;
+}
+.egg.is-out{opacity:0;transition:opacity var(--t-med) var(--ease)}
+.egg__card{
+  width:min(400px,100%);padding:var(--sp-7);border-radius:var(--r-xl);
+  background:var(--glass-2);-webkit-backdrop-filter:var(--blur-3);backdrop-filter:var(--blur-3);
+  border:1px solid var(--line-1);box-shadow:var(--sh-4);
+  animation:pop-in var(--t-slow) var(--ease-out) both;
+}
+.egg__mark{width:30px;height:30px;border-radius:var(--r-sm);display:grid;place-items:center;
+  background:var(--fill-accent);border:1px solid var(--line-accent);margin-bottom:var(--sp-5)}
+.egg__mark .icon{width:15px;height:15px;color:var(--accent-soft)}
+.egg__h{font-size:var(--fs-18);font-weight:640;color:var(--ink-0);letter-spacing:-.2px}
+.egg__p{font-size:var(--fs-12);color:var(--ink-2);line-height:1.6;margin-top:var(--sp-3)}
+.egg__rows{margin:var(--sp-5) 0;display:flex;flex-direction:column}
+.egg__kv{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-4);
+  padding:5px 0;border-top:1px solid var(--line-0);font-size:var(--fs-11);color:var(--ink-3)}
+.egg__kv b{color:var(--ink-1);font-weight:600;text-align:right;font-family:var(--mono);font-size:var(--fs-10)}
+.egg__sig{font-size:var(--fs-11);color:var(--ink-3);font-style:italic;margin-bottom:var(--sp-5)}
+
+.egg__bootwrap{width:min(620px,100%)}
+.egg__boot{
+  font-family:var(--mono);font-size:var(--fs-12);line-height:1.7;color:var(--accent-soft);
+  padding:var(--sp-6);border-radius:var(--r-md);background:var(--bg-0);
+  border:1px solid var(--line-1);box-shadow:var(--sh-3);
+  white-space:pre-wrap;
+}
+.egg__boot div:last-child{color:var(--ink-3)}
+
+@media (prefers-reduced-motion:reduce){
+  .egg,.egg__card{animation:none}
+  .egg.is-out{transition:none}
+}
+
+/* notification centre — spacing fixes for the grouped layout */
+.noti__new{margin-left:var(--sp-3)}
+.noti__at{flex:0 0 auto;padding-right:16px}
+.noti__item .toast__t{margin-top:0}
+
+/* The in-app Reduced Motion switch writes body.reduce-motion (js/main.js).
+   tokens.css already answers the OS-level media query; this is the same three
+   tokens for the app-level switch, so the setting does what it says. Move it
+   to tokens.css beside the media query if that file is ever being edited. */
+body.reduce-motion{--t-fast:1ms;--t-med:1ms;--t-slow:1ms}
+body.reduce-motion .wg,
+body.reduce-motion .toast,
+body.reduce-motion .noti,
+body.reduce-motion .ob,
+body.reduce-motion .ob__card,
+body.reduce-motion .egg,
+body.reduce-motion .egg__card,
+body.reduce-motion .marquee__rail{animation:none}
+
+/* Increased contrast on a light canvas turns two accent-tinted fills pale;
+   these two components carry text on top of them, so they take the full
+   accent instead of its soft companion. Scoped to that combination only,
+   so the default look of the shell is untouched. */
+:root[data-theme="light"][data-contrast="high"] .side__item.is-on{color:var(--ink-0)}
+:root[data-theme="light"][data-contrast="high"] .chip--accent,
+:root[data-theme="light"][data-contrast="high"] .badge--accent{color:var(--accent)}
+
+/* ==================================================================
+   Roblox — streamed play  (.rbx-stream-*)
+
+   The real client, running on a cloud Android device and served
+   through Static's tunnel. The waiting state carries most of the
+   design work here: a cloud device takes up to ninety seconds to
+   allocate, and an unexplained spinner that long reads as broken.
+   ================================================================== */
+
+/* a second emphasis level, below --primary: an alternative route
+   rather than the obvious one */
+.btn--go{
+  background:var(--fill-accent);
+  border-color:var(--line-accent);
+  color:var(--accent-soft);
+}
+.btn--go:hover{background:var(--fill-accent-hi);color:var(--ink-0)}
+.btn--go .icon{color:currentColor}
+
+.rbx-stream{display:flex;flex-direction:column;height:100%;min-height:0}
+.rbx-stream__bar{
+  display:flex;align-items:center;gap:var(--sp-3);flex:0 0 auto;
+  padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--line-1);background:var(--bg-0);
+}
+.rbx-stream__title{font-size:var(--fs-12);color:var(--ink-0);flex:none;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:44%}
+.rbx-stream__badge{
+  display:flex;align-items:center;gap:5px;flex:none;
+  padding:2px 8px;border-radius:var(--r-pill);font-size:var(--fs-10);
+  background:var(--fill-0);border:1px solid var(--line-0);color:var(--ink-3);
+}
+.rbx-stream__badge.is-live{color:#6ee7b7;border-color:rgba(61,220,132,.3)}
+.rbx-stream__badge.is-bad{color:var(--accent-soft);border-color:var(--line-accent)}
+.rbx-stream__badge .icon{width:11px;height:11px}
+
+.rbx-stream__wrap{position:relative;flex:1;min-height:420px;background:#000}
+.rbx-stream__frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
+
+.rbx-stream__veil{
+  position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:var(--sp-3);
+  padding:var(--sp-6);text-align:center;background:rgba(6,2,5,.94);
+}
+.rbx-stream__veil > b{font-size:var(--fs-15);color:var(--ink-0);font-weight:700}
+.rbx-stream__veil > .icon{color:var(--accent-soft)}
+.rbx-stream__stage{font-size:var(--fs-11);color:var(--ink-2);min-height:1.4em;max-width:460px;line-height:1.5}
+.rbx-stream__meta{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-10);color:var(--ink-3)}
+.rbx-stream__clock{font-family:var(--font-mono,ui-monospace,Menlo,monospace);min-width:3ch;text-align:right}
+.rbx-stream__acts{display:flex;gap:var(--sp-3);margin-top:var(--sp-2)}
+
+/* the caveats are part of the waiting state, not fine print —
+   a shared public device and a third-party operator are things
+   you want to know before you type a password into it */
+.rbx-stream__caveats{
+  list-style:none;margin:var(--sp-4) 0 0;padding:0;max-width:520px;
+  display:flex;flex-direction:column;gap:6px;text-align:left;
+}
+.rbx-stream__caveats li{
+  position:relative;padding-left:var(--sp-4);
+  font-size:var(--fs-10);color:var(--ink-3);line-height:1.5;
+}
+.rbx-stream__caveats li::before{
+  content:"";position:absolute;left:0;top:.55em;
+  width:4px;height:4px;border-radius:50%;background:var(--line-2);
+}
+
+.rbx-stream.is-full .rbx-stream__bar{
+  position:absolute;top:0;left:0;right:0;z-index:5;opacity:0;
+  background:var(--glass-3);backdrop-filter:blur(12px);transition:opacity var(--t-fast);
+}
+.rbx-stream.is-full:hover .rbx-stream__bar,
+.rbx-stream.is-full .rbx-stream__bar:focus-within{opacity:1}
+
+.rbx-det__routes{display:block;margin-top:var(--sp-3);line-height:1.55;max-width:62ch}
+
+@media (prefers-reduced-motion:reduce){
+  .rbx-stream.is-full .rbx-stream__bar{transition:none}
+}
+
+/* ==================================================================
+   Wallpaper — depth pass.
+
+   The scene in base.css was already layered; what it lacked was
+   anything that moves. The brief asks for it to "feel alive when
+   you stare at it" without becoming a screensaver — and section 25
+   insists it stay fast on a weak school machine, which turned out
+   to be the harder half.
+
+   MEASURED, because the first attempt at this was a mistake worth
+   recording. Frame rate on this page, same machine, same run:
+
+       no wallpaper at all          60 fps
+       scene, nothing animating     34 fps
+       first attempt at this pass   22 fps   <-- rejected
+
+   The cause was animating `background-position` and animating a
+   layer that carries `filter: blur(46px)`. Neither can be handled
+   by the compositor: both force a full repaint — and a re-blur —
+   every single frame. The fix is not to animate less, it is to
+   animate only the two properties that never repaint.
+
+   SO, THE RULE HERE: transform and opacity only. Filters are
+   allowed but must be static, so the blur is rasterised once and
+   the compositor then only moves the finished layer. No
+   mix-blend-mode on anything large. No scale() on a blurred layer,
+   because scaling forces it to re-rasterise at the new size.
+   ================================================================== */
+
+/* ---- a second, further star plane ---------------------------------
+   Two planes at different densities read as depth once the pointer
+   parallax moves them at different rates. This one is dimmer, finer,
+   and drifts the other way. Opacity-only twinkle. */
+.wp__stars2{
+  position:absolute;inset:0;top:0;height:58%;opacity:.34;
+  background-image:
+    radial-gradient(.8px .8px at 18% 9%,rgba(255,255,255,.7),transparent),
+    radial-gradient(.7px .7px at 33% 19%,rgba(255,240,248,.6),transparent),
+    radial-gradient(.9px .9px at 47% 7%,rgba(255,255,255,.55),transparent),
+    radial-gradient(.7px .7px at 61% 25%,rgba(255,255,255,.5),transparent),
+    radial-gradient(.8px .8px at 70% 12%,rgba(255,236,246,.6),transparent),
+    radial-gradient(.7px .7px at 82% 30%,rgba(255,255,255,.45),transparent),
+    radial-gradient(.9px .9px at 5% 24%,rgba(255,255,255,.5),transparent),
+    radial-gradient(.7px .7px at 26% 38%,rgba(255,255,255,.35),transparent),
+    radial-gradient(.8px .8px at 52% 33%,rgba(255,255,255,.4),transparent),
+    radial-gradient(.7px .7px at 89% 18%,rgba(255,255,255,.4),transparent),
+    radial-gradient(.7px .7px at 44% 46%,rgba(255,255,255,.28),transparent),
+    radial-gradient(.8px .8px at 14% 51%,rgba(255,255,255,.25),transparent);
+  mask-image:linear-gradient(180deg,#000,rgba(0,0,0,.3) 72%,transparent);
+  transform:translate3d(calc(var(--px) * -2px), calc(var(--py) * -1px), 0);
+  transition:transform 600ms cubic-bezier(.22,1,.36,1);
+  animation:wp-twinkle2 11s var(--ease) infinite alternate;
+}
+@keyframes wp-twinkle2{from{opacity:.22}to{opacity:.44}}
+
+/* ---- aurora -------------------------------------------------------
+   The "faint red atmospheric lighting". No filter and no blend mode:
+   radial gradients this soft are already a blur, and adding a real one
+   cost 6 fps for a difference nobody could see. It breathes on opacity
+   and drifts on transform, both free. */
+.wp__aurora{
+  position:absolute;left:-24%;right:-24%;top:4%;height:52%;
+  background:
+    radial-gradient(42% 58% at 26% 52%,rgba(255,110,150,.13),transparent 72%),
+    radial-gradient(36% 50% at 62% 38%,rgba(170,110,190,.11),transparent 74%),
+    radial-gradient(48% 38% at 84% 60%,rgba(255,140,175,.08),transparent 76%);
+  opacity:.7;
+  transform:translate3d(calc(var(--px) * 6px), calc(var(--py) * 3px), 0);
+  transition:transform 600ms cubic-bezier(.22,1,.36,1);
+  animation:wp-aurora 38s ease-in-out infinite alternate;
+}
+@keyframes wp-aurora{from{opacity:.45}to{opacity:.85}}
+
+/* ---- the reflection -------------------------------------------------
+   What makes the lake read as water rather than a dark band: a soft echo
+   of the planet under the horizon, stretched, and broken up by the ripple
+   bands already on .wp__lake::before.
+
+   The blur here is STATIC. It is rasterised once; the parallax transform
+   then just moves the finished layer, which is free. */
+.wp__lake{position:relative;overflow:hidden}
+.wp__reflect{
+  position:absolute;left:-4%;top:-6%;width:62%;height:150%;
+  border-radius:50%;
+  background:
+    radial-gradient(circle at 46% 18%,rgba(255,224,240,.22) 0 6%,rgba(255,188,212,.11) 22%,transparent 46%),
+    radial-gradient(circle at 34% 34%,rgba(180,130,175,.14),transparent 58%);
+  filter:blur(14px);
+  transform:scaleY(-1.35) translate3d(calc(var(--px) * 9px), 0, 0);
+  transform-origin:top center;
+  mask-image:linear-gradient(180deg,rgba(0,0,0,.85),rgba(0,0,0,.35) 44%,transparent 78%);
+  opacity:.9;
+  transition:transform 600ms cubic-bezier(.22,1,.36,1);
+  pointer-events:none;
+}
+
+/* ---- the water moves ------------------------------------------------
+   Drifting the ripple bands by animating background-position was the
+   single most expensive thing in the first attempt. Instead the band
+   layer is made twice as tall and translated by exactly one band period
+   (6px), which loops seamlessly and never repaints. */
+.wp__lake::before{
+  height:200%;
+  animation:wp-ripple 9s linear infinite;
+}
+@keyframes wp-ripple{
+  from{transform:translate3d(0,0,0)}
+  to  {transform:translate3d(0,-6px,0)}
+}
+
+/* the specular streak breathes — opacity only, no scale, because this
+   layer carries a blur and scaling it would force a re-rasterise */
+.wp__lake::after{
+  animation:wp-glint 13s ease-in-out infinite alternate;
+}
+@keyframes wp-glint{from{opacity:.62}to{opacity:1}}
+
+/* ---- haze drift -----------------------------------------------------
+   Translate only. The earlier version also scaled it, which re-blurred a
+   24px-blurred layer every frame for a few pixels of width. */
+.wp__haze{
+  animation:wp-haze 64s ease-in-out infinite alternate;
+}
+@keyframes wp-haze{
+  from{transform:translate3d(-9px,0,0)}
+  to  {transform:translate3d(11px,-3px,0)}
+}
+
+/* On a phone the scene is mostly behind UI anyway, and the blurred layers
+   are the most expensive thing on the page — so drop them rather than
+   making a weak device composite them for nothing. */
+@media (max-width:640px){
+  .wp__aurora,.wp__stars2,.wp__reflect{display:none}
+}
+
+/* One switch for all ambient wallpaper motion. desktop.js measures the real
+   frame rate on first run and adds this class if the machine cannot hold it,
+   and Settings can set it by hand. The pointer parallax is NOT included —
+   it only runs while the pointer is actually moving, so it costs nothing at
+   rest and is what makes the scene feel like a place. */
+.wp--still .wp__stars,
+.wp--still .wp__stars2,
+.wp--still .wp__aurora,
+.wp--still .wp__haze,
+.wp--still .wp__lake::before,
+.wp--still .wp__lake::after{animation:none}
+.wp--still .wp__lake::before{transform:none}
+
+@media (prefers-reduced-motion:reduce){
+  .wp__stars,.wp__stars2,.wp__aurora,.wp__lake::before,.wp__lake::after,.wp__haze{animation:none}
+  .wp__stars2,.wp__aurora,.wp__reflect{transition:none}
+  .wp__lake::before{transform:none}
+}
+
+/* ---- Xbox Cloud tiles ---------------------------------------------
+   The one distinction that matters before you click: a free title needs
+   only a Microsoft account, everything else needs a paid subscription
+   Static has no way to check. Colour is never the only signal — the tag
+   carries the word, and the card's aria-label says it too. */
+.cl-x__tag{
+  position:absolute;top:6px;left:6px;z-index:2;
+  padding:2px 7px;border-radius:var(--r-pill);
+  font-size:var(--fs-10);font-weight:640;letter-spacing:.2px;
+  background:rgba(6,2,5,.76);border:1px solid var(--line-1);color:var(--ink-2);
+  backdrop-filter:blur(8px);
+}
+.cl-x__tag.is-free{color:#6ee7b7;border-color:rgba(61,220,132,.34)}
+.cl__note{margin-top:var(--sp-4);display:flex;flex-direction:column;gap:var(--sp-3)}
+
+/* ---- what a surface costs you to start ---------------------------- */
+.cl-card__acct{
+  display:flex;align-items:center;gap:5px;margin-top:5px;
+  font-size:var(--fs-10);color:var(--ink-3);
+}
+.cl-card__acct .icon{color:var(--ink-3);flex:none}
+.cl__nologin{
+  margin-top:var(--sp-3);padding-top:var(--sp-3);
+  border-top:1px solid var(--line-1);
+  font-size:var(--fs-10);color:var(--ink-3);line-height:1.6;
+}
+.chip.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0)}
+
+/* ==================================================================
+   Desktop clock — .deskclock-*
+
+   Sits on the wallpaper, behind every window. It is the whole of
+   an empty screen, so it is set large and thin with wide tracking
+   and then left alone: no box, no panel, no chrome. It slides
+   under anything you open, which is the point.
+
+   Decorative only — aria-hidden, no pointer events. The real,
+   readable clock lives in the top bar.
+   ================================================================== */
+
+.deskclock{
+  position:absolute;left:50%;top:50%;
+  transform:translate(-50%,-50%);
+  z-index:0;pointer-events:none;user-select:none;
+  display:flex;flex-direction:column;align-items:center;gap:var(--sp-4);
+  text-align:center;width:max-content;max-width:86vw;
+  /* the wallpaper underneath can be any brightness, so the type carries
+     its own shadow rather than relying on a scrim */
+  text-shadow:0 2px 30px rgba(0,0,0,.6), 0 1px 4px rgba(0,0,0,.4);
+  animation:deskclock-in 1.1s var(--ease-out) both;
+}
+@keyframes deskclock-in{
+  from{opacity:0;transform:translate(-50%,calc(-50% + 10px))}
+  to  {opacity:1;transform:translate(-50%,-50%)}
+}
+
+.deskclock__day{
+  font-size:clamp(34px, 6.4vw, 92px);
+  font-weight:300;
+  letter-spacing:clamp(6px, 1.4vw, 20px);
+  /* tracking adds space after the last letter too, which throws the
+     optical centre to the left — pull it back by half */
+  text-indent:clamp(6px, 1.4vw, 20px);
+  line-height:1;
+  color:#fff;
+}
+.deskclock__date{
+  font-size:calc(clamp(10px, 1.05vw, 14px) * var(--fs-k,1));
+  font-weight:600;
+  letter-spacing:clamp(2px, .45vw, 6px);
+  text-indent:clamp(2px, .45vw, 6px);
+  color:rgba(255,255,255,.88);
+}
+.deskclock__time{
+  font-size:calc(clamp(10px, .95vw, 13px) * var(--fs-k,1));
+  font-weight:500;
+  letter-spacing:clamp(2px, .4vw, 5px);
+  text-indent:clamp(2px, .4vw, 5px);
+  color:rgba(255,255,255,.66);
+}
+
+/* Desktop icons occupy the top-left; on a short window the clock would
+   collide with them, so it steps down out of the way. */
+@media (max-height:620px){
+  .deskclock{top:56%}
+  .deskclock__day{font-size:clamp(28px,5vw,54px)}
+}
+
+/* A media wallpaper needs a scrim, or the clock fights the footage.
+   The clips are served at 1080p now (assets/wallpapers), so the video is
+   shown sharp. Only the GIF fallback — ~500px wide, stretched three times —
+   keeps a whisper of blur, pushed slightly past the edges, which reads as
+   depth of field instead of low resolution. */
+.wp__video{filter:saturate(1.04)}
+.wp__still{
+  filter:saturate(1.04) blur(1.2px);
+  transform:scale(1.04);
+}
+.wp:has(.wp__video)::after,
+.wp:has(.wp__still)::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(72% 54% at 50% 50%,rgba(0,0,0,.34),transparent 78%);
+}
+
+@media (prefers-reduced-motion:reduce){
+  .deskclock{animation:none}
+}
+
+/* ==================================================================
+   Music search  — .sp-res-*
+
+   Results come from Apple's keyless catalogue, so every row has
+   artwork and most have a thirty-second preview. The preview
+   control sits on the artwork rather than beside the title: it is
+   the one thing you reach for, and putting it in the flow would
+   reflow the card on hover.
+   ================================================================== */
+
+.sp__find{flex:1 1 220px;min-width:0}
+.sp__find input{flex:1;min-width:0}
+
+.sp-res__tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--sp-4)}
+
+.sp-res__grid{
+  display:grid;gap:var(--sp-4);
+  grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+}
+
+.sp-res{
+  display:flex;flex-direction:column;gap:var(--sp-3);cursor:pointer;
+  border-radius:var(--r-md);text-align:left;min-width:0;
+  transition:transform var(--t-med) var(--ease);
+}
+.sp-res:hover{transform:translateY(-3px)}
+.sp-res:active{transform:translateY(-1px) scale(.99)}
+.sp-res:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+.sp-res__art{
+  position:relative;aspect-ratio:1/1;border-radius:var(--r-md);overflow:hidden;
+  background:var(--fill-1);border:1px solid var(--line-1);box-shadow:var(--sh-2);
+  display:grid;place-items:center;color:var(--ink-3);
+  transition:border-color var(--t-fast),box-shadow var(--t-med);
+}
+.sp-res:hover .sp-res__art{border-color:var(--line-accent);box-shadow:var(--sh-3),var(--glow)}
+.sp-res__art img{width:100%;height:100%;object-fit:cover;display:block}
+
+.sp-res__ctl{position:absolute;right:7px;bottom:7px;z-index:2}
+.sp-res__play{
+  display:grid;place-items:center;width:32px;height:32px;padding:0;
+  border-radius:50%;border:0;cursor:pointer;
+  background:#1db954;color:#06210f;
+  box-shadow:0 5px 16px rgba(0,0,0,.44);
+  opacity:0;transform:translateY(5px);
+  transition:opacity var(--t-fast),transform var(--t-med) var(--ease-out),background var(--t-fast);
+}
+.sp-res:hover .sp-res__play,
+.sp-res:focus-within .sp-res__play,
+.sp-res__play.is-on{opacity:1;transform:none}
+.sp-res__play:hover{background:#25d366}
+.sp-res__play:focus-visible{outline:2px solid #fff;outline-offset:2px}
+/* a sounding preview keeps the control lit, so it is obvious which card
+   the audio is coming from */
+.sp-res__play.is-on{background:var(--accent);color:var(--accent-ink)}
+.sp-res__nopre{
+  display:grid;place-items:center;width:32px;height:32px;
+  color:var(--ink-3);font-size:var(--fs-11);
+}
+
+.sp-res__b{display:flex;flex-direction:column;gap:2px;min-width:0}
+.sp-res__t{
+  font-size:var(--fs-11);font-weight:640;color:var(--ink-0);line-height:1.3;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.sp-res__m{
+  font-size:var(--fs-10);color:var(--ink-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+.sp-res__skel{
+  aspect-ratio:1/1;border-radius:var(--r-md);background:var(--fill-1);
+  position:relative;overflow:hidden;
+}
+.sp-res__skel::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent);
+  animation:cl-shim 1.3s var(--ease) infinite;
+}
+
+@media (prefers-reduced-motion:reduce){
+  .sp-res,.sp-res__play{transition:none}
+  .sp-res__skel::after{animation:none}
+}
+
+/* Discord: the brief moment before a default server answers. */
+.dc__wait{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:var(--sp-3);min-height:240px;padding:var(--sp-6);text-align:center;
+}
+.dc__wait small{font-size:var(--fs-11);color:var(--ink-2);max-width:44ch;line-height:1.6}
+.dc__wait small.dim{font-size:var(--fs-10);color:var(--ink-3)}
+
+/* ==================================================================
+   App glyphs — depth pass.
+
+   The base treatment in shell.css is sound (gradient, inner
+   highlight, gloss). What was missing is separation: at dock size
+   a flat gradient square reads as a coloured blob. A hairline rim
+   and a soft ambient shadow give each icon an edge against the
+   glass behind it, and the icon itself gets a faint drop shadow so
+   the stroke does not dissolve into a light gradient.
+   ================================================================== */
+
+.glyph{
+  /* a hairline lip catches the light at the top edge and separates the
+     tile from whatever sits behind it */
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.26) inset,
+    0 -1px 0 rgba(0,0,0,.34) inset,
+    0 0 0 .5px rgba(0,0,0,.4),
+    var(--sh-2);
+}
+.glyph .icon{
+  /* white strokes on a pale gradient need their own shadow or the top
+     of the icon disappears into the highlight */
+  filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.28));
+}
+/* the sheen was flat across the whole tile; angling it reads as a curved
+   surface instead of a sticker */
+.glyph::after{
+  background:linear-gradient(158deg,rgba(255,255,255,.26),rgba(255,255,255,.04) 44%,transparent 62%);
+}
+
+@media (prefers-reduced-motion:reduce){
+  .glyph{transition:none}
+}
+
+/* ==================================================================
+   App icons — material pass.
+
+   The tiles were a flat linear gradient with a thin glyph. Real OS
+   icons read as small lit objects, and the difference is almost all
+   light: a dome of highlight at the top, a bevelled rim, and — the
+   part that makes a dock feel built rather than printed — a soft
+   shadow tinted with the icon's OWN colour, so a red app pools red
+   under itself and a green one green.
+
+   That tint is derived per-icon with color-mix() from the --g2 stop
+   each glyph already carries, so nothing needs new per-app data.
+   ================================================================== */
+
+.glyph{
+  /* a domed radial light over the existing linear gradient — the base
+     gradient stays as the fallback for the (few) engines without
+     radial-over-linear layering */
+  background:
+    radial-gradient(120% 100% at 50% -12%, rgba(255,255,255,var(--dome,.34)), transparent 56%),
+    radial-gradient(140% 120% at 50% 120%, rgba(0,0,0,.30), transparent 60%),
+    linear-gradient(160deg, var(--g1,#3a3a44), var(--g2,#22222a));
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.34) inset,   /* top lip */
+    0 -1px 0 rgba(0,0,0,.30) inset,        /* bottom shade */
+    0 0 0 .5px rgba(0,0,0,.5),             /* crisp outer edge */
+    0 2px 5px rgba(0,0,0,.32),             /* neutral contact shadow */
+    0 5px 16px -3px color-mix(in srgb, var(--g2, #000) 42%, transparent); /* the coloured pool */
+}
+.glyph .icon{
+  width:54%;height:54%;
+  filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.34));
+}
+.glyph .icon svg{stroke-width:2.15}         /* a touch heavier so it reads at dock size */
+
+/* the dock lifts each icon into a stronger pool of its own colour */
+.dock__item:hover .glyph{
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.4) inset,
+    0 -1px 0 rgba(0,0,0,.3) inset,
+    0 0 0 .5px rgba(0,0,0,.5),
+    0 10px 22px -4px color-mix(in srgb, var(--g2, #000) 60%, transparent),
+    0 0 24px -6px color-mix(in srgb, var(--g1, #fff) 50%, transparent);
+}
+
+/* launcher tiles get the same colour pool on hover, gentler */
+.pin:hover .glyph{
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.34) inset,
+    0 -1px 0 rgba(0,0,0,.3) inset,
+    0 0 0 .5px rgba(0,0,0,.5),
+    0 6px 16px -3px color-mix(in srgb, var(--g2, #000) 55%, transparent);
+}
+
+/* color-mix is very widely supported now, but on an engine that lacks it
+   the whole shadow declaration is dropped — so a plain neutral shadow is
+   defined first as the floor, and the tinted one above simply enhances it */
+@supports not (color: color-mix(in srgb, red 50%, blue)){
+  .glyph{ box-shadow:0 1px 0 rgba(255,255,255,.3) inset,0 2px 6px rgba(0,0,0,.4),var(--sh-2); }
+}
+
+/* ==================================================================
+   Library ("My Stuff") — .lib-*
+   Reuses the .rbx-card grid; only the extras need styling.
+   ================================================================== */
+.lib__hero{min-height:auto}
+.lib-card__glyph{
+  position:absolute;inset:0;display:grid;place-items:center;
+  color:var(--accent-soft);background:var(--fill-1);
+}
+.lib-card__heart{
+  position:absolute;top:6px;right:6px;z-index:2;display:grid;place-items:center;
+  width:22px;height:22px;border-radius:50%;
+  background:rgba(6,2,5,.7);border:1px solid var(--line-accent);color:var(--accent);
+  backdrop-filter:blur(8px);
+}
+.lib-card__heart .icon{fill:currentColor}
+.lib__empty{padding:var(--sp-6) var(--sp-5)}
+.lib__empty-acts{display:flex;gap:var(--sp-3);margin-top:var(--sp-4);flex-wrap:wrap;justify-content:center}
+
+/* ---- custom accent picker (Settings → Themes) --------------------- */
+.st-custom{
+  display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-4);
+  border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-1);
+}
+.st-custom.is-on{border-color:var(--line-accent);background:var(--fill-accent)}
+.st-custom__preview{
+  width:38px;height:38px;flex:none;border-radius:var(--r-md);
+  border:1px solid rgba(255,255,255,.16);box-shadow:var(--sh-2);
+}
+.st-custom__b{flex:1;min-width:0}
+.st-custom__b b{font-size:var(--fs-12);color:var(--ink-0);display:block}
+.st-custom__b small{font-size:var(--fs-10);color:var(--ink-3)}
+.st-custom__swatch{
+  width:34px;height:34px;flex:none;padding:0;border:1px solid var(--line-1);
+  border-radius:var(--r-sm);background:none;cursor:pointer;
+}
+.st-custom__swatch::-webkit-color-swatch-wrapper{padding:2px}
+.st-custom__swatch::-webkit-color-swatch{border:none;border-radius:5px}
+.st-custom__hex{
+  width:78px;flex:none;font-family:var(--font-mono,ui-monospace,Menlo,monospace);
+  font-size:var(--fs-11);text-align:center;
+}
+
+/* ---- Xbox Cloud featured rail (.cl-feat) -------------------------- */
+.cl-feat{padding-bottom:var(--sp-2)}
+.cl-feat__card{
+  flex:0 0 220px;display:flex;flex-direction:column;gap:var(--sp-3);
+  text-align:left;cursor:pointer;border-radius:var(--r-md);
+  transition:transform var(--t-med) var(--ease);
+}
+.cl-feat__card:hover{transform:translateY(-4px)}
+.cl-feat__card:active{transform:translateY(-1px) scale(.99)}
+.cl-feat__card:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:var(--r-md)}
+.cl-feat__art{
+  position:relative;aspect-ratio:16/9;border-radius:var(--r-md);overflow:hidden;
+  background:var(--fill-1);border:1px solid var(--line-1);box-shadow:var(--sh-2);
+  transition:border-color var(--t-fast),box-shadow var(--t-med);
+}
+.cl-feat__card:hover .cl-feat__art{border-color:var(--line-accent);box-shadow:var(--sh-3),var(--glow)}
+.cl-feat__art img{width:100%;height:100%;object-fit:cover;display:block}
+.cl-feat__tag{
+  position:absolute;top:7px;left:7px;padding:2px 8px;border-radius:var(--r-pill);
+  font-size:var(--fs-10);font-weight:640;color:var(--ink-2);
+  background:rgba(6,2,5,.74);border:1px solid var(--line-1);backdrop-filter:blur(8px);
+}
+.cl-feat__tag.is-free{color:#6ee7b7;border-color:rgba(61,220,132,.32)}
+.cl-feat__t{font-size:var(--fs-12);font-weight:640;color:var(--ink-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cl-feat__m{font-size:var(--fs-10);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){ .cl-feat__card{transition:none} }
+
+/* a game whose host only runs it on its own site: a line under Play saying why it opens there */
+.ag-stage__note { position: absolute; left: 50%; bottom: var(--sp-4); transform: translateX(-50%); width: min(92%, 34rem);
+  text-align: center; font-size: var(--fs-12); color: var(--ink-2); background: color-mix(in srgb, var(--bg-0) 72%, transparent);
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-2); }

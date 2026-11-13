@@ -1,0 +1,58 @@
+/* ==================================================================
+   Celebrations — New Year's, birthdays, Valentine's, spring.
+   Drawn by js/shell/celebrate.js; the dates and switches are
+   js/core/season.js, shown in Settings › Celebrations.
+
+   · html[data-valentine="on"], February 1–14: a rose accent
+   · html[data-spring="on"], March 1 – April 30: a leaf-and-blossom accent
+   · the one canvas (.celebrate-fx) and the reduced-motion stills
+     (.celebrate-still) sit on the desktop layer, behind icons and
+     windows, and never take a click
+   · the New Year countdown (.nye-pill) and the birthday card
+     (.bday-card) float above the windows; the pill takes no click,
+     the card only on its own button
+   Without the attributes nothing here applies to the rest of the OS.
+   ================================================================== */
+:root[data-valentine="on"]{
+  --accent:#ff5fa2 !important;
+  --accent-soft:#ffc2d9 !important;
+  --accent-rgb:255 95 162 !important;
+  --accent-ink:#2e0818 !important;
+}
+:root[data-valentine="on"][data-theme="light"]{--accent-soft:#b8326f !important}
+:root[data-spring="on"]{
+  --accent:#6fd08c !important;
+  --accent-soft:#ffc8dc !important;
+  --accent-rgb:111 208 140 !important;
+  --accent-ink:#07230f !important;
+}
+:root[data-spring="on"][data-theme="light"]{--accent-soft:#2f8a4c !important}
+
+.celebrate-fx,.celebrate-still{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+:root[data-gamemode="on"] .celebrate-fx,
+:root[data-gamemode="on"] .celebrate-still,
+body.is-mobile .celebrate-fx,
+body.is-mobile .celebrate-still{display:none}
+
+.nye-pill{
+  position:absolute;left:50%;top:52px;transform:translateX(-50%);z-index:var(--z-toast);pointer-events:none;
+  display:flex;flex-direction:column;align-items:center;gap:1px;padding:7px 18px 8px;border-radius:999px;
+  background:rgba(14,18,40,.78);border:1px solid rgba(255,210,138,.35);color:#fff;
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);box-shadow:0 8px 28px rgba(0,0,0,.35);
+}
+.nye-pill small{font-size:calc(10px * var(--fs-k,1));letter-spacing:.14em;text-transform:uppercase;opacity:.7}
+.nye-pill b{font-size:calc(22px * var(--fs-k,1));line-height:1.1;font-variant-numeric:tabular-nums;letter-spacing:.02em;color:#ffd28a}
+
+.bday-card{
+  position:absolute;right:var(--sp-5);bottom:calc(var(--sp-3) + 64px);z-index:var(--z-toast);width:min(360px,calc(100vw - 32px));
+  display:grid;grid-template-columns:auto 1fr;gap:var(--sp-3);align-items:center;padding:var(--sp-4);
+  border-radius:16px;background:#1b1d2b;border:1px solid rgba(255,143,184,.45);
+  box-shadow:0 14px 40px rgba(0,0,0,.4);color:#fff;
+  animation:bday-in 360ms cubic-bezier(.22,1,.36,1) both;
+}
+.bday-card__t{display:flex;flex-direction:column;gap:3px;min-width:0}
+.bday-card__t small{opacity:.75;line-height:1.35}
+.bday-card__x{grid-column:1 / -1;justify-self:end}
+@keyframes bday-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.bday-card{animation:none}}
+body.reduce-motion .bday-card{animation:none}

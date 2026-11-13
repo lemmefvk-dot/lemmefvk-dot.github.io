@@ -1,0 +1,33 @@
+/* feat-tips.css — the tip of the day card (js/shell/tips.js). Lower right,
+   above the dock, under menus. */
+.tipc{
+  position:absolute;right:var(--sp-5);bottom:calc(var(--dock-h) + var(--sp-5));z-index:var(--z-toast);
+  width:min(320px,calc(100vw - 32px));box-sizing:border-box;padding:var(--sp-4);border-radius:var(--r-lg);
+  background:var(--glass-3);border:1px solid var(--line-1);box-shadow:var(--sh-3);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);
+  animation:tipc-in var(--t-slow) var(--ease-out) both;
+  transition:opacity var(--t-med),transform var(--t-med) var(--ease);
+}
+.tipc.is-out{opacity:0;transform:translateY(10px)}
+@keyframes tipc-in{from{opacity:0;transform:translateY(14px) scale(.98)}}
+.tipc__head{display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-2)}
+.tipc__ico{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;color:var(--accent-ink);background:var(--accent)}
+.tipc__ico svg{width:13px;height:13px}
+.tipc__k{font-size:var(--fs-10);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
+.tipc__x{width:24px;height:24px;border-radius:50%;border:0;cursor:pointer;display:grid;place-items:center;background:none;color:var(--ink-3)}
+.tipc__x:hover{background:var(--fill-1);color:var(--ink-0)}
+.tipc__x svg{width:13px;height:13px}
+.tipc__t{margin:0 0 var(--sp-4);font-size:var(--fs-12);line-height:1.5;color:var(--ink-1)}
+.tipc__acts{display:flex;gap:var(--sp-3)}
+.tipc__acts .btn svg{width:13px;height:13px}
+.tipc__never{display:flex;align-items:center;gap:var(--sp-3);margin-top:var(--sp-4);font-size:var(--fs-11);color:var(--ink-3);cursor:pointer}
+.tipc .btn:focus-visible,.tipc__x:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+body.is-mobile .tipc{left:calc(var(--sp-4) + var(--mob-l, 0px));right:calc(var(--sp-4) + var(--mob-r, 0px));width:auto;
+  bottom:calc(var(--mob-gest, 44px) + var(--mob-dock-h, 96px) + var(--sp-2))}
+body.is-mobile.mob-has-win .tipc{bottom:calc(var(--mob-gest, 44px) + var(--sp-3))}
+body.is-mobile .tipc__x{width:44px;height:44px}
+body.is-mobile .tipc__acts .btn{min-height:44px;height:auto}
+body.is-mobile .tipc__never{min-height:44px}
+@media (prefers-reduced-motion:reduce){.tipc{animation:none;transition:none}}
+body.reduce-motion .tipc{animation:none;transition:none}
