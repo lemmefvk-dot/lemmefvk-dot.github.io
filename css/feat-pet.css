@@ -41,3 +41,11 @@ body.reduce-motion .pet__z,
   .pet__z{animation:none;opacity:.8}
 }
 body.is-mobile .pet{display:none}
+
+/* what it says when something real happens (a timer, a badge, a finished transfer) */
+.pet__say{position:absolute;left:50%;bottom:calc(100% + 4px);transform:translateX(-50%);white-space:nowrap;pointer-events:none;
+  max-width:260px;overflow:hidden;text-overflow:ellipsis;padding:3px 9px;border-radius:var(--r-pill,999px);
+  font:600 calc(11px * var(--fs-k,1))/1.3 var(--font-ui,system-ui);color:var(--ink-0,#fff);background:var(--glass-3,rgba(30,30,40,.92));
+  border:1px solid var(--line-1,rgba(255,255,255,.14));box-shadow:0 4px 14px rgba(0,0,0,.35);animation:pet-say .25s var(--ease-out) both}
+@keyframes pet-say{from{opacity:0;transform:translate(-50%,4px)}to{opacity:1;transform:translate(-50%,0)}}
+body.reduce-motion .pet__say{animation:none}

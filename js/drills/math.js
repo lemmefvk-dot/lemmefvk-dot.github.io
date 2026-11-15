@@ -11,6 +11,11 @@
    ones), and accuracy and speed are worked out from that record when the
    panel is drawn. A table you have not tried says so. There are no
    streaks and no points. Saved on this device ('portal.drillsMath').
+
+   Squares, negative numbers, percentages and fractions are kinds of
+   their own (js/drills/mathcore.js). "Practise my weakest facts" asks
+   each fact the record says needs work (missed, or slow) once, worst
+   first: it only appears once there is such a fact.
    ============================================================ */
 import * as M from './mathcore.js';
 import { record, MAX_MS } from './sched.js';
@@ -67,7 +72,7 @@ export function mountMath(host, ctx) {
         }, `table-${t}`))),
         h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'tables-all' }, onclick: () => { p.tables = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; save(); paintHome(); } }, 'All')) : null,
       h('div.dr-row', h('small.dim', { text: 'Level' }), levels,
-        h('small.dim', { text: p.op === 'x' ? 'Easy asks up to × 10, Medium and Hard up to × 12.' : p.op === 'mix' ? 'Mixed uses the same level for + − × ÷.' : '' })),
+        h('small.dim', { dataset: { fk: 'level-note' }, text: M.LEVEL_NOTES[p.op] || '' })),
       h('div.dr-row', h('small.dim', { text: 'How' }), h('div.dr-chips', { role: 'group', 'aria-label': 'Timed or practice' },
         chip('Timed: 60 seconds', p.mode === 'timed', () => { p.mode = 'timed'; save(); paintHome(); }, 'mode-timed'),
         chip('Practice: 10 questions, no clock', p.mode === 'practice', () => { p.mode = 'practice'; save(); paintHome(); }, 'mode-practice'))),
@@ -99,15 +104,19 @@ export function mountMath(host, ctx) {
       }
       prog.append(others);
       const weak = M.weakFacts(d.facts);
+      const weakAll = M.weakFacts(d.facts, M.ROUND_QUESTIONS);
       prog.append(h('h4.dr-h2', { text: 'Facts to work on' }),
         weak.length ? h('ul.dr-weak', { dataset: { fk: 'math-weak' } }, ...weak.map(w => h('li', { dataset: { key: w.key }, text: `${w.text}: ${w.ok} of ${w.n} right${w.avgMs != null ? `, ${secs(w.avgMs)} each` : ''}` })))
-          : h('p.dr-none', { text: 'None: every fact you have tried has been right and quick.' }));
+          : h('p.dr-none', { text: 'None: every fact you have tried has been right and quick.' }),
+        weakAll.length ? h('div.dr-row', h('button.btn', { type: 'button', dataset: { fk: 'math-weakest' }, onclick: startWeakest }, icon('play'),
+          h('span', { text: `Practise my weakest ${weakAll.length === 1 ? 'fact' : `${weakAll.length} facts`}` })),
+          h('small.dim', { text: 'Each one once, worst first. Any kind of question: whatever the record says you missed or were slow on.' })) : null);
       const timed = d.rounds.filter(r => r.mode === 'timed');
       if (timed.length) {
         const best = new Map();
         for (const r of timed) { const k = `${r.op}/${r.level}`; if (!best.has(k) || r.ok > best.get(k).ok) best.set(k, r); }
         prog.append(h('h4.dr-h2', { text: 'Timed rounds' }), h('ul.dr-weak', { dataset: { fk: 'math-rounds' } },
-          ...[...best.values()].map(r => h('li', { dataset: { key: `${r.op}/${r.level}` }, text: `Best at ${M.OPS.find(o => o[0] === r.op)[2]} (${r.level}): ${r.ok} right in ${r.secs} seconds of ${plural(timed.filter(x => x.op === r.op && x.level === r.level).length, 'round')}` }))));
+          ...[...best.values()].map(r => h('li', { dataset: { key: `${r.op}/${r.level}` }, text: `Best at ${(M.OPS.find(o => o[0] === r.op) || [0, 0, r.op])[2]} (${r.level}): ${r.ok} right in ${r.secs} seconds of ${plural(timed.filter(x => x.op === r.op && x.level === r.level).length, 'round')}` }))));
       }
       prog.append(h('div.dr-row', S.confirmClear
         ? [h('small', { text: 'Clear every drill answer on this device?' }), h('button.btn.btn--sm.btn--danger', { type: 'button', dataset: { fk: 'math-clear-yes' }, onclick: () => { S.data = normalize({ p: S.data.p }); S.confirmClear = false; save(); paintHome(); } }, 'Clear it'), h('button.btn.btn--sm', { type: 'button', onclick: () => { S.confirmClear = false; paintHome(); } }, 'Keep it')]
@@ -123,13 +132,23 @@ export function mountMath(host, ctx) {
     const items = M.pool(p.op, p.level, p.tables);
     if (!items.length) return;
     S.resultMsg = null;
-    S.run = { items, n: 0, ok: 0, q: null, shownAt: 0, t0: now(), mode: p.mode, last: null, hold: false, over: false };
+    S.run = { items, n: 0, ok: 0, q: null, shownAt: 0, t0: now(), mode: p.mode, op: p.op, level: p.level, last: null, hold: false, over: false };
     paintRun();
     ask();
     if (p.mode === 'timed') {
       S.timer = setInterval(tick, 200);
     }
   }
+  /* each weak fact once, worst first: a practice round with its own list */
+  function startWeakest() {
+    const weak = M.weakFacts(S.data.facts, M.ROUND_QUESTIONS);
+    if (!weak.length) return;
+    S.resultMsg = null;
+    S.run = { items: weak.map(w => ({ key: w.key })), list: weak.map(w => M.factOf(w.key)), n: 0, ok: 0, q: null, shownAt: 0, t0: now(), mode: 'practice', op: 'weak', level: 'record', limit: weak.length, hold: false, over: false };
+    paintRun();
+    ask();
+  }
+  const roundLen = R => R.limit || M.ROUND_QUESTIONS;
   const left = () => Math.max(0, M.ROUND_SECONDS * 1000 - (now() - S.run.t0));
   function tick() {
     if (!S.run || S.dead) return;
@@ -139,30 +158,31 @@ export function mountMath(host, ctx) {
   }
   function ask() {
     const R = S.run;
-    R.q = M.nextQuestion(R.items, S.data.facts, Math.random, R.q && R.q.key);
+    R.q = R.list ? R.list[R.n] : M.nextQuestion(R.items, S.data.facts, Math.random, R.q && R.q.key);
     R.shownAt = now();
     R.hold = false;
     const q = root.querySelector('[data-fk="math-q"]'), inp = root.querySelector('[data-fk="math-in"]');
-    if (q) q.textContent = `${R.q.text} =`;
-    if (inp) { inp.value = ''; inp.focus(); }
+    if (q) { q.textContent = `${R.q.text} =`; q.dataset.key = R.q.key; }
+    if (inp) { inp.value = ''; inp.inputMode = R.q.kind === 'frac' ? 'text' : 'numeric'; inp.placeholder = R.q.kind === 'frac' ? 'a fraction, like 3/4' : ''; inp.focus(); }
     const hint = root.querySelector('[data-fk="math-hint"]');
     if (hint) hint.textContent = '';
     paintCount();
   }
   function paintCount() {
     const R = S.run, c = root.querySelector('[data-fk="math-count"]');
-    if (c) c.textContent = R.mode === 'practice' ? `Question ${Math.min(R.n + 1, M.ROUND_QUESTIONS)} of ${M.ROUND_QUESTIONS}` : `${R.ok} right so far`;
+    if (c) c.textContent = R.mode === 'practice' ? `Question ${Math.min(R.n + 1, roundLen(R))} of ${roundLen(R)}` : `${R.ok} right so far`;
   }
   function submit() {
     const R = S.run;
     if (!R || R.over) return;
-    if (R.hold) { if (R.n >= M.ROUND_QUESTIONS && R.mode === 'practice') finish(); else ask(); return; }
+    if (R.hold) { if (R.n >= roundLen(R) && R.mode === 'practice') finish(); else ask(); return; }
     const inp = root.querySelector('[data-fk="math-in"]');
-    const val = M.parseAnswer(inp.value);
+    const res = M.check(R.q, inp.value);
     const hint = root.querySelector('[data-fk="math-hint"]');
-    if (val == null) { if (hint) hint.textContent = 'Type a whole number.'; return; }
+    if (!res.read) { if (hint) hint.textContent = R.q.kind === 'frac' ? 'Type a fraction like 3/4, or a whole number.' : 'Type a whole number.'; return; }
+    const val = inp.value.trim();
     const ms = now() - R.shownAt;
-    const good = val === R.q.answer;
+    const good = res.ok;
     /* an answer that came after the clock ran out does not count */
     if (R.mode === 'timed' && left() <= 0) { finish(); return; }
     const d = S.data;
@@ -174,15 +194,15 @@ export function mountMath(host, ctx) {
     save();
     const fb = root.querySelector('[data-fk="math-feedback"]');
     if (good) {
-      if (fb) { fb.className = 'dr-fb is-ok'; fb.textContent = `${R.q.text} = ${R.q.answer}: right${ms <= MAX_MS ? ` (${secs(ms)})` : ''}`; }
+      if (fb) { fb.className = 'dr-fb is-ok'; fb.textContent = `${R.q.text} = ${R.q.answerText}: right${ms <= MAX_MS ? ` (${secs(ms)})` : ''}`; }
       paintCount();
-      if (R.mode === 'practice' && R.n >= M.ROUND_QUESTIONS) finish(); else ask();
+      if (R.mode === 'practice' && R.n >= roundLen(R)) finish(); else ask();
     } else {
-      if (fb) { fb.className = 'dr-fb is-bad'; fb.textContent = `${R.q.text} = ${R.q.answer}, not ${val}`; }
+      if (fb) { fb.className = 'dr-fb is-bad'; fb.textContent = `${R.q.text} = ${R.q.answerText}, not ${val.replace(/^-/, '−')}${res.note ? `. ${res.note}` : ''}`; }
       paintCount();
       if (R.mode === 'practice') {
         R.hold = true;
-        if (hint) hint.textContent = R.n >= M.ROUND_QUESTIONS ? 'Press Enter to see your result.' : 'Press Enter for the next question.';
+        if (hint) hint.textContent = R.n >= roundLen(R) ? 'Press Enter to see your result.' : 'Press Enter for the next question.';
       } else ask();
     }
   }
@@ -193,12 +213,12 @@ export function mountMath(host, ctx) {
     clearInterval(S.timer); S.timer = null;
     const secsUsed = R.mode === 'timed' ? M.ROUND_SECONDS : Math.round((now() - R.t0) / 1000);
     if (R.n > 0) {
-      S.data.rounds.push({ t: Date.now(), mode: R.mode, op: S.data.p.op, level: S.data.p.level, n: R.n, ok: R.ok, secs: secsUsed });
+      S.data.rounds.push({ t: Date.now(), mode: R.mode, op: R.op, level: R.level, n: R.n, ok: R.ok, secs: secsUsed });
       save();
     }
     S.resultMsg = R.n > 0
       ? h('div.dr-card.dr-result', { role: 'status', dataset: { fk: 'math-summary', n: String(R.n), ok: String(R.ok) } },
-        h('h3.dr-h', { text: R.mode === 'timed' ? 'Time is up' : 'Round finished' }),
+        h('h3.dr-h', { text: R.mode === 'timed' ? 'Time is up' : R.op === 'weak' ? 'Weakest facts: round finished' : 'Round finished' }),
         h('p', { text: `${R.ok} right out of ${plural(R.n, 'answer')}${R.n ? ` (${pct(R.ok / R.n)})` : ''}${R.mode === 'timed' ? ' in 60 seconds' : ` in ${secsUsed} seconds`}.` }))
       : h('div.dr-card', { role: 'status', dataset: { fk: 'math-summary', n: '0', ok: '0' } }, h('p', { text: 'No answers were given, so nothing was recorded.' }));
     S.run = null;

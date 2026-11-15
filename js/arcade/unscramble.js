@@ -8,7 +8,11 @@
    letter every three solved, up to 8. A solved word scores 10 points
    a letter, plus 5 for each word already in your streak (at most 25).
    A hint places the next right letter and takes 5 points off the word when you solve it; skipping a
-   word ends the streak.
+   word ends the streak. Instead of growing, the words can all be one
+   length (4 to 8 letters), picked at the top.
+
+   The longest streak you've had (words in a row without a skip) is
+   kept on this device, beside the best score for each length setting.
 
    The rules (what may be dealt, how a scramble is made, what counts
    as an answer) are in unscramblelogic.js, and the words come from
@@ -22,14 +26,23 @@
                     → skip · Enter checks the word
 
    Score = points, higher is better; the best is kept on this device
-   (portal.arcadePuzzles.unscramble).
+   (portal.arcadePuzzles.unscramble: best for growing words, bestBy for
+   each fixed length, streak for the longest streak).
+
+   ONLINE RACE (ctx.online.kit, js/arcade/race.js): two minutes of
+   growing words dealt from the room's seed. Both screens get the same
+   words in the same order: in a race the length grows with the words
+   dealt, not the words solved, so a skip takes you to the same next
+   word your friend gets by solving. Skip stays (it still ends your
+   streak); hints, the length picker and Restart are off, and nothing is
+   saved. The higher score wins, then more words solved.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { ownsKey, randomSeed, rng, sounder } from './kit.js';
 import { CSS as BASE, load, save, fmtTime, reducedMotion, bag, clock } from './puzzlekit.js';
 import { loadWords } from './words.js';
-import { ROUND_SECONDS, HINT_COST, nextPuzzle, accepts, anagramsOf, solvePoints } from './unscramblelogic.js';
+import { ROUND_SECONDS, HINT_COST, LENGTHS, nextPuzzle, accepts, anagramsOf, solvePoints } from './unscramblelogic.js';
 
 const GAME = 'unscramble';
 const LOW_SECONDS = 10;
@@ -69,11 +82,21 @@ export default {
     const L = bag();
     const snd = sounder(ctx);
     let dead = false, paused = false;
-    const sv = load(GAME);
-    let best = Number.isFinite(sv.best) ? sv.best : null;
+    /* an online race: the shell's race kit, the room's seed */
+    const RACE = ctx.online?.kit && Number.isInteger(ctx.online.seed) ? ctx.online : null;
+    const sv = RACE ? {} : load(GAME);
+    /* the length setting: 'grow' (4 letters, one more every three solved) or a fixed 4–8 */
+    let lenMode = !RACE && LENGTHS.includes(Number(sv.len)) ? Number(sv.len) : 'grow';
+    const bestBy = { ...(sv.bestBy && typeof sv.bestBy === 'object' ? sv.bestBy : {}) };
+    let bestGrow = Number.isFinite(sv.best) ? sv.best : null;
+    const bestOf = () => (lenMode === 'grow' ? bestGrow : Number.isFinite(bestBy[lenMode]) ? bestBy[lenMode] : null);
+    let best = bestOf();
+    let bestStreak = Number.isInteger(sv.streak) && sv.streak > 0 ? sv.streak : 0, roundStreak = 0;
     let lex = null, cache = {};
     let phase = 'loading';              /* loading · ready · play · review · done */
-    let rand = rng(randomSeed());
+    let rand = rng(RACE ? RACE.seed >>> 0 : randomSeed());
+    /* the tiles' display order: in a race its own dice, so shuffling never moves the words dealt */
+    const shuf = RACE ? Math.random : () => rand();
     let puz = null;                     /* { word, tiles, len } */
     let order = [];                     /* tile display order: indexes into puz.tiles */
     let picks = [];                     /* tile indexes used so far, in answer order */
@@ -90,7 +113,9 @@ export default {
     const timeRead = h('div.pz__read.is-clock', { title: 'Time left', 'aria-label': 'Time left' }, icon('clock'), timeV);
     const bestV = h('small', { text: '' });
     const newBtn = h('button.pz__btn', { type: 'button', title: 'Start over with a new round' }, icon('refresh'), h('span.pz__long', { text: 'Restart' }));
-    const top = h('div.pz__top', scoreRead, streakRead, timeRead, bestV, newBtn);
+    const lenBtns = ['grow', ...LENGTHS].map(k => h('button', { type: 'button', dataset: { len: k }, 'aria-pressed': 'false', title: k === 'grow' ? '4 letters, one more every three solved' : `Every word ${k} letters` }, k === 'grow' ? 'Grow' : String(k)));
+    const lenSeg = h('div.pz__seg', { role: 'group', 'aria-label': 'Word length' }, lenBtns);
+    const top = h('div.pz__top', lenSeg, scoreRead, streakRead, timeRead, bestV, newBtn);
     const tilesEl = h('div.pz-us__row', { role: 'group', 'aria-label': 'Letter tiles' });
     const slotsEl = h('div.pz-us__row', { role: 'group', 'aria-label': 'Your answer' });
     const shuffleBtn = h('button.pz__btn', { type: 'button', title: 'Shuffle the tiles (Space)' }, icon('shuffle'), h('span', { text: 'Shuffle' }));
@@ -107,9 +132,10 @@ export default {
     const root = h('div.pz' + (reduced ? '.is-reduced' : ''), { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } },
       h('style', { text: CSS }), top, wrap, foot, live);
     el.appendChild(root);
+    if (RACE) for (const b of [lenSeg, newBtn, hintBtn, bestV]) b.hidden = true;
 
     const say = m => { msg = m; msgEl.textContent = m; live.textContent = ''; live.textContent = m; };
-    const paintFoot = () => foot.replaceChildren(h('span.pz__hint', { html: 'tap tiles or type the letters · <kbd>Space</kbd> shuffles · <kbd>?</kbd> hint · <kbd>→</kbd> skip · <kbd>Backspace</kbd> takes one back' }));
+    const paintFoot = () => foot.replaceChildren(h('span.pz__hint', { html: `tap tiles or type the letters · <kbd>Space</kbd> shuffles${RACE ? '' : ' · <kbd>?</kbd> hint'} · <kbd>→</kbd> skip · <kbd>Backspace</kbd> takes one back` }));
 
     const clk = clock(secs => {
       const left = Math.max(0, ROUND_SECONDS - secs);
@@ -122,7 +148,9 @@ export default {
     function paint() {
       scoreV.textContent = String(score);
       streakV.textContent = String(streak);
-      bestV.textContent = best != null ? `Best: ${best}` : '';
+      streakRead.title = `Words in a row without skipping${bestStreak ? ` · your longest: ${bestStreak}` : ''}`;
+      bestV.textContent = [best != null ? `Best${lenMode === 'grow' ? '' : ` (${lenMode} letters)`}: ${best}` : '', bestStreak ? `longest streak ${bestStreak}` : ''].filter(Boolean).join(' · ');
+      lenBtns.forEach(b => b.setAttribute('aria-pressed', String(String(lenMode) === b.dataset.len)));
       const playing = phase === 'play' && !!puz;
       [backBtn, shuffleBtn, hintBtn, skipBtn].forEach(b => { b.disabled = !playing; });
       if (!puz) { tilesEl.replaceChildren(); slotsEl.replaceChildren(); return; }
@@ -159,19 +187,22 @@ export default {
     }
     function reset() {
       clk.stop(); clk.secs = 0;
-      score = 0; streak = 0; hints = 0; skipped = 0; solved = []; used = new Set(); puz = null; picks = []; order = []; missedNote = null;
+      score = 0; streak = 0; roundStreak = 0; hints = 0; skipped = 0; solved = []; used = new Set(); puz = null; picks = []; order = []; missedNote = null;
+      best = bestOf();
       paused = false; phase = 'ready';
       root.classList.remove('is-low');
       timeV.textContent = fmtTime(ROUND_SECONDS);
       msgEl.textContent = '';
       paint(); paintList(); onScore(0);
+      /* a race was counted down by the Arcade: it starts at once */
+      if (RACE) { start(); return; }
       const go = h('button.btn.btn--primary', { type: 'button', dataset: { act: 'start' }, onclick: () => start() }, icon('play', { fill: true }), h('span', { text: 'Start' }));
-      card('Unscramble', `${ROUND_SECONDS / 60} minutes. Put the letters back into a word — any real word that uses them all counts. They start at 4 letters and get longer.`, go);
+      card('Unscramble', `${ROUND_SECONDS / 60} minutes. Put the letters back into a word — any real word that uses them all counts. ${lenMode === 'grow' ? 'They start at 4 letters and get longer.' : `Every word has ${lenMode} letters.`}`, go);
       say('Press Enter or Space to start.');
       setTimeout(() => { if (!dead && phase === 'ready') go.focus({ preventScroll: true }); }, 30);
     }
     function deal() {
-      puz = nextPuzzle(lex, solved.length, used, rand, cache);
+      puz = nextPuzzle(lex, RACE ? used.size : solved.length, used, rand, cache, lenMode === 'grow' ? 0 : lenMode);
       if (!puz) { endRound(); return; }
       used.add(puz.word);
       picks = []; hints = 0;
@@ -201,17 +232,30 @@ export default {
       card('Time!', `${solved.length} word${solved.length === 1 ? '' : 's'} solved for ${score} points.${missedNote?.length ? ` You were on “${puz.tiles.toUpperCase()}”: ${missedNote.map(w => w.toUpperCase()).join(', ')}.` : ''}`, fin);
       say(`Time is up. ${solved.length} solved, ${score} points.`);
       snd.blip(300, 0.2, 'triangle', 0.8, 150);
+      /* a race doesn't wait for a click: the friend is waiting for the result */
+      if (RACE) { finish(); return; }
       setTimeout(() => { if (!dead && phase === 'review') fin.focus({ preventScroll: true }); }, 30);
     }
     function finish() {
       if (dead || phase !== 'review') return;
       phase = 'done';
-      if (best == null || score > best) { best = score; save(GAME, { best }); }
+      if (RACE) {
+        card(null); paint(); paintList();
+        onScore(score);
+        onEnd({ score, won: true, detail: `${solved.length} word${solved.length === 1 ? '' : 's'} solved${skipped ? ` · ${skipped} skipped` : ''}`, race: { sc: score, n: solved.length } });
+        return;
+      }
+      if (best == null || score > best) {
+        best = score;
+        if (lenMode === 'grow') { bestGrow = score; save(GAME, { best }); } else { bestBy[lenMode] = score; save(GAME, { bestBy }); }
+      }
+      const newStreak = roundStreak > bestStreak;
+      if (newStreak) { bestStreak = roundStreak; save(GAME, { streak: bestStreak }); }
       card(null);
       paint();
       onScore(score);
       const longest = solved.map(s => s.word).sort((a, b) => b.length - a.length)[0];
-      onEnd({ score, won: true, detail: `${solved.length} word${solved.length === 1 ? '' : 's'} solved${longest ? ` · longest ${longest}` : ''}${skipped ? ` · ${skipped} skipped` : ''}` });
+      onEnd({ score, won: true, detail: `${solved.length} word${solved.length === 1 ? '' : 's'} solved${lenMode === 'grow' ? '' : ` (${lenMode} letters)`}${longest ? ` · longest ${longest}` : ''}${skipped ? ` · ${skipped} skipped` : ''}${roundStreak ? ` · streak ${roundStreak}${newStreak ? ', your longest yet' : ''}` : ''}` });
     }
 
     /* ---------- moves ---------- */
@@ -230,6 +274,7 @@ export default {
         const pts = solvePoints(puz.len, streak, hints);
         solved.push({ word: a, points: pts, dealt: puz.word });
         score += pts; streak++;
+        roundStreak = Math.max(roundStreak, streak);
         const others = anagramsOf(lex, puz.tiles).filter(w => w !== a);
         flash('is-good');
         snd.blip(520, 0.08, 'triangle', 0.8); snd.blip(780, 0.1, 'triangle', 0.7);
@@ -245,7 +290,7 @@ export default {
       }
     }
     function hint() {
-      if (!live1()) return;
+      if (!live1() || RACE) return;
       /* keep the right start of the dealt word, drop the rest, then place the next letter */
       let k = 0;
       while (k < picks.length && puz.tiles[picks[k]] === puz.word[k]) k++;
@@ -273,7 +318,7 @@ export default {
     function shuffle() {
       if (!live1()) return;
       const o = order.slice();
-      for (let i = o.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [o[i], o[j]] = [o[j], o[i]]; }
+      for (let i = o.length - 1; i > 0; i--) { const j = Math.floor(shuf() * (i + 1)); [o[i], o[j]] = [o[j], o[i]]; }
       order = o; picks = []; snd.blip(260, 0.05, 'square', 0.3); paint();
     }
     L.on(backBtn, 'click', () => { if (live1()) { picks.pop(); paint(); stage.focus({ preventScroll: true }); } });
@@ -281,6 +326,13 @@ export default {
     L.on(hintBtn, 'click', () => { hint(); stage.focus({ preventScroll: true }); });
     L.on(skipBtn, 'click', () => { skip(); stage.focus({ preventScroll: true }); });
     L.on(newBtn, 'click', () => { if (!dead && lex) reset(); });
+    L.on(lenSeg, 'click', e => {
+      const b = e.target.closest?.('button[data-len]');
+      if (!b || dead || !lex) return;
+      lenMode = b.dataset.len === 'grow' ? 'grow' : Number(b.dataset.len);
+      save(GAME, { len: lenMode });
+      reset();
+    });
 
     /* ---------- keyboard ---------- */
     L.on(window, 'keydown', e => {
@@ -338,7 +390,8 @@ export default {
       peek: () => ({
         phase, tiles: puz ? puz.tiles : '', dealt: puz ? puz.word : '', len: puz ? puz.len : 0, answer: puz ? answer() : '', picks: picks.slice(), order: order.slice(),
         score, streak, hints, skipped, solved: solved.map(s => ({ ...s })), secs: clk.secs, left: Math.max(0, ROUND_SECONDS - clk.secs), paused, best,
-        anagrams: puz && lex ? anagramsOf(lex, puz.tiles) : [], loaded: !!lex, message: msg,
+        anagrams: puz && lex ? anagramsOf(lex, puz.tiles) : [], loaded: !!lex, message: msg, lenMode, bestStreak, roundStreak,
+        race: RACE ? { seed: RACE.seed, dealt: [...used] } : null,
       }),
       /* test hook — nothing in the game calls it: time({ secs }), seed({ seed }) (the next round's order) */
       hook(cmd, arg) {

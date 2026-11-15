@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Your own ScummVM games: licence and source</title><style>:root{color-scheme:dark}body{margin:0 auto;max-width:720px;padding:32px 20px 64px;background:#0c0913;color:#e1d6e6;font:16px/1.6 system-ui,sans-serif}
+h1{font-size:28px;line-height:1.2;color:#fff;margin:0 0 4px}h2{font-size:20px;color:#fff;margin:32px 0 8px}a{color:#9fd8ff}code{font-size:.88em;overflow-wrap:anywhere;color:#d4f0c8}
+.sub{color:#b5a9bd;margin:0 0 24px}li{margin:8px 0}</style></head>
+<body>
+<h1>StaticOS Free Classics: Your own ScummVM games</h1>
+<p class="sub">The ScummVM Team · your own copy of the game. Licence and source for the copy on StaticOS’s Free Classics shelf.</p>
+<p><b>ScummVM</b> is free software by The ScummVM Team that plays many old adventure games from their original files. On StaticOS it
+    plays <b>your own copy</b> of a game: you pick its folder on your device, and its files are read in your browser and handed only to the
+    engine in its sealed frame. They are never uploaded, and they are kept on your device only if you tick “Keep”, for you alone.
+    StaticOS supplies no games here, and the ScummVM Team has nothing to do with StaticOS.</p>
+    <p>This build has these engines: SCUMM (with v7 and v8, and Humongous), AGI, SCI (with SCI32), AGOS (with AGOS 2), Kyra (the
+    Kyrandia games), Broken Sword and Broken Sword II, Flight of the Amazon Queen, Beneath a Steel Sky, Lure of the Temptress, Drascula,
+    SAGA (with I Have No Mouth), Tinsel, Gobli*ns, Cinématique (evo 1 and 2), MADE, Parallaction, Touche, Bud Tucker, Dreamweb and
+    Toonstruck. CD music is played when your copy has it as Ogg Vorbis files; MP3 and FLAC are not built in, and neither are MIDI synthesisers
+    beyond the built-in AdLib emulation.</p>
+<h2 id="licence">Licences</h2>
+<ul>
+      <li><b>The engine:</b> GNU General Public License, version 3 or later: <a href="COPYING.txt">COPYING.txt</a>, with its authors in
+      <a href="COPYRIGHT.txt">COPYRIGHT.txt</a>. Parts of ScummVM’s tree are under other licences: <a href="LICENSES/COPYING.Apache.txt">Apache</a>, <a href="LICENSES/COPYING.BSD.txt">BSD</a>, <a href="LICENSES/COPYING.BSL.txt">BSL</a>, <a href="LICENSES/COPYING.GLAD.txt">GLAD</a>, <a href="LICENSES/COPYING.ISC.txt">ISC</a>, <a href="LICENSES/COPYING.LGPL.txt">LGPL</a>, <a href="LICENSES/COPYING.LUA.txt">LUA</a>, <a href="LICENSES/COPYING.MIT.txt">MIT</a>, <a href="LICENSES/COPYING.MKV.txt">MKV</a>, <a href="LICENSES/COPYING.MPL.txt">MPL</a>, <a href="LICENSES/COPYING.OFL.txt">OFL</a>, <a href="LICENSES/COPYING.TINYGL.txt">TINYGL</a>, <a href="LICENSES/CatharonLicense.txt.txt">CatharonLicense.txt</a>.</li>
+      <li><b>Libraries built into the engine:</b> <a href="../THIRD-PARTY-NOTICES.txt">SDL, Emscripten’s runtime, zlib, Ogg and Vorbis</a>.</li>
+      <li><b>The engines’ data files</b> in <code>data/</code> are ScummVM’s own <code>dists/engine-data</code> files, gzipped, under the same licence.</li>
+      <li><b>Your game:</b> whatever licence your copy came with. StaticOS does not supply, host or upload it.</li>
+    </ul>
+
+<h2 id="source">Source code</h2>
+<p>This engine is ScummVM <a href="https://github.com/scummvm/scummvm/tree/v2026.4.0">tag v2026.4.0</a>,
+    commit <code>7d2709da5136866589f7602f5f5a7b17de03420e</code>, with one patch, built with Emscripten 4.0.10 (emsdk commit d7b4130688bfa348392b921ab04015aa15c4f154): the <b>own</b> build of
+    <code>build-scummvm-more.sh</code>.</p>
+    <ul>
+      <li><a href="source/scummvm-v2026.4.0-classics.tar.gz">The source both of StaticOS’s further ScummVM builds were made from (20.3 MB), hosted here</a>: the tag
+      without the engines neither build uses. The engine was built from exactly this file.</li>
+      <li><a href="source/scummvm-sandbox.patch">Our patch</a>: it lets the engine run in a sandboxed frame. We modified the engine on 2026-10-31.</li>
+      <li><a href="source/build.sh">The exact build script</a>, with every configure flag and how the tarball is made from the tag,
+      and <a href="source/pkg-config-shim.py">its small helper</a>.</li>
+      <li>The full upstream tree, with every engine: <a href="https://github.com/scummvm/scummvm/archive/refs/tags/v2026.4.0.tar.gz">v2026.4.0.tar.gz</a>.</li>
+    </ul>
+</body></html>

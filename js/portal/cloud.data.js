@@ -12,18 +12,16 @@
      boosteroid            frame-ancestors excludes us
 
    X-Frame-Options is enforced by the browser before any of our
-   code runs, so there is no client-side way around it. Static's
-   own tunnel gets past framing — but GeForce NOW then refuses
-   the tunnel's TLS handshake outright, so even that does not
-   help. Cine-OS ships a Fortnite tile pointing at GeForce NOW;
-   it is a dead iframe. We do not pretend otherwise.
+   code runs, so there is no client-side way around it. Cine-OS
+   ships a Fortnite tile pointing at GeForce NOW; it is a dead
+   iframe. We do not pretend otherwise.
 
    WHAT DOES WORK, ALL VERIFIED FRAMEABLE
      archive.org/embed/<id>   no frame headers at all, and it
                               serves a full in-browser emulator.
                               Its search API is CORS-open, so the
                               library is live rather than baked:
-                              8,900+ MS-DOS titles alone.
+                              a great many MS-DOS titles alone.
      nowgg.fun                a mirror that, unlike now.gg itself,
                               sends no frame headers — Android
                               and Roblox running in a window.
@@ -104,8 +102,8 @@ export async function search({ collection = 'softwarelibrary_msdos_games', q = '
  * Only the Internet Archive's emulator is offered here. The entries
  * that used to follow it (Roblox and a whole Android device on an
  * unofficial now.gg mirror, and Xbox Cloud Gaming) were served
- * through Static's tunnel, which meant typing a Roblox or Microsoft
- * password into a page carried by relays run by strangers. now.gg's
+ * through a relay, which meant typing a Roblox or Microsoft
+ * password into a page carried by strangers. now.gg's
  * own Roblox listing has also gone (its link redirects to their home
  * page). Those services are reached as plain links from the catalogue
  * instead, in a new tab on their own sites.
@@ -133,14 +131,12 @@ export const STREAMS = [
 
 export const BLOCKED = [
   ['GeForce NOW', 'play.geforcenow.com',
-    "frame-ancestors 'self' blocks a direct frame, and it also drops the tunnel's TLS handshake — "
-    + 'the one service that defeats both routes. Tested on all three relays.'],
+    "frame-ancestors 'self' blocks it from being framed here."],
   ['Amazon Luna', 'luna.amazon.com',
-    'x-frame-options: DENY directly, and unreachable through the tunnel as well.'],
-  ['Roblox / Android via nowgg.fun — DIRECTLY', 'nowgg.fun',
+    'x-frame-options: DENY, so it cannot be framed here.'],
+  ['Roblox / Android on nowgg.fun', 'nowgg.fun',
     'Redirects to 76.ip.nowgg.fun, which sends SAMEORIGIN, so a plain iframe is refused. This is '
-    + 'the tile other sites ship and it is dead there. It DOES work through Static\'s tunnel, '
-    + 'because that serves it from our own origin — see the Roblox page.'],
+    + 'the tile other sites ship and it is dead there.'],
   ['now.gg (official)', 'now.gg', 'x-frame-options: SAMEORIGIN.'],
   ['Streamex', 'streamex.sh',
     'Loads google.com inside its own frame, which the browser refuses.'],
@@ -175,15 +171,13 @@ export const accountOf = s => ACCOUNT[s && s.account ? s.account : 'none'];
 /* Counted rather than asserted, so the number on the page is always
    whatever is actually in the catalogues. */
 export const NO_ACCOUNT_NOTE =
-  'Everything in Static except Xbox Cloud and Roblox runs with nothing to sign into — the '
-  + 'emulated library here, every game in Static Games, the whole anime catalogue and the proxy. '
-  + 'There is no shared account for the two that do ask: a credential in a static site is public '
-  + 'to anyone who views the source, one account is one stream, and it would be banned within days.';
+  'The emulated library here, every game in Static Games and the whole anime catalogue run with '
+  + 'nothing to sign into. Services that do ask for an account open on their own sites, and you use '
+  + 'your own: a shared login in a static site would be public to anyone who views the source.';
 
 export const VERDICT =
-  'Roblox runs here — the real client, streamed off a cloud Android device through Static\'s '
-  + 'tunnel, which serves the player from our own origin so its frame rules stop applying. Xbox '
-  + 'Cloud loads the same way, though playing needs your own subscription. GeForce NOW and Luna '
-  + 'defeat even the tunnel. Emulation runs directly, and there is a lot of it.';
+  'The Internet Archive\'s emulators run right here, directly in this window, and there is a lot of '
+  + 'them. Roblox, Xbox Cloud, GeForce NOW and Luna are other companies\' services: they open on '
+  + 'their own sites, in a new tab.';
 
 export default { COLLECTIONS, STREAMS, BLOCKED, VERDICT, search, embedUrl, thumbUrl };

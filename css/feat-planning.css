@@ -95,3 +95,12 @@ body.is-mobile .np-panel { flex-basis: 100%; max-width: none; margin: var(--sp-3
 .st-cls-card .st-ab { align-self: flex-start; }
 .st-days { display: flex; gap: 6px; flex-wrap: wrap; }
 .st-days label { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Notes: every day, the streak, the sprint, and the outline's level buttons */
+.np-streak { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-3); font-size: var(--fs-11); }
+.np-streak .icon { width: 13px; height: 13px; }
+.np-streak.is-on { color: var(--ink-0); font-weight: 600; }
+.np-streak.is-on .icon { color: #ff9a3d; }
+.np-sprintst { font-variant-numeric: tabular-nums; color: var(--ink-1); font-size: var(--fs-11); }
+.np-levels { margin-right: var(--sp-2); }
+.np-levels .np-lv { height: 20px; padding: 0 6px; font-size: var(--fs-10); }

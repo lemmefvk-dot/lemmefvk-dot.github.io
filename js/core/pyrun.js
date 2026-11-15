@@ -21,15 +21,21 @@
    from the site, so the page downloads the files (with real
    progress), and hands the bytes in over postMessage.
 
+   `import draw` gives a small drawing module (core/pydraw.js):
+   its calls arrive as 'draw' batches of JSON commands, drawn on a
+   canvas beside the output (onDraw).
+
    input() and sys.stdin work through WebAssembly JSPI (stack
    switching): Python waits for the answer without freezing the
    worker. Chromium 137+ and Edge have it; where it is missing
    input() raises EOFError and says so (inputSupported tells the UI).
 
-   create({ host, onOut(stream, text), onInput(prompt), onStage(text) })
+   create({ host, onOut(stream, text), onInput(prompt), onStage(text), onDraw(cmds) })
      -> { ready, run({ files, main }), answer(text), kill(), state, assetsReady }
    download(onProgress(fraction, doneBytes, totalBytes)) -> assets
    ============================================================ */
+
+import { DRAW_PY } from './pydraw.js';
 
 const BASE = 'vendor/pyodide/';
 /* the files' real sizes, for the progress bar (the server may compress, so
@@ -98,7 +104,7 @@ function frameMain() {
       } catch (err) { post({ __py: 1, t: 'fatal', text: 'Could not start the worker: ' + (err && err.message || err) }); return; }
       worker.onmessage = function (m) { post(m.data); };
       worker.onerror = function (ev) { post({ __py: 1, t: 'fatal', text: 'The Python worker stopped: ' + (ev.message || 'unknown error') }); };
-      worker.postMessage({ t: 'init', asmURL: asmURL, mjsURL: mjsURL, wasm: d.wasm, stdlib: d.stdlib }, [d.wasm, d.stdlib]);
+      worker.postMessage({ t: 'init', asmURL: asmURL, mjsURL: mjsURL, wasm: d.wasm, stdlib: d.stdlib, draw: d.draw }, [d.wasm, d.stdlib]);
     } else if (worker) worker.postMessage(d);
   });
   post({ __py: 1, t: 'frame' });
@@ -123,6 +129,7 @@ function workerMain() {
     'import js',
     'from pyodide.ffi import run_sync, can_run_sync',
     'WORK = "/home/pyodide/work"',
+    'sys.path.append("/home/pyodide/staticos")',
     'class _Stdin:',
     '    encoding = "utf-8"',
     '    errors = "strict"',
@@ -158,6 +165,7 @@ function workerMain() {
     '    for name, mod in list(sys.modules.items()):',
     '        f = getattr(mod, "__file__", None)',
     '        if isinstance(f, str) and f.startswith(WORK + "/"): del sys.modules[name]',
+    '    sys.modules.pop("draw", None)',
     '    importlib.invalidate_caches()',
     '    os.chdir(WORK)',
     '    sys.path[:] = [p for p in sys.path if p != WORK]',
@@ -186,6 +194,12 @@ function workerMain() {
 
   var realFetch = self.fetch;
 
+  /* draw: commands queue here and go to the page in batches, at most every 30 ms */
+  var dq = [], dlast = 0;
+  var dflush = function () { if (dq.length) { send({ t: 'draw', cmds: dq }); dq = []; } dlast = Date.now(); };
+  self.__staticos_draw = function (s) { dq.push(String(s)); if (dq.length >= 400 || Date.now() - dlast > 30) dflush(); };
+  self.__staticos_draw_flush = dflush;
+
   self.__staticos_ask = function (prompt) {
     return new Promise(function (resolve) { pending = resolve; send({ t: 'input', prompt: String(prompt || '') }); });
   };
@@ -213,6 +227,8 @@ function workerMain() {
     var decE = new TextDecoder();
     py.setStdout({ write: function (b) { var s = dec.decode(b, { stream: true }); if (s) send({ t: 'out', text: s }); return b.length; } });
     py.setStderr({ write: function (b) { var s = decE.decode(b, { stream: true }); if (s) send({ t: 'err', text: s }); return b.length; } });
+    py.FS.mkdirTree('/home/pyodide/staticos');
+    if (d.draw) py.FS.writeFile('/home/pyodide/staticos/draw.py', d.draw);
     py.runPython(HARNESS);
     /* can_run_sync() is only true inside a call that is already switching stacks, so ask the browser */
     jspi = typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function';
@@ -232,10 +248,13 @@ function workerMain() {
         py.FS.writeFile(root + '/' + f.path, f.text);
       });
       var fn = py.globals.get('staticos_run');
+      dq = []; dlast = Date.now();
       var code = jspi ? await fn.callPromising(d.main) : fn(d.main);
       fn.destroy();
+      dflush();
       send({ t: 'done', id: d.id, code: Number(code) });
     } catch (err) {
+      dflush();
       send({ t: 'err', text: String(err && err.message || err) + '\n' });
       send({ t: 'done', id: d.id, code: 1 });
     }
@@ -255,7 +274,7 @@ function frameHtml() {
 }
 
 /** Make an engine: a hidden sealed frame (with its worker) inside `host`. */
-export function create({ host, onOut, onInput, onStage } = {}) {
+export function create({ host, onOut, onInput, onStage, onDraw } = {}) {
   const frame = document.createElement('iframe');
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.setAttribute('referrerpolicy', 'no-referrer');
@@ -284,6 +303,7 @@ export function create({ host, onOut, onInput, onStage } = {}) {
     else if (d.t === 'out') onOut?.('out', String(d.text));
     else if (d.t === 'err') onOut?.('err', String(d.text));
     else if (d.t === 'input') onInput?.(String(d.prompt || ''));
+    else if (d.t === 'draw') onDraw?.(Array.isArray(d.cmds) ? d.cmds : []);
     else if (d.t === 'done') { E.state = 'idle'; const w = E.runWait; E.runWait = null; w?.({ code: d.code }); }
     else if (d.t === 'fatal') { const msg = String(d.text); E.state = 'dead'; readyRej(new Error(msg)); const w = E.runWait; E.runWait = null; w?.({ code: 1, error: msg }); }
   };
@@ -293,7 +313,7 @@ export function create({ host, onOut, onInput, onStage } = {}) {
   /** Hand the downloaded engine to the worker. Resolves when Python is up. */
   E.boot = assets => {
     const send = () => toFrame({
-      t: 'boot', worker: String(workerMain),
+      t: 'boot', worker: String(workerMain), draw: DRAW_PY,
       wasm: assets.wasm.slice(0), stdlib: assets.stdlib.slice(0), asm: assets.asm.slice(0), mjs: assets.mjs.slice(0),
     });
     if (booted) send(); else E.onFrame = send;

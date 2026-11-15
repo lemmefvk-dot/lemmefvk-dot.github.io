@@ -45,7 +45,8 @@ const phone = () => document.body.classList.contains('is-mobile');
 const reduced = () => !!store.get('prefs.reduceMotion')
   || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
 const say = t => bus.emit('a11y:say', t);
-const nameOf = w => w.el.getAttribute('aria-label') || w.app.name;
+/* a tab can be given a name of its own (double-click it, F2, or Rename Tab… in the window menu) */
+const nameOf = w => w.tabName || w.el.getAttribute('aria-label') || w.app.name;
 const winOf = node => {
   const b = node && node.closest && node.closest('.win-tab');
   return b ? wm.get(Number(b.dataset.win)) : null;
@@ -67,6 +68,10 @@ function stripOf(w) {
     if (t) { e.preventDefault(); wm.close(t.id); }
   });
   el.addEventListener('keydown', key);
+  el.addEventListener('dblclick', e => {
+    const t = e.target.closest('.win-tab__x') ? null : winOf(e.target);
+    if (t) rename(t);
+  });
   w.el.insertBefore(el, w.body);
   w.tabStrip = el;
   return el;
@@ -88,6 +93,42 @@ function paint(g) {
   }
 }
 
+/** Rename a tab in place: Enter keeps it, Escape leaves it, empty goes back to the app's own title. */
+export function rename(w) {
+  const g = w && w.group;
+  if (!g) return false;
+  const strip = g.active.tabStrip;
+  const btn = strip && [...strip.querySelectorAll('.win-tab')].find(b => Number(b.dataset.win) === w.id);
+  const label = btn && btn.querySelector('.win-tab__name');
+  if (!label) return false;
+  const input = h('input.win-tab__edit', { value: w.tabName || nameOf(w), 'aria-label': 'Tab name', maxlength: '40', spellcheck: 'false' });
+  let done = false;
+  const finish = keep => {
+    if (done) return;
+    done = true;
+    if (keep) {
+      const v = input.value.replace(/\s+/g, ' ').trim().slice(0, 40);
+      const own = w.el.getAttribute('aria-label') || w.app.name;
+      w.tabName = v && v !== own ? v : null;
+    }
+    paint(g);
+    const again = g.active.tabStrip && [...g.active.tabStrip.querySelectorAll('.win-tab')].find(b => Number(b.dataset.win) === w.id);
+    again?.focus({ preventScroll: true });
+    if (keep) say(`Tab named ${nameOf(w)}`);
+  };
+  for (const ev of ['pointerdown', 'click', 'dblclick', 'auxclick']) input.addEventListener(ev, e => e.stopPropagation());
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  label.replaceWith(input);
+  input.focus();
+  input.select();
+  return true;
+}
+
 function click(e) {
   const t = winOf(e.target);
   if (!t) return;
@@ -103,6 +144,12 @@ function key(e) {
   const all = [...e.currentTarget.querySelectorAll('.win-tab')];
   const i = all.indexOf(document.activeElement);
   if (i < 0) return;
+  if (e.key === 'F2') {
+    e.preventDefault();
+    const t = winOf(all[i]);
+    if (t) rename(t);
+    return;
+  }
   if (e.key === 'Delete' || e.key === 'Backspace') {
     e.preventDefault();
     const t = winOf(all[i]);
@@ -213,6 +260,7 @@ export function join(target, w) {
   flip(w, from);
   wm.focus(w);
   bus.emit('win:list', wm.list());
+  bus.emit('tabs:join', { n: g.tabs.length });
   say(`${nameOf(w)} added as a tab beside ${nameOf(target)}`);
   return true;
 }
@@ -385,4 +433,4 @@ export function init() {
   window.addEventListener('keydown', onKey, true);
 }
 
-export default { init, join, detach, step, tabsOf };
+export default { init, join, detach, step, tabsOf, rename };

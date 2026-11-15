@@ -1,7 +1,8 @@
 /* ============================================================
    main.js — bring up StaticOS
    Boot order: prefs → wallpaper → window layer → app list →
-   shell surfaces → boot splash → tick loops → session restore.
+   boot splash, playing while the shell surfaces and tick loops
+   load under it → session restore.
    Every module is loaded dynamically so one broken part cannot
    take down the whole desktop; failures are reported instead.
    Apps are declared from js/apps/manifest.js and each one's code
@@ -22,13 +23,15 @@ import * as THEMES from './core/themes.js';
 import * as SEASON from './core/season.js';
 import * as wm from './core/wm.js';
 import api from './core/api.js?v=ps5-cloud-proxy-v11';
-import { drift, round, clamp } from './core/util.js';
+import { clamp } from './core/util.js';
 import { mountUpdater } from './core/updater.js';
 import * as sfx from './core/sfx.js';
 import { declareApps, preloadApp } from './core/apploader.js';
 import * as appearance from './core/appearance.js';
 import * as KM from './core/keymap.js';
 import * as profiles from './core/profiles.js';
+/* the words: waits for data/i18n/es.json when Spanish is the language, so nothing below draws before it is there */
+import * as i18n from './core/i18n.js';
 
 const HOST = q('#os');
 const failures = [];
@@ -46,7 +49,7 @@ function applyPrefs() {
   root.dataset.theme = p.theme || 'dark';
   THEMES.apply(p.accent, root);
   root.dataset.density = p.density || 'normal';
-  root.dataset.icons = ['round', 'sharp', 'flat', 'outline', 'tinted'].includes(p.iconStyle) ? p.iconStyle : 'glass';
+  root.dataset.icons = ['round', 'sharp', 'flat', 'outline', 'tinted', 'clay'].includes(p.iconStyle) ? p.iconStyle : 'glass';
   /* Night Shift and the colour filters share <html>'s filter: js/core/appearance.js */
   const b = clamp(0.6 + (p.brightness ?? 100) / 100 * 0.4, 0.45, 1);
   HOST.style.filter = b < 0.999 ? `brightness(${b.toFixed(3)})` : '';
@@ -101,6 +104,16 @@ async function boot() {
   /* the first window most sessions see, fetched alongside the shell */
   preloadApp(store.get('prefs.bootOS') === 'linux' ? 'terminal' : 'files');
 
+  /* The boot splash (or the boot menu) starts now, over the wallpaper, and
+     plays while the rest of the shell loads underneath it: it used to wait
+     for the whole shell and then play on top, so every start-up paid for
+     the download and the animation one after the other. It only fades once
+     the shell is up (shellUp below), so nothing half-built ever shows, and
+     cover('boot') keeps the surfaces mounting under it inert. */
+  let shellUp;
+  const shellReady = new Promise(res => { shellUp = res; });
+  const splash = use('./shell/bootpicker.js', 'runBootPicker', HOST, shellReady);
+
   /* shell surfaces */
   await Promise.all([
     use('./shell/topbar.js', 'mountTopbar', HOST),
@@ -114,6 +127,9 @@ async function boot() {
     /* desktops: ⌃←/→, swipes, the HUD — and the snap layouts on the green button */
     use('./shell/desktops.js', 'mountDesktops', HOST),
     use('./shell/snaplayouts.js', 'mountSnapLayouts', HOST),
+    use('./shell/snapassist.js', 'mountSnapAssist', HOST),       /* after a snap, pick a window for the rest */
+    use('./shell/splitview.js', 'mountSplitView', HOST),         /* drag the line between snapped windows */
+    use('./shell/longpress.js', 'mountLongPress', HOST),         /* touch: a long press is a right-click */
     /* push the pointer into a corner: what Settings › Desktop › Hot corners says (all off until chosen) */
     use('./shell/hotcorners.js', 'mountHotCorners', HOST),
     use('./shell/lockscreen.js', 'mountLock', HOST),
@@ -132,6 +148,8 @@ async function boot() {
     use('./shell/earlyaccess.js', 'mountEarlyAccess', HOST),
     /* several people on one computer: switch user, guest sessions */
     use('./shell/users.js', 'mountUsers', HOST),
+    /* backup reminder, the offline banner, daily file snapshots, data saver, install */
+    use('./shell/housekeeping.js', 'mountHousekeeping', HOST),
     /* the music visualizer on the wallpaper (off unless Settings › Wallpaper
        turns it on; no canvas and no frames until then) */
     use('./shell/visualizer.js', 'mountVisualizer', HOST),
@@ -145,6 +163,8 @@ async function boot() {
     use('./shell/winter.js', 'mountWinter', HOST),
     /* New Year's fireworks, birthdays, Valentine's hearts, spring blossoms: one canvas (js/shell/celebrate.js) */
     use('./shell/celebrate.js', 'mountCelebrate', HOST),
+    /* autumn, Lunar New Year, St Patrick's, Pi Day, Earth Day, summer, back to school, first snow (js/shell/seasons-more.js) */
+    use('./shell/seasons-more.js', 'mountSeasonsMore', HOST),
     /* the ghost hunt: 13 ghosts hidden around the OS, in season only */
     use('./shell/ghosts.js', 'mountGhosts', HOST),
     /* a little cat (a ghost in spooky season) on the dock — Settings › Desktop */
@@ -164,34 +184,50 @@ async function boot() {
     use('./shell/screensaver.js', 'mountScreensaver', HOST),
     /* Settings › Accessibility › Magnifier and its keys (nothing runs while it is off) */
     use('./shell/magnifier.js', 'mountMagnifier', HOST),
+    /* Settings › Accessibility: captions and a flash for sounds, the on-screen keyboard */
+    use('./shell/a11yplus.js', 'mountA11yPlus', HOST),
   ]);
 
   startClocks();
   bindGlobals();
   sfx.init();
-  import('./core/gamemode.js').then(G => G.init()).catch(err => console.warn('[StaticOS] game mode', err));
-  import('./core/gamefiles.js').then(G => G.init()).catch(err => console.warn('[StaticOS] game files', err));
-  import('./core/trashexpiry.js').then(T => T.init()).catch(err => console.warn('[StaticOS] trash expiry', err));   /* the opt-in 30-day Trash (Settings › Storage) */
-  import('./core/notehistory.js').then(N => N.init()).catch(err => console.warn('[StaticOS] note history', err));  /* versions of a note, kept on idle (Notes › History) */
-  import('./core/labs.js').then(L => L.init()).catch(err => console.warn('[StaticOS] labs', err));
-  import('./core/achievements.js').then(async A => A.init({ plays: await import('./core/plays.js') })).catch(err => console.warn('[StaticOS] achievements', err));   /* arms the gesture-unlock and wires open/close/notify cues (opt-in, off by default) */
-  import('./core/clipboard.js').then(C => C.init()).catch(err => console.warn('[StaticOS] clipboard', err));       /* captures copies so Static Clipboard has a history */
-  import('./core/automations.js').then(A => A.init()).catch(err => console.warn('[StaticOS] automations', err));   /* runs the user's own "when … then …" rules */
-  import('./core/exams.js').then(E => E.init()).catch(err => console.warn('[StaticOS] exams', err));              /* keeps exam reminders and "carried over" in step with the clock, window closed */
-  import('./core/focus.js').then(F => F.init()).catch(err => console.warn('[StaticOS] focus timer', err));       /* Clock › Focus keeps time with its window closed */
-  import('./core/dndsched.js').then(D => D.init()).catch(err => console.warn('[StaticOS] Do Not Disturb schedule', err));   /* turns Do Not Disturb on and off by Settings › Notifications schedules */
-  import('./core/screentime.js').then(T => T.init()).catch(err => console.warn('[StaticOS] screen time', err));  /* Settings › Screen Time: measured here, while open */
-  import('./core/reopen.js').then(R => R.init()).catch(err => console.warn('[StaticOS] reopen', err));             /* remembers closed windows: ⇧⌘T / Ctrl+Shift+T brings them back */
-  import('./core/wintabs.js').then(T => T.init()).catch(err => console.warn('[StaticOS] window tabs', err));       /* drop a window onto another's title bar: one frame, two tabs */
+  /* the engines that work with their window closed. They used to have the whole splash to
+     load in; now that it plays during the shell's own loading, the session is restored
+     (below) only once they are all up, so the first window still opens where it was left */
+  const engines = [];
+  const engine = p => engines.push(p);
+  engine(import('./core/gamemode.js').then(G => G.init()).catch(err => console.warn('[StaticOS] game mode', err)));
+  engine(import('./core/gamefiles.js').then(G => G.init()).catch(err => console.warn('[StaticOS] game files', err)));
+  engine(import('./core/trashexpiry.js').then(T => T.init()).catch(err => console.warn('[StaticOS] trash expiry', err)));   /* the opt-in 30-day Trash (Settings › Storage) */
+  engine(import('./core/notehistory.js').then(N => N.init()).catch(err => console.warn('[StaticOS] note history', err)));  /* versions of a note, kept on idle (Notes › History) */
+  engine(import('./core/labs.js').then(L => L.init()).catch(err => console.warn('[StaticOS] labs', err)));
+  engine(import('./core/achievements.js').then(async A => A.init({ plays: await import('./core/plays.js') })).catch(err => console.warn('[StaticOS] achievements', err)));   /* arms the gesture-unlock and wires open/close/notify cues (opt-in, off by default) */
+  engine(import('./core/clipboard.js').then(C => C.init()).catch(err => console.warn('[StaticOS] clipboard', err)));       /* captures copies so Static Clipboard has a history */
+  engine(import('./core/automations.js').then(A => A.init()).catch(err => console.warn('[StaticOS] automations', err)));   /* runs the user's own "when … then …" rules */
+  engine(import('./core/exams.js').then(E => E.init()).catch(err => console.warn('[StaticOS] exams', err)));              /* keeps exam reminders and "carried over" in step with the clock, window closed */
+  engine(import('./core/homework.js').then(H => H.init()).catch(err => console.warn('[StaticOS] homework', err)));   /* the next of a repeating assignment appears on its day, window closed */
+  if (store.get('portal.timetable')) engine(import('./core/timetable.js').then(T => T.init()).catch(err => console.warn('[StaticOS] timetable', err)));   /* tops up the "next class" reminders each day, window closed */
+  if (store.get('portal.calendar')) engine(import('./core/calendar.js').then(C => C.init()).catch(err => console.warn('[StaticOS] calendar', err)));   /* tops up the reminders of monthly, yearly… events each day */
+  if (store.get('portal.contacts')) engine(import('./core/contacts.js').then(C => C.init()).catch(err => console.warn('[StaticOS] contacts', err)));   /* tops up the yearly birthday reminders each day */
+  engine(import('./core/focus.js').then(F => F.init()).catch(err => console.warn('[StaticOS] focus timer', err)));       /* Clock › Focus keeps time with its window closed */
+  if (store.get('prefs.clock.alarms')?.length || store.get('prefs.clock.timers')?.length) engine(import('./core/alarms.js').then(A => A.init()).catch(err => console.warn('[StaticOS] alarms', err)));   /* Clock's alarms and timers ring with its window closed */
+  engine(import('./core/dndsched.js').then(D => D.init()).catch(err => console.warn('[StaticOS] Do Not Disturb schedule', err)));   /* turns Do Not Disturb on and off by Settings › Notifications schedules */
+  engine(import('./core/snippets.js').then(S => S.init()).catch(err => console.warn('[StaticOS] text snippets', err)));   /* a short code and a space expands in any text field (Settings › Keyboard › Text snippets) */
+  engine(import('./core/screentime.js').then(T => T.init()).catch(err => console.warn('[StaticOS] screen time', err)));  /* Settings › Screen Time: measured here, while open */
+  engine(import('./core/reopen.js').then(R => R.init()).catch(err => console.warn('[StaticOS] reopen', err)));             /* remembers closed windows: ⇧⌘T / Ctrl+Shift+T brings them back */
+  engine(import('./core/winlayouts.js').then(W => W.init()).catch(err => console.warn('[StaticOS] window layouts', err)));   /* each app opens where it was left; saved layouts */
+  engine(import('./core/wintabs.js').then(T => T.init()).catch(err => console.warn('[StaticOS] window tabs', err)));       /* drop a window onto another's title bar: one frame, two tabs */
   window.Static.updater = mountUpdater();   /* see ./watch.sh */
 
   /* the shell is up: the watchdog in index.html stands down */
-  if (window.__staticBoot) window.__staticBoot.alive = true;
+  if (window.__staticBoot) { window.__staticBoot.alive = true; window.__staticBoot.aliveMs = Math.round(performance.now()); }   /* the desktop is up: About This Static reads it (js/core/sysinfo.js) */
   /* the Developer Room lists what failed to load */
   if (window.__staticBoot) window.__staticBoot.failures = failures;
 
-  /* boot splash last: it paints over a desktop that is already alive */
-  await use('./shell/bootpicker.js', 'runBootPicker', HOST);
+  /* the splash can finish now; then the engines it used to give time to */
+  shellUp();
+  await splash;
+  await Promise.all(engines);
 
   /* First run gets the short setup flow instead of a restored session —
      there is nothing to restore, and landing on a bare desktop with no
@@ -201,14 +237,19 @@ async function boot() {
     await use('./shell/onboarding.js', 'mountOnboarding', HOST);
   }
 
-  restoreSession();
+  /* "Reopen what I had open" (Settings › Desktop › Startup): the windows from last time, else the starter one */
+  const resume = await import('./core/resume.js').catch(() => null);
+  restoreSession(resume);
+  resume?.init();
   showHotkeyHint();
-  if (window.__staticBoot) window.__staticBoot.ok = true;
+  if (window.__staticBoot) { window.__staticBoot.ok = true; window.__staticBoot.readyMs = Math.round(performance.now()); }
   /* the desktop and the restored session are up: Automations opens your
      startup apps on top, and the wallpaper clip starts downloading */
   bus.emit('boot:ready');
   window.dispatchEvent(new Event('staticos:ready'));
   announceVersion();
+  /* a slow device is offered Low graphics mode, once (measures only while you move, drag or scroll) */
+  import('./core/smoothcheck.js').then(S => S.init()).catch(err => console.warn('[StaticOS] smooth check', err));
   import('./core/events.js').then(E => E.init()).catch(err => console.warn('[StaticOS] events', err));
   /* Social › Friends: presence for your friends and game-night reminders.
      Only where Friends has been used — otherwise its code never loads. */
@@ -256,27 +297,11 @@ async function boot() {
 /* ---------- 4. the heartbeat --------------------------------------- */
 function startClocks() {
   let n = 0;
-  const cpuHist = [];
   setInterval(() => {
     n++;
     const d = new Date();
     bus.emit('tick:1s', d);
     if (n % 5 === 0) bus.emit('tick:5s', d);
-
-    /* synthetic-but-organic telemetry (the fictional machine's gauges) */
-    const boost = 1;
-    const live = store.get('live');
-    const next = {
-      cpu: drift(live.cpu, 6, Math.min(97, 46 * boost), 5),
-      gpu: drift(live.gpu, 4, Math.min(99, 58 * boost), 7),
-      ram: drift(live.ram, 22, Math.min(92, 62 * boost), 1.6),
-      net: drift(live.net, 0, 84, 9),
-      temp: round(clamp(42 + (live.cpu / 100) * 34 * boost + (Math.random() - 0.5) * 2, 38, 94), 1),
-    };
-    cpuHist.push(next.cpu);
-    if (cpuHist.length > 90) cpuHist.shift();
-    next.cpuHist = cpuHist.slice();
-    store.set('live', next);
   }, 1000);
 }
 
@@ -347,13 +372,14 @@ function bindGlobals() {
 }
 
 /* ---------- 6. first impression ------------------------------------ */
-function restoreSession() {
+function restoreSession(resume = null) {
   const a = wm.workArea();
   /* On the Linux drive the desktop's own terminal is the first thing to
      see; a Files window would sit on top of it. */
   const linuxDesk = deskterm.available();
   /* a phone starts on its home screen, like a phone (js/shell/mobile.js) */
   if (document.body.classList.contains('is-mobile')) return;
+  if (resume && resume.restore()) return;
   /* restore: true — if Files was on another desktop when the page went away, it goes back there */
   if (a.w < 900) { if (!linuxDesk) wm.open('files', { restore: true }); return; }
 
@@ -398,7 +424,7 @@ function showHotkeyHint(ms = 4200) {
 
 /* ---------- 7. console conveniences -------------------------------- */
 window.Static = {
-  api, wm, store, bus, icon, h, failures, updater: null, offline: null,
+  api, wm, store, bus, icon, h, failures, updater: null, offline: null, i18n,
   reset: () => { store.reset(); location.reload(); },
 };
 

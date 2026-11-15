@@ -7,7 +7,11 @@
    nothing can be bought, sold or exchanged.
 
    THE RULE SET (the usual American table rules):
-     · six decks, shuffled when a quarter is left at the start of a hand;
+     · a shoe of 1, 2, 4, 6 or 8 decks (six unless you choose another),
+       shuffled before a hand once three quarters of it have been dealt
+       (fewer than a quarter left: 13 of 52 with one deck, 78 of 312
+       with six); if it ever runs out during a hand, the cards that are
+       not on the table are shuffled into a new shoe;
      · cards count their number, J Q K count 10, an ace is 11 unless
        that would go over 21, then 1 (a "soft" hand holds an ace
        counted as 11);
@@ -34,10 +38,13 @@
    Randomness comes from rnd, a () => [0,1) function (the game seeds one
    from crypto, tests seed their own).
    ============================================================ */
+/* decks: the shoe a new table starts with (a table keeps its own, t.decks) */
 export const RULES = Object.freeze({
   decks: 6, reshuffleAt: 0.25, dealerStandsSoft17: true, blackjackPays: '3 to 2', doubleAny: true, doubleAfterSplit: true,
   maxHands: 4, resplitAces: false, insurance: false, surrender: false,
 });
+export const DECKS = [1, 2, 4, 6, 8];
+export const deckCount = n => (DECKS.includes(n) ? n : RULES.decks);
 export const STAKES = [10, 20, 50, 100];
 export const START_POINTS = 500;
 export const MIN_STAKE = STAKES[0];
@@ -83,12 +90,31 @@ function freshShoe(rnd, decks) {
   return shoe;
 }
 
-/** a table: a shoe and some points. */
-export function newTable(rnd, points = START_POINTS, { manual = false } = {}) {
-  return { manual, rnd, shoe: freshShoe(rnd, RULES.decks), shuffled: 1, points, phase: 'idle', dealer: [], hands: [], active: 0, hole: false, results: null, net: 0, rounds: 0 };
+/** a table: a shoe of `decks` decks and some points. */
+export function newTable(rnd, points = START_POINTS, { manual = false, decks = RULES.decks } = {}) {
+  const n = deckCount(decks);
+  return { manual, rnd, decks: n, shoe: freshShoe(rnd, n), shuffled: 1, points, phase: 'idle', dealer: [], hands: [], active: 0, hole: false, results: null, net: 0, rounds: 0 };
+}
+/** the shoe's full size, and the count below which it is shuffled before a hand */
+export const shoeSize = t => 52 * t.decks;
+export const cutAt = t => Math.ceil(shoeSize(t) * RULES.reshuffleAt);
+export const needsShuffle = t => t.shoe.length < cutAt(t);
+export function reshuffle(t) { t.shoe = freshShoe(t.rnd, t.decks); t.shuffled++; }
+/** a new shoe of n decks, between hands only. Returns false when not allowed. */
+export function setDecks(t, n) {
+  if (!DECKS.includes(n) || t.phase === 'play' || t.phase === 'dealer') return false;
+  t.decks = n;
+  reshuffle(t);
+  return true;
 }
 function take(t) {
-  if (!t.shoe.length) { t.shoe = freshShoe(t.rnd, RULES.decks); t.shuffled++; }
+  if (!t.shoe.length) {
+    /* ran out mid-hand: a new shoe without the cards on the table */
+    const shoe = freshShoe(t.rnd, t.decks);
+    for (const c of [...t.dealer, ...t.hands.flatMap(h => h.cards)]) { const i = shoe.findIndex(x => x.r === c.r && x.s === c.s); if (i >= 0) shoe.splice(i, 1); }
+    t.shoe = shoe;
+    t.shuffled++;
+  }
   return t.shoe.pop();
 }
 const live = h => !h.done;
@@ -100,7 +126,7 @@ export const broke = t => (t.phase === 'idle' || t.phase === 'settled') && t.poi
 /** start a hand with `stake` points in play. Returns false when it is not allowed. */
 export function deal(t, stake) {
   if (!canDeal(t, stake)) return false;
-  if (t.shoe.length < 52 * RULES.decks * RULES.reshuffleAt) { t.shoe = freshShoe(t.rnd, RULES.decks); t.shuffled++; }
+  if (needsShuffle(t)) reshuffle(t);
   t.points -= stake;
   t.rounds++;
   const p1 = take(t), d1 = take(t), p2 = take(t), d2 = take(t);
@@ -223,4 +249,195 @@ export function settle(t) {
   t.hole = false;
 }
 
-export default { RULES, STAKES, START_POINTS, newTable, deal, hit, stand, double, split, dealerStep, dealerPlay, settle, handValue, isBlackjack, isBust, textOf, canHit, canStand, canDouble, canSplit, canDeal, broke, current, codeOf, parseCode, valueOf };
+/* ============================================================
+   BASIC STRATEGY — the best move for your cards against the
+   dealer's up card, for this game's rules. Copied cell by cell from
+   Michael Shackleford's published charts at The Wizard of Odds
+   (wizardofodds.com/games/blackjack/strategy/ — the "Dealer Stands
+   on Soft 17" chart for each shoe: "Single-Deck" (1-deck page),
+   "Double-Deck" (2-decks page) and "4-8 Decks" (4-decks page)).
+   Those charts assume what this game does: the dealer stands on
+   soft 17 and peeks for blackjack, double on any first two cards,
+   split up to four hands. One chart per shoe: 1 deck, 2 decks, and
+   the 4–8 deck chart for 4, 6 and 8.
+   Their codes, and how this game reads them (it allows doubling
+   after a split and has no surrender):
+     H hit · S stand · Dh double if allowed, else hit · Ds double if
+     allowed, else stand · P split · Ph split if doubling after a
+     split is allowed (it is), else hit · Pd split if doubling after
+     a split is allowed (it is), else double · Rh / Rs surrender if
+     allowed (it isn't), else hit / stand.
+   Columns: the dealer's 2 3 4 5 6 7 8 9 10 A. A row number is your
+   total; the first hard row covers everything below it, the last
+   hard and soft rows everything above. Pairs are by card value
+   (11 = aces); 5s and 10s have no row: they are played as 10 and 20.
+   ============================================================ */
+const row = s => s.split(' ');
+export const CHARTS = {
+  1: {
+    hard: {
+      7: row('H H H H H H H H H H'),
+      8: row('H H H Dh Dh H H H H H'),
+      9: row('Dh Dh Dh Dh Dh H H H H H'),
+      10: row('Dh Dh Dh Dh Dh Dh Dh Dh H H'),
+      11: row('Dh Dh Dh Dh Dh Dh Dh Dh Dh Dh'),
+      12: row('H H S S S H H H H H'),
+      13: row('S S S S S H H H H H'),
+      14: row('S S S S S H H H H H'),
+      15: row('S S S S S H H H H H'),
+      16: row('S S S S S H H H Rh Rh'),
+      17: row('S S S S S S S S S S'),
+    },
+    soft: {
+      13: row('H H Dh Dh Dh H H H H H'),
+      14: row('H H Dh Dh Dh H H H H H'),
+      15: row('H H Dh Dh Dh H H H H H'),
+      16: row('H H Dh Dh Dh H H H H H'),
+      17: row('Dh Dh Dh Dh Dh H H H H H'),
+      18: row('S Ds Ds Ds Ds S S H H S'),
+      19: row('S S S S Ds S S S S S'),
+      20: row('S S S S S S S S S S'),
+    },
+    pair: {
+      2: row('Ph P P P P P H H H H'),
+      3: row('Ph Ph P P P P Ph H H H'),
+      4: row('H H Ph Pd Pd H H H H H'),
+      6: row('P P P P P Ph H H H H'),
+      7: row('P P P P P P Ph H Rs H'),
+      8: row('P P P P P P P P P P'),
+      9: row('P P P P P S P P S S'),
+      11: row('P P P P P P P P P P'),
+    },
+  },
+  2: {
+    hard: {
+      8: row('H H H H H H H H H H'),
+      9: row('Dh Dh Dh Dh Dh H H H H H'),
+      10: row('Dh Dh Dh Dh Dh Dh Dh Dh H H'),
+      11: row('Dh Dh Dh Dh Dh Dh Dh Dh Dh Dh'),
+      12: row('H H S S S H H H H H'),
+      13: row('S S S S S H H H H H'),
+      14: row('S S S S S H H H H H'),
+      15: row('S S S S S H H H Rh H'),
+      16: row('S S S S S H H H Rh Rh'),
+      17: row('S S S S S S S S S S'),
+    },
+    soft: {
+      13: row('H H H Dh Dh H H H H H'),
+      14: row('H H H Dh Dh H H H H H'),
+      15: row('H H Dh Dh Dh H H H H H'),
+      16: row('H H Dh Dh Dh H H H H H'),
+      17: row('H Dh Dh Dh Dh H H H H H'),
+      18: row('S Ds Ds Ds Ds S S H H H'),
+      19: row('S S S S S S S S S S'),
+    },
+    pair: {
+      2: row('Ph Ph P P P P H H H H'),
+      3: row('Ph Ph P P P P H H H H'),
+      4: row('H H H Ph Ph H H H H H'),
+      6: row('P P P P P Ph H H H H'),
+      7: row('P P P P P P Ph H H H'),
+      8: row('P P P P P P P P P P'),
+      9: row('P P P P P S P P S S'),
+      11: row('P P P P P P P P P P'),
+    },
+  },
+  4: {
+    hard: {
+      8: row('H H H H H H H H H H'),
+      9: row('H Dh Dh Dh Dh H H H H H'),
+      10: row('Dh Dh Dh Dh Dh Dh Dh Dh H H'),
+      11: row('Dh Dh Dh Dh Dh Dh Dh Dh Dh H'),
+      12: row('H H S S S H H H H H'),
+      13: row('S S S S S H H H H H'),
+      14: row('S S S S S H H H H H'),
+      15: row('S S S S S H H H Rh H'),
+      16: row('S S S S S H H Rh Rh Rh'),
+      17: row('S S S S S S S S S S'),
+    },
+    soft: {
+      13: row('H H H Dh Dh H H H H H'),
+      14: row('H H H Dh Dh H H H H H'),
+      15: row('H H Dh Dh Dh H H H H H'),
+      16: row('H H Dh Dh Dh H H H H H'),
+      17: row('H Dh Dh Dh Dh H H H H H'),
+      18: row('S Ds Ds Ds Ds S S H H H'),
+      19: row('S S S S S S S S S S'),
+    },
+    pair: {
+      2: row('Ph Ph P P P P H H H H'),
+      3: row('Ph Ph P P P P H H H H'),
+      4: row('H H H Ph Ph H H H H H'),
+      6: row('Ph P P P P H H H H H'),
+      7: row('P P P P P P H H H H'),
+      8: row('P P P P P P P P P P'),
+      9: row('P P P P P S P P S S'),
+      11: row('P P P P P P P P P P'),
+    },
+  },
+};
+/** the chart for a shoe of n decks */
+export const chartFor = n => CHARTS[n >= 4 ? 4 : n === 2 ? 2 : 1];
+/* the chart's cell for a total: below the first row is the first row, above the last the last */
+function cell(rows, total, col) {
+  const keys = Object.keys(rows).map(Number);
+  const k = Math.max(keys[0], Math.min(keys[keys.length - 1], total));
+  return rows[k][col];
+}
+
+/**
+ * The basic-strategy move for `cards` against the dealer's up card,
+ * with what the table allows right now:
+ *   basicMove(cards, up, { decks, canDouble, canSplit })
+ *     -> { move: 'hit'|'stand'|'double'|'split', code, chart: 'hard'|'soft'|'pair', total }
+ */
+export function basicMove(cards, up, { decks = RULES.decks, canDouble = false, canSplit = false } = {}) {
+  const ch = chartFor(decks);
+  const col = valueOf(up) === 11 ? 9 : valueOf(up) - 2;           /* 2…9 → 0…7, a ten-card → 8, an ace → 9 */
+  const v = handValue(cards);
+  const pairVal = cards.length === 2 && valueOf(cards[0]) === valueOf(cards[1]) ? valueOf(cards[0]) : 0;
+  const read = code => {
+    if (code === 'Dh') return canDouble ? 'double' : 'hit';
+    if (code === 'Ds') return canDouble ? 'double' : 'stand';
+    if (code === 'P') return 'split';
+    if (code === 'Ph') return RULES.doubleAfterSplit ? 'split' : 'hit';
+    if (code === 'Pd') return RULES.doubleAfterSplit ? 'split' : canDouble ? 'double' : 'hit';
+    if (code === 'S' || code === 'Rs') return 'stand';      /* no surrender here */
+    return 'hit';                                           /* H, Rh */
+  };
+  if (pairVal && ch.pair[pairVal]) {
+    const code = ch.pair[pairVal][col], move = read(code);
+    /* a split the table won't allow (four hands, not enough points): play the total instead */
+    if (move !== 'split' || canSplit) return { move, code, chart: 'pair', total: v.total };
+  }
+  if (v.soft && v.total <= 12) return { move: 'hit', code: 'H', chart: 'soft', total: v.total };   /* two aces that can't be split */
+  const chart = v.soft ? 'soft' : 'hard';
+  const code = cell(ch[chart], v.total, col);
+  return { move: read(code), code, chart, total: v.total };
+}
+
+const PAST = { hit: 'hit', stand: 'stood', double: 'doubled', split: 'split' };
+const upWords = c => (c.r === 1 ? 'an ace' : valueOf(c) === 8 ? 'an 8' : `a ${valueOf(c)}`);
+const pairWords = c => (c.r === 1 ? 'aces' : `${valueOf(c)}s`);
+/** "double 11 against a 6", "split 8s against a 10", "stand on soft 18 against a 7" */
+export function adviceWords(cards, up, adv) {
+  const v = handValue(cards);
+  const pair = cards.length === 2 && valueOf(cards[0]) === valueOf(cards[1]);
+  const what = pair && adv.chart === 'pair' ? `a pair of ${pairWords(cards[0])}` : v.soft ? `soft ${v.total}` : String(v.total);
+  const verb = adv.move === 'split' ? `split ${pairWords(cards[0])}` : adv.move === 'stand' ? `stand on ${what}` : `${adv.move} ${what}`;
+  return `${verb} against ${upWords(up)}`;
+}
+/**
+ * One line after a hand. moves: [{ cards, up, choice, adv }] in the order made
+ * (adv = basicMove() at that moment, with what the table allowed then).
+ */
+export function tipText(moves) {
+  if (!moves.length) return 'No moves to check: the hand was over at the deal.';
+  const off = moves.filter(m => m.adv.move !== m.choice);
+  if (!off.length) return moves.length === 1 ? 'Basic strategy agrees with your move.' : `Basic strategy agrees with all ${moves.length} of your moves.`;
+  const say = m => `${adviceWords(m.cards, m.up, m.adv)} — you ${PAST[m.choice]}`;
+  const more = off.length > 2 ? ` (and ${off.length - 2} more)` : '';
+  return `Basic strategy: ${off.slice(0, 2).map(say).join('; ')}${more}.`;
+}
+
+export default { RULES, DECKS, STAKES, START_POINTS, newTable, deal, hit, stand, double, split, dealerStep, dealerPlay, settle, handValue, isBlackjack, isBust, textOf, canHit, canStand, canDouble, canSplit, canDeal, broke, current, codeOf, parseCode, valueOf, setDecks, reshuffle, needsShuffle, shoeSize, cutAt, basicMove, adviceWords, tipText, chartFor };

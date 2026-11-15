@@ -1,0 +1,84 @@
+/* Static Arcade online: the race strip, reactions, a dropped friend,
+   the room card's extras (read-aloud code, friends to invite, match
+   length, head to head) and the result card's match and words.
+   Loaded by js/apps/arcade.js beside feat-arcade.css. */
+
+/* the race strip under the toolbar: you and your friend */
+.arc-race{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;flex:none;padding:7px var(--sp-4,12px);
+  background:rgba(0,0,0,.35);border-bottom:1px solid hsl(var(--h) 90% 60% / .16)}
+.arc-race[hidden]{display:none}
+.arc-race__row{display:flex;align-items:center;gap:8px;flex:1 1 220px;min-width:0}
+.arc-race__who{flex:0 0 auto;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:calc(10px * var(--fs-k,1));font-weight:750;letter-spacing:.8px;text-transform:uppercase;color:var(--ink-3)}
+.arc-race__row.is-me .arc-race__who{color:hsl(var(--h) 100% 82%)}
+.arc-race__bar{position:relative;flex:1;min-width:40px;height:8px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}
+.arc-race__bar i{position:absolute;inset:0 auto 0 0;border-radius:inherit;background:hsl(330 85% 66%);transition:width .3s ease}
+.arc-race__row.is-me .arc-race__bar i{background:hsl(var(--h) 95% 64%);box-shadow:0 0 10px hsl(var(--h) 100% 60% / .7)}
+.arc-race__row[data-done="true"] .arc-race__bar i{background:#4be38a}
+.arc-race__txt{flex:0 0 auto;font:700 calc(11px * var(--fs-k,1))/1 var(--arc-mono);color:var(--ink-1);font-variant-numeric:tabular-nums;white-space:nowrap}
+.arc-race__quit{height:26px;padding:0 10px;font-size:var(--fs-11,11px)}
+
+/* reactions: four buttons in the toolbar, bubbles over the stage */
+.arc-react{display:inline-flex;gap:2px;flex:none;padding:2px;border-radius:var(--r-pill);background:rgba(0,0,0,.3);border:1px solid var(--line-1)}
+.arc-react[hidden]{display:none}
+.arc-react__b{width:28px;height:24px;display:grid;place-items:center;border-radius:99px;font-size:var(--fs-15);line-height:1;cursor:pointer;transition:transform .12s ease}
+.arc-react__b:hover{background:var(--fill-2)}
+.arc-react__b:active{transform:scale(.9)}
+.arc-react__b.is-wait{opacity:.45}
+.arc-react__b:focus-visible{outline:2px solid hsl(var(--h) 100% 72%);outline-offset:1px}
+.arc-reacts{position:absolute;top:12px;right:12px;z-index:7;display:flex;flex-direction:column;align-items:flex-end;gap:6px;pointer-events:none}
+.arc-reacts__b{display:inline-flex;align-items:center;gap:7px;padding:5px 11px 5px 7px;border-radius:99px;background:rgba(10,8,18,.86);
+  border:1px solid hsl(330 90% 66% / .45);box-shadow:0 8px 20px -10px rgba(0,0,0,.9);animation:arc-react-in .25s ease-out both, arc-react-out .4s ease-in 2s both}
+.arc-reacts__b.is-me{border-color:hsl(var(--h) 90% 66% / .5)}
+.arc-reacts__e{font-size:var(--fs-24);line-height:1}
+.arc-reacts__n{font-size:var(--fs-11,11px);font-weight:700;color:var(--ink-1);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes arc-react-in{from{opacity:0;transform:translateY(-6px) scale(.9)}to{opacity:1;transform:none}}
+@keyframes arc-react-out{to{opacity:0;transform:translateY(-4px)}}
+
+/* the friend has dropped: they have 30 s to come back */
+.arc-lost{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:7;display:flex;align-items:center;gap:8px;max-width:calc(100% - 24px);
+  padding:7px 14px;border-radius:99px;font-size:var(--fs-12,12px);font-weight:650;color:#ffe2e6;pointer-events:none;
+  background:rgba(60,10,20,.9);border:1px solid rgba(255,110,130,.55)}
+.arc-lost[hidden]{display:none}
+.arc-lost.is-back{color:#d9ffe8;background:rgba(10,50,30,.9);border-color:rgba(75,227,138,.55)}
+.arc-lost .icon{width:15px;height:15px;flex:none}
+
+/* the room card */
+.arc-net__code span.is-half{margin-left:10px}
+.arc-net__say{display:flex;align-items:center;gap:6px;justify-content:center;flex-wrap:wrap;font-size:var(--fs-11,11px);color:var(--ink-2);max-width:340px}
+.arc-net__say .icon{width:13px;height:13px;flex:none;color:var(--ink-3)}
+.arc-net__friends{width:100%}
+.arc-net__friends[hidden]{display:none}
+.arc-net__flist{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:var(--sp-2,6px)}
+.arc-net__fbtn{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 10px;max-width:100%}
+.arc-net__fbtn.is-sent{color:#9df5c1;border-color:rgba(75,227,138,.5)}
+.arc-net__fname{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}
+.arc-net__fst{font-size:var(--fs-11,11px);color:var(--ink-3)}
+.arc-net__pres{width:7px;height:7px;flex:none;border-radius:50%;background:var(--ink-4)}
+.arc-net__pres[data-p="online"]{background:#4be38a}
+.arc-net__pres[data-p="idle"]{background:#ffcf5a}
+.arc-net__best{display:inline-flex;gap:2px;margin-top:var(--sp-3,8px);padding:3px;border-radius:var(--r-md,11px);background:var(--fill-1);border:1px solid var(--line-0);
+  font-size:var(--fs-12,12px);color:var(--ink-1)}
+.arc-net__best > span{padding:5px 10px;font-weight:650}
+.arc-net__best button{height:28px;padding:0 11px;border-radius:8px;font:650 var(--fs-12,12px)/1 var(--font,system-ui);color:var(--ink-2);cursor:pointer}
+.arc-net__best button[aria-pressed="true"]{background:var(--fill-3);color:var(--ink-0);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.arc-net__best button:focus-visible{outline:2px solid hsl(var(--h) 100% 72%);outline-offset:1px}
+.arc-net__h2h{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:5px;margin-top:var(--sp-2,6px);font-size:var(--fs-11,11px);color:var(--ink-2);max-width:340px}
+.arc-net__h2h b{color:var(--ink-0)}
+.arc-net__h2h .icon{width:13px;height:13px;color:var(--ink-3)}
+.arc-net__match{margin-top:var(--sp-2,6px);padding:4px 12px;border-radius:var(--r-pill);font:700 var(--fs-12,12px)/1.3 var(--arc-mono);color:hsl(var(--h) 100% 86%);
+  background:hsl(var(--h) 90% 55% / .12);border:1px solid hsl(var(--h) 90% 65% / .35)}
+
+/* the Friends tab: head to head against each friend */
+.arc-fr__row--h2h{grid-template-columns:minmax(0,1fr) auto}
+.arc-fr__row--h2h .arc-fr__when{grid-column:1 / -1;font-size:var(--fs-11,11px);color:var(--ink-3)}
+
+/* the result card: Letter Grid's words, side by side */
+.arc-res__words{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;margin-top:var(--sp-2,6px);text-align:left}
+.arc-res__wcol b{display:block;font-size:var(--fs-11,11px);color:var(--ink-2);margin-bottom:4px}
+.arc-res__wcol p{margin:0;display:flex;flex-wrap:wrap;gap:3px;max-height:96px;overflow:auto}
+.arc-res__wcol span{padding:1px 6px;border-radius:6px;font:600 var(--fs-11,11px)/1.5 var(--arc-mono);color:var(--ink-3);background:rgba(255,255,255,.05)}
+.arc-res__wcol span.is-only{color:#1a0b20;background:hsl(48 100% 66%);font-weight:800}
+
+body.reduce-motion .arc-reacts__b,body.reduce-motion .arc-race__bar i{animation:none;transition:none}
+@media (prefers-reduced-motion: reduce){.arc-reacts__b{animation:none}.arc-race__bar i{transition:none}}

@@ -226,3 +226,6 @@
 @media (prefers-reduced-motion: reduce) {
   .ph__presdot.is-live { animation: none; }
 }
+
+.ph__link{background:none;border:0;padding:0;font:inherit;color:var(--accent);font-weight:600;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.ph__link:hover{filter:brightness(1.15)}

@@ -10,8 +10,12 @@
      and the dead-zoned position as the cap, inside a ring the size
      of the dead zone), a larger plot of each stick beside the dead
      zone slider (so its effect is visible at rest), the raw
-     button/axis values, the mapping the browser reports, and a
-     rumble test only where the browser exposes vibrationActuator.
+     button/axis values, the mapping the browser reports, a
+     calibration that measures where each stick rests and keeps it
+     for that controller (the key bridge and the controller cursor
+     take it off every reading), and a rumble test and an opt-in
+     buzz when an Arcade round ends, both only where the browser
+     exposes vibrationActuator.
      Browsers reveal a gamepad only after a button is pressed, and
      the empty state says exactly that.
    · Keyboard — an ANSI layout lit by KeyboardEvent.code, key /
@@ -25,25 +29,32 @@
      pointermove events in the last second, plus the coalesced raw
      samples inside them (closer to the mouse's real polling rate).
    · Button mapping — which key each control sends through
-     js/core/padmap.js, the "Play keyboard games with a controller"
-     toggle, and a live preview bridge that dispatches into this
-     panel only, so you can see the exact events a game would get.
+     js/core/padmap.js, for every game or for one game of its own
+     (a profile, used while that game runs), the "Play keyboard
+     games with a controller" toggle, and a live preview bridge that
+     dispatches into this panel only, so you can see the exact
+     events a game would get.
    · Compatibility — the Static Arcade games, from their declared
      input: a game that reads the keyboard can be driven by the
-     bridge; mouse/touch-only games cannot. Each has a Play button
-     that opens it in the Arcade.
+     bridge; a mouse/touch-only one by the controller cursor
+     (js/arcade/padcursor.js). The Free Classics shelf cannot be
+     reached at all, and each says why ("Mouse only, in a sealed
+     frame"). Each has a Play button that opens it in the Arcade.
 
    opts.tab picks the tab ('pads' | 'keys' | 'mouse' | 'map' |
    'compat', or aliases like 'mapping'); reopening the singleton
-   with a tab switches to it.
+   with a tab switches to it. opts.game, with the mapping tab,
+   shows that game's own profile.
 
-   Store: portal.controller = { deadzone, bridge, mapping, labels }
-   (shape owned by padmap.js). Nothing here is simulated: with no
-   controller connected, the Controllers tab shows no numbers.
+   Store: portal.controller = { deadzone, bridge, mapping, profiles,
+   calibration, rumble, labels } (shape owned by padmap.js). Nothing
+   here is simulated: with no controller connected, the Controllers
+   tab shows no numbers.
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import * as PM from '../core/padmap.js';
 import { ARCADE } from '../arcade/index.js';
+import { CLASSICS, CLASSIC_PREFIX, controlsOf } from '../classics/catalog.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-controller-css')) {
   const l = document.createElement('link');
@@ -230,7 +241,7 @@ function diagram(stKey, { idle = false } = {}) {
     lastDz = dz;
     for (const k of Object.keys(sticks)) sticks[k].dz.setAttribute('r', String(Math.max(0, dz * T_TRAVEL)));
   }
-  function update(gp, dz) {
+  function update(gp, dz, cal = null) {
     setDeadzone(dz);
     for (const inp of PM.INPUTS) {
       if (inp.button === undefined) continue;
@@ -241,7 +252,7 @@ function diagram(stKey, { idle = false } = {}) {
     }
     for (const key of ['lt', 'rt']) {
       const inp = PM.inputById(key);
-      const v = Math.round(PM.inputAmount(gp, inp, dz) * 100) / 100;
+      const v = Math.round(PM.inputAmount(gp, inp, dz, cal) * 100) / 100;
       const t = trig[key];
       if (t.last === v) continue;
       t.last = v;
@@ -250,12 +261,14 @@ function diagram(stKey, { idle = false } = {}) {
       t.val.textContent = v > 0 ? pct(v) : '';
     }
     const ax = gp.axes || [];
+    const cax = PM.axesOf(gp, cal);
     for (const [key, ix, iy] of [['ls', 0, 1], ['rs', 2, 3]]) {
       const k = sticks[key];
       const rx = Math.max(-1, Math.min(1, Number(ax[ix]) || 0));
       const ry = Math.max(-1, Math.min(1, Number(ax[iy]) || 0));
-      const [ax2, ay2] = PM.applyDeadzone(rx, ry, dz);
-      const sig = `${rx.toFixed(3)},${ry.toFixed(3)},${dz}`;
+      /* the cap: where the stick counts as pointing, its resting point and the dead zone taken off */
+      const [ax2, ay2] = PM.applyDeadzone(cax[ix], cax[iy], dz);
+      const sig = `${rx.toFixed(3)},${ry.toFixed(3)},${dz},${cal ? cal.join() : ''}`;
       if (k.last === sig) continue;
       k.last = sig;
       k.raw.setAttribute('cx', String(k.cx + rx * T_TRAVEL));
@@ -292,12 +305,12 @@ function stickPlot(h, name) {
     lastDz = dz;
     dzEl.setAttribute('r', String(Math.max(0, dz * PLOT_R)));
   }
-  function update(rx, ry, dz) {
+  function update(rx, ry, dz, cx = rx, cy = ry) {
     setDeadzone(dz);
-    const sig = `${rx.toFixed(3)},${ry.toFixed(3)},${dz}`;
+    const sig = `${rx.toFixed(3)},${ry.toFixed(3)},${cx.toFixed(3)},${cy.toFixed(3)},${dz}`;
     if (sig === last) return;
     last = sig;
-    const [x, y] = PM.applyDeadzone(rx, ry, dz);
+    const [x, y] = PM.applyDeadzone(cx, cy, dz);
     const mag = Math.min(1, Math.hypot(x, y));
     raw.setAttribute('cx', (rx * PLOT_R).toFixed(2));
     raw.setAttribute('cy', (ry * PLOT_R).toFixed(2));
@@ -305,7 +318,7 @@ function stickPlot(h, name) {
     out.setAttribute('cy', (y * PLOT_R).toFixed(2));
     vec.setAttribute('d', `M0 0L${(x * PLOT_R).toFixed(2)} ${(y * PLOT_R).toFixed(2)}`);
     el.classList.toggle('is-moved', mag > 0);
-    const rawMag = Math.hypot(rx, ry);
+    const rawMag = Math.hypot(cx, cy);
     state.textContent = mag > 0 ? `${pct(mag)} tilt` : rawMag >= 0.005 ? 'inside dead zone' : 'centred';
   }
   return { el, update, setDeadzone };
@@ -475,6 +488,13 @@ const GAME_KEYS = {
   clicker:  [['Tune the signal', K_ACT], ['Buy a generator 1-9', ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => ['Digit' + n])], ['Buy an upgrade', ['KeyU']], ['Buy amount', ['KeyB']]],
   /* Sum Grid: arrows move, digits enter, Backspace erases, N notes, H hint, Z undo */
   sumgrid:  [['Move', K_UP, K_DOWN, K_LEFT, K_RIGHT], ['Number', ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6']], ['Erase', ['Backspace', 'Delete']], ['Notes', ['KeyN']], ['Hint', ['KeyH']], ['Undo', ['KeyZ']]],
+  colorflood: [['Colour', ['ArrowLeft'], ['ArrowRight']], ['Play colour', K_ACT], ['Undo', ['KeyU', 'KeyZ']], ['Restart', ['KeyR']]],
+  pondhopper: [['Move', ...ARROWS], ['Hop', K_ACT], ['Undo', ['KeyU', 'KeyZ']], ['Hint', ['KeyH']]],
+  heist: [['Step', K_UP, K_DOWN, K_LEFT, K_RIGHT], ['Wait', K_ACT], ['Undo', ['KeyU', 'KeyZ']], ['Restart', ['KeyR']]],
+  tactics: [['Move cursor', ...ARROWS], ['Select / move / attack', K_ACT], ['End turn', ['KeyE']], ['Cancel', ['Backspace']]],
+  cavediver: [['Swim the other way', ['Space', 'ArrowUp', 'KeyW']]],
+  garden: [['Move', ...ARROWS], ['Place / pick up', K_ACT], ['Seed / sunbeam', ['Digit1'], ['Digit2']], ['Undo', ['KeyU', 'KeyZ']]],
+  orbit: [['Change orbit', ['Space', 'ArrowUp', 'KeyW']]],
   towerdefense: [['Move', ...ARROWS], ['Build / select', K_ACT], ['Towers', ['Digit1'], ['Digit2'], ['Digit3']], ['Upgrade', ['KeyU']], ['Sell', ['KeyX']], ['Next wave', ['KeyN']], ['Speed', ['KeyF']]],
 };
 /* keyboard games the bridge cannot play, and why */
@@ -487,6 +507,19 @@ const TEXT_ONLY = {
 };
 /* the Arcade's own keys, in every game (js/apps/arcade.js) */
 const SHELL_KEYS = [['Pause', ['Escape', 'KeyP']], ['Play again', ['Enter', 'NumpadEnter']]];
+/* why a game has no keys for the bridge, in its own words: "Mouse only" and what that means here */
+const POINTER = { mouse: 'Mouse only', touch: 'Touch only' };
+function pointerWhy(g) {
+  const ins = g.input || [];
+  const kind = ins.includes('mouse') && ins.includes('touch') ? 'Mouse or touch only' : POINTER[ins.find(i => POINTER[i])] || 'Pointer only';
+  return { short: kind, long: `${kind}: there are no keys to send, so the controller plays it as a pointer instead (the controller cursor): the left stick or D-pad moves it, A clicks, B right-clicks.` };
+}
+/* the Free Classics shelf: each runs sealed in a frame of its own (js/classics/frame.js) */
+function classicWhy(c) {
+  const ctl = controlsOf(c);
+  const use = c.controls === 'mouse' ? 'the mouse' : c.controls === 'keyboard' ? 'the keyboard' : 'the mouse and keyboard';
+  return { short: ctl.label, long: `${ctl.label}, and it runs sealed in a frame of its own: the key bridge and the controller cursor cannot reach inside, and the frame cannot see controllers. Play it with ${use}.` };
+}
 const GROUP_NAME = { dpad: 'D-pad', lstick: 'Left stick', rstick: 'Right stick' };
 
 /* ======================================================================
@@ -527,7 +560,7 @@ defineApp({
     /* opts.tab: a tab id, or a readable alias ({ tab: 'mapping' }) */
     const ALIAS = { controllers: 'pads', gamepad: 'pads', keyboard: 'keys', mapping: 'map', bridge: 'map', compatibility: 'compat', arcade: 'compat' };
     const tabId = t => (TABS.some(x => x.id === t) ? t : ALIAS[t] || null);
-    const S = { tab: tabId(opts?.tab) || 'pads', off: null, dead: false };
+    const S = { tab: tabId(opts?.tab) || 'pads', off: null, dead: false, mapGame: typeof opts?.game === 'string' ? opts.game : null };
     const uid = 'cc' + (++seq);
 
     /* ------------------------------ shell ------------------------------ */
@@ -648,10 +681,14 @@ defineApp({
       const V = { sel: null };
 
       let labels = PM.getConfig().labels;
+      let cfgNow = PM.getConfig();
       const offStore = store.sub(PM.KEY, () => {
         const c = PM.getConfig();
+        cfgNow = c;
         dz = c.deadzone;
         view?.setDeadzone(dz);
+        view?.paintCal();
+        view?.paintRumbleEnd();
         /* a new label style rebuilds the view; a dead-zone drag must not */
         if (c.labels !== labels) { labels = c.labels; sig = null; kick(); }
       });
@@ -771,6 +808,21 @@ defineApp({
             rumbleNote.textContent = `The browser refused: ${err.message || err.name}.`;
           }
         };
+        /* opt-in: a short buzz when an Arcade round ends (padmap.roundRumble), only where the pad can */
+        const endSw = h('button.switch.cc-rumble-end', {
+          type: 'button', role: 'switch', dataset: { fk: 'rumble-end' }, 'aria-label': 'Buzz when an Arcade round ends',
+          onclick: () => PM.setConfig({ rumble: !PM.getConfig().rumble }),
+        });
+        const paintRumbleEnd = () => {
+          const on = PM.getConfig().rumble;
+          endSw.classList.toggle('is-on', on);
+          endSw.setAttribute('aria-checked', on ? 'true' : 'false');
+        };
+        paintRumbleEnd();
+        const endRow = PM.canRumble(gp)
+          ? h('label.cc-toggle', endSw, h('span', h('b', { text: 'Buzz when an Arcade round ends' }),
+            h('small', { text: 'Off unless you turn it on. A light buzz for a win, a longer one otherwise.' })))
+          : null;
         const rumbleCard = h('div.cc-card',
           h('div.cc-card__title', icon('activity'), h('span', { text: 'Vibration' })),
           act
@@ -780,7 +832,51 @@ defineApp({
               effects.includes('trigger-rumble')
                 ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'trumble' }, onclick: () => rumble('trigger-rumble') }, h('span', { text: 'Trigger rumble' })) : null)
             : null,
-          act ? rumbleNote : h('p.cc-card__note', { text: 'Not available: this browser does not expose vibration for this controller.' }));
+          act ? rumbleNote : h('p.cc-card__note', { text: 'Not available: this browser does not expose vibration for this controller.' }),
+          endRow);
+
+        /* calibration: where each stick rests, measured and kept for this controller */
+        const calText = h('p.cc-card__note.cc-cal__now', { 'aria-live': 'polite' });
+        const calNote = h('p.cc-card__note', { 'aria-live': 'polite' });
+        const calBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'calibrate' }, onclick: () => measure() }, h('span', { text: 'Calibrate' }));
+        const calReset = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'cal-reset' }, onclick: () => { PM.clearCalibration(gp); calNote.textContent = 'Back to the controller’s own centre.'; } }, h('span', { text: 'Reset' }));
+        const fmtC = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+        function paintCal() {
+          const c = PM.calOf(gp);
+          calReset.hidden = !c;
+          calText.textContent = c
+            ? `Kept for this controller: the left stick rests at ${fmtC(c[0])}, ${fmtC(c[1])}; the right at ${fmtC(c[2])}, ${fmtC(c[3])}. Taken off every reading.`
+            : 'Not calibrated: readings are as the controller reports them.';
+        }
+        let measuring = false;
+        function measure() {
+          if (measuring) return;
+          measuring = true;
+          calBtn.disabled = true;
+          calNote.textContent = 'Measuring: keep your hands off both sticks…';
+          const samples = [];
+          const frame = () => {
+            if (S.dead) return;
+            const pad = PM.connectedPads().find(p => p.index === gp.index);
+            if (!pad) { done('The controller went away. Press a button on it and try again.'); return; }
+            samples.push([0, 1, 2, 3].map(i => Number(pad.axes?.[i]) || 0));
+            if (samples.length < 30) { requestAnimationFrame(frame); return; }
+            const mean = [0, 1, 2, 3].map(i => samples.reduce((n, s) => n + s[i], 0) / samples.length);
+            const spread = Math.max(...[0, 1, 2, 3].map(i => Math.max(...samples.map(s => Math.abs(s[i] - mean[i])))));
+            if (spread > 0.08) { done('A stick moved while measuring. Let go of both sticks and try again.'); return; }
+            if (mean.some(v => Math.abs(v) > 0.5)) { done('A stick is pushed well away from the middle. Let go of both sticks and try again.'); return; }
+            PM.setCalibration(pad, mean);
+            done('Calibrated. The key bridge and the controller cursor now take this resting point off.');
+          };
+          const done = msg => { measuring = false; calBtn.disabled = false; calNote.textContent = msg; };
+          requestAnimationFrame(frame);
+        }
+        paintCal();
+        const calCard = gp.axes.length >= 2 ? h('div.cc-card.cc-cal',
+          h('div.cc-card__title', icon('scan'), h('span', { text: 'Stick centres' })),
+          h('p.cc-card__note', { text: 'A worn stick can rest a little off the middle. Let go of both sticks, then press Calibrate: it measures where they rest and keeps that for this controller.' }),
+          h('div.cc-card__row', calBtn, calReset),
+          calText, calNote) : null;
 
         /* label style */
         const pref = PM.getConfig().labels;
@@ -814,6 +910,7 @@ defineApp({
             slider,
             h('p.cc-card__note', { text: 'Stick movement inside the dashed circle is ignored — it hides drift from worn sticks. Used by this display and by the key bridge.' }),
             h('div.cc-legend', h('span', h('i.cc-legend__raw'), 'raw position'), h('span', h('i.cc-legend__cap'), 'after dead zone'), h('span', h('i.cc-legend__dz'), 'dead zone'))),
+          calCard,
           rumbleCard,
           h('div.cc-card',
             h('div.cc-card__title', icon('type'), h('span', { text: 'Button labels' })),
@@ -833,13 +930,15 @@ defineApp({
           raw.el);
         const clampAxis = v => Math.max(-1, Math.min(1, Number(v) || 0));
         return {
-          el: wrap, gp, style: stKey,
+          el: wrap, gp, style: stKey, paintCal, paintRumbleEnd,
           setDeadzone: v => { dia.setDeadzone(v); for (const { p } of plots) p.setDeadzone(v); },
           update(pad) {
-            dia.update(pad, dz);
-            raw.update(pad, dz);
+            const cal = PM.calOf(pad, cfgNow);
+            dia.update(pad, dz, cal);
+            raw.update(pad, dz, cal);
             const ax = pad.axes || [];
-            for (const { i, p } of plots) p.update(clampAxis(ax[i]), clampAxis(ax[i + 1]), dz);
+            const cax = PM.axesOf(pad, cal);
+            for (const { i, p } of plots) p.update(clampAxis(ax[i]), clampAxis(ax[i + 1]), dz, cax[i], cax[i + 1]);
           },
         };
       }
@@ -878,7 +977,7 @@ defineApp({
           axes);
         return {
           el,
-          update(pad, dzv) {
+          update(pad, dzv, cal = null) {
             pad.buttons.forEach((b, i) => {
               const c = btnCells[i];
               if (!c) return;
@@ -892,6 +991,7 @@ defineApp({
               c.cell.classList.toggle('is-on', pressed);
             });
             const ax = pad.axes || [];
+            const cax = PM.axesOf(pad, cal);
             ax.forEach((a, i) => {
               const r = axisRows[i];
               if (!r) return;
@@ -900,7 +1000,7 @@ defineApp({
               let adjV = null;
               if (standard && i < 4) {
                 const base = i < 2 ? 0 : 2;
-                const [x, y] = PM.applyDeadzone(Number(ax[base]) || 0, Number(ax[base + 1]) || 0, dzv);
+                const [x, y] = PM.applyDeadzone(cax[base], cax[base + 1], dzv);
                 adjV = i % 2 ? y : x;
               }
               const key = v.toFixed(3) + '|' + (adjV === null ? '' : adjV.toFixed(2));
@@ -1481,9 +1581,64 @@ defineApp({
         sw);
 
       const list = h('div.cc-map__list');
-      const resetBtn = h('button.btn.btn--sm', { type: 'button', onclick: () => { PM.resetMapping(); api.notify({ app: 'Controller Center', icon: 'gamepad', title: 'Mapping reset', message: 'D-pad and left stick send arrows, A Space, B Escape, X Z, Y X, Start Enter.', timeout: 3500 }); } },
-        icon('rotate-ccw'), h('span', { text: 'Reset to defaults' }));
+      /* PROFILES: the mapping being edited — every game's (null), or one game's own */
+      const gameName = id => ARCADE.find(g => g.id === id)?.title || id;
+      let editing = S.mapGame && PM.hasProfile(S.mapGame) ? S.mapGame : null;
+      S.mapGame = null;
+      const resetBtn = h('button.btn.btn--sm', {
+        type: 'button', onclick: () => {
+          PM.resetMapping(editing);
+          api.notify(editing
+            ? { app: 'Controller Center', icon: 'gamepad', title: `${gameName(editing)}: mapping reset`, message: 'It is a copy of the mapping every other game uses again, still its own.', timeout: 3500 }
+            : { app: 'Controller Center', icon: 'gamepad', title: 'Mapping reset', message: 'D-pad and left stick send arrows, A Space, B Escape, X Z, Y X, Start Enter.', timeout: 3500 });
+        },
+      }, icon('rotate-ccw'), h('span', { text: 'Reset to defaults' }));
       const hd = head('Button mapping', 'Choose the key each control sends: select a key, then press the key you want. Select it again, or press Tab, to cancel. Cmd/Ctrl shortcuts cancel too and still reach StaticOS.', resetBtn);
+      /* the games a mapping can matter to: those that read keys */
+      const keyGames = ARCADE.filter(g => ((g.input || []).includes('keyboard') || GAME_KEYS[g.id]) && !TEXT_ONLY[g.id])
+        .sort((a, b) => a.title.localeCompare(b.title));
+      const profSel = h('select.cc-prof__sel', {
+        'aria-label': 'Mapping for', dataset: { fk: 'profile' },
+        onchange: () => {
+          const v = profSel.value || null;
+          if (v && !PM.hasProfile(v) && !PM.addProfile(v)) { profSel.value = editing || ''; return; }
+          editing = v;
+          paintProfiles();
+          paintList();
+          paintTry();
+        },
+      });
+      const profRemove = h('button.btn.btn--sm', {
+        type: 'button', dataset: { fk: 'profile-remove' },
+        onclick: () => {
+          const g = editing;
+          if (!g) return;
+          PM.removeProfile(g);
+          editing = null;
+          paintProfiles();
+          paintList();
+          api.notify({ app: 'Controller Center', icon: 'gamepad', title: `${gameName(g)} uses the main mapping again`, message: 'Its own mapping is gone.', timeout: 3500 });
+        },
+      }, icon('trash'), h('span', { text: 'Remove its own mapping' }));
+      const profNote = h('p.cc-card__note.cc-prof__note');
+      function paintProfiles() {
+        const cfg = PM.getConfig();
+        const own = Object.keys(cfg.profiles).filter(id => ARCADE.some(g => g.id === id));
+        clear(profSel);
+        profSel.append(h('option', { value: '', text: 'Every game (the main mapping)' }));
+        if (own.length) profSel.append(h('optgroup', { label: 'Games with their own mapping' }, own.map(id => h('option', { value: id, text: gameName(id) }))));
+        const rest = keyGames.filter(g => !own.includes(g.id));
+        if (rest.length) profSel.append(h('optgroup', { label: 'Give a game its own mapping' }, rest.map(g => h('option', { value: g.id, text: `${g.title}…` }))));
+        profSel.value = editing || '';
+        profRemove.hidden = !editing;
+        profNote.textContent = editing
+          ? `${gameName(editing)} uses this mapping while it runs in the Arcade. Every other game keeps the main one.`
+          : own.length ? `Every game uses this, except ${own.length === 1 ? 'one game that has' : `${own.length} games that have`} its own.` : 'Every game uses this. Pick a game to give it a mapping of its own.';
+      }
+      const profBar = h('div.cc-card.cc-prof',
+        h('div.cc-card__title', icon('sliders'), h('span', { text: 'Mapping for' })),
+        h('div.cc-card__row', profSel, profRemove),
+        profNote);
 
       /* live preview: a private bridge that dispatches into this panel only */
       const heldEl = h('div.cc-try__held', { 'aria-live': 'polite' });
@@ -1503,7 +1658,7 @@ defineApp({
         h('div.cc-card__title', icon('play'), h('span', { text: 'Try it' })),
         tryState, heldEl, tryLog, sink);
 
-      el.append(hd.el, bridge, h('div.cc-map__grid', list, h('div.cc-map__side', tryCard,
+      el.append(hd.el, bridge, profBar, h('div.cc-map__grid', list, h('div.cc-map__side', tryCard,
         h('p.cc-fine', { text: 'Every connected controller sends the same keys. Key names follow the US layout. The dead zone from the Controllers tab applies to the sticks here too.' }))));
 
       let lastPads = -1;
@@ -1531,7 +1686,7 @@ defineApp({
       /* the preview obeys the same gate as the Arcade's bridge, scoped to
          this window: nothing is sent while another window is in front */
       const preview = hasGamepadAPI ? PM.createBridge({
-        target: sink, requireToggle: false, scope: root,
+        target: sink, requireToggle: false, scope: root, game: () => editing,
         onFrame: ({ active, held, pads, live }) => {
           for (const [id, r] of Object.entries(rows)) {
             const on = active.has(id);
@@ -1560,7 +1715,7 @@ defineApp({
       }
       function paintRow(id) {
         const r = rows[id];
-        const code = PM.getConfig().mapping[id];
+        const code = PM.mappingFor(editing)[id];
         const on = listening === id;
         r.key.classList.toggle('is-listening', on);
         r.key.classList.toggle('is-empty', !code && !on);
@@ -1613,7 +1768,7 @@ defineApp({
                   pendingMod = null;
                   assigning = e.code;
                   listening = null;
-                  PM.setMapping(inp.id, e.code);
+                  PM.setMapping(inp.id, e.code, editing);
                 },
                 onkeyup: e => {
                   if (listening === inp.id && pendingMod && e.code === pendingMod) {
@@ -1623,7 +1778,7 @@ defineApp({
                     const code = pendingMod;
                     pendingMod = null;
                     listening = null;
-                    PM.setMapping(inp.id, code);
+                    PM.setMapping(inp.id, code, editing);
                     return;
                   }
                   if (!assigning || e.code !== assigning) return;
@@ -1633,7 +1788,7 @@ defineApp({
                 },
                 onblur: () => { if (listening === inp.id) stopListening(); },
               });
-              const clr = h('button.cc-clear', { type: 'button', 'aria-label': `Clear ${label}`, title: 'Clear', onclick: () => PM.setMapping(inp.id, '') }, icon('x'));
+              const clr = h('button.cc-clear', { type: 'button', 'aria-label': `Clear ${label}`, title: 'Clear', onclick: () => PM.setMapping(inp.id, '', editing) }, icon('x'));
               const row = h('div.cc-map__row', { dataset: { input: inp.id } },
                 glyph, h('div.cc-map__name', h('b', { text: label }), h('small', { text: inp.name })), key, clr);
               rows[inp.id] = { row, key, clear: clr, label, live: false };
@@ -1665,6 +1820,7 @@ defineApp({
       let styleNow = null;
       const offStore = store.sub(PM.KEY, () => {
         paintBridge();
+        if (editing && !PM.hasProfile(editing)) { editing = null; paintProfiles(); }
         if (styleKey(PM.connectedPads()[0]) !== styleNow) paintList();
         else for (const id of Object.keys(rows)) paintRow(id);
       });
@@ -1675,6 +1831,7 @@ defineApp({
       window.addEventListener('gamepadconnected', onPads);
       window.addEventListener('gamepaddisconnected', onPads);
       paintBridge();
+      paintProfiles();
       paintList();
       preview?.start();
 
@@ -1727,13 +1884,14 @@ defineApp({
             + '. The keys are the ones each game’s code listens for. A game ignores keys it does not use, so a button mapped to anything else does nothing there. Like the keyboard, the controller only reaches a game while the Arcade window is in front. Every controller sends the same keys, so a second player in Pong still needs the keyboard (W / S).',
         }));
 
-      /* what drives one control: the pad inputs whose key is in its slots */
-      function drive(slots, cfg, st) {
+      /* what drives one control: the pad inputs whose key is in its slots (with the game's own mapping, if it has one) */
+      function drive(slots, cfg, st, mapping = cfg.mapping) {
         const by = new Map();      /* display name → true, in INPUTS order */
         let met = 0;
+        const c = { ...cfg, mapping };
         for (const slot of slots) {
-          const codes = (typeof slot === 'function' ? slot(cfg) : slot).filter(Boolean);
-          const ins = PM.INPUTS.filter(i => cfg.mapping[i.id] && codes.includes(cfg.mapping[i.id]));
+          const codes = (typeof slot === 'function' ? slot(c) : slot).filter(Boolean);
+          const ins = PM.INPUTS.filter(i => mapping[i.id] && codes.includes(mapping[i.id]));
           if (ins.length) met++;
           /* one key (Flap, Serve…): name the exact input, "D-pad ↑";
              several (Move): the device part, "D-pad" */
@@ -1765,25 +1923,30 @@ defineApp({
           const keyed = listed.includes('keyboard') || !!GAME_KEYS[g.id];
           const inputs = keyed && !listed.includes('keyboard') ? [...listed, 'keyboard'] : listed;
           const ctls = keyed && !TEXT_ONLY[g.id] ? (GAME_KEYS[g.id] || null) : null;
-          const res = ctls ? ctls.map(([label, ...slots]) => ({ label, slots, d: drive(slots, cfg, st) })) : [];
-          const verdict = !keyed ? 'no' : TEXT_ONLY[g.id] ? 'text' : !ctls ? 'unknown' : res.every(r => r.d.ok) ? 'ok' : 'map';
-          return { g, res, verdict, inputs, extraKeys: inputs !== listed };
+          const own = PM.hasProfile(g.id, cfg);
+          const mapping = PM.mappingFor(g.id, cfg);
+          const res = ctls ? ctls.map(([label, ...slots]) => ({ label, slots, d: drive(slots, cfg, st, mapping) })) : [];
+          /* 'cursor': no keys at all, so the Arcade gives the controller a pointer (js/arcade/padcursor.js) */
+          const verdict = !keyed ? 'cursor' : TEXT_ONLY[g.id] ? 'text' : !ctls ? 'unknown' : res.every(r => r.d.ok) ? 'ok' : 'map';
+          const why = verdict === 'cursor' ? pointerWhy(g)
+            : verdict === 'text' ? { short: 'Needs typing', long: TEXT_ONLY[g.id] }
+              : verdict === 'unknown' ? { short: 'Keys not listed', long: 'It reads the keyboard, but which keys it uses is not written down here yet, so the bridge may or may not cover them. Try it.' }
+                : null;
+          return { g, res, verdict, inputs, extraKeys: inputs !== listed, own, why };
         });
         const ready = rows.filter(r => r.verdict === 'ok');
         const needMap = rows.filter(r => r.verdict === 'map');
-        const pointer = rows.filter(r => r.verdict === 'no');
+        const pointer = rows.filter(r => r.verdict === 'cursor');
         const typing = rows.filter(r => r.verdict === 'text');
         big.textContent = String(ready.length);
         sumTitle.textContent = `${ready.length} of ${ARCADE.length} games are ready to play with a controller${on ? '.' : ' once the key bridge is on.'}`;
         const names = list => andList(list.map(r => r.g.title));
         const verb = list => (list.length === 1 ? 'needs' : 'need');
-        const cannot = [
-          pointer.length ? `${names(pointer)} ${verb(pointer)} a mouse or touch screen` : '',
-          typing.length ? `${names(typing)} ${verb(typing)} real typing` : '',
-        ].filter(Boolean);
         sumText.textContent = [
           needMap.length ? `${names(needMap)} ${verb(needMap)} a few keys mapped first.` : '',
-          cannot.length ? `${cannot.join(', and ')} — a controller cannot stand in for ${cannot.length > 1 ? 'either' : 'that'}.` : '',
+          pointer.length ? `${pointer.length === 1 ? 'One game is' : `${pointer.length} games are`} mouse or touch only: the controller plays ${pointer.length === 1 ? 'it' : 'them'} as a pointer.` : '',
+          typing.length ? `${names(typing)} ${verb(typing)} real typing, which a controller cannot stand in for.` : '',
+          'The Free Classics, at the end, cannot take a controller at all.',
         ].filter(Boolean).join(' ');
 
         clear(shellCtls);
@@ -1794,14 +1957,15 @@ defineApp({
         const fGame = fb?.closest('[data-game]')?.dataset.game;
         const fCls = fb ? (fb.classList.contains('cc-game__fix') ? 'cc-game__fix' : 'cc-game__play') : null;
         clear(list);
-        for (const { g, res, verdict, inputs, extraKeys } of rows) {
+        for (const { g, res, verdict, inputs, extraKeys, own, why } of rows) {
           const ok = verdict === 'ok';
-          const no = verdict === 'no' || verdict === 'text';
+          const no = verdict === 'text';
           const missing = res.filter(r => !r.d.ok).map(r => r.label);
-          list.append(h('li.cc-game', { class: ok ? 'is-ok' : no ? 'is-no' : 'is-warn', dataset: { game: g.id, verdict } },
+          list.append(h('li.cc-game', { class: ok ? 'is-ok' : no ? 'is-no' : 'is-warn', dataset: { game: g.id, verdict, own: String(own) } },
             h('span.cc-game__art', { style: { '--hue': String(g.hue) } }, icon(g.icon)),
             h('div.cc-game__body',
-              h('div.cc-game__top', h('b', { text: g.title }), g.players.includes(2) ? h('span.cc-game__pl', { text: '1–2 players' }) : null),
+              h('div.cc-game__top', h('b', { text: g.title }), g.players.includes(2) ? h('span.cc-game__pl', { text: '1–2 players' }) : null,
+                own ? h('span.cc-game__own', { text: 'Own mapping' }) : null),
               h('p', { text: g.blurb }),
               h('div.cc-game__inputs', inputs.map(i => h('span.cc-in', {
                 class: i === 'keyboard' ? 'is-key' : '',
@@ -1810,24 +1974,44 @@ defineApp({
               res.length ? h('div.cc-ctls', res.map(r => ctlChip(r.label, r.d, r.slots.length))) : null),
             h('div.cc-game__foot',
               h('div.cc-game__verdict',
-                icon(ok ? 'check-circle' : no ? 'x-circle' : 'alert'),
+                icon(ok ? 'check-circle' : no ? 'x-circle' : verdict === 'cursor' ? 'mouse-pointer' : 'alert'),
                 h('span', {
-                  text: ok ? 'Ready with your mapping'
-                    : verdict === 'no' ? 'Needs mouse or touch'
+                  text: ok ? `Ready with ${own ? 'its own mapping' : 'your mapping'}`
+                    : verdict === 'cursor' ? `${why.short}: plays with the controller cursor`
                       : verdict === 'text' ? 'Needs typing'
                         : verdict === 'unknown' ? 'Reads the keyboard — check its controls'
                           : `Map ${missing.join(', ').toLowerCase()} first`,
                 })),
               h('div.cc-game__acts',
-                verdict === 'map' ? h('button.btn.btn--sm.cc-game__fix', {
-                  type: 'button', 'aria-label': `Open button mapping to set up ${g.title}`,
-                  onclick: () => select('map', { focusInto: true }),
+                verdict === 'map' || verdict === 'ok' ? h('button.btn.btn--sm.cc-game__fix', {
+                  type: 'button', 'aria-label': `${verdict === 'map' ? 'Open button mapping to set up' : 'Mapping for'} ${g.title}`,
+                  title: own ? 'Its own mapping' : 'The mapping every game uses',
+                  onclick: () => { S.mapGame = own ? g.id : null; select('map', { focusInto: true }); },
                 }, icon('sliders'), h('span', { text: 'Mapping' })) : null,
                 h('button.btn.btn--sm.cc-game__play', {
                   type: 'button', 'aria-label': `Play ${g.title} in the Arcade`,
                   onclick: () => api.openApp('arcade', { game: g.id }),
                 }, icon('play'), h('span', { text: 'Play' })))),
-            verdict === 'text' ? h('p.cc-game__caveat', { text: TEXT_ONLY[g.id] }) : null));
+            why ? h('p.cc-game__caveat.cc-game__why', { text: why.long }) : null));
+        }
+        /* the Free Classics: sealed frames, so no controller at all, and each says why */
+        list.append(h('li.cc-games__sep', h('b', { text: 'Free Classics' }), h('small', { text: 'Old games in Static Arcade’s Old Games shelf' })));
+        for (const c of CLASSICS) {
+          const why = classicWhy(c);
+          list.append(h('li.cc-game.is-no', { dataset: { game: CLASSIC_PREFIX + c.id, verdict: 'sealed' } },
+            h('span.cc-game__art', { style: { '--hue': String(c.hue) } }, icon(c.icon)),
+            h('div.cc-game__body',
+              h('div.cc-game__top', h('b', { text: c.title })),
+              h('p', { text: c.blurb }),
+              h('div.cc-game__inputs', h('span.cc-in', { class: c.controls !== 'mouse' ? 'is-key' : '' }, icon(controlsOf(c).icon), h('span', { text: why.short })))),
+            h('div.cc-game__foot',
+              h('div.cc-game__verdict', icon('x-circle'), h('span', { text: `${why.short}, in a sealed frame` })),
+              h('div.cc-game__acts',
+                h('button.btn.btn--sm.cc-game__play', {
+                  type: 'button', 'aria-label': `Play ${c.title} in the Arcade`,
+                  onclick: () => api.openApp('arcade', { game: CLASSIC_PREFIX + c.id }),
+                }, icon('play'), h('span', { text: 'Play' })))),
+            h('p.cc-game__caveat.cc-game__why', { text: why.long })));
         }
         if (fGame) (list.querySelector(`[data-game="${fGame}"] .${fCls}`) || list.querySelector(`[data-game="${fGame}"] .cc-game__play`))?.focus({ preventScroll: true });
       }
@@ -1849,7 +2033,15 @@ defineApp({
     }
 
     /* ------------------------------ lifecycle ------------------------------ */
-    win.onReopen?.(o => { const t = tabId(o?.tab); if (t) select(t, { focusInto: true }); });
+    win.onReopen?.(o => {
+      const t = tabId(o?.tab);
+      /* a game's own mapping asked for while the mapping tab is open: build it again on that game */
+      if (typeof o?.game === 'string') {
+        S.mapGame = o.game;
+        if (t === 'map' && S.tab === 'map') { try { S.off?.(); } catch (err) { console.error(err); } S.off = null; }
+      }
+      if (t) select(t, { focusInto: true });
+    });
     paintChrome();
     /* opened straight onto a tab ({ tab: 'keys' }): focus goes into it, as
        when the tab is clicked, so the Keyboard tester gets the very first

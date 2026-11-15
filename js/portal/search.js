@@ -12,6 +12,10 @@
    ============================================================ */
 
 import { BRAND, SCHEMES } from './brand.js';
+import { COUNTS, fmtCount } from './counts.js';
+import * as TI from '../core/textindex.js';
+import * as Col from '../core/collections.js';
+import * as playsMod from '../core/plays.js';
 
 /** Must match providers.searchWeb()'s page size. */
 const PER_PAGE = 8;
@@ -33,11 +37,14 @@ const KIND = {
   manga: { label: 'Manga',  icon: 'file-text', badge: 'badge--warn' },
   page:  { label: BRAND.name, icon: BRAND.icon, badge: 'badge--accent' },
   web:   { label: 'Web',    icon: 'globe',     badge: '' },
+  roblox: { label: 'Roblox', icon: 'box',       badge: 'badge--accent' },
+  cloud: { label: 'Cloud',  icon: 'cast',      badge: 'badge--ok' },
+  library: { label: 'Yours', icon: 'heart',     badge: 'badge--warn' },
 };
 const kindOf = k => KIND[k] || KIND.web;
 
 /** The kinds the portal holds itself; everything else is "the web". */
-const MEDIA_KINDS = ['game', 'movie', 'anime', 'manga', 'roblox'];
+const MEDIA_KINDS = ['game', 'movie', 'anime', 'manga', 'roblox', 'cloud', 'library'];
 
 /* `match` is null on the All tab and a predicate on the others, so an
    unexpected kind still lands somewhere instead of vanishing. `noun` is what
@@ -49,8 +56,20 @@ const TABS = [
   { id: 'movie', name: 'Movies', icon: 'film',    noun: 'movie',      match: r => r.kind === 'movie' },
   { id: 'anime', name: 'Anime',  icon: 'star',    noun: 'anime title', match: r => r.kind === 'anime' || r.kind === 'manga' },
   { id: 'roblox', name: 'Roblox', icon: 'box',    noun: 'experience', match: r => r.kind === 'roblox' },
+  { id: 'cloud', name: 'Cloud',  icon: 'cast',    noun: 'cloud game', match: r => r.kind === 'cloud' },
+  { id: 'library', name: 'Yours', icon: 'heart',   noun: 'result from your Library', match: r => r.kind === 'library' },
   { id: 'web',   name: 'Web',    icon: 'globe',   noun: 'web result', match: r => !MEDIA_KINDS.includes(r.kind) },
 ];
+
+/* g: games · a: anime · r: roblox · l: your library · c: cloud · m: movies */
+const SHORTCUTS = { g: 'game', a: 'anime', r: 'roblox', l: 'library', c: 'cloud', m: 'movie' };
+const SHORTCUT_NAMES = { game: 'games', anime: 'anime', roblox: 'Roblox', library: 'your Library', cloud: 'cloud games', movie: 'movies' };
+function parseShortcut(raw) {
+  const m = /^([gmarlc]):\s*(.*)$/i.exec(String(raw || '').trim());
+  return m ? { tab: SHORTCUTS[m[1].toLowerCase()], term: m[2].trim() } : { tab: '', term: String(raw || '').trim() };
+}
+const RECENT_KEY = 'portal.search.recent';
+const FILTERS = [['', 'Any'], ['played', 'Played'], ['fav', 'In favorites'], ['new', 'Not yet']];
 
 /** "1 game" / "3 games" — never "1 games". */
 const counted = (tab, n) => `${n} ${tab.noun}${n === 1 ? '' : 's'}`;
@@ -103,16 +122,23 @@ export function buildSearch(ctx) {
     data: null,
     loading: false,
     error: null,
-    /** '' | 'loading' | 'failed' — the 7,963-title anime fetch. */
+    /** '' | 'loading' | 'failed' — the full anime fetch. */
     catalogue: '',
     catalogueErr: null,
+    flt: '',            // quick filter: '' | 'played' | 'fav' | 'new'
+    short: '',          // the tab a g:/a:/r:/l: prefix chose
+    term: '',           // the query without its prefix
+    dym: null,          // "Did you mean" for games
+    mine: null,         // notes and files on this device that match
   };
+  { const sc = parseShortcut(S.q); S.short = sc.tab; S.term = sc.term; if (sc.tab) S.tab = sc.tab; }
   try { S.tab = store.get(TAB_KEY, 'all'); } catch (e) { /* defaults are fine */ }
   if (!TABS.some(t => t.id === S.tab)) S.tab = 'all';
   /* Restoring the Anime tab without its catalogue would show an empty tab on
-     arrival, so that one only sticks once the 7,963 titles are in memory. */
+     arrival, so that one only sticks once every title is in memory. */
   if (S.tab === 'anime' && !providers.bigCatalogue.isLoaded('anime')) S.tab = 'all';
 
+  if (S.short) S.tab = S.short;
   let seq = 0;   // guards late provider answers against a newer search
 
   const root = h('div.cx');
@@ -252,8 +278,14 @@ export function buildSearch(ctx) {
     S.error = null;
     paintBody();
     try {
-      const data = await providers.searchWeb(S.q, { page: S.page });
+      if (S.short === 'anime' && !providers.bigCatalogue.isLoaded('anime')) await providers.bigCatalogue.load('anime').catch(() => null);
+      const data = S.term ? await providers.searchWeb(S.term, { page: S.page }) : { query: '', page: 1, total: 0, took: 0, answer: null, results: [], related: [] };
       if (token !== seq || !root.isConnected) return;
+      S.dym = null;
+      try { S.dym = S.term ? providers.gameCatalogue.search(S.term, { limit: 1 }).suggestion || null : null; } catch (e) { S.dym = null; }
+      S.mine = null;
+      try { if (S.term && TI.words(S.term).length) S.mine = TI.query(S.term, { limit: 6 }); } catch (e) { S.mine = null; }
+      if (S.term) remember(S.q);
       S.data = data;
       S.page = data.page || S.page;
       S.loading = false;
@@ -266,14 +298,50 @@ export function buildSearch(ctx) {
     }
   }
 
+  function remember(q) {
+    try {
+      const cur = (store.get(RECENT_KEY, []) || []).filter(x => typeof x === 'string');
+      store.set(RECENT_KEY, [q, ...cur.filter(x => x.toLowerCase() !== q.toLowerCase())].slice(0, 8));
+    } catch (e) { /* not fatal */ }
+  }
+  const recents = () => { try { return (store.get(RECENT_KEY, []) || []).filter(x => typeof x === 'string'); } catch (e) { return []; } };
+  /* when the notes and files index finishes building, the matching notes appear */
+  const offIdx = TI.onReady(() => { if (root.isConnected && S.term && S.data) { try { S.mine = TI.query(S.term, { limit: 6 }); paintBody(); } catch (e) { /* ignore */ } } });
+
   const totalPages = () =>
     Math.max(1, Math.ceil(((S.data && S.data.total) || 0) / PER_PAGE));
 
   const allResults = () => (S.data && S.data.results) || [];
 
+  function filterSets() {
+    const arr = v => (Array.isArray(v) ? v : []);
+    const played = playsMod.playedKeys();
+    for (const r of arr(store.get('portal.games.recent'))) if (r && r.id) played.add(`web:${r.id}`);
+    return {
+      gamePlayed: played, gameFav: new Set(arr(store.get('portal.games.favs'))),
+      rbxSeen: new Set(arr(store.get('portal.roblox.recent')).map(String)), rbxFav: new Set(arr(store.get('portal.roblox.favs')).map(String)),
+    };
+  }
+  /** a quick filter keeps only the games and Roblox experiences that fit; everything else steps aside */
+  function passesFilter(r, F) {
+    if (!S.flt) return true;
+    const id = idOf(r.url);
+    if (r.kind === 'game') {
+      const pl = F.gamePlayed.has(`web:${id}`), fv = F.gameFav.has(id);
+      return S.flt === 'played' ? pl : S.flt === 'fav' ? fv : !pl;
+    }
+    if (r.kind === 'roblox') {
+      const pl = F.rbxSeen.has(id), fv = F.rbxFav.has(id);
+      return S.flt === 'played' ? pl : S.flt === 'fav' ? fv : !pl;
+    }
+    return false;
+  }
   function shown() {
     const tab = TABS.find(t => t.id === S.tab) || TABS[0];
-    return tab.match ? allResults().filter(tab.match) : allResults();
+    const rows = tab.match ? allResults().filter(tab.match) : allResults();
+    if (!S.flt) return rows;
+    const F = filterSets();
+    return rows.filter(r => passesFilter(r, F));
   }
 
   function countFor(tab) {
@@ -303,7 +371,7 @@ export function buildSearch(ctx) {
     S.page = 1;
 
     /* The Anime tab is the one deliberate 7.9 MB fetch: load it, then
-       re-run the search so all 7,963 titles are in the index. */
+       re-run the search so every title is in the index. */
     S.catalogue = 'loading';
     S.catalogueErr = null;
     paintBody();
@@ -311,7 +379,7 @@ export function buildSearch(ctx) {
       await providers.bigCatalogue.load('anime');
       if (!root.isConnected) return;
       S.catalogue = '';
-      S.page = 1;          /* folding 7,963 titles in re-ranks everything */
+      S.page = 1;          /* folding every title in re-ranks everything */
       await run();
     } catch (err) {
       if (!root.isConnected) return;
@@ -360,7 +428,7 @@ export function buildSearch(ctx) {
        to 190px and the side panel ended up WIDER than the results. Let the
        side drop below once the results cannot hold 260px (see resultsCol).
        Above ~580px nothing moves: at 620 the columns still come out 290+268. */
-    body.append(tabsRow(), statRow(),
+    body.append(tabsRow(), filterRow(), statRow(), dymRow(),
       h('div.cx-srch__wrap', { style: { flexWrap: 'wrap' } }, resultsCol(), sideCol()));
 
     if (held) {
@@ -391,10 +459,49 @@ export function buildSearch(ctx) {
     return el;
   }
 
+  function filterRow() {
+    const el = h('div.cx-srch__flt', { role: 'group', 'aria-label': 'Quick filters for games' });
+    if (!S.data) return el;
+    el.appendChild(h('span.dim', { text: 'Games:' }));
+    for (const [id, label] of FILTERS) {
+      el.appendChild(h('button', {
+        type: 'button', dataset: { flt: id || 'any' }, class: S.flt === id ? 'is-on' : null, 'aria-pressed': String(S.flt === id),
+        title: id ? `Show only games and Roblox experiences ${id === 'played' ? 'you have launched' : id === 'fav' ? 'in your favorites' : 'you have not tried'} on this device` : 'No filter',
+        onclick: () => { S.flt = id; paintBody(); },
+      }, label));
+    }
+    return el;
+  }
+
+  function dymRow() {
+    if (!S.dym || !S.data) return h('div');
+    return h('div.cx-srch__dym', { role: 'note' }, icon('sparkles'), h('span', { text: 'Did you mean ' }),
+      h('button', { type: 'button', 'aria-label': `Search for ${S.dym} instead`, onclick: () => navigate(searchUrl((S.short ? `${Object.keys(SHORTCUTS).find(k => SHORTCUTS[k] === S.short)}: ` : '') + S.dym)) },
+        S.dym), h('span', { text: '?' }));
+  }
+
+  /* notes and text files on this device, found by the same on-device index Spotlight uses */
+  function mineCard() {
+    const m = S.mine;
+    if (!m || !m.hits.length || (S.tab !== 'all' && S.tab !== 'library') || (S.data && (S.data.page || 1) !== 1)) return null;
+    const open = hit => {
+      if (hit.kind === 'n') api.openApp('notes', { noteId: hit.ref, find: hit.at >= 0 ? hit.word : null });
+      else api.openFile(hit.ref);
+    };
+    return h('div.cx-mine', { dataset: { sec: 'mine' } },
+      h('div.cx-mine__h', icon('file-text'), h('b', { text: 'In your notes and files' }), h('small', { text: `${m.total} on this device` })),
+      m.hits.map(hit => h('button.cx-res', { type: 'button', dataset: { mine: hit.key }, onclick: () => open(hit) },
+        h('div.cx-res__u', icon(hit.kind === 'n' ? 'sticky-note' : 'file-text'), h('span', { text: hit.kind === 'n' ? 'Notes' : String(hit.ref).replace(/^.*\/Home\//, '~/') }),
+          h('span.badge.cx-res__k', { text: hit.kind === 'n' ? 'Note' : 'File' })),
+        h('div.cx-res__t', { text: hit.title }),
+        hit.snip && hit.snip.text ? h('div.cx-res__s', { text: hit.snip.text }) : null)),
+      h('small.dim', { text: 'Found on this device only, in what the signed-in person has saved. Nothing is sent anywhere.' }));
+  }
+
   function statRow() {
     const el = h('div.cx-srch__stat', { role: 'status' });
     if (S.catalogue === 'loading') {
-      el.textContent = 'Fetching the full anime catalogue — 7,963 titles.';
+      el.textContent = `Fetching the full anime catalogue — ${fmtCount(COUNTS.anime)} titles.`;
       return el;
     }
     if (S.loading || !S.data) {
@@ -426,7 +533,7 @@ export function buildSearch(ctx) {
       }, h('div.spinner'), h('div',
         h('div', { text: 'Loading the anime catalogue…',
           style: { fontSize: 'var(--fs-12)', color: 'var(--ink-1)' } }),
-        h('small.dim', { text: '7,963 titles, fetched once and then kept in memory.',
+        h('small.dim', { text: `${fmtCount(COUNTS.anime)} titles, fetched once and then kept in memory.`,
           style: { fontSize: 'var(--fs-10)' } }))));
       col.appendChild(skelResults(3));
       return col;
@@ -441,6 +548,8 @@ export function buildSearch(ctx) {
     }
 
     if (S.data.answer && (S.data.page || 1) === 1) col.appendChild(answerCard(S.data.answer));
+    const mc = mineCard();
+    if (mc) col.appendChild(mc);
 
     const rows = shown();
     if (!rows.length) {
@@ -483,6 +592,56 @@ export function buildSearch(ctx) {
           title: 'Copy', onclick: () => copy(ans.value) }, icon('copy'))));
   }
 
+  /* ---------- hover / focus preview with Favorite and Add to collection ---------- */
+  let prevEl = null, prevT = 0, prevHide = 0;
+  root.style.position = 'relative';
+  function hidePreview(now) {
+    clearTimeout(prevT);
+    clearTimeout(prevHide);
+    const go = () => { if (prevEl) { prevEl.remove(); prevEl = null; } };
+    if (now) go(); else prevHide = setTimeout(go, 250);
+  }
+  function previewItem(r) {
+    const id = idOf(r.url);
+    if (r.kind === 'game') { const g = providers.getGame(id); return { kind: 'web', id, title: g ? g.title : r.title, art: g && g.art, line: g ? `${g.studio}${g.cats && g.cats.length ? ` · ${g.cats.filter(c => c !== 'featured').slice(0, 2).join(', ')}` : ''}` : '', favKey: 'portal.games.favs' }; }
+    if (r.kind === 'roblox') return { kind: 'roblox', id, title: r.title.replace(/ — Roblox$/, ''), art: null, line: r.snippet.slice(0, 90), favKey: 'portal.roblox.favs' };
+    const a = providers.bigCatalogue.byId(id, 'anime');
+    return { kind: 'anime', id, title: a ? a.title : r.title, art: a && a.image, line: a ? [a.year, (a.genres || []).slice(0, 2).join(', ')].filter(Boolean).join(' · ') : '', favKey: '' };
+  }
+  function showPreview(btn, r) {
+    hidePreview(true);
+    const it = previewItem(r);
+    const favs = () => (Array.isArray(store.get(it.favKey)) ? store.get(it.favKey).map(String) : []);
+    const favBtn = it.favKey ? h('button.btn.btn--sm', { type: 'button', dataset: { act: 'fav' }, 'aria-pressed': String(favs().includes(it.id)),
+      onclick: () => {
+        const on = favs().includes(it.id);
+        store.set(it.favKey, on ? favs().filter(x => x !== it.id) : [it.id, ...favs()]);
+        favBtn.setAttribute('aria-pressed', String(!on));
+        favBtn.lastChild.textContent = on ? 'Favorite' : 'Favorited';
+      } }, icon('heart', { fill: favs().includes(it.id) }), h('span', { text: favs().includes(it.id) ? 'Favorited' : 'Favorite' })) : null;
+    const el = h('div.cx-prev', { role: 'group', 'aria-label': `Preview of ${it.title}`,
+      onmouseenter: () => { clearTimeout(prevHide); }, onmouseleave: () => hidePreview(false) },
+      it.art ? h('img', { src: it.art, alt: '', referrerpolicy: 'no-referrer', onerror: e => e.target.remove() }) : null,
+      h('div.cx-prev__b', h('b', { text: it.title }), it.line ? h('small', { text: it.line }) : null,
+        h('div.cx-prev__acts', favBtn,
+          h('button.btn.btn--sm', { type: 'button', dataset: { act: 'collect' }, 'aria-haspopup': 'menu',
+            onclick: e => { const b = e.currentTarget.getBoundingClientRect(); Col.pickMenu(api, it, b.left, b.bottom + 4); } },
+            icon('bookmark'), h('span', { text: 'Add to collection…' })),
+          h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => { hidePreview(true); navigate(r.url); } }, icon('play'), h('span', { text: 'Open' })))));
+    root.appendChild(el);
+    prevEl = el;
+    const rr = root.getBoundingClientRect(), br = btn.getBoundingClientRect();
+    el.style.top = `${Math.max(0, br.top - rr.top + 4)}px`;
+    el.style.left = `${Math.max(8, Math.min(br.left - rr.left + 40, rr.width - 330))}px`;
+  }
+  function attachPreview(btn, r) {
+    const arm = () => { clearTimeout(prevT); clearTimeout(prevHide); prevT = setTimeout(() => { if (btn.isConnected) showPreview(btn, r); }, 450); };
+    btn.addEventListener('mouseenter', arm);
+    btn.addEventListener('focus', arm);
+    btn.addEventListener('mouseleave', () => hidePreview(false));
+    btn.addEventListener('keydown', e => { if (e.key === 'Escape') hidePreview(true); });
+  }
+
   function resultRow(r) {
     const k = kindOf(r.kind);
     const urlLine = h('div.cx-res__u',
@@ -495,8 +654,9 @@ export function buildSearch(ctx) {
 
     const btn = h('button.cx-res', {
       type: 'button', title: r.url,
-      onclick: () => navigate(r.url),
+      onclick: () => { hidePreview(true); navigate(r.url); },
     });
+    if (['game', 'roblox', 'anime'].includes(r.kind)) attachPreview(btn, r);
 
     if (r.image && (r.kind === 'anime' || r.kind === 'manga')) {
       btn.style.flexDirection = 'row';
@@ -537,13 +697,13 @@ export function buildSearch(ctx) {
     const noCatalogue = !providers.bigCatalogue.isLoaded('anime');
     let hint;
     if (S.tab === 'anime' && noCatalogue) {
-      hint = 'The 7,963-title anime catalogue is not in memory — press the Anime tab '
+      hint = 'The anime catalogue is not in memory — press the Anime tab '
            + 'again to fetch it and search all of it.';
     } else if (filtered) {
       hint = `Nothing of that kind on this page — the All tab has `
            + `${total.toLocaleString()} result${total === 1 ? '' : 's'}.`;
     } else if (noCatalogue) {
-      hint = 'The 7,963-title anime catalogue has not been loaded yet — open the '
+      hint = 'The anime catalogue has not been loaded yet — open the '
            + 'Anime tab to fold it into this search.';
     } else {
       hint = 'Check the spelling, use fewer words, or browse a category instead.';
@@ -723,10 +883,10 @@ export function buildSearch(ctx) {
       }, icon('search'), h('span', { text: q })))));
   }
 
-  /** The real row count once a catalogue is in memory, its documented size before. */
-  function catalogueSize(kind, documented) {
+  /** The real row count once a catalogue is in memory, the counted size (counts.js) before. */
+  function catalogueSize(kind) {
     const rows = providers.bigCatalogue.peek(kind);
-    return rows ? rows.length.toLocaleString() : documented;
+    return fmtCount(rows ? rows.length : COUNTS[kind]);
   }
 
   function shortcutsCard() {
@@ -739,7 +899,7 @@ export function buildSearch(ctx) {
       h('div.card__head', icon('chevrons-right'), h('div.card__t', { text: 'Jump to' })),
       h('div.list',
         item('Games', `${providers.GAMES.length} titles, playable in the page`, 'gamepad', 'static://games'),
-        item('Anime', `${catalogueSize('anime', '7,963')} titles · ${catalogueSize('manga', '1,200')} manga`,
+        item('Anime', `${catalogueSize('anime')} titles · ${catalogueSize('manga')} manga`,
           'star', 'static://anime'),
         item('Proxy', `How ${BRAND.name} will reach the open web`, 'shield', 'static://proxy')));
   }
@@ -756,15 +916,27 @@ export function buildSearch(ctx) {
     },
       mark(true),
       h('div.dim', {
-        text: `Games, movies, ${catalogueSize('anime', '7,963')} anime and the open web — one box.`,
+        text: `Games, movies, ${catalogueSize('anime')} anime and the open web — one box.`,
         style: { fontSize: 'var(--fs-11)' },
       }),
       h('div', { style: { display: 'flex', width: '100%', maxWidth: '520px' } }, form),
       h('div.row', { style: { justifyContent: 'center' } }, luckyBtn));
 
     const trend = h('div');
-    body.append(hero, trend);
+    const rec = recents();
+    const recentSec = rec.length ? section('Recent searches', 'clock', null,
+      h('div.cx-rel', { dataset: { sec: 'recent' } }, rec.map(q => h('button', { type: 'button', onclick: () => navigate(searchUrl(q)) }, icon('search'), h('span', { text: q }))),
+        h('button', { type: 'button', dataset: { act: 'clear-recent' }, 'aria-label': 'Clear recent searches',
+          onclick: () => { try { store.set(RECENT_KEY, []); } catch (e) { /* ignore */ } paintLandingAgain(); } }, icon('x'), h('span', { text: 'Clear' })))) : null;
+    const hint = h('small.dim', { text: 'Shortcuts: g: games · a: anime · r: Roblox · l: your Library · c: cloud · m: movies — for example  g: slope', style: { textAlign: 'center' } });
+    body.append(hero, hint, recentSec, trend);
     loadTrending(trend);
+  }
+
+  function paintLandingAgain() {
+    api.clear(head);
+    api.clear(body);
+    paintLanding();
   }
 
   async function loadTrending(mount) {
@@ -859,7 +1031,7 @@ export function buildSearch(ctx) {
      it ever leaving a watched parent, so they call cherriTeardown() by hand —
      the same contract games/movies/anime honour. Without it the keydown
      listener above outlives the page until the reader next presses a key. */
-  root.cherriTeardown = off;
+  root.cherriTeardown = () => { off(); offIdx(); hidePreview(true); };
 
   function focusInput() {
     if (!root.isConnected) return;

@@ -100,6 +100,7 @@ export default {
         if (S.over) return;
         S.over = { over: true, winner: me, reason: 'resign', who: 'them' };
         say(`${peerName} resigned.`);
+        ctx.announce?.(`${peerName} resigned.`);
         paint();
         finishSoon();
       },
@@ -142,7 +143,10 @@ export default {
       snd.blip(v === 1 ? 260 : 340, 0.06, 'triangle', 0.7);
       const o = outcome(g);
       if (o.over) { S.over = o; S.line = o.line; }
-      say(`${nameOf(v)} played ${pointName(i)}.${o.over ? ' ' + overText() : ''}`);
+      const told = `${nameOf(v)} played ${pointName(i)}.${o.over ? ' ' + overText() : ''}`;
+      say(told);
+      /* the other side's move, for a screen reader (the shell's live region): yours you just made */
+      if (by !== 'me' || mode === '2p') ctx.announce?.(told);
       paint();
       if (S.over) {
         if (S.line) { loop.kick(2.5); snd.blip(520, 0.12, 'triangle', 0.8, 780); }

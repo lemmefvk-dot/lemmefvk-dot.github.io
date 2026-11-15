@@ -1,0 +1,79 @@
+/* ==================================================================
+   Calculator extras — the one-line entry, fraction answers, the
+   clickable tape and the Tools sheet. The keypads themselves are in
+   apps.css (.calc__*); these lean on the same tokens.
+   ================================================================== */
+
+/* the line: a whole sum typed at once */
+.calc__lwrap{display:flex;flex-direction:column;gap:2px;flex:0 0 auto}
+.calc__line{
+  width:100%;padding:7px 10px;border-radius:var(--r-md);border:1px solid var(--line-1);
+  background:var(--fill-0);color:var(--ink-0);font-size:var(--fs-13);font-family:inherit;
+  font-variant-numeric:tabular-nums;
+}
+.calc__line::placeholder{color:var(--ink-4,var(--ink-3))}
+.calc__line:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--line-accent)}
+.calc__lout{min-height:14px;padding:0 var(--sp-2);font-size:var(--fs-11);color:var(--ink-2);text-align:right;
+  font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.calc__lout.is-err{color:#ff8a9a}
+.calc--sci .calc__out,.calc--prog .calc__out{min-height:58px}
+
+/* chips under the display: angle, 2nd, a/b, memory, Convert */
+.calc__sgrp{display:flex;align-items:center;gap:var(--sp-2);min-width:0}
+.calc__chip{
+  display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-11);font-weight:600;letter-spacing:.04em;
+  color:var(--ink-2);padding:2px 8px;border-radius:var(--r-pill);background:var(--fill-0);border:1px solid var(--line-1);
+  white-space:nowrap;cursor:pointer;
+}
+.calc__chip:hover{background:var(--fill-2);color:var(--ink-0)}
+.calc__chip:disabled{opacity:.4;cursor:default}
+.calc__chip.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--accent-soft)}
+.calc__chip .icon{width:12px;height:12px}
+.calc__ichip{padding:2px 6px}
+.calc__xnote{font-size:var(--fs-10);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.calc__k.is-2nd{color:var(--accent-soft)}
+
+/* the tape: each recent answer is a button that puts it back */
+.calc__tchip{
+  display:inline-block;margin-left:var(--sp-2);padding:0 6px;border-radius:var(--r-pill);
+  font:inherit;color:var(--ink-3);background:transparent;border:1px solid transparent;cursor:pointer;
+}
+.calc__tchip:hover{color:var(--ink-0);background:var(--fill-1);border-color:var(--line-1)}
+.calc__tchip:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+
+/* Tools: percent, tip and split, constants */
+.calc__tools{position:absolute;inset:var(--sp-4);z-index:3;flex-direction:column;border-radius:var(--r-lg);background:var(--bg-2);border:1px solid var(--line-2);box-shadow:var(--sh-3);overflow:hidden}
+.calc__tseg{flex:1;display:flex;gap:2px;padding:2px;border-radius:var(--r-sm);background:var(--fill-0);border:1px solid var(--line-0);min-width:0}
+.calc__hhead .calc__tseg button{flex:1 1 0;min-width:0;padding:3px 4px;background:transparent;font-size:var(--fs-11);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.calc__tools .calc__hhead{padding:var(--sp-2) var(--sp-3)}
+.calc__hhead .calc__tx{display:inline-grid;place-items:center;width:26px;height:24px;padding:0;flex:none}
+.calc__tools,.calc__tscroll,.calc__tbody{min-width:0}
+.calc__hhead .calc__tseg button.is-on{background:var(--fill-2);color:var(--ink-0);box-shadow:var(--sh-1)}
+.calc__tscroll{flex:1;overflow:auto;min-height:0}
+.calc__tbody{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4)}
+.calc__trow{display:flex;flex-direction:column;gap:4px;padding-bottom:var(--sp-3);border-bottom:1px solid var(--line-0)}
+.calc__tq{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-12);color:var(--ink-2)}
+.calc__ta{display:flex;align-items:center;justify-content:flex-end;gap:var(--sp-3)}
+.calc__tin{
+  width:96px;min-width:0;padding:5px 8px;border-radius:var(--r-sm);border:1px solid var(--line-1);
+  background:var(--fill-1);color:var(--ink-0);font:inherit;font-size:var(--fs-12);font-variant-numeric:tabular-nums;
+}
+.calc__tin:focus{outline:2px solid var(--accent);outline-offset:0}
+.calc__tres{font-size:var(--fs-15);font-weight:650;color:var(--ink-0);font-variant-numeric:tabular-nums}
+.calc__tchips{display:flex;flex-wrap:wrap;gap:4px}
+.calc__tsplit{display:flex;flex-direction:column;gap:4px}
+.calc__tline{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-12);color:var(--ink-2)}
+.calc__tline span{flex:1}
+.calc__tline b{font-size:var(--fs-15);color:var(--ink-0);font-variant-numeric:tabular-nums}
+.calc__tnote{font-size:var(--fs-10);color:var(--ink-3);line-height:1.45}
+.calc__tconsts{gap:0;padding-top:var(--sp-3)}
+.calc__tconsts .calc__tnote{padding-bottom:var(--sp-3)}
+.calc__crow{
+  display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:var(--sp-3);text-align:left;
+  padding:6px 4px;border-bottom:1px solid var(--line-0);color:var(--ink-1);
+}
+.calc__crow:hover{background:var(--fill-1)}
+.calc__csym{font-size:var(--fs-15);color:var(--accent-soft);text-align:center}
+.calc__cname{display:flex;flex-direction:column;min-width:0;font-size:var(--fs-12)}
+.calc__cname small{font-size:var(--fs-10);color:var(--ink-3)}
+.calc__cval{font-size:var(--fs-11);color:var(--ink-0);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}

@@ -15,10 +15,19 @@
    Calendar does not show these classes (it edits events by id in many
    places, and a class isn't an event) — the widget is where "now and
    next" lives.
+
+   Each day's column also marks free periods (a gap of 20 minutes or
+   more between classes) and double lessons (the same subject twice in a
+   row), worked out from this week's classes (js/core/timetable.js
+   dayShape). "Next class" reminders, a few minutes before each class,
+   go through the reminders engine (js/core/automations.js) and are
+   listed in Automations › Reminders. Print the week opens the
+   browser's print window with the week as a table (study/print.js).
    ============================================================ */
 import * as TT from '../core/timetable.js';
 import * as HW from '../core/homework.js';
 import * as CAL from '../core/calendar.js';
+import { printSheet, printedOn } from './print.js';
 
 const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -74,6 +83,42 @@ export function mountTimetable(host, ctx) {
     render();
   }
 
+  function setRemind(v) {
+    const d = TT.read();
+    d.remind = v === '' ? null : Number(v);
+    save(d);
+    S.note = d.remind === null ? 'Class reminders are off.' : `You’ll be reminded ${TT.remindLabel(d.remind).toLowerCase()} each class, while StaticOS is open.`;
+    render();
+  }
+  /* the soonest reminder still to come, from what was handed to the engine */
+  function nextReminder() {
+    const now = Date.now();
+    let best = null;
+    for (const r of TT.remindersFor(S.data, now)) {
+      for (const day of r.on) {
+        const [y, m, dd] = day.split('-').map(Number), [hh, mm] = r.time.split(':').map(Number);
+        const at = new Date(y, m - 1, dd, hh, mm).getTime();
+        if (at > now && (!best || at < best.at)) best = { at, r };
+      }
+    }
+    return best;
+  }
+  function printWeek() {
+    const d = S.data;
+    const days = TT.WEEK_ORDER.filter(x => (x >= 1 && x <= 5) || d.classes.some(c => c.day === x));
+    const starts = [...new Set(d.classes.map(c => c.start))].sort();
+    const thisWeek = TT.weekOf(TT.ymd(new Date()), d);
+    const cell = c => h('div', h('b', { text: c.subject }), h('div', { text: `${CAL.clockText(c.start)} – ${CAL.clockText(c.end)}${c.room ? ` · ${c.room}` : ''}${d.rotate.on && c.week !== 'both' ? ` · ${c.week} weeks` : ''}` }));
+    const table = h('table', h('thead', h('tr', h('th', { text: 'Starts' }), days.map(x => h('th', { text: TT.DAYS[x] })))),
+      h('tbody', starts.map(t => h('tr', h('td', { text: CAL.clockText(t) }), days.map(x => h('td', d.classes.filter(c => c.day === x && c.start === t).sort((a, b) => a.subject.localeCompare(b.subject)).map(cell)))))));
+    const frees = days.map(x => [x, TT.dayShape(d.classes.filter(c => c.day === x && (!d.rotate.on || c.week === 'both' || c.week === thisWeek))).filter(i => i.kind === 'free')]).filter(([, f]) => f.length);
+    printSheet(h, 'Timetable', `${d.rotate.on ? `This week is ${thisWeek}. ` : ''}${d.classes.length} class${d.classes.length === 1 ? '' : 'es'} a week, as entered in Static Study.`, [
+      table,
+      frees.length ? h('h2', { text: 'Free periods' }) : null,
+      frees.length ? h('ul', frees.map(([x, f]) => h('li', { text: `${TT.DAYS[x]}: ${f.map(i => `${CAL.clockText(i.start)} – ${CAL.clockText(i.end)}`).join(', ')}` }))) : null,
+      h('p.st-print__fine', { text: printedOn() })]);
+  }
+
   function card(c, thisWeek) {
     const off = S.data.rotate.on && c.week !== 'both' && c.week !== thisWeek;
     return h('button.st-cls-card', { type: 'button', class: off ? 'is-off' : '', style: { '--cc': TT.colorFor(c.subject, classes()), opacity: off ? '.55' : null }, dataset: { id: c.id, day: String(c.day) },
@@ -83,6 +128,28 @@ export function mountTimetable(host, ctx) {
     h('small', { dataset: { fk: 'tt-time' }, text: `${CAL.clockText(c.start)} – ${CAL.clockText(c.end)}` }),
     c.room ? h('small', { text: c.room }) : null,
     c.week !== 'both' ? h('small.st-badge.st-ab', { text: `${c.week} weeks${off ? ' · not this week' : ''}` }) : null);
+  }
+
+  /* a day's cards in time order, with this week's free periods between and its double lessons together */
+  function dayItems(list, thisWeek) {
+    const on = c => !S.data.rotate.on || c.week === 'both' || c.week === thisWeek;
+    const shape = TT.dayShape(list.filter(on));
+    const frees = shape.filter(i => i.kind === 'free');
+    const second = new Set(shape.filter(i => i.double === 'second').map(i => i.c.id));
+    const items = [...list.map(c => ({ at: c.start, c })), ...frees.map(f => ({ at: f.start, f }))].sort((a, b) => a.at.localeCompare(b.at) || (a.c ? -1 : 1));
+    const out = [];
+    for (let k = 0; k < items.length; k++) {
+      const it = items[k];
+      if (it.f) { out.push(h('div.st-tt__free', { dataset: { fk: 'tt-free' }, 'aria-label': `Free period, ${CAL.clockText(it.f.start)} to ${CAL.clockText(it.f.end)}` }, h('span', { text: `Free · ${TT.span(it.f.mins * 60000)}` }), h('small', { text: `${CAL.clockText(it.f.start)} – ${CAL.clockText(it.f.end)}` }))); continue; }
+      const nx = items[k + 1];
+      if (nx && nx.c && second.has(nx.c.id) && on(it.c)) {
+        out.push(h('div.st-tt__double', { dataset: { fk: 'tt-double' } }, h('small', { text: `Double lesson · ${CAL.clockText(it.c.start)} – ${CAL.clockText(nx.c.end)}` }), card(it.c, thisWeek), card(nx.c, thisWeek)));
+        k++;
+        continue;
+      }
+      out.push(card(it.c, thisWeek));
+    }
+    return out;
   }
 
   function form() {
@@ -130,7 +197,18 @@ export function mountTimetable(host, ctx) {
     root.append(h('div.st-tt__head',
       h('label.st-row', on, h('span', { text: 'Alternate A and B weeks' })), which,
       h('span.st-spacer'),
+      d.classes.length ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'tt-print' }, onclick: printWeek }, icon('printer'), h('span', { text: 'Print the week' })) : null,
       h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: 'tt-add' }, onclick: () => { S.form = blank(); S.focusSubject = true; render(); } }, icon('plus'), h('span', { text: 'Add a class' }))));
+    if (d.classes.length) {
+      const nx = d.remind === null ? null : nextReminder();
+      root.append(h('div.st-tt__head.st-tt__remind', { dataset: { fk: 'tt-remind-row' } },
+        h('label.st-inline', h('span', { text: 'Next-class reminder' }),
+          h('select.select.st-sel', { 'aria-label': 'Next-class reminder', dataset: { fk: 'tt-remind' }, onchange: e => setRemind(e.target.value) },
+            TT.REMIND.map(([v, l]) => h('option', { value: v === null ? '' : String(v), text: l, selected: d.remind === v })))),
+        h('small.dim', { dataset: { fk: 'tt-remind-note' }, text: d.remind === null ? 'A notification before each class, while StaticOS is open.'
+          : nx ? `Next: ${nx.r.text.replace(/^Next class: /, '')} at ${new Date(nx.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: !store.get('prefs.h24') })}, ${TT.dayWord(TT.ymd(new Date(nx.at))).toLowerCase()}. They go off while StaticOS is open and are listed in Automations › Reminders.`
+            : 'No class in the next three weeks to remind you of.' })));
+    }
     const body = h('div.st-tt__scroll');
     if (S.note) { body.append(h('div.st-flash', { role: 'status', dataset: { fk: 'tt-note' } }, icon('check'), h('span', { text: S.note }))); S.note = ''; }
     if (S.form) body.append(form());
@@ -143,7 +221,7 @@ export function mountTimetable(host, ctx) {
         const list = d.classes.filter(c => c.day === day).sort((a, b) => a.start.localeCompare(b.start) || a.subject.localeCompare(b.subject));
         grid.append(h('div.st-tt__day', { role: 'listitem', class: day === todayDow ? 'is-today' : '', dataset: { day: String(day) } },
           h('b', { text: day === todayDow ? `${TT.DAYS[day]} (today)` : TT.DAYS[day] }),
-          list.length ? list.map(c => card(c, thisWeek)) : h('small.dim', { text: 'No classes' })));
+          list.length ? dayItems(list, thisWeek) : h('small.dim', { text: 'No classes' })));
       }
       body.append(grid);
     }
@@ -154,5 +232,7 @@ export function mountTimetable(host, ctx) {
   render();
   const offH24 = store.sub('prefs.h24', () => { if (!S.dead) render(); });
   const offTT = store.sub(TT.KEY, () => { if (!S.dead && !S.form) { refresh(); render(); } });
-  return { teardown() { S.dead = true; offH24(); offTT(); }, open() { /* nothing to jump to */ } };
+  /* opened on one class (Calendar's timetable layer): its form, ready to change */
+  const openOn = o => { const c = o && typeof o.cls === 'string' ? S.data.classes.find(x => x.id === o.cls) : null; if (c) edit(c); };
+  return { teardown() { S.dead = true; offH24(); offTT(); }, open: openOn };
 }

@@ -32,6 +32,7 @@
      isScheduled(habit, key)
      streaks(habit, todayKey) -> { current, best, doneToday, scheduledToday, extras }
      week(habit, todayKey, n) -> [{ key, scheduled, done, future }]  oldest first
+     heatmap(habits, todayKey, weeks) -> { weeks:[[{ key, future, sched, done }×7]], sched, done }
      toggleDay(habit, key, todayKey) -> new habit (future days are refused)
    ============================================================ */
 
@@ -98,6 +99,36 @@ export function week(h, today = dayKey(), n = 7) {
   return out;
 }
 
+/** The last `weeks` calendar weeks (Sunday first), oldest first, for one habit or several.
+    Each day: { key, future, sched, done } where sched is how many of the habits
+    were scheduled that day (and had started by then) and done how many of those
+    were ticked. Only real ticks count; an unscheduled extra tick is left out. */
+export function heatmap(list, today = dayKey(), weeks = 12) {
+  const hs = (Array.isArray(list) ? list : [list]).filter(Boolean);
+  const sets = hs.map(h => ({ h, done: new Set(h.done), start: firstDay(h) }));
+  const end = shiftDay(today, 6 - weekday(today));          /* the Saturday of this week */
+  let key = shiftDay(end, -(weeks * 7 - 1));
+  const cols = [];
+  let sched = 0, done = 0;
+  for (let w = 0; w < weeks; w++) {
+    const col = [];
+    for (let d = 0; d < 7; d++, key = shiftDay(key, 1)) {
+      const future = key > today;
+      let s = 0, k = 0;
+      if (!future) for (const x of sets) {
+        if (key < x.start || !isScheduled(x.h, key)) continue;
+        if (x.done.has(key)) k++;
+        else if (key === today) continue;                  /* today is still open: not a miss yet */
+        s++;
+      }
+      sched += s; done += k;
+      col.push({ key, future, sched: s, done: k });
+    }
+    cols.push(col);
+  }
+  return { weeks: cols, sched, done, first: cols[0][0].key, last: today };
+}
+
 export function toggleDay(h, key, today = dayKey()) {
   if (!validKey(key) || key > today) return h;
   const has = h.done.includes(key);
@@ -112,4 +143,4 @@ export function describeDays(h) {
   return h.days.map(d => DAY_NAMES[d]).join(', ');
 }
 
-export default { dayKey, shiftDay, weekday, isScheduled, streaks, week, toggleDay, normHabit, describeDays, validKey, DAY_NAMES, MAX_HABITS };
+export default { dayKey, shiftDay, weekday, isScheduled, streaks, week, heatmap, toggleDay, normHabit, describeDays, validKey, DAY_NAMES, MAX_HABITS };

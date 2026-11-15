@@ -17,10 +17,31 @@
    came from cache are the numbers that tell you whether StaticOS
    is struggling on a given machine, which is the question the
    fake dials were pretending to answer.
+
+   Added on the same rule (a number is shown only if it was measured):
+   · Record 60 s writes the frame rate, JS heap, request count and long
+     tasks, once a second, to a CSV. A column the browser does not report
+     is left empty, never filled in.
+   · "Slow right now" appears after three frames-per-second readings in
+     a row under 30, and points at Game Mode.
+   · Long tasks counts the 50 ms+ stalls the browser reports (Chromium).
+   · The Windows table sorts, and minimises, restores and closes windows.
+   · Low-battery tips appear only where the browser reports a battery.
+   · Pause holds the live gauges so a figure can be read; recording and
+     the slow hint's counting carry on underneath.
    ============================================================ */
 
 import { defineApp } from '../core/registry.js';
 import * as M from '../core/metrics.js';
+import * as SI from '../core/sysinfo.js';
+
+if (typeof document !== 'undefined' && !document.getElementById('feat-monitor-css')) {
+  const l = document.createElement('link');
+  l.id = 'feat-monitor-css';
+  l.rel = 'stylesheet';
+  l.href = 'css/feat-monitor.css';
+  document.head.appendChild(l);
+}
 
 const TABS = [
   ['overview', 'Overview', 'activity'],
@@ -29,6 +50,15 @@ const TABS = [
   ['windows', 'Windows', 'maximize'],
   ['device', 'Device', 'cpu'],
 ];
+
+const REC_SECONDS = 60;
+const SLOW_FPS = 30;          /* under this, three readings in a row, is "slow right now" */
+const LOW_BATTERY = 30;       /* % — tips appear at or under this, on battery */
+const CSV_COLS = ['second', 'fps', 'heap_used_bytes', 'heap_percent', 'requests_total', 'requests_new', 'transferred_bytes', 'long_tasks_total', 'windows_open'];
+const stamp = (d = new Date()) => {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+};
 
 const pct = v => `${Math.max(0, Math.min(100, Math.round(v)))}%`;
 const ms = v => (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${Math.round(v)} ms`);
@@ -48,8 +78,13 @@ defineApp({
     const { root, api } = ctx;
     const { h, icon, render, clear } = api;
 
-    const S = { tab: api.store.get('portal.monitor.tab', 'overview'), dead: false };
+    const S = { tab: api.store.get('portal.monitor.tab', 'overview'), dead: false, paused: false, frozen: null, frozenHist: null,
+      slow: 0, fine: 0, sort: { key: 'app', dir: 1 } };
     const R = {};
+    /* the 60-second recording: lives here, not in a tab, so it carries on while another tab is showing */
+    const REC = { state: 'idle', rows: [], t0: 0, prevReq: null, file: '' };
+    const hist = () => (S.paused && S.frozenHist ? S.frozenHist : M.history());
+    const snapNow = () => (S.paused && S.frozen ? S.frozen : M.snapshot());
 
     M.start('monitor');
 
@@ -70,9 +105,17 @@ defineApp({
     /* One subscription drives every live figure. The metrics module
        samples once a second off its own frame counter, so nothing here
        needs a timer of its own. */
-    const off = api.bus?.on?.('metrics:tick', snap => { if (!S.dead) live(snap); });
+    const off = api.bus?.on?.('metrics:tick', snap => {
+      if (S.dead) return;
+      recTick(snap);
+      watchSlow(snap);
+      if (!S.paused) live(snap);
+    });
     /* and each window animation reports its own frames as it finishes */
-    const offAnim = api.bus?.on?.('metrics:transition', () => { if (!S.dead) paintAnims(); });
+    const offAnim = api.bus?.on?.('metrics:transition', () => { if (!S.dead && !S.paused) paintAnims(); });
+    /* the Windows table follows the window manager, not just the second tick */
+    const offWins = ['win:list', 'win:minimize', 'win:restore', 'win:focus', 'win:close']
+      .map(e => api.bus?.on?.(e, () => { if (!S.dead && S.tab === 'windows') paintWindows(false); }));
 
     /* The window manager only honours the function mount() RETURNS
        (wm.js: `if (typeof teardown === 'function') w.hooks.close.push(...)`).
@@ -84,6 +127,7 @@ defineApp({
       S.dead = true;
       try { off?.(); } catch (err) { /* already gone */ }
       try { offAnim?.(); } catch (err) { /* already gone */ }
+      offWins.forEach(f => { try { f?.(); } catch (err) { /* already gone */ } });
       M.stop('monitor');
     };
 
@@ -144,12 +188,13 @@ defineApp({
     }
 
     function overview() {
-      const hist = M.history();
       R.fpsRing = ring(0, 'FPS', '');
-      R.fpsSpark = h('div.mon__sparkwrap', spark(hist.fps, { max: 70 }));
+      R.fpsSpark = h('div.mon__sparkwrap', spark(hist().fps, { max: 70 }));
       R.heapSlot = h('div');
       R.winSlot = h('div');
       R.animSlot = h('div');
+      R.ltSlot = h('div');
+      R.recSlot = h('div');
 
       const heapCard = M.heap()
         ? card('JS heap', 'layers', R.heapSlot)
@@ -164,6 +209,10 @@ defineApp({
               + 'figure a page can honestly report.' })),
           heapCard,
           card('Open windows', 'maximize', R.winSlot),
+          card('Long tasks', 'clock', R.ltSlot,
+            h('small.dim', { text: 'Stretches of 50 ms or more when the page could not respond, as the browser '
+              + 'reports them since the page loaded.' })),
+          card('Record 60 seconds', 'download', R.recSlot),
           card('Window animations', 'layers', R.animSlot,
             h('small.dim', { text: 'Every open, close, snap and desktop switch is timed frame by frame as it plays. '
               + 'A dropped frame is a screen refresh it missed.' })),
@@ -171,7 +220,9 @@ defineApp({
             h('div.mon__cant', M.unavailable().map(([what, why]) =>
               h('div.mon__cantrow', h('b', { text: what }), h('small', { text: why })))))),
       );
-      live(M.snapshot());
+      live(snapNow());
+      paintLongTasks();
+      paintRec();
       paintAnims();
     }
 
@@ -272,32 +323,73 @@ defineApp({
     }
 
     function windows() {
-      R.winTable = h('div.mon__procs');
+      R.winTable = h('div.mon__procs.mon__procs--act');
       body.append(card('Open windows', 'maximize',
         R.winTable,
         h('small.dim', { text: 'Static’s own windows — the only process table here that is real. '
           + 'A page cannot see anything running outside it.' })));
-      paintWindows(M.windows());
+      paintWindows();
     }
 
-    function paintWindows(w) {
-      if (!R.winTable) return;
+    const stateOf = w => (w.min ? 'minimised' : w === api.wm.getActive() ? 'focused' : 'open');
+    const STATE_RANK = { focused: 0, open: 1, minimised: 2 };
+    const winRows = () => api.wm.list().map(w => ({
+      w, id: w.id, app: w.app?.name || w.appId, appId: w.appId,
+      title: w.el?.getAttribute('aria-label') || '', width: w.w, height: w.h, state: stateOf(w),
+    }));
+    const SORTS = {
+      app: (a, b) => a.app.localeCompare(b.app),
+      title: (a, b) => a.title.localeCompare(b.title),
+      size: (a, b) => a.width * a.height - b.width * b.height,
+      state: (a, b) => STATE_RANK[a.state] - STATE_RANK[b.state],
+    };
+
+    function paintWindows(force = true) {
+      if (!R.winTable || !body.contains(R.winTable)) return;
+      const rows = winRows();
+      /* the table is only rebuilt when something in it changed: a row's buttons
+         must not be swapped out from under a click every second */
+      const sig = `${S.sort.key}${S.sort.dir}|${rows.map(r => `${r.id}:${r.app}:${r.title}:${r.width}x${r.height}:${r.state}`).join('|')}`;
+      if (!force && sig === R.winSig) return;
+      R.winSig = sig;
       clear(R.winTable);
-      if (!w || !w.count) {
+      if (!rows.length) {
         R.winTable.appendChild(h('div.empty', icon('maximize'),
           h('b', { text: 'No windows open' }),
           h('small', { text: 'Open an app and it will appear here.' })));
         return;
       }
-      R.winTable.appendChild(h('div.mon__prochead',
-        h('span', { text: 'App' }), h('span', { text: 'Title' }),
-        h('span', { text: 'Size' }), h('span', { text: 'State' })));
-      for (const a of w.apps) {
-        R.winTable.appendChild(h('div.mon__proc',
-          h('b', { text: a.app }),
-          h('span', { text: a.title || '—' }),
-          h('span', { text: `${a.w}×${a.h}` }),
-          h('span', { text: a.minimised ? 'minimised' : a.focused ? 'focused' : 'open' })));
+      const head = (key, label) => {
+        const on = S.sort.key === key;
+        return h('span', { role: 'columnheader', 'aria-sort': on ? (S.sort.dir > 0 ? 'ascending' : 'descending') : 'none' },
+          h('button.mon__sort', {
+            type: 'button', class: on ? 'is-on' : '', dataset: { sort: key },
+            onclick: () => { S.sort = { key, dir: on ? -S.sort.dir : 1 }; paintWindows(); },
+          }, label, on ? h('i', { text: S.sort.dir > 0 ? '▲' : '▼', 'aria-hidden': 'true' }) : null));
+      };
+      R.winTable.appendChild(h('div.mon__prochead', { role: 'row' },
+        head('app', 'App'), head('title', 'Title'), head('size', 'Size'), head('state', 'State'),
+        h('span', { text: '' })));
+      rows.sort((a, b) => S.sort.dir * (SORTS[S.sort.key](a, b) || a.id - b.id));
+      for (const r of rows) {
+        const self = r.w === ctx.win;
+        R.winTable.appendChild(h('div.mon__proc', { role: 'row', dataset: { win: String(r.id) } },
+          h('b', { text: r.app }),
+          h('span', { text: r.title || '—' }),
+          h('span', { text: `${r.width}×${r.height}` }),
+          h('span', { text: r.state }),
+          h('span.mon__acts',
+            h('button.btn.btn--sm.btn--ghost.mon__min', {
+              type: 'button', disabled: self && !r.w.min,
+              title: r.w.min ? 'Bring it back' : 'Minimise it',
+              'aria-label': `${r.w.min ? 'Restore' : 'Minimise'} ${r.app}`,
+              onclick: () => { if (r.w.min) api.wm.restore(r.w); else api.wm.minimize(r.w); paintWindows(); },
+            }, r.w.min ? 'Restore' : 'Minimise'),
+            h('button.btn.btn--sm.btn--ghost.mon__close', {
+              type: 'button', disabled: self, title: self ? 'This is System Monitor' : 'Close it',
+              'aria-label': `Close ${r.app}`,
+              onclick: () => { api.wm.close(r.id); setTimeout(paintWindows, 60); },
+            }, 'Close'))));
       }
     }
 
@@ -336,8 +428,141 @@ defineApp({
         batt.append(
           ring(b.level, 'charge', b.charging ? 'charging' : 'on battery'),
           b.timeToEmpty ? row('Time remaining', ms(b.timeToEmpty * 1000)) : null,
-          b.timeToFull ? row('Until full', ms(b.timeToFull * 1000)) : null);
+          b.timeToFull ? row('Until full', ms(b.timeToFull * 1000)) : null,
+          batteryTips(b));
       });
+    }
+
+    /* Tips only where the browser reports a battery, and only when it is low and
+       not charging. Every button does what it says; brightness is a thing a page
+       cannot change, so that tip is only words. */
+    function batteryTips(b) {
+      if (!b || b.charging || b.level > LOW_BATTERY) return null;
+      const prefs = api.store.get('prefs', {}) || {};
+      const winN = api.wm.list().length;
+      const tip = (text, label, run) => h('li.mon__tip', h('span', { text }),
+        label ? h('button.btn.btn--sm', { type: 'button', onclick: () => { run(); if (S.tab === 'device') paint(); } }, label) : null);
+      const list = h('ul.mon__tips', { 'aria-label': 'Ways to save battery' },
+        prefs.gameMode ? null : tip('Game Mode stops blur, shadows and shell animations, so the processor does less work.', 'Turn on Game Mode', () => api.store.set('prefs.gameMode', true)),
+        prefs.reduceMotion ? null : tip('Reduce motion stops the animations that are left.', 'Reduce motion', () => api.store.set('prefs.reduceMotion', true)),
+        winN > 3 ? tip(`${winN} windows are open. Closing the ones you are not using saves power.`, 'See windows', () => { S.tab = 'windows'; paintTabs(); }) : null,
+        tip('Turn down your screen brightness. A web page cannot change it for you.'));
+      return h('div.mon__tipswrap', h('b', { text: `Battery is at ${b.level}% — a few ways to make it last` }), list);
+    }
+
+    /* ---------- slow right now ---------- */
+    /* Three readings in a row under SLOW_FPS shows the hint; three in a row at
+       or over it clears it. 0 is a tab that was in the background, not a slow
+       desktop, so it counts for neither. */
+    function watchSlow(snap) {
+      if (S.paused || !snap || !snap.fps) return;
+      if (snap.fps < SLOW_FPS) { S.slow++; S.fine = 0; } else { S.fine++; S.slow = 0; }
+      if (S.slow >= 3) paintSlow(snap.fps);
+      else if (S.fine >= 3) paintSlow(null);
+    }
+    function paintSlow(fps) {
+      if (!R.slow) return;
+      if (fps === null) { R.slow.hidden = true; clear(R.slow); return; }
+      const on = !!api.store.get('prefs.gameMode', false);
+      const was = R.slow.hidden;
+      R.slow.hidden = false;
+      if (!was && R.slow.dataset.on === String(on)) {
+        R.slow.querySelector('.mon__slowfps').textContent = `${fps} fps`;
+        return;
+      }
+      R.slow.dataset.on = String(on);
+      clear(R.slow);
+      R.slow.append(icon('alert', { size: 14 }),
+        h('div.mon__slowt',
+          h('b', { text: 'Slow right now' }),
+          h('small', {}, 'Frames are arriving at ', h('b.mon__slowfps', { text: `${fps} fps` }), '. ',
+            on ? 'Game Mode is already on, so the shell is not spending frames on decoration.'
+              : 'Game Mode stops blur, shadows and shell animations so the frames go to what you are doing.')),
+        on ? null : h('button.btn.btn--sm.btn--primary.mon__gm', { type: 'button',
+          onclick: () => { api.store.set('prefs.gameMode', true); paintSlow(fps); } }, 'Turn on Game Mode'),
+        h('button.btn.btn--sm.mon__gmset', { type: 'button', onclick: () => api.openApp('settings', { section: 'performance' }) }, 'Game Mode settings'));
+    }
+
+    /* ---------- long tasks ---------- */
+    function paintLongTasks() {
+      if (!R.ltSlot || !body.contains(R.ltSlot)) return;
+      const lt = M.longTasks();
+      clear(R.ltSlot);
+      if (!lt) {
+        R.ltSlot.append(missing('Not reported here', 'Only Chromium-based browsers report long tasks to a page.'));
+        return;
+      }
+      R.ltSlot.append(h('div.mon__big', { text: String(lt.count) }),
+        row('In the last minute', String(lt.lastMinute)),
+        row('Longest', ms(lt.worstMs)),
+        row('Time blocked in all', ms(lt.totalMs)));
+    }
+
+    /* ---------- record 60 seconds ---------- */
+    function recStart() {
+      REC.state = 'run'; REC.rows = []; REC.t0 = 0; REC.lastAt = 0; REC.prevReq = null; REC.file = '';
+      paintRec();
+    }
+    function recTick(snap) {
+      if (REC.state !== 'run' || !snap) return;
+      if (!REC.t0) REC.t0 = snap.at;
+      else if (snap.at <= REC.lastAt) return;             /* the same reading twice: one row */
+      REC.lastAt = snap.at;
+      /* the time each reading was really taken, to a tenth: a busy page reads
+         late now and then, and whole seconds would give two rows the same one */
+      const second = Math.round((snap.at - REC.t0) / 100) / 10;
+      const net = snap.network;
+      const lt = M.longTasks();
+      REC.rows.push([
+        second,
+        snap.fps,
+        snap.heap ? snap.heap.used : '',
+        snap.heap ? snap.heap.pct : '',
+        net ? net.requests : '',
+        net && REC.prevReq !== null ? Math.max(0, net.requests - REC.prevReq) : '',
+        net ? net.transferred : '',
+        lt ? lt.count : '',
+        snap.windows ? snap.windows.count : '',
+      ]);
+      if (net) REC.prevReq = net.requests;
+      if (second >= REC_SECONDS - 1) recStop();
+      else paintRec();
+    }
+    function recStop() {
+      if (REC.state !== 'run') return;
+      REC.state = REC.rows.length ? 'done' : 'idle';
+      paintRec();
+    }
+    const recCsv = () => `${CSV_COLS.join(',')}\n${REC.rows.map(r => r.join(',')).join('\n')}\n`;
+    function recSave() {
+      const path = `/home/static/Documents/StaticOS-monitor-${stamp()}.csv`;
+      try { api.vfs.write(path, recCsv()); REC.file = path; }
+      catch (err) { api.notify({ app: 'System Monitor', icon: 'alert', title: 'Could not save', message: String(err?.message || err) }); return; }
+      api.notify({ app: 'System Monitor', icon: 'check', title: 'Recording saved', message: path.replace('/home/static/', '~/'),
+        actions: [{ label: 'Show in Files', onClick: () => api.openApp('files', { path: '/home/static/Documents' }) }] });
+      paintRec();
+    }
+    function recDownload() { SI.downloadText(`StaticOS-monitor-${stamp()}.csv`, recCsv(), 'text/csv'); }
+    function paintRec() {
+      if (!R.recSlot || !body.contains(R.recSlot)) return;
+      clear(R.recSlot);
+      if (REC.state === 'idle') {
+        R.recSlot.append(h('button.btn.btn--sm.mon__rec', { type: 'button', onclick: recStart }, icon('play', { size: 12 }), 'Record'),
+          h('small.dim', { text: 'Writes the frame rate, JS heap, requests and long tasks, once a second for a minute, to a CSV. '
+            + 'Anything the browser does not report is left empty.' }));
+      } else if (REC.state === 'run') {
+        const sec = REC.rows.length ? REC.rows[REC.rows.length - 1][0] + 1 : 0;
+        R.recSlot.append(h('div.mon__big', { text: `${sec} / ${REC_SECONDS} s` }),
+          h('div.mon__recbar', h('i', { style: { width: `${(sec / REC_SECONDS) * 100}%` } })),
+          h('button.btn.btn--sm.mon__recstop', { type: 'button', onclick: recStop }, 'Stop and keep what there is'));
+      } else {
+        R.recSlot.append(h('div.mon__big', { text: `${REC.rows.length} reading${REC.rows.length === 1 ? '' : 's'}` }),
+          REC.file ? h('small.dim', { text: `Saved to ${REC.file.replace('/home/static/', '~/')}` }) : null,
+          h('div.mon__recacts',
+            h('button.btn.btn--sm.btn--primary.mon__recsave', { type: 'button', onclick: recSave }, 'Save to Files'),
+            h('button.btn.btn--sm.mon__recdl', { type: 'button', onclick: recDownload }, 'Download'),
+            h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => { REC.state = 'idle'; REC.rows = []; paintRec(); } }, 'Discard')));
+      }
     }
 
     /* ---------- the live pass ---------- */
@@ -356,13 +581,13 @@ defineApp({
       }
       if (R.fpsSpark && body.contains(R.fpsSpark)) {
         clear(R.fpsSpark);
-        R.fpsSpark.appendChild(spark(M.history().fps, { max: 70 }));
+        R.fpsSpark.appendChild(spark(hist().fps, { max: 70 }));
       }
       if (R.heapSlot && body.contains(R.heapSlot) && snap.heap) {
         clear(R.heapSlot);
         R.heapSlot.append(
           ring(snap.heap.pct, 'used', `${M.formatBytes(snap.heap.used)} of ${M.formatBytes(snap.heap.limit)}`),
-          h('div.mon__sparkwrap', spark(M.history().heap, { max: 100 })));
+          h('div.mon__sparkwrap', spark(hist().heap, { max: 100 })));
       }
       if (R.winSlot && body.contains(R.winSlot)) {
         clear(R.winSlot);
@@ -372,14 +597,39 @@ defineApp({
           h('div.mon__chips', w.apps.slice(0, 8).map(a =>
             h('span.chip', { text: a.app }))));
       }
-      if (R.winTable && body.contains(R.winTable)) paintWindows(snap.windows);
+      paintLongTasks();
+      if (R.winTable && body.contains(R.winTable)) paintWindows(false);
     }
 
     /* Mounted last, deliberately: paint() reaches for card(), row() and the
        other const helpers below, and a const is in its temporal dead zone
        until the line that declares it runs. Calling paint() any earlier
        throws before a single pixel lands. */
-    render(root, h('div.mon', tabs, body));
+    /* Pause holds the live gauges so a figure can be read. It freezes what the
+       Overview shows (and its sparklines); the table of windows still follows
+       what you do to it, and a recording carries on underneath. */
+    const pauseLabel = h('span', { text: 'Pause' });
+    const pauseIc = h('span.mon__pauseic', icon('pause', { size: 12 }));
+    const pauseBtn = h('button.btn.btn--sm.mon__pause', {
+      type: 'button', 'aria-pressed': 'false', title: 'Hold the live figures still',
+      onclick: () => {
+        S.paused = !S.paused;
+        pauseBtn.setAttribute('aria-pressed', String(S.paused));
+        pauseBtn.classList.toggle('is-on', S.paused);
+        pauseLabel.textContent = S.paused ? 'Resume' : 'Pause';
+        clear(pauseIc); pauseIc.append(icon(S.paused ? 'play' : 'pause', { size: 12 }));
+        S.frozen = S.paused ? M.snapshot() : null;
+        S.frozenHist = S.paused ? M.history() : null;
+        heldNote.hidden = !S.paused;
+        if (!S.paused) { S.slow = 0; S.fine = 0; paint(); }
+      },
+    }, pauseIc, pauseLabel);
+    const heldNote = h('span.mon__held', { role: 'status', hidden: true, text: 'Paused — the figures are held' });
+    R.slow = h('div.mon__slow', { role: 'status', hidden: true });
+
+    render(root, h('div.mon',
+      h('div.mon__head', tabs, h('div.mon__ctl', heldNote, pauseBtn)),
+      R.slow, body));
     paintTabs();
     paint();
     return teardown;

@@ -14,18 +14,19 @@
 import api from '../core/api.js?v=ps5-cloud-proxy-v11';
 import { THEMES, apply as applyAccent, swatch } from '../core/themes.js';
 import * as WP from '../portal/wallpapers.js';
+import { t } from '../core/i18n.js';
 
 const KEY = 'session.onboarded';
 
 const MOTION = [
-  [false, 'Full motion', 'Windows spring, the dock magnifies, panels slide.'],
-  [true, 'Reduced motion', 'The same interface with the movement taken out.'],
+  [false, t('Full motion'), t('Windows spring, the dock magnifies, panels slide.')],
+  [true, t('Reduced motion'), t('The same interface with the movement taken out.')],
 ];
 
 const SIZES = [
-  ['compact', 'Compact', 'Small dock, tighter spacing. More room for windows.'],
-  ['normal', 'Regular', 'The default balance.'],
-  ['roomy', 'Large', 'Bigger dock and widgets, easier to hit.'],
+  ['compact', t('Compact'), t('Small dock, tighter spacing. More room for windows.')],
+  ['normal', t('Regular'), t('The default balance.')],
+  ['roomy', t('Large'), t('Bigger dock and widgets, easier to hit.')],
 ];
 
 /**
@@ -47,9 +48,9 @@ export function mountOnboarding(host, { force = false } = {}) {
   const blurb = h('p.ob__p');
   const dots = h('div.ob__dots', { 'aria-hidden': 'true' });
 
-  const back = h('button.btn.btn--ghost.btn--sm', { text: 'Back', onclick: () => go(step - 1) });
+  const back = h('button.btn.btn--ghost.btn--sm', { text: t('Back'), onclick: () => go(step - 1) });
   const next = h('button.btn.btn--primary', { onclick: () => go(step + 1) });
-  const skip = h('button.ob__skip', { text: 'Skip', 'aria-label': 'Skip setup', onclick: finish });
+  const skip = h('button.ob__skip', { text: t('Skip'), 'aria-label': t('Skip setup'), onclick: finish });
 
   const card = h('div.ob__card', {
     role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ob-title', tabindex: '-1',
@@ -91,20 +92,20 @@ export function mountOnboarding(host, { force = false } = {}) {
   /* ---------------- steps ------------------ */
   const STEPS = [
     {
-      title: 'Welcome to StaticOS',
-      blurb: 'A desktop that lives in a browser tab. Four quick choices and you are in — you can change every one of them later in Settings.',
-      next: 'Get started',
+      title: t('Welcome to StaticOS'),
+      blurb: t('A desktop that lives in a browser tab. Four quick choices and you are in — you can change every one of them later in Settings.'),
+      next: t('Get started'),
       build: () => h('div.ob__hello',
-        h('div.ob__pill', icon('maximize'), h('span', { text: 'Windows, a dock and a widget rail' })),
-        h('div.ob__pill', icon('shield'), h('span', { text: 'Everything opens in this tab' })),
-        h('div.ob__pill', icon('activity'), h('span', { text: 'Real readings only — nothing invented' }))),
+        h('div.ob__pill', icon('maximize'), h('span', { text: t('Windows, a dock and a widget rail') })),
+        h('div.ob__pill', icon('shield'), h('span', { text: t('Everything opens in this tab') })),
+        h('div.ob__pill', icon('activity'), h('span', { text: t('Real readings only — nothing invented') }))),
     },
     {
-      title: 'Pick an accent',
-      blurb: 'One colour drives the whole system. The layout never changes.',
+      title: t('Pick an accent'),
+      blurb: t('One colour drives the whole system. The layout never changes.'),
       build: () => {
         const cur = store.get('prefs.accent');
-        const grid = h('div.ob__swatches', { role: 'radiogroup', 'aria-label': 'Accent' });
+        const grid = h('div.ob__swatches', { role: 'radiogroup', 'aria-label': t('Accent') });
         for (const t of THEMES) {
           grid.appendChild(h('button.ob__sw', {
             role: 'radio', 'aria-checked': String(t.id === store.get('prefs.accent')),
@@ -118,11 +119,11 @@ export function mountOnboarding(host, { force = false } = {}) {
       },
     },
     {
-      title: 'Choose a wallpaper',
-      blurb: 'The built-in scenes are drawn by the browser, so they cost nothing to load.',
+      title: t('Choose a wallpaper'),
+      blurb: t('The built-in scenes are drawn by the browser, so they cost nothing to load.'),
       build: () => {
         const cur = store.get(WP.ACTIVE_KEY);
-        const grid = h('div.ob__wps', { role: 'radiogroup', 'aria-label': 'Wallpaper' });
+        const grid = h('div.ob__wps', { role: 'radiogroup', 'aria-label': t('Wallpaper') });
         for (const w of WP.list(store)) {
           /* a video can't be a CSS background — show its poster (or GIF) instead */
           const still = w.kind === 'video' ? (w.poster || w.fallback) : w.url;
@@ -141,16 +142,16 @@ export function mountOnboarding(host, { force = false } = {}) {
       },
     },
     {
-      title: 'How much motion?',
-      blurb: 'Reduced motion keeps every animation out of your way. Your browser setting already asked for it if you have it on.',
-      build: () => radios('Motion', MOTION, !!store.get('prefs.reduceMotion'),
+      title: t('How much motion?'),
+      blurb: t('Reduced motion keeps every animation out of your way. Your browser setting already asked for it if you have it on.'),
+      build: () => radios(t('Motion'), MOTION, !!store.get('prefs.reduceMotion'),
         v => { store.set('prefs.reduceMotion', v); paint(); }),
     },
     {
-      title: 'Dock and interface size',
-      blurb: 'Sets the dock height, the widget rail width and the spacing everywhere else.',
-      next: 'Enter the desktop',
-      build: () => radios('Size', SIZES, store.get('prefs.density', 'normal'),
+      title: t('Dock and interface size'),
+      blurb: t('Sets the dock height, the widget rail width and the spacing everywhere else.'),
+      next: t('Enter the desktop'),
+      build: () => radios(t('Size'), SIZES, store.get('prefs.density', 'normal'),
         v => { store.set('prefs.density', v); paint(); }),
     },
   ];

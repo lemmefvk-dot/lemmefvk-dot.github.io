@@ -23,7 +23,8 @@
 
    createTuner({ h, icon, store }) -> { el, start(), stop(why), destroy(), running }
    ============================================================ */
-import { yin, rms, noteOf, targetOf, makeSmoother, TUNINGS } from '../core/pitch.js';
+import { yin, rms, noteOf, targetOf, makeSmoother, TUNINGS, customTuning, freqOfMidi } from '../core/pitch.js';
+import { t } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-audiotools-css')) {
   const l = document.createElement('link');
@@ -38,7 +39,9 @@ const FFT = 4096;
 const EVERY = 40;                 /* ms between readings */
 const QUIET = 0.01;               /* rms below this (−40 dBFS) is silence */
 const IN_TUNE = 5;                /* cents either side that count as in tune */
-const MODES = [...Object.values(TUNINGS).map(t => ({ id: t.id, label: t.label, sub: t.sub })), { id: 'chromatic', label: 'Chromatic', sub: 'any note' }];
+const MODES = [...Object.values(TUNINGS).map(t => ({ id: t.id, label: t.label, sub: t.sub })), { id: 'chromatic', label: t('Chromatic'), sub: t('any note') }, { id: 'custom', label: t('Custom'), sub: t('your own notes') }];
+const HOLD = 12;                  /* in-tune readings in a row (about half a second) before a string gets its tick */
+const A4_MIN = 415, A4_MAX = 466;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 function micProblem(err) {
@@ -53,28 +56,43 @@ function micProblem(err) {
 
 export function createTuner({ h, icon, store }) {
   const saved = (store && store.get(KEY)) || {};
-  const S = { mode: MODES.some(m => m.id === saved.mode) ? saved.mode : 'guitar', phase: 'off', problem: '', why: '', shown: 0, has: false, dead: false };
+  const S = { mode: MODES.some(m => m.id === saved.mode) ? saved.mode : 'guitar', phase: 'off', problem: '', why: '', shown: 0, has: false, dead: false,
+    a4: clamp(Math.round(Number(saved.a4)) || 440, A4_MIN, A4_MAX), custom: typeof saved.custom === 'string' ? saved.custom.slice(0, 60) : 'D2 A2 D3 G3 B3 E4',
+    done: new Set(), streak: 0, streakOf: -1 };
+  const keep = () => { try { store && store.set(KEY, { mode: S.mode, a4: S.a4, custom: S.custom }); } catch (e) { /* not saved */ } };
+  const tuningNow = () => (S.mode === 'custom' ? customTuning(S.custom) : TUNINGS[S.mode] || null);
+  let tone = null;                  /* the reference tone that is sounding: { ac, osc, timer } */
   let stream = null, ac = null, an = null, timer = 0, buf = null, gen = 0;
   const smoother = makeSmoother();
 
   /* ---- layout ---- */
-  const askBtn = h('button.btn.btn--primary.tu-ask', { type: 'button', onclick: () => start() }, icon('mic'), h('span', { text: 'Turn on microphone' }));
-  const offBtn = h('button.btn.tu-off', { type: 'button', onclick: () => stop('You turned the microphone off.') }, icon('x'), h('span', { text: 'Turn off microphone' }));
+  const askBtn = h('button.btn.btn--primary.tu-ask', { type: 'button', onclick: () => start() }, icon('mic'), h('span', { text: t('Turn on microphone') }));
+  const offBtn = h('button.btn.tu-off', { type: 'button', onclick: () => stop('You turned the microphone off.') }, icon('x'), h('span', { text: t('Turn off microphone') }));
   const intro = h('div.mu-intro.tu-intro',
     h('div.mu-intro__ic', icon('gauge')),
     h('div.mu-intro__txt',
-      h('h3', { text: 'Tune a guitar or ukulele with your microphone' }),
-      h('p', { text: 'The tuner has to listen to the string you pluck to tell how in tune it is, so it needs your microphone. Your browser will ask before it starts. The sound is analysed live in this window and never recorded, saved or sent anywhere, and the microphone turns off when you leave this page, minimise or close the window.' })),
+      h('h3', { text: t('Tune a guitar or ukulele with your microphone') }),
+      h('p', { text: t('The tuner has to listen to the string you pluck to tell how in tune it is, so it needs your microphone. Your browser will ask before it starts. The sound is analysed live in this window and never recorded, saved or sent anywhere, and the microphone turns off when you leave this page, minimise or close the window.') })),
     h('div.mu-intro__acts', askBtn));
   const problem = h('div.mu-banner.tu-problem', { role: 'alert', hidden: true }, icon('alert'), h('span'));
   const modeBtns = new Map();
-  const modes = h('div.tu-modes', { role: 'radiogroup', 'aria-label': 'Tuning' }, MODES.map(m => {
+  const modes = h('div.tu-modes', { role: 'radiogroup', 'aria-label': t('Tuning') }, MODES.map(m => {
     const b = h('button.tu-mode', { type: 'button', role: 'radio', dataset: { mode: m.id }, onclick: () => setMode(m.id) },
       h('b', { text: m.label }), h('small', { text: m.sub }));
     modeBtns.set(m.id, b);
     return b;
   }));
-  const stringsEl = h('div.tu-strings', { role: 'group', 'aria-label': 'Strings' });
+  const stringsEl = h('div.tu-strings', { role: 'group', 'aria-label': t('Strings') });
+  const a4In = h('input', { type: 'number', min: String(A4_MIN), max: String(A4_MAX), step: '1', value: String(S.a4), 'aria-label': t('Reference pitch, the frequency of A4 in hertz'), dataset: { role: 'a4' },
+    onchange: ev => { const v = clamp(Math.round(Number(ev.target.value)) || 440, A4_MIN, A4_MAX); ev.target.value = String(v); if (v === S.a4) return; S.a4 = v; keep(); resetDone(); paintStatic(); } });
+  const a4Btn = h('button.btn.btn--sm', { type: 'button', dataset: { role: 'a4-tone' }, title: t('Play A4 at the reference pitch'), onclick: () => playTone(69, 'A4') }, icon('play'), h('span', { text: t('Play A') }));
+  const customIn = h('input', { type: 'text', value: S.custom, maxlength: '60', spellcheck: 'false', 'aria-label': t('Custom tuning, note names from the lowest string, e.g. D2 A2 D3 G3'), placeholder: 'D2 A2 D3 G3', dataset: { role: 'custom' },
+    oninput: ev => { S.custom = ev.target.value; keep(); resetDone(); paintStatic(); } });
+  const customErr = h('small.tu-customerr', { role: 'alert' });
+  const customRow = h('div.tu-custom', h('label.field', customIn), customErr);
+  const resetBtn = h('button.btn.btn--sm.btn--ghost.tu-reset', { type: 'button', dataset: { role: 'ticks-reset' }, onclick: () => { resetDone(); paintStatic(); } }, icon('rotate-ccw'), h('span', { text: t('Start the ticks again') }));
+  const refRow = h('div.tu-ref', h('label.tu-ref__lbl', h('span', { text: 'A4 =' }), h('span.field', a4In), h('span', { text: t('Hz') })), a4Btn);
+  const doneEl = h('div.tu-alldone', { role: 'status', dataset: { role: 'alldone' }, hidden: true }, icon('check'), h('b', { text: t('All strings in tune') }));
   const noteEl = h('div.tu-note', { 'aria-hidden': 'true' });
   const hzEl = h('div.tu-hz');
   const targetEl = h('div.tu-target');
@@ -82,24 +100,37 @@ export function createTuner({ h, icon, store }) {
   const needle = h('i.tu-needle');
   const ticks = h('span.tu-ticks', { 'aria-hidden': 'true' }, [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50].map(c =>
     h('i', { class: c === 0 ? 'is-zero' : null, style: { left: `${50 + c}%` } })));
-  const meter = h('div.tu-meter', { role: 'meter', 'aria-label': 'Cents sharp or flat', 'aria-valuemin': '-50', 'aria-valuemax': '50', 'aria-valuenow': '0', 'aria-valuetext': 'Listening' },
+  const meter = h('div.tu-meter', { role: 'meter', 'aria-label': t('Cents sharp or flat'), 'aria-valuemin': '-50', 'aria-valuemax': '50', 'aria-valuenow': '0', 'aria-valuetext': 'Listening' },
     ticks, needle,
-    h('span.tu-flat', { 'aria-hidden': 'true', text: '♭ flat' }), h('span.tu-sharp', { 'aria-hidden': 'true', text: 'sharp ♯' }));
+    h('span.tu-flat', { 'aria-hidden': 'true', text: t('♭ flat') }), h('span.tu-sharp', { 'aria-hidden': 'true', text: t('sharp ♯') }));
   const live = h('div.sr', { 'aria-live': 'polite' });
   const status = h('div.tu-status', { role: 'status' });
-  const stage = h('div.tu-stage', noteEl, hzEl, meter, centsEl, targetEl, stringsEl);
-  const el = h('div.tu', { dataset: { mic: 'off', mode: S.mode, note: '', cents: '', target: '' } },
-    intro, problem, modes, stage, h('div.tu-foot', status, offBtn), live);
+  const stage = h('div.tu-stage', noteEl, hzEl, meter, centsEl, targetEl, stringsEl, doneEl);
+  const el = h('div.tu', { dataset: { mic: 'off', mode: S.mode, note: '', cents: '', target: '', a4: String(S.a4), tone: '' } },
+    intro, problem, modes, customRow, refRow, stage, h('div.tu-foot', status, resetBtn, offBtn), live);
 
   /* ---- paint ---- */
   function paintStatic() {
     el.dataset.mode = S.mode;
+    el.dataset.a4 = String(S.a4);
     for (const [id, b] of modeBtns) b.setAttribute('aria-checked', String(id === S.mode));
     stringsEl.replaceChildren();
-    const t = TUNINGS[S.mode];
+    const t = tuningNow();
+    customRow.hidden = S.mode !== 'custom';
+    customErr.textContent = S.mode === 'custom' && !t ? 'Type note names from the lowest string, like D2 A2 D3 G3 (up to 8; use # or b for sharps and flats).' : '';
     stringsEl.hidden = !t;
-    if (t) t.strings.forEach((s, i) => stringsEl.append(h('span.tu-str', { dataset: { i: String(i) }, title: `${s.label} · ${Math.round(s.freq * 10) / 10} Hz` },
-      h('b', { text: s.name }), h('small', { text: String(Math.floor(s.midi / 12) - 1) }))));
+    if (t) t.strings.forEach((s, i) => {
+      const f = freqOfMidi(s.midi, S.a4);
+      const done = S.done.has(i);
+      stringsEl.append(h('button.tu-str', { type: 'button', class: done ? 'is-done' : null, dataset: { i: String(i), done: done ? '1' : '' },
+        title: `${s.label} · ${Math.round(f * 10) / 10} Hz — press to hear it`, 'aria-label': `${s.label}, ${Math.round(f * 10) / 10} hertz${done ? ', in tune' : ''}. Press to hear it`,
+        onclick: () => playTone(s.midi, s.label) },
+        h('b', { text: s.name }), h('small', { text: String(Math.floor(s.midi / 12) - 1) }), done ? h('i.tu-tick', { 'aria-hidden': 'true', text: '✓' }) : null));
+    });
+    const all = !!t && S.done.size === t.strings.length;
+    doneEl.hidden = !all;
+    el.dataset.alldone = all ? '1' : '';
+    resetBtn.hidden = !S.done.size;
   }
   function paintPhase() {
     const on = S.phase === 'on';
@@ -114,6 +145,46 @@ export function createTuner({ h, icon, store }) {
       : on ? (S.has ? '' : 'Listening… play a string.')
       : S.why;
   }
+  function resetDone() { S.done = new Set(); S.streak = 0; S.streakOf = -1; }
+  /** a string that stays in tune for HOLD readings in a row earns a tick; the ticks stay until you start them again */
+  function tick(r) {
+    if (!r || r.index < 0 || Math.abs(r.cents) >= IN_TUNE) { S.streak = 0; S.streakOf = -1; return; }
+    if (S.streakOf !== r.index) { S.streakOf = r.index; S.streak = 0; }
+    if (++S.streak >= HOLD && !S.done.has(r.index)) { S.done.add(r.index); paintStatic(); }
+  }
+  /* ---- the reference tone: a plain sine wave, made here, with a soft start and end so it doesn't click ---- */
+  function playTone(midi, label) {
+    stopTone();
+    const f = freqOfMidi(midi, S.a4);
+    el.dataset.tone = String(Math.round(f * 100) / 100);
+    status.textContent = `Playing ${label} — ${Math.round(f * 10) / 10} Hz`;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ac = new AC();
+      const osc = ac.createOscillator(), g = ac.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = f;
+      const t0 = ac.currentTime;
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.25, t0 + 0.03);
+      g.gain.setValueAtTime(0.25, t0 + 1.6);
+      g.gain.linearRampToValueAtTime(0, t0 + 2);
+      osc.connect(g).connect(ac.destination);
+      osc.start();
+      osc.stop(t0 + 2.05);
+      ac.resume && ac.resume().catch(() => {});
+      tone = { ac, osc, timer: setTimeout(stopTone, 2200) };
+    } catch (e) { tone = { ac: null, osc: null, timer: setTimeout(stopTone, 2200) }; }
+  }
+  function stopTone() {
+    if (!tone) return;
+    clearTimeout(tone.timer);
+    try { tone.osc && tone.osc.stop(); } catch (e) { /* already stopped */ }
+    try { tone.ac && tone.ac.close(); } catch (e) { /* closed */ }
+    tone = null;
+    el.dataset.tone = '';
+  }
+
   function paintReading(r) {
     S.has = !!r;
     const a11y = r => {
@@ -168,17 +239,23 @@ export function createTuner({ h, icon, store }) {
     an.getFloatTimeDomainData(buf);
     let raw = null;
     if (rms(buf) >= QUIET) {
-      const y = yin(buf, ac.sampleRate);
+      /* a bass string can sit below 50 Hz: look as low as the tuning's lowest string needs */
+      const tnLow = tuningNow();
+      const lowHz = tnLow ? Math.min(...tnLow.strings.map(x => freqOfMidi(x.midi, S.a4))) : 50;
+      const y = yin(buf, ac.sampleRate, { minHz: Math.max(25, Math.min(50, lowHz * 0.8)) });
       if (y && y.clarity >= 0.8) raw = y;
     }
     const sm = smoother.push(raw);
     if (!sm) { paintReading(null); return; }
-    const n = noteOf(sm.freq);
-    if (S.mode === 'chromatic') {
-      paintReading({ ...n, label: n.label, target: '', index: -1 });
+    const tn = tuningNow();
+    if (S.mode === 'chromatic' || !tn) {
+      paintReading({ ...noteOf(sm.freq, S.a4), target: '', index: -1 });
     } else {
-      const t = targetOf(sm.freq, S.mode);
-      paintReading({ ...n, cents: t.cents, target: `${t.string.label} (${Math.round(t.string.freq * 10) / 10} Hz)`, index: t.index, freq: sm.freq });
+      const nn = noteOf(sm.freq, S.a4);
+      const t = targetOf(sm.freq, tn, S.a4);
+      const r = { ...nn, cents: t.cents, target: `${t.string.label} (${Math.round(freqOfMidi(t.string.midi, S.a4) * 10) / 10} Hz)`, index: t.index, freq: sm.freq };
+      paintReading(r);
+      tick(r);
     }
   }
 
@@ -187,7 +264,8 @@ export function createTuner({ h, icon, store }) {
     S.mode = id;
     S.shown = 0;
     smoother.reset();
-    try { store && store.set(KEY, { mode: id }); } catch (e) { /* not saved */ }
+    resetDone();
+    keep();
     paintStatic();
     paintReading(null);
   }
@@ -256,6 +334,7 @@ export function createTuner({ h, icon, store }) {
     stream = null;
     if (ac) { try { ac.close(); } catch (e) { /* closed */ } }
     ac = an = buf = null;
+    S.streak = 0; S.streakOf = -1;
     if (S.phase === 'off') return;
     S.phase = 'off';
     S.why = why;
@@ -274,6 +353,6 @@ export function createTuner({ h, icon, store }) {
     el,
     get running() { return S.phase === 'on'; },
     start, stop,
-    destroy() { S.dead = true; stop(); document.removeEventListener('visibilitychange', onVis); },
+    destroy() { S.dead = true; stop(); stopTone(); document.removeEventListener('visibilitychange', onVis); },
   };
 }

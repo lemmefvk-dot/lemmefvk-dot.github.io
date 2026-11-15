@@ -35,6 +35,7 @@ import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import * as media from '../core/media.js';
 import { vfs } from '../core/vfs.js';
+import { t } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-photo-edit-css')) {
   const l = document.createElement('link');
@@ -49,15 +50,27 @@ const FLIP_V = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strok
 const CONTRAST = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>';
 
 export const ADJUST = [
-  { key: 'exposure', label: 'Exposure', icon: 'sun' },
-  { key: 'brightness', label: 'Brightness', icon: 'brightness' },
-  { key: 'contrast', label: 'Contrast', svg: CONTRAST },
-  { key: 'saturation', label: 'Saturation', icon: 'droplet' },
-  { key: 'warmth', label: 'Warmth', icon: 'thermometer' },
+  { key: 'exposure', label: t('Exposure'), icon: 'sun' },
+  { key: 'brightness', label: t('Brightness'), icon: 'brightness' },
+  { key: 'contrast', label: t('Contrast'), svg: CONTRAST },
+  { key: 'saturation', label: t('Saturation'), icon: 'droplet' },
+  { key: 'warmth', label: t('Warmth'), icon: 'thermometer' },
+  { key: 'sharpen', label: t('Sharpen'), icon: 'sparkles', min: 0 },
+  { key: 'vignette', label: t('Vignette'), icon: 'circle' },
 ];
+/* One-tap looks: they only set the sliders above, so a look can be tweaked afterwards. */
+export const LOOKS = [
+  { id: 'none', name: 'Original', adj: {} },
+  { id: 'mono', name: 'Mono', adj: { saturation: -100, contrast: 15 } },
+  { id: 'warm', name: 'Warm', adj: { warmth: 45, saturation: 10 } },
+  { id: 'cool', name: 'Cool', adj: { warmth: -45, saturation: 5 } },
+  { id: 'fade', name: 'Fade', adj: { contrast: -30, brightness: 15, saturation: -25 } },
+];
+const noAdj = () => ({ exposure: 0, brightness: 0, contrast: 0, saturation: 0, warmth: 0, sharpen: 0, vignette: 0 });
+export const lookAdj = id => ({ ...noAdj(), ...(LOOKS.find(l => l.id === id)?.adj || {}) });
 export const ASPECTS = [
-  { key: 'free', label: 'Free' },
-  { key: 'orig', label: 'Original' },
+  { key: 'free', label: t('Free') },
+  { key: 'orig', label: t('Original') },
   { key: '1:1', label: '1:1', r: 1 },
   { key: '4:3', label: '4:3', r: 4 / 3 },
   { key: '16:9', label: '16:9', r: 16 / 9 },
@@ -74,7 +87,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 export const identity = () => ({
   rot: 0, flipH: false, flipV: false, angle: 0,
   crop: { x: 0, y: 0, w: 1, h: 1 }, aspect: 'free',
-  adj: { exposure: 0, brightness: 0, contrast: 0, saturation: 0, warmth: 0 },
+  adj: { exposure: 0, brightness: 0, contrast: 0, saturation: 0, warmth: 0, sharpen: 0, vignette: 0 },
 });
 /** the picture after its quarter turns */
 export const oriented = (E, sw, sh) => (E.rot % 2 ? { ow: sh, oh: sw } : { ow: sw, oh: sh });
@@ -132,8 +145,41 @@ export function adjustTables(adj) {
     return t;
   });
 }
-/** The colour pass, in place on RGBA bytes. */
-export function applyAdjust(data, adj) {
+/** Sharpen (an unsharp mask on a 3 × 3 blur) and vignette over w × h RGBA bytes, in place. */
+function spatialPass(data, adj, w, h) {
+  const amt = (adj.sharpen || 0) / 100 * 1.6;
+  if (amt > 0 && w > 2 && h > 2) {
+    const src = new Uint8ClampedArray(data);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = (y * w + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          const j = i + c;
+          const blur = (src[j - 4 - w * 4] + src[j - w * 4] + src[j + 4 - w * 4] + src[j - 4] + src[j] + src[j + 4]
+            + src[j - 4 + w * 4] + src[j + w * 4] + src[j + 4 + w * 4]) / 9;
+          data[j] = src[j] + (src[j] - blur) * amt;
+        }
+      }
+    }
+  }
+  const v = (adj.vignette || 0) / 100;
+  if (v) {
+    const cx = (w - 1) / 2 || 1, cy = (h - 1) / 2 || 1;
+    for (let y = 0; y < h; y++) {
+      const dy = (y - cy) / cy;
+      for (let x = 0; x < w; x++) {
+        const dx = (x - cx) / cx;
+        const d = Math.min(1, Math.hypot(dx, dy) / Math.SQRT2);
+        const t = clamp((d - 0.3) / 0.7, 0, 1), s = t * t * (3 - 2 * t);
+        const i = (y * w + x) * 4;
+        if (v > 0) { const k = 1 - v * s * 0.85; data[i] *= k; data[i + 1] *= k; data[i + 2] *= k; }
+        else { const k = -v * s * 0.7; data[i] += (255 - data[i]) * k; data[i + 1] += (255 - data[i + 1]) * k; data[i + 2] += (255 - data[i + 2]) * k; }
+      }
+    }
+  }
+}
+/** The colour pass, in place on RGBA bytes. With w and h, Sharpen and Vignette run too. */
+export function applyAdjust(data, adj, w, h) {
   if (isPlain(adj)) return data;
   const [tr, tg, tb] = adjustTables(adj);
   const sat = 1 + (adj.saturation || 0) / 100;
@@ -146,6 +192,7 @@ export function applyAdjust(data, adj) {
     }
     data[i] = r; data[i + 1] = g; data[i + 2] = b;      /* Uint8ClampedArray rounds and clamps */
   }
+  if (w && h && (adj.sharpen || adj.vignette)) spatialPass(data, adj, w, h);
   return data;
 }
 
@@ -191,13 +238,46 @@ export async function renderFile(src, sw, sh, E, mime) {
   drawEdit(g, src, sw, sh, E, 1, true);
   if (!isPlain(E.adj)) {
     const id = g.getImageData(0, 0, w, hh);
-    applyAdjust(id.data, E.adj);
+    applyAdjust(id.data, E.adj, w, hh);
     g.putImageData(id, 0, 0);
   }
   const jpeg = /jpe?g/i.test(mime);
   const blob = await toBlob(cv, jpeg ? 'image/jpeg' : 'image/png', jpeg ? 0.92 : undefined);
   cv.width = cv.height = 0;
   return { blob, w, h: hh };
+}
+
+/** Write one picture again through the same full-resolution path as Save: turned a
+    quarter `rot` times, flipped, and/or with `adj` sliders. Beside the original as
+    "<name> (<suffix>).<ext>", or over it when `replace`. Resolves { path, w, h }. */
+export async function saveVariant(path, { rot = 0, flipH = false, flipV = false, adj = null, suffix = 'edited', replace = false } = {}) {
+  const name = vfs.baseName(path);
+  const pic = await decode(path);
+  try {
+    const E = identity();
+    E.rot = ((rot % 4) + 4) % 4; E.flipH = !!flipH; E.flipV = !!flipV;
+    if (adj) E.adj = { ...E.adj, ...adj };
+    const { blob, w, h: hh } = await renderFile(pic.src, pic.sw, pic.sh, E, pic.mime);
+    const ext = blob.type === 'image/jpeg' ? (['jpg', 'jpeg'].includes(extOf(name)) ? extOf(name) : 'jpg') : 'png';
+    let out;
+    if (replace) {
+      const keep = ext === extOf(name) || (ext === 'jpg' && extOf(name) === 'jpeg');
+      out = await media.replace(path, blob, { name: keep ? name : `${stemOf(name)}.${ext}` });
+    } else out = await media.save(vfs.parentPath(path), `${stemOf(name)} (${suffix}).${ext}`, blob);
+    return { path: out.path, w, h: hh };
+  } finally { try { pic.src.close?.(); } catch (e) { /* closed */ } }
+}
+/** A one-tap look on many pictures: copies named "<name> (Mono).jpg" at full resolution. */
+export async function applyLook(paths, lookId, { onProgress } = {}) {
+  const look = LOOKS.find(l => l.id === lookId);
+  if (!look || look.id === 'none') throw new Error('Choose a look.');
+  const done = [], failed = [];
+  for (let i = 0; i < paths.length; i++) {
+    onProgress?.(i, paths.length);
+    try { done.push((await saveVariant(paths[i], { adj: lookAdj(lookId), suffix: look.name })).path); }
+    catch (err) { failed.push({ path: paths[i], why: err?.message || String(err) }); }
+  }
+  return { done, failed };
 }
 
 /* ------------------------------------------------------------------
@@ -220,62 +300,67 @@ export function openEditor({ host, path, api, onSaved, onClose }) {
   /* top bar */
   const undoBtn = ib('corner-up-left', 'Undo (⌘Z)', () => undo());
   const redoBtn = ib('corner-up-left', 'Redo (⇧⌘Z)', () => redo(), '.pe-mirror');
-  const beforeBtn = h('button.btn.btn--sm.pe__before', { type: 'button', 'aria-pressed': 'false', title: 'Show the picture as it was', onclick: () => setBefore(!before) },
-    icon('eye'), h('span', { text: 'Before' }));
-  const resetBtn = h('button.btn.btn--sm.btn--ghost', { type: 'button', title: 'Put every setting back', onclick: () => reset() }, icon('refresh'), h('span', { text: 'Reset' }));
-  const replaceBtn = h('button.btn.btn--sm.btn--ghost.pe__replace', { type: 'button', title: 'Overwrite the original file (asks first)', onclick: () => save(true) },
-    h('span', { text: 'Replace original…' }));
-  const saveBtn = h('button.btn.btn--sm.btn--primary.pe__save', { type: 'button', title: 'Save the edit as a new file beside the original', onclick: () => save(false) },
-    icon('save'), h('span', { text: 'Save as copy' }));
+  const beforeBtn = h('button.btn.btn--sm.pe__before', { type: 'button', 'aria-pressed': 'false', title: t('Show the picture as it was'), onclick: () => setBefore(!before) },
+    icon('eye'), h('span', { text: t('Before') }));
+  const resetBtn = h('button.btn.btn--sm.btn--ghost', { type: 'button', title: t('Put every setting back'), onclick: () => reset() }, icon('refresh'), h('span', { text: t('Reset') }));
+  const replaceBtn = h('button.btn.btn--sm.btn--ghost.pe__replace', { type: 'button', title: t('Overwrite the original file (asks first)'), onclick: () => save(true) },
+    h('span', { text: t('Replace original…') }));
+  const saveBtn = h('button.btn.btn--sm.btn--primary.pe__save', { type: 'button', title: t('Save the edit as a new file beside the original'), onclick: () => save(false) },
+    icon('save'), h('span', { text: t('Save as copy') }));
   const top = h('div.pe__top',
     ib('x', 'Cancel (Esc)', () => cancel(), '.pe__cancel'),
-    h('div.pe__t', h('b', { text: 'Edit' }), h('small', { text: name })),
+    h('div.pe__t', h('b', { text: t('Edit') }), h('small', { text: name })),
     h('div.grow'),
     undoBtn, redoBtn, h('span.pe__sep'), beforeBtn, resetBtn, h('span.pe__sep'), replaceBtn, saveBtn);
 
   /* stage */
   const cv = h('canvas.pe__cv', { 'aria-hidden': 'true' });
   const status = h('div.pe__status', { role: 'status' });
-  const stage = h('div.pe__stage', { tabindex: '0', 'aria-label': 'Picture being edited. In Crop, the arrow keys move the crop box; with Shift, further.' }, cv, status);
+  const stage = h('div.pe__stage', { tabindex: '0', 'aria-label': t('Picture being edited. In Crop, the arrow keys move the crop box; with Shift, further.') }, cv, status);
 
   /* side panel: Crop | Adjust */
   const tabBtn = (key, ic, label) => h('button.pe__tab', { type: 'button', role: 'tab', dataset: { tab: key }, 'aria-selected': 'false', onclick: () => setTab(key) }, icon(ic), h('span', { text: label }));
-  const tabs = h('div.pe__tabs', { role: 'tablist', 'aria-label': 'Edit tools' }, tabBtn('crop', 'crop', 'Crop & rotate'), tabBtn('adjust', 'sliders', 'Adjust'));
+  const tabs = h('div.pe__tabs', { role: 'tablist', 'aria-label': t('Edit tools') }, tabBtn('crop', 'crop', 'Crop & rotate'), tabBtn('adjust', 'sliders', 'Adjust'));
   const aspectBtns = ASPECTS.map(a => h('button', { type: 'button', dataset: { aspect: a.key }, 'aria-pressed': 'false', onclick: () => setAspect(a.key) }, a.label));
   const sizeEl = h('span.pe__size');
-  const angleIn = h('input.slider.pe__range', { type: 'range', min: String(-MAX_ANGLE), max: String(MAX_ANGLE), step: '0.5', value: '0', 'aria-label': 'Straighten, degrees' });
+  const angleIn = h('input.slider.pe__range', { type: 'range', min: String(-MAX_ANGLE), max: String(MAX_ANGLE), step: '0.5', value: '0', 'aria-label': t('Straighten, degrees') });
   const angleVal = h('output.pe__val');
   angleIn.addEventListener('input', () => { E.angle = Number(angleIn.value); paintSide(); queue(); });
   angleIn.addEventListener('change', commit);
   const cropPane = h('div.pe__pane', { dataset: { pane: 'crop' } },
-    h('div.pe__lbl', { text: 'Aspect' }),
-    h('div.seg.pe__aspects', { role: 'group', 'aria-label': 'Crop aspect' }, aspectBtns),
-    h('div.pe__lbl', { text: 'Rotate & flip' }),
+    h('div.pe__lbl', { text: t('Aspect') }),
+    h('div.seg.pe__aspects', { role: 'group', 'aria-label': t('Crop aspect') }, aspectBtns),
+    h('div.pe__lbl', { text: t('Rotate & flip') }),
     h('div.pe__row',
-      h('button.btn.btn--sm', { type: 'button', title: 'Rotate left 90°', 'aria-label': 'Rotate left', onclick: () => turn(-1) }, icon('rotate-ccw'), h('span', { text: '90°' })),
-      h('button.btn.btn--sm.pe-mirror', { type: 'button', title: 'Rotate right 90°', 'aria-label': 'Rotate right', onclick: () => turn(1) }, icon('rotate-ccw'), h('span', { text: '90°' })),
-      h('button.btn.btn--sm', { type: 'button', title: 'Flip across (mirror)', 'aria-label': 'Flip horizontally', onclick: () => flip('h') }, h('span.icon', { html: FLIP_H })),
-      h('button.btn.btn--sm', { type: 'button', title: 'Flip upside down', 'aria-label': 'Flip vertically', onclick: () => flip('v') }, h('span.icon', { html: FLIP_V }))),
-    h('div.pe__lbl', h('span', { text: 'Straighten' }), angleVal),
+      h('button.btn.btn--sm', { type: 'button', title: t('Rotate left 90°'), 'aria-label': t('Rotate left'), onclick: () => turn(-1) }, icon('rotate-ccw'), h('span', { text: '90°' })),
+      h('button.btn.btn--sm.pe-mirror', { type: 'button', title: t('Rotate right 90°'), 'aria-label': t('Rotate right'), onclick: () => turn(1) }, icon('rotate-ccw'), h('span', { text: '90°' })),
+      h('button.btn.btn--sm', { type: 'button', title: t('Flip across (mirror)'), 'aria-label': t('Flip horizontally'), onclick: () => flip('h') }, h('span.icon', { html: FLIP_H })),
+      h('button.btn.btn--sm', { type: 'button', title: t('Flip upside down'), 'aria-label': t('Flip vertically'), onclick: () => flip('v') }, h('span.icon', { html: FLIP_V }))),
+    h('div.pe__lbl', h('span', { text: t('Straighten') }), angleVal),
     h('div.pe__slide', angleIn,
-      h('button.btn.btn--sm.btn--ghost', { type: 'button', title: 'Back to 0°', onclick: () => { E.angle = 0; commit(); } }, h('span', { text: '0°' }))),
-    h('div.pe__lbl', h('span', { text: 'Saved size' }), sizeEl));
+      h('button.btn.btn--sm.btn--ghost', { type: 'button', title: t('Back to 0°'), onclick: () => { E.angle = 0; commit(); } }, h('span', { text: '0°' }))),
+    h('div.pe__lbl', h('span', { text: t('Saved size') }), sizeEl));
   const adjIns = {};
   const adjVals = {};
-  const adjPane = h('div.pe__pane', { dataset: { pane: 'adjust' } }, ADJUST.map(a => {
-    const input = adjIns[a.key] = h('input.slider.pe__range', { type: 'range', min: '-100', max: '100', step: '1', value: '0', 'aria-label': a.label, dataset: { adj: a.key } });
+  const lookBtns = LOOKS.map(l => h('button', { type: 'button', dataset: { look: l.id }, title: l.id === 'none' ? t('Put the sliders back to 0') : t('{name}: sets the sliders, then tweak them', { name: l.name }),
+    onclick: () => { E.adj = lookAdj(l.id); commit(); } }, l.name));
+  const adjPane = h('div.pe__pane', { dataset: { pane: 'adjust' } },
+    h('div.pe__lbl', { text: t('Looks') }),
+    h('div.seg.pe__looks', { role: 'group', 'aria-label': t('One-tap looks') }, lookBtns),
+    ADJUST.map(a => {
+    const input = adjIns[a.key] = h('input.slider.pe__range', { type: 'range', min: String(a.min ?? -100), max: '100', step: '1', value: '0', 'aria-label': a.label, dataset: { adj: a.key } });
     adjVals[a.key] = h('output.pe__val');
     input.addEventListener('input', () => { E.adj[a.key] = Number(input.value); paintSide(); queue(); });
     input.addEventListener('change', commit);
     return h('div.pe__adj',
-      h('div.pe__lbl', { title: 'Double-click to put it back to 0', ondblclick: () => { E.adj[a.key] = 0; commit(); } },
+      h('div.pe__lbl', { title: t('Double-click to put it back to 0'), ondblclick: () => { E.adj[a.key] = 0; commit(); } },
         a.svg ? h('span.icon', { html: a.svg }) : icon(a.icon), h('span', { text: a.label }), adjVals[a.key]),
       input);
   }));
   const note = h('p.pe__note');
-  const side = h('aside.pe__side', { 'aria-label': 'Edit tools' }, tabs, cropPane, adjPane, note);
+  const side = h('aside.pe__side', { 'aria-label': t('Edit tools') }, tabs, cropPane, adjPane, note);
   const busyEl = h('div.pe__busy', { hidden: true, role: 'status' }, h('i.ph-spin'), h('span'));
-  const root = h('div.pe', { role: 'dialog', 'aria-modal': 'true', 'aria-label': `Edit ${name}` }, top, h('div.pe__body', stage, side), busyEl);
+  const root = h('div.pe', { role: 'dialog', 'aria-modal': 'true', 'aria-label': t('Edit {name}', { name }) }, top, h('div.pe__body', stage, side), busyEl);
   host.appendChild(root);
   const g = cv.getContext('2d');
 
@@ -354,6 +439,7 @@ export function openEditor({ host, path, api, onSaved, onClose }) {
     angleIn.value = String(E.angle);
     angleVal.textContent = `${signed(E.angle)}°`;
     for (const a of ADJUST) { adjIns[a.key].value = String(E.adj[a.key]); adjVals[a.key].textContent = signed(E.adj[a.key]); }
+    for (const b of lookBtns) { const l = lookAdj(b.dataset.look); const on = ADJUST.every(a => (E.adj[a.key] || 0) === l[a.key]); b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', String(on)); }
     if (pic) { const o = outputSize(E, pic.sw, pic.sh); sizeEl.textContent = `${o.w.toLocaleString()} × ${o.h.toLocaleString()} px`; }
   }
   function queue() { if (!rq && !dead) rq = requestAnimationFrame(() => { rq = 0; draw(); }); }
@@ -384,7 +470,7 @@ export function openEditor({ host, path, api, onSaved, onClose }) {
         o.width = b.width;
         o.height = b.height;
         const id = new ImageData(new Uint8ClampedArray(P.data.data), b.width, b.height);
-        applyAdjust(id.data, E.adj);
+        applyAdjust(id.data, E.adj, b.width, b.height);
         o.getContext('2d').putImageData(id, 0, 0);
         P.out = o;
       }
@@ -608,7 +694,7 @@ export function openEditor({ host, path, api, onSaved, onClose }) {
     const jpeg = /jpe?g/i.test(pic.mime);
     if (replace) {
       const ok = await api.confirm({
-        title: `Replace “${name}”?`,
+        title: t('Replace “{name}”?', { name }),
         message: `The original picture is overwritten with this edit${jpeg || /png/i.test(pic.mime) ? '' : ', as a PNG'}. Undo can’t bring it back once it is saved; Save as copy keeps both.`,
         ok: 'Replace', danger: true,
       });
@@ -627,20 +713,20 @@ export function openEditor({ host, path, api, onSaved, onClose }) {
         out = await media.save(dir, `${stemOf(name)} (edited).${ext}`, blob);
       }
       if (dead) return;
-      api.notify({ app: 'Photos', icon: 'image', title: replace ? 'Original replaced' : 'Saved a copy', message: `${vfs.baseName(out.path)} · ${w.toLocaleString()} × ${hh.toLocaleString()} px` });
+      api.notify({ app: 'Photos', icon: 'image', title: replace ? t('Original replaced') : t('Saved a copy'), message: `${vfs.baseName(out.path)} · ${w.toLocaleString()} × ${hh.toLocaleString()} px` });
       close();
       onSaved?.({ path: out.path, replaced: replace });
     } catch (err) {
       setBusy('');
       const full = /quota/i.test(`${err?.name} ${err?.message}`);
-      api.notify({ app: 'Photos', icon: 'alert', title: 'Couldn’t save the edit', timeout: 9000,
-        message: full ? 'This browser has run out of room for StaticOS’s files. Emptying the Trash in Files frees space.' : (err?.message || 'The picture could not be written.') });
+      api.notify({ app: 'Photos', icon: 'alert', title: t('Couldn’t save the edit'), timeout: 9000,
+        message: full ? t('This browser has run out of room for StaticOS’s files. Emptying the Trash in Files frees space.') : (err?.message || 'The picture could not be written.') });
     }
   }
   async function cancel() {
     if (busy) return;
     if (dirty()) {
-      const ok = await api.confirm({ title: 'Discard your edits?', message: `The changes to “${name}” haven’t been saved.`, ok: 'Discard', danger: true });
+      const ok = await api.confirm({ title: t('Discard your edits?'), message: t('The changes to “{name}” haven’t been saved.', { name }), ok: 'Discard', danger: true });
       if (!ok || dead) return;
     }
     close();

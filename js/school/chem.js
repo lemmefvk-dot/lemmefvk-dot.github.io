@@ -1,19 +1,24 @@
 /* ============================================================
    school/chem.js — the Formulas tab of the Periodic Table app.
 
-   Two calculators over js/core/chem.js, using the same
+   Three tools over js/core/chem.js, using the same
    data/elements.json (PubChem atomic masses) the table shows:
-     · Molar mass of a formula, with a row per element;
-     · Balance an equation, with the atom count checked on both sides.
+     · Molar mass of a formula, with a row per element and its percent
+       composition by mass;
+     · Balance an equation, with the atom count checked on both sides;
+     · Check my balancing: the equation exactly as you balanced it, your
+       numbers kept, with the atoms of each element counted on each
+       side, so you can see which one is out.
    It is arithmetic on whatever formula is typed. It says nothing
    about what a substance is for and gives no procedures. All typed
    text is shown as text.
    ============================================================ */
-import { makeTable, molarMass, balance } from '../core/chem.js';
+import { makeTable, molarMass, balance, checkEquation } from '../core/chem.js';
 import { h } from '../core/dom.js';
 
 const MASS_EXAMPLES = ['H2O', 'Ca(OH)2', 'CuSO4·5H2O', 'Al2(SO4)3', 'K4[Fe(CN)6]', 'C6H12O6'];
 const EQ_EXAMPLES = ['H2 + O2 -> H2O', 'C3H8 + O2 -> CO2 + H2O', 'Fe + O2 -> Fe2O3', 'KMnO4 + HCl -> KCl + MnCl2 + Cl2 + H2O', 'Cu + Ag^+ -> Cu^2+ + Ag', 'CH4 + O2 -> CO2 + H2O + H2'];
+const CHECK_EXAMPLES = ['2H2 + O2 -> 2H2O', 'C3H8 + 5O2 -> 3CO2 + 4H2O', '4Fe + 3O2 -> 2Fe2O3', 'CH4 + O2 -> CO2 + 2H2O', 'Cu + Ag^+ -> Cu^2+ + Ag'];
 
 const CSS = `
 .pf{flex:1;min-height:0;overflow:auto;padding:var(--sp-4);display:flex;flex-direction:column;gap:var(--sp-4);color:var(--ink-1);font-size:var(--fs-13)}
@@ -37,6 +42,7 @@ const CSS = `
 .pf th:first-child,.pf td:first-child{text-align:left}
 .pf th{color:var(--ink-3);font-weight:600;font-size:var(--fs-11);text-transform:uppercase;letter-spacing:.06em}
 .pf tfoot td{font-weight:700;color:var(--ink-0)}
+.pf caption{caption-side:top;text-align:left;padding:0 0 4px;color:var(--ink-3);font-size:var(--fs-11);font-weight:600;text-transform:uppercase;letter-spacing:.08em}
 .pf__ok{color:#3fb97a}
 .pf__bad{color:#ff5a6e}
 .pf__note{margin:0;color:var(--ink-2);font-size:var(--fs-12);line-height:1.5;max-width:75ch}
@@ -68,7 +74,7 @@ const sig = (n, d = 10) => String(Number(n.toPrecision(d)));
 
 export function mountChem(host, { elements }) {
   const table = makeTable(elements);
-  const S = { mode: 'mass', mass: '', balance: '' };
+  const S = { mode: 'mass', mass: '', balance: '', check: '' };
   const out = h('div', { 'aria-live': 'polite', dataset: { fk: 'chem-out' } });
   const modes = h('div.pf__modes', { role: 'group', 'aria-label': 'Formula tools' });
   const form = h('form.pf__form');
@@ -82,16 +88,18 @@ export function mountChem(host, { elements }) {
   host.appendChild(el);
 
   function paintChrome() {
-    modes.replaceChildren(...[['mass', 'Molar mass'], ['balance', 'Balance an equation']].map(([k, t]) =>
+    modes.replaceChildren(...[['mass', 'Molar mass'], ['balance', 'Balance an equation'], ['check', 'Check my balancing']].map(([k, t]) =>
       h('button', { type: 'button', 'aria-pressed': String(S.mode === k), dataset: { fk: `chem-mode-${k}` }, onclick: () => { S.mode = k; paintChrome(); run(); input.focus({ preventScroll: true }); } }, h('span', { text: t }))));
-    const mass = S.mode === 'mass';
+    const mass = S.mode === 'mass', check = S.mode === 'check';
     input.value = S[S.mode];
-    input.placeholder = mass ? 'A formula, e.g. Ca(OH)2 or CuSO4·5H2O' : 'An equation, e.g. H2 + O2 -> H2O';
-    input.setAttribute('aria-label', mass ? 'Formula' : 'Equation to balance');
-    go.textContent = mass ? 'Calculate' : 'Balance';
-    ex.replaceChildren(h('small', { text: 'Try:' }), ...(mass ? MASS_EXAMPLES : EQ_EXAMPLES).map(t =>
+    input.placeholder = mass ? 'A formula, e.g. Ca(OH)2 or CuSO4·5H2O' : check ? 'Your balanced equation, e.g. 2H2 + O2 -> 2H2O' : 'An equation, e.g. H2 + O2 -> H2O';
+    input.setAttribute('aria-label', mass ? 'Formula' : check ? 'Equation to check' : 'Equation to balance');
+    go.textContent = mass ? 'Calculate' : check ? 'Check' : 'Balance';
+    ex.replaceChildren(h('small', { text: 'Try:' }), ...(mass ? MASS_EXAMPLES : check ? CHECK_EXAMPLES : EQ_EXAMPLES).map(t =>
       h('button', { type: 'button', dataset: { fk: 'chem-example' }, onclick: () => { input.value = t; S[S.mode] = t; run(); } }, formulaNodes(t))));
-    ex.append(h('small', { text: mass ? 'Hydrates: use · or . before the water (the number in front multiplies it). Charges: Fe^3+.' : 'Separate substances with +, put an arrow (->) between the sides. Ions: Cu^2+, SO4^2-.' }));
+    ex.append(h('small', { text: mass ? 'Hydrates: use · or . before the water (the number in front multiplies it). Charges: Fe^3+.'
+      : check ? 'Put your numbers in front of each substance (no number means 1). Every atom is counted on both sides; nothing is changed.'
+        : 'Separate substances with +, put an arrow (->) between the sides. Ions: Cu^2+, SO4^2-.' }));
   }
 
   const err = msg => h('div.pf__err', { role: 'alert', dataset: { fk: 'chem-error' } }, h('span', { text: msg }));
@@ -104,7 +112,8 @@ export function mountChem(host, { elements }) {
     return h('div', { dataset: { fk: 'chem-mass', total: m.total.toFixed(3) } },
       h('div.pf__big', h('small', { text: 'Molar mass' }), h('span', formulaNodes(m.text)), h('span', { text: ` = ${m.total.toFixed(3)} g/mol` })),
       h('table', { 'aria-label': 'Breakdown by element' },
-        h('thead', h('tr', ['Element', 'Atoms', 'Atomic mass (u)', 'Subtotal (g/mol)', 'Share'].map(t => h('th', { scope: 'col', text: t })))),
+        h('caption', { text: 'Percent composition by mass' }),
+        h('thead', h('tr', ['Element', 'Atoms', 'Atomic mass (u)', 'Subtotal (g/mol)', 'Mass %'].map(t => h('th', { scope: 'col', text: t })))),
         h('tbody', m.rows.map(r => h('tr', { dataset: { fk: 'chem-row', sym: r.sym, count: r.count } },
           h('td', { text: `${r.name} (${r.sym})` }), h('td', { text: String(r.count) }), h('td', { text: sig(r.mass) }), h('td', { text: r.subtotal.toFixed(3) }), h('td', { text: `${r.percent.toFixed(2)}%` })))),
         h('tfoot', h('tr', h('td', { text: 'Total' }), h('td', { text: String(m.rows.reduce((t, r) => t + r.count, 0)) }), h('td'), h('td', { text: m.total.toFixed(3) }), h('td', { text: '100%' })))),
@@ -139,7 +148,21 @@ export function mountChem(host, { elements }) {
     return h('div', ...kids);
   }
 
-  function run() { out.replaceChildren(S.mode === 'mass' ? runMass() : runBalance()); }
+  function runCheck() {
+    const text = S.check.trim();
+    if (!text) return h('p.pf__note', { text: 'Type an equation you have balanced, with your numbers in front, to count the atoms on each side.' });
+    const c = checkEquation(text, table);
+    if (!c.ok) return err(c.error);
+    const what = c.differ.map(s => (s === 'charge' ? 'the charge' : s)).join(', ');
+    return h('div', { dataset: { fk: 'chem-checked', balanced: c.balanced ? '1' : '0' } },
+      h('div.pf__big', h('small', { text: c.balanced ? 'Balanced' : 'Not balanced yet' }), h('span', formulaNodes(c.text))),
+      h('p.pf__note', { dataset: { fk: 'chem-verdict' }, class: c.balanced ? 'pf__ok' : 'pf__bad', text: c.balanced
+        ? 'Every element has the same number of atoms on both sides' + (c.checks.some(x => x.sym === 'charge') ? ', and the charge is the same too.' : '.')
+        : `${what} ${c.differ.length === 1 ? 'differs' : 'differ'} between the sides. Change the numbers in front (never the small ones inside a formula) and check again.` }),
+      h('h3', { text: 'Atoms on each side, with your numbers' }), checkTable(c.checks));
+  }
+
+  function run() { out.replaceChildren(S.mode === 'mass' ? runMass() : S.mode === 'check' ? runCheck() : runBalance()); }
   paintChrome();
   run();
   return { focus: () => input.focus({ preventScroll: true }), teardown() {} };

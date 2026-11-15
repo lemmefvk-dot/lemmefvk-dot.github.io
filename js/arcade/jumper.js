@@ -14,10 +14,27 @@
      undo and redo, keep several levels on this device, and share
      one as a link — once you've finished it (the link carries your
      winning run, so nobody opens an impossible level).
+   · Ghosts: a level you have finished keeps the run of your best time,
+     and the next time you play it a see-through Pip runs it beside you,
+     step for step from your first move (Options › Ghost of your best
+     run turns it off).
+   · Time attack (ctx.mode 'ta1'…'ta4', one per world, each with its own
+     best in the Arcade): the world's five levels back to back, once all
+     five are cleared. The five times add up (each level's clock starts
+     at your first move); falls cost the time they take. The run comes
+     back to the Arcade as a replay (onEnd replay { v: 1, w, runs }), so
+     the Arcade's own ghosts work: "Race your best" brings a ghost of it
+     level by level, "Watch it" plays it back, and both land on the same
+     time because the physics is a fixed step.
+   · A level someone shared can be sent back with your result: the link
+     carries the same level and your winning run, so whoever opens it
+     sees your time checked by replaying it — and can race it as a
+     ghost. A link that brought no result shows none.
    · Reduced motion: no shake, no particles, still backdrop and
      no bobbing; the game is the same.
    · Saved on this device through the store (portal.arcadePuzzles.jumper):
-     progress, best times, your levels and the editor's draft.
+     progress, best times and their runs, your levels and the editor's
+     draft.
 
    The rules live in jumper-core.js (one fixed 1/60 s step, so the
    run is identical at any frame rate); this file is the screen,
@@ -30,7 +47,7 @@ import { FONT, coarse, surface, ownsKey, sounder, rng, prompt } from './kit.js';
 import { load, save, reducedMotion } from './puzzlekit.js';
 import {
   TILE, ROWS, MIN_COLS, MAX_COLS, DT, L, R, JUMP, PW, PH, MAX_SPARKS, MAX_CHECKPOINTS,
-  buildLevel, blankRows, newSim, step, encodeMasks, cleanReplay, runReplay, fmtFrames,
+  buildLevel, blankRows, newSim, step, encodeMasks, expandRuns, cleanReplay, runReplay, fmtFrames, MAX_REPLAY_FRAMES,
 } from './jumper-core.js';
 import { LEVELS, WORLDS } from './jumper-levels.js';
 import * as share from './jumper-share.js';
@@ -107,6 +124,9 @@ const css = `
 .pj-link{flex:1 1 220px;min-width:120px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.4);color:inherit;font:inherit;font-size:12px}
 `;
 
+/* a time attack's total, "1:23.45" */
+const fmtTotal = f => { const t = f / 60; return `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, '0')}`; };
+
 const hash = (a, b) => { let x = (a * 374761393 + b * 668265263) >>> 0; x = (x ^ (x >>> 13)) * 1274126177 >>> 0; return (x ^ (x >>> 16)) >>> 0; };
 const px = (g, x, y, w, hh) => g.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(hh));
 
@@ -114,6 +134,18 @@ export default {
   mount(el, ctx) {
     const reduced = reducedMotion(ctx);
     const snd = sounder(ctx);
+    /* the Arcade's mode: the levels, or one world's time attack */
+    const MODE = /^ta[1-4]$/.test(ctx.mode || '') ? ctx.mode : 'levels';
+    const TAW = MODE === 'levels' ? -1 : Number(MODE[2]) - 1;
+    const showGhost = () => ctx.settings?.ghost !== false;
+    /* a time attack replay this module wrote: { v: 1, w, runs: [five runs] }, each run reaching its level's goal */
+    const taGhost = (() => {
+      const d = ctx.ghost?.data;
+      if (TAW < 0 || !d || d.v !== 1 || d.w !== TAW || !Array.isArray(d.runs) || d.runs.length !== 5) return null;
+      const runs = d.runs.map(cleanReplay);
+      if (runs.some((r, k) => !r || !runReplay(buildLevel(LEVELS[TAW * 5 + k].rows).level, r).won)) return null;
+      return { watch: !!ctx.ghost.watch, runs };
+    })();
     const rand = rng(7);
     const DECOR = [0, 1, 2, 3].map(() => Array.from({ length: 40 }, (_, i) => ({ x: i * 70 + rand() * 40, w: 50 + rand() * 70, hgt: 30 + rand() * 80, a: rand() })));
 
@@ -141,6 +173,10 @@ export default {
       cam: 0, particles: [], shake: 0, t: 0, newBest: false,
       spark: new Map(), nameHud: '', shared: null,
       ed: null, notes: '',
+      gh: null,                     /* a ghost: { sim, masks, i, label, prev } — your best run, a friend's, or a time attack's */
+      watch: null,                  /* a replay driving Pip: the masks, one per step */
+      ta: null,                     /* a time attack: { w, k (0-4), total, falls, sparks, runs, banner } */
+      tooLong: false,
     };
     let raf = 0, last = 0, dead = false;
     const ui = h('div.pj-ui');
@@ -152,7 +188,7 @@ export default {
     root.append(style, ui);
     const focusStage = () => { try { root.focus({ preventScroll: true }); } catch (e) { /* not focusable */ } };
     const btn = (label, onclick, ic, cls = '', extra = {}) => h('button.pj-btn' + (cls ? '.' + cls : ''), { type: 'button', onclick: e => { onclick(e); }, ...extra }, ic ? icon(ic) : null, h('span', { text: label }));
-    const mask = () => S.forced !== null ? S.forced : (S.kb | S.touch | S.virt);
+    const mask = () => S.watch ? (S.watch[S.steps] || 0) : S.forced !== null ? S.forced : (S.kb | S.touch | S.virt);
 
     /* ------------------------------ menu ------------------------------ */
     function best(i) { return done()[i] || null; }
@@ -169,7 +205,12 @@ export default {
           next >= 0 ? btn(total ? 'Continue' : 'Play', () => startMain(next), 'play', 'pj-btn--go', { 'data-act': 'continue' }) : null,
           btn('Level editor', () => openEditor(null), 'wrench', '', { 'data-act': 'editor' }))));
       WORLDS.forEach((w, wi) => {
+        const all = [0, 1, 2, 3, 4].every(k => done()[wi * 5 + k]);
         menu.append(h('h3', { text: `${wi + 1}. ${w.name}` }), h('p', { text: w.blurb }));
+        /* a cleared world has a time attack: the Arcade's mode for it (ctx.setMode) */
+        if (typeof ctx.setMode === 'function') {
+          menu.append(h('div.pj-row', btn(all ? 'Time attack' : 'Time attack (clear all five first)', () => ctx.setMode(`ta${wi + 1}`), 'clock', '', { 'data-act': 'ta', 'data-world': wi + 1, disabled: !all, title: all ? `All five ${w.name} levels back to back, against the clock` : `Clear all five ${w.name} levels to open its time attack` })));
+        }
         const row = h('div.pj-row');
         for (let i = wi * 5; i < wi * 5 + 5; i++) {
           const b = best(i), open = unlocked(i), lv = LEVELS[i];
@@ -200,25 +241,33 @@ export default {
     const shareable = m => { const b = buildLevel(m.rows); const run = cleanReplay(m.run); return !!(b.ok && run && runReplay(b.level, run).won); };
 
     /* ------------------------------ playing ------------------------------ */
-    function startMain(i) { begin(LEVELS[i].rows, { kind: 'main', i }, LEVELS[i].name); }
+    function startMain(i) {
+      const b = done()[i], run = b && cleanReplay(b.run);
+      begin(LEVELS[i].rows, { kind: 'main', i }, LEVELS[i].name, run && showGhost() ? { runs: run, label: 'your best', frames: b.f } : null);
+    }
     function startMine(id) { const m = mineList().find(x => x.id === id); if (m) begin(m.rows, { kind: 'mine', id }, m.name || 'Untitled level'); }
-    function begin(rows, src, name) {
+    /* ghost: { runs, label, frames } — a run on this level to race (yours or a friend's) */
+    function begin(rows, src, name, ghost = null) {
       const b = buildLevel(rows);
       if (!b.ok) { note(b.error); return; }
       S.mode = 'play'; S.src = src; S.level = b.level; S.nameHud = name;
       S.spark = new Map(b.level.sparks.map((p, k) => [p.r * b.level.w + p.c, k]));
+      S.ghostSpec = ghost;
       resetRun(true);
       buildPlayUI();
       loopStart();
     }
     function resetRun(snapCam) {
       S.sim = newSim(S.level); S.sim.ev = [];
-      S.armed = false; S.over = false; S.simTime = 0; S.steps = 0; S.rec = []; S.particles = []; S.shake = 0; S.newBest = false;
+      S.armed = false; S.over = false; S.simTime = 0; S.steps = 0; S.rec = []; S.particles = []; S.shake = 0; S.newBest = false; S.tooLong = false;
       S.prev = { x: S.sim.x, y: S.sim.y };
+      /* the ghost starts over with you: the same level, its own sim, a step for each of yours */
+      const G = S.ghostSpec;
+      S.gh = G ? { sim: newSim(S.level), masks: expandRuns(G.runs), i: 0, label: G.label, frames: G.frames, prev: null } : null;
       if (snapCam) S.cam = camTarget();
     }
     function restart() {
-      if (S.mode !== 'play') return;
+      if (S.mode !== 'play' || S.watch) return;
       resetRun(false);
       ui.querySelector('.pj-card')?.remove();
       hud();
@@ -227,7 +276,9 @@ export default {
     let hudEls = null;
     function buildPlayUI() {
       ui.replaceChildren();
-      const back = S.src.kind === 'test' ? btn('Back to editor', () => backToEditor(), 'arrow-left', '', { 'data-act': 'back' }) : btn('Menu', () => { loopStop(); showMenu(); }, 'arrow-left', '', { 'data-act': 'menu' });
+      const back = S.src.kind === 'test' ? btn('Back to editor', () => backToEditor(), 'arrow-left', '', { 'data-act': 'back' })
+        : S.src.kind === 'ta' ? btn('Levels', () => toLevels(), 'arrow-left', '', { 'data-act': 'menu' })
+        : btn('Menu', () => { loopStop(); showMenu(); }, 'arrow-left', '', { 'data-act': 'menu' });
       const name = h('div.pj-name', { text: S.nameHud });
       const stat = h('div.pj-stat', { 'aria-live': 'off' });
       const rs = btn('Restart', () => { restart(); }, 'rotate-ccw', '', { 'data-act': 'restart', title: 'Restart the level (R)' });
@@ -252,7 +303,8 @@ export default {
     function hud(force) {
       if (!hudEls || !S.sim) return;
       const sp = S.level.sparks.length;
-      const t = `✦ ${S.sim.sparks}/${sp}  ·  ${S.sim.deaths} ${S.sim.deaths === 1 ? 'fall' : 'falls'}  ·  ${fmtFrames(S.sim.frame)} s`;
+      const ta = S.ta ? `${S.ta.k + 1}/5 · ${fmtTotal(S.ta.total + S.sim.frame)}  ·  ` : '';
+      const t = `${ta}✦ ${S.sim.sparks}/${sp}  ·  ${S.sim.deaths} ${S.sim.deaths === 1 ? 'fall' : 'falls'}  ·  ${fmtFrames(S.sim.frame)} s${S.gh ? `  ·  ghost: ${S.gh.label}` : ''}`;
       if (force || t !== hudText) { hudText = t; hudEls.stat.textContent = t; }
     }
     function arm() { if (S.mode === 'play' && !S.armed && !S.over) { S.armed = true; S.simTime = 0; S.steps = 0; } }
@@ -261,7 +313,11 @@ export default {
       S.prev.x = S.sim.x; S.prev.y = S.sim.y;
       step(S.sim, m);
       S.steps++;
-      if (S.src.kind === 'test') S.rec.push(m);        /* only a test play is recorded: its run becomes the proof in a share link */
+      /* every play is recorded: a test play's run is the proof in a share link, a best time's run its ghost */
+      if (S.rec.length < MAX_REPLAY_FRAMES) S.rec.push(m); else S.tooLong = true;
+      /* the ghost takes its own step from its run */
+      const G = S.gh;
+      if (G && !G.sim.won) { G.prev = { x: G.sim.x, y: G.sim.y }; step(G.sim, G.i < G.masks.length ? G.masks[G.i++] : 0); }
       if (S.sim.won) onWin();
     }
     /* real time in, whole fixed steps out: the same inputs give the same run at any frame rate */
@@ -269,11 +325,12 @@ export default {
       S.t += dt;
       if (S.mode !== 'play' || S.paused || S.over) return;
       const m = mask();
-      if (!S.armed) { if (!m) return; arm(); }
+      if (!S.armed) { if (!m && !S.watch) return; arm(); }
       S.simTime += dt;
       const target = Math.floor(S.simTime * 60 + 1e-6);
       let n = 0;
       while (S.steps < target && !S.over && n < 12) { stepOnce(mask()); n++; }
+      if (nextTA()) return;
       if (S.steps < target) { S.steps = target; S.simTime = S.steps / 60; }       /* a very long stall: don't spiral */
       events();
       updateCam(dt);
@@ -303,16 +360,21 @@ export default {
       S.touch = 0;
       const s = S.sim;
       const kind = S.src.kind;
+      if (kind === 'ta') { taLevelDone(); return; }
       let lines = [];
+      const run = !S.tooLong ? cleanReplay(encodeMasks(S.rec)) : null;
       if (kind === 'main') {
         const i = S.src.i, prev = done()[i], first = !prev;
         const better = !prev || s.winFrame < prev.f;
-        const rec = { f: better ? s.winFrame : prev.f, d: better ? s.deaths : prev.d, s: Math.max(s.sparks, prev ? prev.s : 0) };
+        /* a new best time keeps its run, for the ghost next time */
+        const keepRun = better ? run : (prev && cleanReplay(prev.run)) || null;
+        const rec = { f: better ? s.winFrame : prev.f, d: better ? s.deaths : prev.d, s: Math.max(s.sparks, prev ? prev.s : 0), ...(keepRun ? { run: keepRun } : {}) };
         persist({ done: { ...done(), [i]: rec } });
         S.newBest = better && !first;
         const n = cleared();
         ctx.onScore(n);
         lines = [`Time ${fmtFrames(s.winFrame)} s${S.newBest ? ' — a new best!' : ''}`, `Sparks ${s.sparks} of ${S.level.sparks.length} · ${s.deaths} ${s.deaths === 1 ? 'fall' : 'falls'}`];
+        if (S.gh && S.gh.frames) lines.push(vsGhost(s.winFrame, S.gh.frames, 'your best run'));
         if (first && n === LEVELS.length) setTimeout(() => { if (!dead) ctx.onEnd({ score: n, won: true, detail: `All ${n} levels cleared` }); }, 600);
       } else if (kind === 'test') {
         const runs = encodeMasks(S.rec);
@@ -321,6 +383,10 @@ export default {
         else { S.ed.run = null; lines = ['Finished — but that run was too long to share (five minutes at most). Restart and finish it faster.']; }
       } else {
         lines = [`Time ${fmtFrames(s.winFrame)} s`, `Sparks ${s.sparks} of ${S.level.sparks.length} · ${s.deaths} ${s.deaths === 1 ? 'fall' : 'falls'}`];
+        /* a shared level that came with a friend's result: how you compare */
+        const fr = kind === 'shared' && S.shared?.result;
+        if (fr) lines.push(vsGhost(s.winFrame, fr.frames, fr.by ? `${fr.by}’s run` : 'their run'));
+        S.myRun = run;
       }
       const card = h('div.pj-card', { role: 'dialog', 'aria-label': 'Level complete', 'data-pj': 'win' }, h('h3', { text: 'Level complete' }), ...lines.map(t => h('p', { text: t })));
       const row = h('div.pj-row');
@@ -328,6 +394,7 @@ export default {
         const i = S.src.i;
         if (i + 1 < LEVELS.length) row.append(btn('Next level', () => startMain(i + 1), 'play', 'pj-btn--go', { 'data-act': 'next' }));
       } else if (kind === 'shared') {
+        row.append(btn('Send my result back', () => sendResult(row), 'send', 'pj-btn--go', { 'data-act': 'send-result', disabled: !S.myRun, title: S.myRun ? 'A link to this level with your time' : 'That run was too long to put in a link' }));
         row.append(btn('Save a copy to My levels', () => saveShared(row), 'save', '', { 'data-act': 'save-shared' }));
       } else if (kind === 'test') {
         row.append(btn('Back to editor', () => backToEditor(), 'arrow-left', 'pj-btn--go', { 'data-act': 'back' }));
@@ -347,6 +414,82 @@ export default {
       row.parentElement.append(h('p', { text: 'Saved to My levels.' }));
     }
     const newId = () => `m${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+    /* "1.20 s faster than your best run" */
+    function vsGhost(mine, theirs, who) {
+      const d = Math.abs(mine - theirs);
+      return d === 0 ? `Level with ${who} (${fmtFrames(theirs)} s)` : `${fmtFrames(d)} s ${mine < theirs ? 'faster' : 'slower'} than ${who} (${fmtFrames(theirs)} s)`;
+    }
+    /* a shared level, sent back with your time: the same level and the author's proof, plus your winning run */
+    async function sendResult(row) {
+      const sh = S.shared;
+      if (!sh || !S.myRun) return;
+      const card = row.parentElement;
+      card.querySelector('[data-pj="reply"]')?.remove();
+      const r = await share.encodeLevel({ name: sh.name, rows: sh.rows, run: sh.run, creator: sh.creator || '', reply: { by: playerName(), run: S.myRun } });
+      if (dead) return;
+      if (!r.ok) { card.append(h('p', { 'data-pj': 'reply', text: r.error })); return; }
+      let copied = false;
+      try { await navigator.clipboard.writeText(r.link); copied = true; } catch (e) { /* the field is there to copy from */ }
+      const field = h('input.pj-link', { type: 'text', readonly: true, value: r.link, 'aria-label': 'Link with your result', onfocus: e => e.target.select() });
+      card.append(h('div', { 'data-pj': 'reply' }, h('p', { text: `${copied ? 'Link copied' : 'Here is the link'}: the same level with your time (${fmtFrames(S.sim.winFrame)} s). Whoever opens it sees it, checked by replaying your run.` }), field));
+    }
+
+    /* ------------------------------ time attack ------------------------------ */
+    const toLevels = () => { loopStop(); if (typeof ctx.setMode === 'function') ctx.setMode('levels'); else showMenu(); };
+    function showTimeAttack() {
+      loopStop();
+      S.mode = 'menu'; S.level = null; S.sim = null; S.over = false; S.ta = null; S.watch = null;
+      ui.replaceChildren();
+      const w = WORLDS[TAW], all = [0, 1, 2, 3, 4].every(k => done()[TAW * 5 + k]);
+      const card = h('div.pj-card', { role: 'dialog', 'aria-label': `Time attack: ${w.name}`, 'data-pj': 'ta' },
+        h('h3', { text: `Time attack · ${w.name}` }));
+      const row = h('div.pj-row');
+      if (!all) {
+        card.append(h('p', { text: `Clear all five ${w.name} levels first, then come back to race them back to back.` }));
+        row.append(btn('Levels', () => toLevels(), 'arrow-left', 'pj-btn--go', { 'data-act': 'menu' }));
+      } else {
+        card.append(h('p', { text: 'All five levels back to back. Each level’s clock starts at your first move; the five times add up, and falls cost the time they take.' }));
+        if (Number.isFinite(ctx.best)) card.append(h('p', { text: `Your best here: ${fmtTotal(Math.round(ctx.best * 60))}.` }));
+        if (taGhost && !taGhost.watch) card.append(h('p', { text: 'Your best run races you as a see-through Pip, level by level.' }));
+        row.append(btn('Start', () => startTA(0), 'play', 'pj-btn--go', { 'data-act': 'ta-start' }),
+          btn('Levels', () => toLevels(), 'arrow-left', '', { 'data-act': 'menu' }));
+      }
+      card.append(row);
+      ui.append(h('div.pj-menu', { 'data-pj': 'ta-bg' }), card);
+      draw();
+      row.querySelector('button')?.focus({ preventScroll: true });
+    }
+    /* level k (0-4) of the world's time attack */
+    function startTA(k) {
+      if (!S.ta || k === 0) S.ta = { w: TAW, k: 0, total: 0, falls: 0, sparks: 0, runs: [] };
+      S.ta.k = k;
+      const i = TAW * 5 + k, gr = taGhost;
+      S.watch = gr && gr.watch ? expandRuns(gr.runs[k]) : null;
+      begin(LEVELS[i].rows, { kind: 'ta', i }, `${LEVELS[i].name} · ${k + 1}/5`, gr && !gr.watch ? { runs: gr.runs[k], label: 'your best time attack', frames: null } : null);
+      if (S.watch) arm();
+    }
+    function nextTA() {
+      if (S.pendingTA == null) return false;
+      const k = S.pendingTA;
+      S.pendingTA = null;
+      startTA(k);
+      return true;
+    }
+    function taLevelDone() {
+      const s = S.sim, T = S.ta;
+      T.total += s.winFrame; T.falls += s.deaths; T.sparks += s.sparks;
+      T.runs.push(!S.tooLong ? encodeMasks(S.rec) : null);
+      [523, 659, 784].forEach((f, k) => setTimeout(() => { if (!dead) snd.blip(f, 0.14, 'triangle', 0.8); }, k * 80));
+      /* the next level starts once this step is over (not inside the loop that is stepping this one) */
+      if (T.k < 4) { S.pendingTA = T.k + 1; return; }
+      /* the whole world: the time is the score, the five runs the replay */
+      const secs = Math.round(T.total / 60 * 100) / 100;
+      const replay = S.watch || T.runs.some(r => !r || !cleanReplay(r)) ? undefined : { v: 1, w: TAW, runs: T.runs.map(cleanReplay) };
+      ui.append(h('div.pj-card', { role: 'status', 'data-pj': 'ta-done' }, h('h3', { text: `${WORLDS[TAW].name} in ${fmtTotal(T.total)}` }),
+        h('p', { text: `${T.falls} ${T.falls === 1 ? 'fall' : 'falls'} · ${T.sparks} spark${T.sparks === 1 ? '' : 's'}` })));
+      ctx.onScore(secs);
+      setTimeout(() => { if (!dead) ctx.onEnd({ score: secs, won: true, detail: `${WORLDS[TAW].name} in ${fmtTotal(T.total)} · ${T.falls} ${T.falls === 1 ? 'fall' : 'falls'} · ${T.sparks} sparks`, replay }); }, 400);
+    }
 
     /* ------------------------------ a level someone shared ------------------------------ */
     function showPreview(lv) {
@@ -362,9 +505,13 @@ export default {
       const card = h('div.pj-card', { role: 'dialog', 'aria-label': 'Shared level preview', 'data-pj': 'preview' },
         h('h3', { text: lv.name }), h('p', { text: by }), cv,
         h('p', { text: `${lv.w} tiles wide · ${lv.sparks} spark${lv.sparks === 1 ? '' : 's'} · ${lv.checkpoints} checkpoint${lv.checkpoints === 1 ? '' : 's'}. The author’s run reaches the goal in ${fmtFrames(lv.frames)} s, so it can be finished.` }),
+        /* only a result that came with the link, and only once its run has been replayed to the goal */
+        lv.result ? h('p', { 'data-pj': 'result', text: `${lv.result.by || 'Someone'} sent back a result: ${fmtFrames(lv.result.frames)} s, ${lv.result.deaths} ${lv.result.deaths === 1 ? 'fall' : 'falls'}, ${lv.result.sparks} of ${lv.sparks} sparks — checked by replaying their run. (The name is what the link says.)` }) : null,
+        lv.resultDropped ? h('p', { text: 'A result came with this link but its run doesn’t reach the goal, so it isn’t shown.' }) : null,
         h('p', { text: 'Nothing starts until you press Play.' }));
       const row = h('div.pj-row',
         btn('Play', () => { S.shared = lv; begin(lv.rows, { kind: 'shared' }, lv.name); }, 'play', 'pj-btn--go', { 'data-act': 'play-shared' }),
+        lv.result ? btn(lv.result.by ? `Race ${lv.result.by}’s run` : 'Race their run', () => { S.shared = lv; begin(lv.rows, { kind: 'shared' }, lv.name, { runs: lv.result.run, label: lv.result.by || 'their run', frames: lv.result.frames }); }, 'ghost', '', { 'data-act': 'race-shared' }) : null,
         btn('Not now', () => showMenu(), 'x', '', { 'data-act': 'dismiss' }));
       card.append(row);
       ui.append(h('div.pj-menu', { 'data-pj': 'preview-bg' }), card);
@@ -488,7 +635,7 @@ export default {
       if (dead) return;
       const g = sf.g;
       sf.begin();
-      const lvIdx = S.src && S.src.kind === 'main' ? LEVELS[S.src.i].world : (S.mode === 'editor' ? (S.ed?.theme ?? 0) : (S.src ? 0 : 0));
+      const lvIdx = S.src && (S.src.kind === 'main' || S.src.kind === 'ta') ? LEVELS[S.src.i].world : (S.mode === 'editor' ? (S.ed?.theme ?? 0) : (S.src ? 0 : 0));
       const th = THEMES[lvIdx] || THEMES[0];
       g.imageSmoothingEnabled = false;
       const sky = g.createLinearGradient(0, 0, 0, sf.h);
@@ -533,6 +680,14 @@ export default {
             /* smooth between fixed steps */
             const a = reduced || S.over || !S.armed || S.paused ? 1 : Math.max(0, Math.min(1, S.simTime * 60 - S.steps));
             const ix = S.prev.x + (sim.x - S.prev.x) * a, iy = S.prev.y + (sim.y - S.prev.y) * a;
+            /* the ghost first, see-through, under you */
+            const G = S.gh;
+            if (G && G.sim.dead === 0 && !(G.sim.won && S.steps - G.sim.winFrame > 40)) {
+              const gp = G.prev || G.sim;
+              g.globalAlpha = 0.42;
+              drawPip(g, Math.round(gp.x + (G.sim.x - gp.x) * a), Math.round(gp.y + (G.sim.y - gp.y) * a), G.sim, a);
+              g.globalAlpha = 1;
+            }
             if (sim.dead === 0) drawPip(g, Math.round(ix), Math.round(iy), sim, a);
             for (const p of S.particles) { g.globalAlpha = Math.max(0, p.life); g.fillStyle = p.c; px(g, p.x, p.y, 2, 2); }
             g.globalAlpha = 1;
@@ -540,9 +695,12 @@ export default {
         }
         g.restore();
       }
-      if (S.mode === 'play' && !S.armed && !S.over && S.sim && !S.paused) {
-        prompt(g, sf, coarse() ? 'Touch a button to start' : 'Press ← → or Space to start', coarse() ? 'Left and right to run, the round button to jump.' : 'Run with ← → , jump with Space (hold for height).', 175, sf.h * 0.42);
+      if (S.mode === 'play' && !S.armed && !S.over && S.sim && !S.paused && !S.watch) {
+        const first = S.ta ? `Time attack · level ${S.ta.k + 1} of 5${S.ta.k ? ` · ${fmtTotal(S.ta.total)} so far` : ''}` : null;
+        prompt(g, sf, first || (coarse() ? 'Touch a button to start' : 'Press ← → or Space to start'),
+          S.gh ? `The see-through Pip is ${S.gh.label === 'your best' ? 'your best run' : S.gh.label}` : coarse() ? 'Left and right to run, the round button to jump.' : 'Run with ← → , jump with Space (hold for height).', 175, sf.h * 0.42);
       }
+      if (S.watch && S.mode === 'play') prompt(g, sf, 'Replay of your best time attack', `Level ${S.ta ? S.ta.k + 1 : 1} of 5`, 175, sf.h * 0.18);
     }
     function drawEditorExtras(g, lv, x0, x1) {
       /* grid lines, and a marker over start and goal so they read in the editor */
@@ -843,11 +1001,13 @@ export default {
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(onResize) : null;
     ro?.observe(el);
 
-    ctx.onScore(cleared());
+    if (TAW < 0) ctx.onScore(cleared());
     {
       /* a level link opened this game: show its preview (nothing runs); otherwise the level select */
       const offered = share.take();
-      if (offered) showPreview(offered); else showMenu();
+      if (offered) showPreview(offered);
+      else if (TAW >= 0) { if (taGhost?.watch) startTA(0); else showTimeAttack(); }
+      else showMenu();
     }
 
     return {
@@ -887,6 +1047,9 @@ export default {
           } : null,
           mine: mineList().map(m => ({ id: m.id, name: m.name, run: !!m.run })),
           particles: S.particles.length, shake: S.shake, note: S.notes, touchUI: root.classList.contains('is-touch'), mask: mask(),
+          gameMode: MODE, ta: S.ta ? { w: S.ta.w, k: S.ta.k, total: S.ta.total, falls: S.ta.falls, runs: S.ta.runs.length } : null, watch: !!S.watch,
+          ghost: S.gh ? { x: S.gh.sim.x, y: S.gh.sim.y, frame: S.gh.sim.frame, won: S.gh.sim.won, winFrame: S.gh.sim.winFrame, label: S.gh.label } : null,
+          shared: S.shared ? { name: S.shared.name, result: S.shared.result ? { by: S.shared.result.by, frames: S.shared.result.frames } : null } : null,
         };
       },
       /* test hook — nothing in the game calls it:
@@ -902,9 +1065,12 @@ export default {
           S.forced = prev;
         } else if (cmd === 'replay') {
           arm();
-          for (const [m, n] of arg.runs) for (let i = 0; i < n && !S.over; i++) stepOnce(m);
+          const sim0 = S.sim;                                /* a time attack moves on to its next level at the goal: stop there */
+          for (const [m, n] of arg.runs) for (let i = 0; i < n && !S.over && S.sim === sim0; i++) stepOnce(m);
+          if (nextTA()) { draw(); return true; }
           events(); S.sim.ev.length = 0; updateCam(1); hud(); draw();
         } else if (cmd === 'open') { loopStop(); startMain(arg); }
+        else if (cmd === 'ta') { loopStop(); startTA(arg | 0); }
         else if (cmd === 'restart') restart();
         else if (cmd === 'manual') S.manual = !!arg;
         else if (cmd === 'touch') { root.classList.toggle('is-touch', !!arg); }

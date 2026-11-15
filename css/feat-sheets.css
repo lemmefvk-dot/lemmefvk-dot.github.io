@@ -41,9 +41,13 @@
 .ss-wrap { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; }
 .ss-scroll { position: relative; flex: 1 1 auto; overflow: auto; background: var(--bg-1); outline: none; font-size: var(--fs-12); color: var(--ink-0); overscroll-behavior: contain; }
 .ss-scroll:focus-visible { box-shadow: inset 0 0 0 2px var(--line-accent); border-radius: 0; outline: none; }
-.ss-head { position: sticky; top: 0; z-index: 3; height: 24px; background: var(--bg-2); }
+.ss-head { position: sticky; top: 0; z-index: 5; height: 24px; background: var(--bg-2); display: flex; }
 .ss-body { position: relative; }
-.ss-row { position: absolute; left: 0; height: 24px; }
+/* a row: its number (sticky left), then any frozen columns (in-flow, sticky), then the rest placed absolutely */
+.ss-row { position: absolute; left: 0; height: 24px; display: flex; }
+/* frozen rows sit in the flow at the top of the body and stick under the column letters */
+.ss-row.is-frz { position: sticky; left: auto; z-index: 3; background: var(--bg-1); flex: 0 0 auto; }
+.ss-row.is-frzl { box-shadow: 0 1px 0 var(--line-2), 0 2px 0 var(--line-1); }
 .ss-corner, .ss-ch, .ss-rh {
   background: var(--bg-2); color: var(--ink-2); font: 600 var(--fs-10) / 24px var(--font); text-align: center;
   border-right: 1px solid var(--line-1); border-bottom: 1px solid var(--line-1); user-select: none; cursor: default;
@@ -54,12 +58,39 @@
 .ss-ch.is-sel, .ss-rh.is-sel { background: var(--fill-accent-hi); color: var(--ink-0); }
 .ss-grip { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; z-index: 1; }
 .ss-grip:hover, .ss-grip.is-on { background: var(--accent); opacity: .6; }
-.ss-rh { position: sticky; left: 0; z-index: 2; width: 52px; height: 24px; font-variant-numeric: tabular-nums; }
+.ss-rh { position: sticky; left: 0; z-index: 2; width: 52px; height: 100%; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.ss-rh.is-flt { color: var(--accent-soft); }
 .ss-c {
-  position: absolute; top: 0; height: 24px; padding: 0 6px; line-height: 23px;
+  position: absolute; top: 0; height: 100%; padding: 0 6px; line-height: 23px;
   border-right: 1px solid var(--line-0); border-bottom: 1px solid var(--line-0);
   overflow: hidden; white-space: pre; text-overflow: ellipsis; text-align: left;
 }
+/* frozen columns: in the row's flow, stuck after the row number, over what scrolls under them */
+.ss-c.is-fz, .ss-ch.is-fz { position: sticky; top: auto; flex: 0 0 auto; z-index: 1; background: var(--bg-1); }
+.ss-ch.is-fz { background: var(--bg-2); }
+.ss-c.is-fzl { box-shadow: 1px 0 0 var(--line-2); }
+.ss-c.is-wrap { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 16px; padding-top: 4px; padding-bottom: 3px; text-overflow: clip; }
+/* borders: part of each cell's style */
+.ss-c[class*=" bd-"] { --bdc: var(--ink-1); box-shadow: inset 0 var(--bt, 0) 0 var(--bdc), inset 0 calc(-1 * var(--bb, 0px)) 0 var(--bdc), inset var(--bl, 0) 0 0 var(--bdc), inset calc(-1 * var(--br, 0px)) 0 0 var(--bdc); }
+.ss-c.bd-t { --bt: 1px; } .ss-c.bd-b { --bb: 1px; } .ss-c.bd-l { --bl: 1px; } .ss-c.bd-r { --br: 1px; }
+/* conditional formatting fills, from the chart colours so they follow the theme */
+.cf-red { --cf: var(--chart-8); } .cf-orange { --cf: var(--chart-2); } .cf-yellow { --cf: var(--chart-4); } .cf-green { --cf: var(--chart-3); }
+.cf-blue { --cf: var(--chart-1); } .cf-purple { --cf: var(--chart-7); } .cf-pink { --cf: var(--chart-5); }
+.ss-c[class*=" cf-"] { background-color: color-mix(in srgb, var(--cf) 30%, var(--bg-1)); color: var(--ink-0); }
+/* a dropdown cell and a filter header show a ▾ at the right; a cell that fails its check gets a corner */
+.ss-c.has-dd, .ss-c.has-flt { padding-right: 18px; }
+.ss-c.has-dd::after, .ss-c.has-flt::after {
+  content: "▾"; position: absolute; right: 2px; top: 3px; width: 14px; height: 17px; border-radius: 3px;
+  display: grid; place-items: center; font-size: var(--fs-10); line-height: 1; color: var(--ink-2); background: var(--fill-1);
+}
+.ss-c.has-flt.is-flt::after { content: "⏷"; color: var(--accent-soft); background: var(--fill-accent); }
+.ss-c.is-bad::before { content: ""; position: absolute; left: 0; top: 0; border: 4px solid transparent; border-left-color: var(--chart-8); border-top-color: var(--chart-8); }
+/* a merged area: one box over its cells, drawn as the top-left one */
+.ss-mg { z-index: 1; background-color: var(--bg-1); display: flex; align-items: center; justify-content: flex-start; pointer-events: none; }
+.ss-mg.is-num, .ss-mg.al-r { justify-content: flex-end; }
+.ss-mg.al-c, .ss-mg.is-bool, .ss-mg.is-err { justify-content: center; }
+.ss-mg.is-wrap { align-items: flex-start; }
+.ss-mg.is-mgfz { z-index: 3; }
 .ss-c.is-num { text-align: right; font-variant-numeric: tabular-nums; }
 .ss-c.is-bool, .ss-c.is-err { text-align: center; }
 .ss-c.is-err { color: var(--accent-soft); font-weight: 600; }
@@ -70,7 +101,7 @@
 .ss-c.is-hit.is-now { background: rgba(var(--accent-rgb)/.24); }
 
 /* selection: one rectangle over the cells, one ring for the active cell */
-.ss-sel, .ss-cur, .ss-clip, .ss-pt { position: absolute; pointer-events: none; z-index: 1; display: none; }
+.ss-sel, .ss-cur, .ss-clip, .ss-pt { position: absolute; pointer-events: none; z-index: 4; display: none; }
 .ss-sel { background: rgba(var(--accent-rgb)/.12); border: 1px solid var(--accent); }
 .ss-cur { border: 2px solid var(--accent); }
 .ss-clip { border: 1px dashed var(--accent-soft); }
@@ -79,7 +110,7 @@
 
 /* the in-cell editor sits over the grid, outside its accessibility tree */
 .ss-editor {
-  position: absolute; z-index: 4; display: none; resize: none; overflow: hidden;
+  position: absolute; z-index: 7; display: none; resize: none; overflow: hidden;
   min-height: 24px; padding: 3px 5px; margin: 0; border: 2px solid var(--accent); border-radius: 0;
   background: var(--bg-1); color: var(--ink-0); font: var(--fs-12) / 16px var(--font); white-space: pre; box-shadow: var(--sh-2);
 }
@@ -98,6 +129,11 @@
 .ss-chart__title:hover { border-color: var(--line-1); }
 .ss-chart__title:focus { outline: none; border-color: var(--line-accent); background: var(--bg-2); }
 .ss-chart canvas { width: 100%; height: 210px; display: block; border-radius: var(--r-sm); cursor: crosshair; }
+.ss-chart__axes { display: flex; gap: var(--sp-2); }
+.ss-chart__axes[hidden], .ss-chart__trend[hidden] { display: none; }
+.ss-chart__axis { flex: 1; min-width: 0; height: 22px; padding: 0 var(--sp-2); border-radius: var(--r-xs); background: var(--bg-2); border: 1px solid var(--line-1); color: var(--ink-0); font-size: var(--fs-10); }
+.ss-chart__axis:focus { outline: none; border-color: var(--line-accent); }
+.ss-chart__trend { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-10); color: var(--ink-1); }
 .ss-chart__foot { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-10); color: var(--ink-2); }
 .ss-chart__foot code { font-family: var(--mono); color: var(--ink-1); }
 .ss-tip { position: absolute; z-index: 5; pointer-events: none; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); background: var(--glass-3); border: 1px solid var(--line-2); box-shadow: var(--sh-2); font-size: var(--fs-10); color: var(--ink-1); white-space: nowrap; }
@@ -112,6 +148,10 @@
 .ss-tab { flex: 0 0 auto; height: 24px; padding: 0 var(--sp-4); border-radius: var(--r-xs); font-size: var(--fs-11); font-weight: 560; color: var(--ink-2); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ss-tab:hover { background: var(--fill-1); color: var(--ink-0); }
 .ss-tab[aria-selected="true"] { background: var(--fill-2); color: var(--ink-0); box-shadow: inset 0 -2px 0 var(--accent); }
+/* a coloured tab: a bar along its top in its own colour */
+.ss-tab.has-color { box-shadow: inset 0 3px 0 var(--tab); }
+.ss-tab.has-color[aria-selected="true"] { box-shadow: inset 0 3px 0 var(--tab), inset 0 -2px 0 var(--accent); }
+.ss-status__flt { display: inline-flex; align-items: center; gap: 3px; color: var(--accent-soft); }
 .ss-tabin { height: 24px; width: 120px; padding: 0 var(--sp-2); border-radius: var(--r-xs); background: var(--bg-2); border: 1px solid var(--line-accent); color: var(--ink-0); font-size: var(--fs-11); }
 .ss-status { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; font-size: var(--fs-10); color: var(--ink-2); white-space: nowrap; }
 .ss-status b { color: var(--ink-0); font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -127,7 +167,62 @@
 .ss-dlg__card input, .ss-dlg__card select { height: 30px; padding: 0 var(--sp-3); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-1); color: var(--ink-0); font-size: var(--fs-12); }
 .ss-dlg__card input:focus, .ss-dlg__card select:focus { outline: none; border-color: var(--line-accent); }
 .ss-dlg__why { font-size: var(--fs-11); color: var(--accent-soft); min-height: 1em; }
-.ss-dlg__btns { display: flex; justify-content: flex-end; gap: var(--sp-3); }
+.ss-dlg__btns { display: flex; justify-content: flex-end; gap: var(--sp-3); flex-wrap: wrap; }
+.ss-dlg__card.is-wide { width: min(460px, 94%); max-height: calc(100% - 24px); overflow-y: auto; }
+.ss-dlg__row { display: flex; align-items: flex-end; gap: var(--sp-3); flex-wrap: wrap; }
+.ss-dlg__row > label { flex: 1 1 120px; }
+.ss-dlg__card label[hidden], .ss-dlg__row[hidden], .ss-dlg__card input[hidden] { display: none; }
+.ss-dlg__card .ss-dlg__check { flex-direction: row; align-items: center; gap: var(--sp-2); font-size: var(--fs-11); color: var(--ink-1); }
+.ss-dlg__card .ss-dlg__check input { height: auto; }
+.ss-dlg__ta { min-height: 64px; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-1); color: var(--ink-0); font: var(--fs-12) / 1.4 var(--font); resize: vertical; }
+.ss-flt__list { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; padding: var(--sp-1); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-1); }
+.ss-dlg__card .ss-flt__item { flex-direction: row; align-items: center; gap: var(--sp-2); padding: 3px var(--sp-2); font-size: var(--fs-11); font-weight: 500; color: var(--ink-0); border-radius: var(--r-xs); }
+.ss-dlg__card .ss-flt__item:hover { background: var(--fill-1); }
+.ss-dlg__card .ss-flt__item input { height: auto; }
+.ss-flt__item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-flt__item small { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ss-flt__note { margin: 0; font-size: var(--fs-10); color: var(--ink-2); }
+.ss-cf__list { display: flex; flex-direction: column; gap: var(--sp-1); }
+.ss-cf__rule { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm); background: var(--bg-2); font-size: var(--fs-11); color: var(--ink-0); }
+.ss-cf__sw { display: inline-block; width: 16px; height: 16px; border-radius: 4px; background: color-mix(in srgb, var(--cf) 45%, var(--bg-1)); border: 1px solid var(--cf); flex: 0 0 auto; }
+.ss-cf__fills { display: flex; gap: var(--sp-2); }
+.ss-dlg__card .ss-cf__fill { flex-direction: row; cursor: pointer; }
+.ss-cf__fill input:checked + .ss-cf__sw { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--accent); }
+.ss-cf__fill input:focus-visible + .ss-cf__sw { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* ---- Describe my data: a panel over the grid, text only ------------- */
+.ss-ai { position: absolute; top: 120px; right: var(--sp-4); z-index: 9; width: min(340px, calc(100% - 24px)); max-height: calc(100% - 140px); overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); border-radius: var(--r-lg); background: var(--glass-3); border: 1px solid var(--line-2); box-shadow: var(--sh-3); }
+.ss-ai[hidden] { display: none; }
+.ss-ai__head { display: flex; align-items: center; gap: var(--sp-2); }
+.ss-ai__head > .icon { width: 15px; height: 15px; color: var(--accent-soft); }
+.ss-ai__head b { flex: 1; font-size: var(--fs-13); color: var(--ink-0); }
+.ss-ai__state { margin: 0; font-size: var(--fs-11); color: var(--ink-2); }
+.ss-ai__out { white-space: pre-wrap; font-size: var(--fs-12); line-height: 1.5; color: var(--ink-0); }
+.ss-ai__out:empty { display: none; }
+.ss-ai__acts { display: flex; gap: var(--sp-2); }
+.ss-ai__fine { margin: 0; font-size: var(--fs-10); line-height: 1.45; color: var(--ink-3); }
+
+/* ---- print: just the sheet, as a table ------------------------------- */
+.ss-print { display: none; }
+@media print {
+  html.ss-printing, html.ss-printing body { background: #fff !important; height: auto !important; min-height: 0 !important; overflow: visible !important; position: static !important; }
+  html.ss-printing body > :not(.ss-print) { display: none !important; }
+  html.ss-printing .ss-print { display: block !important; color: #000; font: 10pt/1.35 system-ui, sans-serif; }
+  .ss-print * { color: #000 !important; }
+  .ss-print h1 { font-size: 15pt; margin: 0 0 3pt; }
+  .ss-print p { margin: 0 0 10pt; font-size: 8.5pt; }
+  .ss-print table { border-collapse: collapse; }
+  .ss-print td { border: 0.5pt solid #ccc; padding: 2pt 5pt; white-space: pre; vertical-align: top; }
+  .ss-print td.is-wrap { white-space: pre-wrap; max-width: 3in; }
+  .ss-print td.is-num { text-align: right; }
+  .ss-print td.al-l { text-align: left; } .ss-print td.al-c { text-align: center; } .ss-print td.al-r { text-align: right; }
+  .ss-print td.is-b { font-weight: 700; } .ss-print td.is-i { font-style: italic; }
+  .ss-print td.bd-t { border-top: 1pt solid #000; } .ss-print td.bd-b { border-bottom: 1pt solid #000; }
+  .ss-print td.bd-l { border-left: 1pt solid #000; } .ss-print td.bd-r { border-right: 1pt solid #000; }
+  .ss-print td[class*="cf-"] { background: color-mix(in srgb, var(--cf) 30%, #fff) !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .ss-print tr { break-inside: avoid; }
+}
 
 :root[data-theme="light"] .ss-charts { background: rgba(20,8,12,.03); }
 :root[data-theme="light"] .ss-dlg { background: rgba(20,8,12,.18); }

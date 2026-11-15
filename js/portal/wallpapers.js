@@ -1,7 +1,7 @@
 /* ============================================================
    wallpapers.js — what the desktop shows behind everything.
 
-   Four kinds:
+   Four kinds (plus 'live' and 'file', below):
      'scene'  the built-in procedural layers (pure CSS, no files)
      'video'  a looping muted <video> — mp4 / webm
      'gif'    an animated GIF, painted as a background layer
@@ -18,10 +18,21 @@
      wallpaper            -> the active id
      portal.wallpapers    -> [{id,name,url,kind,code,by}]
      portal.wpUnlocked    -> [id, …]
+     portal.wpFavs        -> [id, …]   the hearts in the picker
+
+   Added later, on top of the four kinds:
+     'live'  a wallpaper drawn on a canvas (core/livewp.js): rain on glass,
+             fireflies, a city at night. Still under Reduce motion.
+     'file'  a picture from Files, kept by path (addFile) — so a big photo
+             costs no room in the saved settings, and it is yours alone.
    ============================================================ */
 
 import * as THEMES from '../core/themes.js';
 import * as DAY from '../core/daycycle.js';
+import * as SAVER from '../core/datasaver.js';
+import * as LIVE from '../core/livewp.js';
+import { vfs } from '../core/vfs.js';
+import * as MEDIA from '../core/media.js';
 
 /* Exported because the shell subscribes to them by name:
    js/shell/desktop.js does store.sub(WP.ACTIVE_KEY, …) so the desktop
@@ -29,6 +40,7 @@ import * as DAY from '../core/daycycle.js';
    undefined and the subscription silently watches nothing. */
 export const LIST_KEY = 'portal.wallpapers';
 const UNLOCK_KEY = 'portal.wpUnlocked';
+export const FAV_KEY = 'portal.wpFavs';
 export const ACTIVE_KEY = 'wallpaper';
 
 /* Built-ins are generated, not files: nothing to download, and they
@@ -110,6 +122,10 @@ export const BUILT_IN = [
     url: 'assets/wallpapers/packs/abyss.svg', blurb: 'Light rays, kelp and a jellyfish.' },
   { id: 'pack-matcha', name: 'Matcha', kind: 'image', built: true, theme: 'matcha',
     url: 'assets/wallpapers/packs/matcha.svg', blurb: 'Raked sand, mossy stones and bamboo.' },
+  /* Wallpapers drawn live on a canvas (core/livewp.js). `css` is only the
+     picker card's preview. */
+  ...LIVE.IDS.map(id => ({ id: `live-${id}`, name: LIVE.SCENES[id].name, kind: 'live', scene: id, built: true,
+    css: LIVE.SCENES[id].css, tag: 'animated', blurb: LIVE.SCENES[id].blurb })),
   /* One scene in four lights that follows the clock (js/core/daycycle.js;
      drawn by tools/daycycle-art.mjs). `url` is its daytime look, for the
      picker card. */
@@ -150,9 +166,13 @@ const unlocked = store => {
 };
 export const isUnlocked = (store, w) => !w.code || unlocked(store).includes(w.id);
 
-/** Everything the picker should show: built-ins + unlocked customs. */
+/** A picture from Files whose file is still there (everything else is always fine). */
+const fileOk = w => w.kind !== 'file' || (vfs.node(w.path)?.type === 'file' && MEDIA.isMedia(vfs.node(w.path)));
+
+/** Everything the picker should show: built-ins + unlocked customs
+    (a Files picture whose file was deleted drops out of the list). */
 export function list(store, { includeLocked = false } = {}) {
-  const rows = [...BUILT_IN, ...custom(store)];
+  const rows = [...BUILT_IN, ...custom(store)].filter(fileOk);
   return includeLocked ? rows : rows.filter(w => isUnlocked(store, w));
 }
 
@@ -177,9 +197,55 @@ export function add(store, { name, url, kind, code, by } = {}) {
   return entry;
 }
 
+/** Use a picture from Files (a path in the virtual file system) as a wallpaper.
+    Kept by path, not copied: it needs no room in the saved settings. */
+export function addFile(store, path) {
+  const p = vfs.norm(String(path || ''));
+  const n = vfs.node(p);
+  if (!n || n.type !== 'file') throw new Error('That file isn’t in Files any more.');
+  if (MEDIA.kindOf(n.name) !== 'image' || !MEDIA.isMedia(n)) throw new Error('Pick a picture: png, jpg, webp, gif, avif or svg.');
+  const rows = custom(store);
+  const had = rows.find(w => w.kind === 'file' && w.path === p);
+  if (had) return had;
+  const title = String(n.name).replace(/\.[^.]+$/, '') || 'My picture';
+  let id = 'file-' + (slug(title) || 'picture');
+  while (rows.some(w => w.id === id) || BUILT_IN.some(w => w.id === id)) id += '-2';
+  const entry = { id, name: title, kind: 'file', path: p, url: `file:${p}`, tag: 'from Files', code: null, by: null };
+  store.set(LIST_KEY, [...rows, entry]);
+  return entry;
+}
+
+/** Add a picture found on another page (a game's art, an anime cover) by its
+    address, crediting where it came from. The picture stays where it is. */
+export function addArt(store, { name, url, by } = {}) {
+  const clean = String(url || '').trim();
+  if (!/^https:\/\//i.test(clean)) throw new Error('That picture has no web address to use.');
+  const had = custom(store).find(w => w.url === clean);
+  if (had) return had;
+  const entry = add(store, { name: name || 'Art', url: clean, kind: 'image', by: by || null });
+  return entry;
+}
+
+/* ---------- favourites: the hearts ---------- */
+export const favs = store => {
+  const v = store.get(FAV_KEY);
+  const ids = Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
+  const have = new Set(list(store).map(w => w.id));
+  return ids.filter(id => have.has(id));
+};
+export const isFav = (store, id) => favs(store).includes(id);
+export function setFav(store, id, on) {
+  const cur = favs(store).filter(x => x !== id);
+  const next = on ? [...cur, id] : cur;
+  store.set(FAV_KEY, next);
+  return next;
+}
+export const toggleFav = (store, id) => { const on = !isFav(store, id); setFav(store, id, on); return on; };
+
 export function remove(store, id) {
   const rows = custom(store).filter(w => w.id !== id);
   store.set(LIST_KEY, rows);
+  if (store.get(FAV_KEY)) store.set(FAV_KEY, favs(store));   /* the dead one drops out of favs() */
   if (store.get(ACTIVE_KEY) === id) store.set(ACTIVE_KEY, 'aurora');
   return rows;
 }
@@ -195,7 +261,11 @@ export function redeem(store, code) {
   return hit;
 }
 
-export const active = store => byId(store, store.get(ACTIVE_KEY)) || BUILT_IN[0];
+export const active = store => {
+  const w = byId(store, store.get(ACTIVE_KEY));
+  /* a picture from Files that has since been deleted: the default, not a black screen */
+  return w && fileOk(w) ? w : BUILT_IN[0];
+};
 export function setActive(store, id) {
   const w = byId(store, id);
   if (!w || !isUnlocked(store, w)) return null;
@@ -232,14 +302,32 @@ export function mediaLayer(w, h) {
 
   if (w.kind === 'daycycle') return DAY.layer(h, base);
 
+  if (w.kind === 'live') return LIVE.layer(h, base, w.scene);
+
+  /* a picture from Files: its address is read from the stored file, so the
+     layer is there at once and the picture fills in a moment later */
+  if (w.kind === 'file') {
+    const el = h('div.wp__img', { dataset: { path: w.path }, style: { ...base, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' } });
+    MEDIA.urlOf(w.path).then(u => { if (u) el.style.backgroundImage = `url("${String(u).replace(/"/g, '\\"')}")`; }, () => {});
+    return el;
+  }
+  /* Data saver: the clip's own first frame, a still, instead of downloading and playing the video */
+  if (w.kind === 'video' && w.poster && SAVER.on()) {
+    return h('img.wp__still', { src: w.poster, alt: '', 'aria-hidden': 'true', style: { ...base, objectFit: 'cover' } });
+  }
+
   if (w.kind === 'video') {
+    /* the clip holds still in Game Mode and under Reduce motion (js/core/gamemode.js) */
+    const held = () => document.documentElement.dataset.gamemode === 'on'
+      || document.documentElement.dataset.motion === 'reduced'
+      || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
     /* The clip (up to a megabyte) waits until the desktop is up: during
        start-up it would only compete with StaticOS's own code for a slow
        connection, and the poster — its first frame — looks the same. */
     const ready = typeof document === 'undefined' || document.body?.dataset.ready === '1'
       || !!(typeof window !== 'undefined' && window.__staticBoot && window.__staticBoot.ok);
     const v = h('video.wp__video', {
-      src: ready || !w.poster ? w.url : null, poster: w.poster || null, autoplay: true, loop: true, muted: true, playsinline: true,
+      src: ready || !w.poster ? w.url : null, poster: w.poster || null, autoplay: !held(), loop: true, muted: true, playsinline: true,
       preload: 'auto', tabindex: '-1', 'aria-hidden': 'true',
       style: { ...base, objectFit: 'cover' },
     });
@@ -247,12 +335,13 @@ export function mediaLayer(w, h) {
       window.addEventListener('staticos:ready', () => {
         if (!v.isConnected || v.getAttribute('src')) return;
         v.src = w.url;
+        if (held()) return;
         const p = v.play();
         if (p && p.catch) p.catch(() => {});
       }, { once: true });
     }
     v.muted = true;                       // the attribute alone is not enough in some browsers
-    const go = () => { const p = v.play(); if (p && p.catch) p.catch(() => {}); };
+    const go = () => { if (held()) return; const p = v.play(); if (p && p.catch) p.catch(() => {}); };
     v.addEventListener('canplay', go, { once: true });
     /* A codec the browser will not decode fires `error` and leaves a black
        rectangle, which looks exactly like a broken site. Swap to the still
@@ -283,6 +372,6 @@ export function mediaLayer(w, h) {
 }
 
 export default {
-  BUILT_IN, list, custom, byId, add, remove, redeem, active, setActive,
+  BUILT_IN, list, custom, byId, add, addFile, addArt, remove, redeem, active, setActive, favs, isFav, setFav, toggleFav, FAV_KEY,
   isUnlocked, detectKind, mediaLayer, LIST_KEY, UNLOCK_KEY, ACTIVE_KEY,
 };

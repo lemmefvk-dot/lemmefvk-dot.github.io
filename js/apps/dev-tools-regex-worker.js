@@ -6,13 +6,18 @@
    it: Dev Tools gives it a time limit and terminates this worker if it
    does not answer.
 
-   in:  { id, source, flags, text, max }
-   out: { id, ok:true, matches:[{ index, length, text, groups:[…], named:{…} }], more }
+   in:  { id, source, flags, text, max, replace }
+   out: { id, ok:true, matches:[{ index, length, text, groups:[…], named:{…} }], more, replaced }
         { id, ok:false, error }
+   `replace` (a string, or null for none) is run through the browser's
+   own String.prototype.replace with the same pattern and flags, so $1,
+   $<name>, $&, $` and $' mean exactly what they mean in JavaScript; it
+   runs here too, under the same time limit.
    Text only: nothing here makes markup.
    ============================================================ */
+const MAX_OUT = 2000000;
 self.onmessage = e => {
-  const { id, source, flags, text, max = 1000 } = e.data || {};
+  const { id, source, flags, text, max = 1000, replace = null } = e.data || {};
   let re;
   try {
     re = new RegExp(source, flags.includes('g') ? flags : flags + 'g');
@@ -39,5 +44,15 @@ self.onmessage = e => {
     self.postMessage({ id, ok: false, error: String(err && err.message || err) });
     return;
   }
-  self.postMessage({ id, ok: true, matches, more });
+  let replaced = null, cut = false;
+  if (typeof replace === 'string') {
+    try {
+      replaced = text.replace(new RegExp(source, flags), replace);
+      if (replaced.length > MAX_OUT) { replaced = replaced.slice(0, MAX_OUT); cut = true; }
+    } catch (err) {
+      self.postMessage({ id, ok: false, error: String(err && err.message || err) });
+      return;
+    }
+  }
+  self.postMessage({ id, ok: true, matches, more, replaced, cut });
 };

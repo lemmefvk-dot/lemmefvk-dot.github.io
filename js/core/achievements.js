@@ -34,6 +34,20 @@
      deskwidgets:added · win:snap · power:lock   (only once the desktop is up)
      screensaver:shown { preview: false }  Daydreamer: it started by itself, not Preview
      sticker:placed { total }              Sticker Slinger; 10 at once: Sticker Bomb
+   More everyday badges:
+     arcade:score { online: true }         Played a Friend
+     watch:friend                          Movie Night: a friend joined your Watch Together room
+     daily:solved { streak }               Week of Stars (7) and Month of Stars (30), from Daily Stars
+     clips:change { kind: 'save' }         Clip It
+     arcade:score (the same game, over and over)  Game Master: 10 rounds of one game
+     backup:done                           Backed Up: a data backup was downloaded
+     tabs:join                             Tabbed: two windows made into tabs
+     keymap:change                         Shortcut Shaper: you changed a shortcut
+     the offline copy reporting complete   Offline Ready (asked of the service worker, not guessed)
+   Arcade Marathon has tiers: 25, 100 and 500 rounds.
+   Badges with a goal tell you when you pass halfway ("5 of 10 games"), once —
+   after a game, an Arcade round, a flashcard or a Daily Stars solve; not for
+   opening apps, which would pop up while you explore.
    Halloween (only while js/core/halloween.js says it is the season):
      pumpkin:carved                                   (Pumpkin Carver)
      halloween:trickortreat { kind, days }            (the dock pumpkin)
@@ -55,15 +69,15 @@ const KEY = 'portal.achievements';
 
 export const DEFS = [
   { id: 'first-game',    name: 'First Game',        icon: 'gamepad',   desc: 'Launch any game.' },
-  { id: 'explorer',      name: 'Explorer',          icon: 'compass',   desc: 'Play 10 different games.', goal: 10, stat: 'distinct' },
-  { id: 'hundred',       name: '100 Games Played',  icon: 'trending-up', desc: 'Launch games 100 times.', goal: 100, stat: 'total' },
-  { id: 'week',          name: 'Seven Days',        icon: 'calendar',  desc: 'Play something on 7 different days.', goal: 7, stat: 'days' },
+  { id: 'explorer',      name: 'Explorer',          icon: 'compass',   desc: 'Play 10 different games.', goal: 10, stat: 'distinct', unit: 'games' },
+  { id: 'hundred',       name: '100 Games Played',  icon: 'trending-up', desc: 'Launch games 100 times.', goal: 100, stat: 'total', unit: 'launches' },
+  { id: 'week',          name: 'Seven Days',        icon: 'calendar',  desc: 'Play something on 7 different days.', goal: 7, stat: 'days', unit: 'days' },
   { id: 'first-fav',     name: 'First Favorite',    icon: 'heart',     desc: 'Favorite a game.' },
   { id: 'arcade',        name: 'Arcade Regular',    icon: 'zap',       desc: 'Play a Static Arcade game.' },
   { id: 'high-score',    name: 'Personal Best',     icon: 'star',      desc: 'Beat your own high score in an Arcade game.' },
   { id: 'couch',         name: 'Couch Co-op',       icon: 'users',     desc: 'Play a 2-player Arcade game on one device.' },
-  { id: 'horror',        name: '10 Horror Games',   icon: 'moon',      desc: 'Play 10 different horror games.', goal: 10, stat: 'horror' },
-  { id: 'apps-10',       name: 'App Hopper',        icon: 'grid-9',    desc: 'Open 10 different apps.', goal: 10, stat: 'apps' },
+  { id: 'horror',        name: '10 Horror Games',   icon: 'moon',      desc: 'Play 10 different horror games.', goal: 10, stat: 'horror', unit: 'games' },
+  { id: 'apps-10',       name: 'App Hopper',        icon: 'grid-9',    desc: 'Open 10 different apps.', goal: 10, stat: 'apps', unit: 'apps' },
   { id: 'first-save',    name: 'First Save',        icon: 'save',      desc: 'Save a file — from Code, Paint, Notes, Files and more.' },
   { id: 'first-creation', name: 'First Creation',   icon: 'sparkles',  desc: 'Make a game in Static Forge.' },
   { id: 'iterate',       name: 'Iterator',          icon: 'refresh',   desc: 'Change a creation by describing an edit.' },
@@ -75,9 +89,21 @@ export const DEFS = [
   /* Everyday badges: each one is something you did, heard from the bus event the
      app or shell part itself emits when it really happens (see init() below) */
   { id: 'winner',        name: 'Winner',            icon: 'star',      desc: 'Win a round of an Arcade game.' },
-  { id: 'marathon',      name: 'Arcade Marathon',   icon: 'gamepad',   desc: 'Finish 25 Arcade rounds.', goal: 25, stat: 'rounds' },
+  { id: 'marathon',      name: 'Arcade Marathon',   icon: 'gamepad',   desc: 'Finish 25 Arcade rounds.', goal: 25, stat: 'rounds', unit: 'rounds' },
+  { id: 'marathon-100',  name: 'Arcade Marathon II', icon: 'gamepad',  desc: 'Finish 100 Arcade rounds.', goal: 100, stat: 'rounds', unit: 'rounds' },
+  { id: 'marathon-500',  name: 'Arcade Marathon III', icon: 'gamepad', desc: 'Finish 500 Arcade rounds.', goal: 500, stat: 'rounds', unit: 'rounds' },
+  { id: 'played-friend', name: 'Played a Friend',   icon: 'users',     desc: 'Finish an online Arcade round against a friend.' },
+  { id: 'friend-watch',  name: 'Movie Night',       icon: 'film',      desc: 'Let a friend watch with you: a friend joins your Watch Together room.' },
+  { id: 'daily-7',       name: 'Week of Stars',     icon: 'star',      desc: 'Solve Daily Stars 7 days in a row.', goal: 7, stat: 'dstreak', unit: 'days in a row' },
+  { id: 'daily-30',      name: 'Month of Stars',    icon: 'star',      desc: 'Solve Daily Stars 30 days in a row.', goal: 30, stat: 'dstreak', unit: 'days in a row' },
+  { id: 'clip-it',       name: 'Clip It',           icon: 'film',      desc: 'Record a clip of an Arcade game.' },
+  { id: 'game-master',   name: 'Game Master',       icon: 'star',    desc: 'Finish 10 rounds of the same Arcade game.', goal: 10, stat: 'mastery', unit: 'rounds of one game' },
+  { id: 'backed-up',     name: 'Backed Up',         icon: 'download',  desc: 'Download a backup of your saved data.' },
+  { id: 'tabbed',        name: 'Tabbed',            icon: 'layers',    desc: 'Drag one window onto another to make tabs.' },
+  { id: 'shortcut-shaper', name: 'Shortcut Shaper', icon: 'keyboard',  desc: 'Change a keyboard shortcut in Settings.' },
+  { id: 'offline-ready', name: 'Offline Ready',     icon: 'hard-drive', desc: 'Let StaticOS finish saving its offline copy, so it opens without a connection.' },
   { id: 'hit-books',     name: 'Hit the Books',     icon: 'bookmark',  desc: 'Grade a flashcard in Study.' },
-  { id: 'card-shark',    name: 'Card Shark',        icon: 'zap',       desc: 'Grade 50 flashcards in Study.', goal: 50, stat: 'cards' },
+  { id: 'card-shark',    name: 'Card Shark',        icon: 'zap',       desc: 'Grade 50 flashcards in Study.', goal: 50, stat: 'cards', unit: 'cards' },
   { id: 'turned-in',     name: 'Turned It In',      icon: 'check-circle', desc: 'Mark a homework assignment done in Study.' },
   { id: 'ticked-off',    name: 'Ticked Off',        icon: 'check',     desc: 'Tick off a task in Tasks.' },
   { id: 'in-the-zone',   name: 'In the Zone',       icon: 'flame',     desc: 'Run a Focus timer session all the way to the end.' },
@@ -96,7 +122,7 @@ export const DEFS = [
   { id: 'sticker-bomb',  name: 'Sticker Bomb',      icon: 'image',     desc: 'Have 10 stickers on the desktop at once.' },
   /* Halloween badges: shown (and earnable) only during the season, kept forever once earned */
   { id: 'pumpkin-carved', name: 'Carved a Pumpkin', icon: 'pumpkin',   desc: 'Carve a jack-o’-lantern in the Pumpkin Carver.', season: 'halloween' },
-  { id: 'trick-or-treat', name: 'Trick-or-Treater', icon: 'candy',     desc: 'Trick-or-treat at the dock pumpkin on 5 different days.', goal: 5, stat: 'tot', season: 'halloween' },
+  { id: 'trick-or-treat', name: 'Trick-or-Treater', icon: 'candy',     desc: 'Trick-or-treat at the dock pumpkin on 5 different days.', goal: 5, stat: 'tot', unit: 'days', season: 'halloween' },
   { id: 'haunted-maze',  name: 'Survived the Haunted Maze', icon: 'ghost', desc: 'Make it out of the Haunted Maze in the Arcade.', season: 'halloween' },
   { id: 'ghost-hunter',  name: 'Ghost Hunter',      icon: 'ghost',     desc: `Find all ${GHOSTS.TOTAL} ghosts hiding around StaticOS.`, goal: GHOSTS.TOTAL, stat: 'ghosts', season: 'halloween' },
 ];
@@ -106,7 +132,7 @@ const obj = v => (v && typeof v === 'object' ? v : {});
 const read = () => {
   const v = store.get(KEY, null);
   const base = v && typeof v === 'object' ? v : {};
-  return { ...base, unlocked: obj(base.unlocked), horror: obj(base.horror), apps: obj(base.apps), days: obj(base.days), counts: obj(base.counts) };
+  return { ...base, half: obj(base.half), unlocked: obj(base.unlocked), horror: obj(base.horror), apps: obj(base.apps), days: obj(base.days), counts: obj(base.counts) };
 };
 const write = v => store.set(KEY, { ...v });
 
@@ -130,6 +156,16 @@ export function unlock(id) {
 }
 
 let playsRef = null;
+/* Daily Stars' own record (arcade/daily-state.js): the streak as it stands today */
+function dailyStreak() {
+  try {
+    const s = store.get('portal.arcadeDaily', null)?.streak;
+    if (!s || !Number.isInteger(s.cur)) return 0;
+    const t = new Date(), y = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1);
+    const key = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return s.last === key(t) || s.last === key(y) ? s.cur : 0;
+  } catch (e) { return 0; }
+}
 const trickDays = () => Object.keys(obj(store.get('portal.halloween', null)?.days)).length;
 
 function count(d, cur, stats) {
@@ -141,6 +177,8 @@ function count(d, cur, stats) {
     case 'ghosts': return GHOSTS.foundCount();
     case 'rounds': return Number(cur.counts.rounds) || 0;
     case 'cards': return Number(cur.counts.cards) || 0;
+    case 'mastery': return Math.max(0, ...Object.values(obj(cur.counts.games)).map(Number).filter(Number.isFinite));
+    case 'dstreak': return dailyStreak();
     default: return Number(stats[d.stat]) || 0;
   }
 }
@@ -181,6 +219,34 @@ function seedDays(plays) {
   } catch (e) { /* no history yet */ }
 }
 
+/** Rounds finished per Arcade game, most played first: [{ game, rounds }] (what Game Master counts). */
+export function mastery() {
+  return Object.entries(obj(read().counts.games)).map(([game, rounds]) => ({ game, rounds: Number(rounds) || 0 }))
+    .filter(r => r.rounds > 0).sort((a, b) => b.rounds - a.rounds);
+}
+
+/** "5 of 10 games" — a badge's progress in words, or '' when it has no goal. */
+export const progressText = a => (a && a.goal ? `${a.progress || 0} of ${a.goal} ${a.unit || ''}`.trim() : '');
+
+/* A badge with a goal says so once when you pass halfway, not on every step:
+   portal.achievements.half = { id: true } */
+function checkHalfway() {
+  const cur = read();
+  const half = { ...obj(cur.half) };
+  let changed = false;
+  for (const a of list()) {
+    if (!a.goal || a.unlocked || half[a.id] || a.goal < 4) continue;
+    if (a.progress * 2 < a.goal) continue;
+    half[a.id] = true; changed = true;
+    bus.emit('noti:push', {
+      app: 'Achievements', icon: a.icon || 'star', timeout: 5000, kind: 'achievement-progress',
+      title: `${a.name}: halfway`, message: `${progressText(a)}. ${a.desc}`,
+      actions: [{ label: 'View', onClick: () => bus.emit('achievements:open') }],
+    });
+  }
+  if (changed) write({ ...read(), half });
+}
+
 const desktopUp = () => typeof document !== 'undefined' && document.body?.dataset.ready === '1';
 
 /** Count one more of something you did; -> the new total. Counted only from the day it exists. */
@@ -191,6 +257,24 @@ function bump(key) {
   return n;
 }
 
+/* Offline Ready: the service worker is asked whether its copy is complete (core/offline.js),
+   now and then until it says yes — never assumed. */
+function watchOffline() {
+  if (isUnlocked('offline-ready')) return;
+  let busy = false, ticks = 0, asked = 0;
+  const off = bus.on('tick:5s', async () => {
+    /* once a minute, 30 times at most: the answer only ever changes while the worker saves its copy */
+    if (busy || !desktopUp() || ++ticks % 12 !== 1) return;
+    if (isUnlocked('offline-ready') || ++asked > 30) { off(); return; }
+    busy = true;
+    try {
+      const O = await import('./offline.js');
+      const s = await O.status();
+      if (s && s.supported && s.complete === true) { unlock('offline-ready'); off(); }
+    } catch (e) { /* no service worker here */ } finally { busy = false; }
+  });
+}
+
 let wired = false;
 export function init({ plays } = {}) {
   if (wired) return;
@@ -199,6 +283,7 @@ export function init({ plays } = {}) {
   if (plays) seedDays(plays);
 
   bus.on('game:launch', e => {
+    setTimeout(checkHalfway, 0);
     unlock('first-game');
     if (e?.kind === 'arcade') unlock('arcade');
     if (plays) {
@@ -222,9 +307,31 @@ export function init({ plays } = {}) {
     const game = s?.game || s?.id || s?.gameId;
     if (game === 'haunted-maze' && s.won !== false && s.survived !== false) unlock('haunted-maze');
     if (s?.won === true) unlock('winner');
-    if (bump('rounds') >= 25) unlock('marathon');
+    if (s?.online === true && s.void !== true) unlock('played-friend');
+    const n = bump('rounds');
+    if (n >= 25) unlock('marathon');
+    if (n >= 100) unlock('marathon-100');
+    if (n >= 500) unlock('marathon-500');
+    if (game) {
+      const cur = read();
+      const games = { ...obj(cur.counts.games), [game]: (Number(obj(cur.counts.games)[game]) || 0) + 1 };
+      write({ ...cur, counts: { ...cur.counts, games } });
+      if (games[game] >= 10) unlock('game-master');
+    }
+    checkHalfway();
   });
-  bus.on('flashcards:review', () => { unlock('hit-books'); if (bump('cards') >= 50) unlock('card-shark'); });
+  bus.on('watch:friend', () => unlock('friend-watch'));
+  bus.on('daily:solved', e => {
+    if (Number(e?.streak) >= 7) unlock('daily-7');
+    if (Number(e?.streak) >= 30) unlock('daily-30');
+    checkHalfway();
+  });
+  bus.on('clips:change', e => { if (e?.kind === 'save') unlock('clip-it'); });
+  bus.on('backup:done', () => unlock('backed-up'));
+  bus.on('tabs:join', () => { if (desktopUp()) unlock('tabbed'); });
+  bus.on('keymap:change', () => { if (desktopUp()) unlock('shortcut-shaper'); });
+  watchOffline();
+  bus.on('flashcards:review', () => { unlock('hit-books'); if (bump('cards') >= 50) unlock('card-shark'); checkHalfway(); });
   bus.on('homework:done', () => unlock('turned-in'));
   bus.on('tasks:done', () => unlock('ticked-off'));
   bus.on('focus:done', () => unlock('in-the-zone'));
@@ -269,4 +376,4 @@ export function init({ plays } = {}) {
   if (typeof window !== 'undefined') window.addEventListener('gamepadconnected', () => bus.emit('gamepad:connected'));
 }
 
-export default { init, list, summary, unlock, isUnlocked, DEFS };
+export default { init, list, summary, unlock, isUnlocked, mastery, progressText, DEFS };

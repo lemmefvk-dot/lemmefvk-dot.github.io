@@ -1,8 +1,12 @@
 /* ============================================================
    arcade/mines.js — Mines: clear the field without a bang.
 
-   Beginner is 9×9 with 10 mines; Expert-lite is 16×16 with 40. The
-   choice is remembered (portal.arcadeMines) so "play again" keeps it.
+   Beginner is 9×9 with 10 mines; Expert-lite is 16×16 with 40;
+   Custom is any board from 5×5 to 30×24 with as many mines as leave
+   the first click's square of nine clear. The choice is remembered
+   (portal.arcadeMines) so "play again" keeps it. A custom board keeps
+   its own best time per size and mine count, and doesn't change the
+   Arcade's best (a board with one mine would win every time).
 
    The first cell you open is always safe: mines are only laid after
    that click, and never on it or its eight neighbours (unless the
@@ -23,11 +27,20 @@
    lower is better. Hitting a mine ends the round with won:false (the
    time is still reported, and the result says it was a loss). While
    paused the board is covered, so a pause can't be used to think.
+
+   ONLINE RACE (ctx.online.kit, ./race.js): Beginner, with the mines
+   laid from the room's seed around a safe square picked by the same
+   seed, which is opened for both players at the start — the same
+   field and the same first move on both screens, and the clock runs
+   from there. No board sizes or New in a race, and nothing is saved.
+   The share of safe squares opened goes to the friend's bar; a bang
+   ends your race with that share.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { store } from '../core/store.js';
 import * as padmap from '../core/padmap.js';
+import { rng } from './kit.js';
 
 const MODES = {
   easy: { cols: 9, rows: 9, mines: 10, name: 'Beginner', short: '9×9' },
@@ -35,6 +48,18 @@ const MODES = {
 };
 const PREF = 'portal.arcadeMines';
 const LONG_PRESS = 420;
+/* a custom board's limits: the first click and its eight neighbours always stay clear */
+export const CUSTOM = { cols: [5, 30], rows: [5, 24], minMines: 1 };
+export const maxMines = (cols, rows) => cols * rows - 9;
+/** a custom board from what was typed: { cols, rows, mines, fixed: [what was changed] } */
+export function customBoard(cols, rows, mines) {
+  const fixed = [];
+  const clampInt = (v, lo, hi, name) => { const n = Math.round(Number(v)); const out = Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : lo; if (out !== Number(v)) fixed.push(name); return out; };
+  const c = clampInt(cols, ...CUSTOM.cols, 'columns'), r = clampInt(rows, ...CUSTOM.rows, 'rows');
+  const m = clampInt(mines, CUSTOM.minMines, maxMines(c, r), 'mines');
+  return { cols: c, rows: r, mines: m, fixed };
+}
+const customMode = b => ({ cols: b.cols, rows: b.rows, mines: b.mines, name: 'Custom', short: `${b.cols}×${b.rows}`, custom: true });
 
 const FLAG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.5 21V3.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M7.5 4h10.5l-2.6 4.2L18 12.4H7.5z" fill="currentColor"/></svg>';
 const MINE = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M5.3 18.7l2.8-2.8M15.9 8.1l2.8-2.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="6" fill="currentColor"/><circle cx="10" cy="10" r="1.7" fill="#fff" opacity=".75"/></svg>';
@@ -63,8 +88,8 @@ const CSS = `
 .arx-mn__btn[aria-pressed="true"]{background:color-mix(in srgb,var(--ga) 22%,transparent);border-color:color-mix(in srgb,var(--ga) 60%,transparent);color:var(--ink-0,#fff)}
 .arx-mn__btn[aria-pressed="true"] svg{color:var(--ga)}
 .arx-mn__wrap{position:relative;flex:1 1 auto;min-height:220px;width:100%;container-type:size;display:grid;place-items:center}
-.arx-mn__board{--n:9;position:relative;width:min(100cqw,100cqh,720px);height:min(100cqw,100cqh,720px);display:grid;
-  grid-template-columns:repeat(var(--n),minmax(0,1fr));grid-template-rows:repeat(var(--n),minmax(0,1fr));gap:var(--gap,3px);padding:var(--gap,3px);border-radius:var(--r-lg,15px);
+.arx-mn__board{--n:9;--m:9;position:relative;width:min(100cqw,calc(100cqh * var(--n) / var(--m)),calc(720px * var(--n) / max(var(--n), var(--m))));aspect-ratio:var(--n) / var(--m);display:grid;
+  grid-template-columns:repeat(var(--n),minmax(0,1fr));grid-template-rows:repeat(var(--m),minmax(0,1fr));gap:var(--gap,3px);padding:var(--gap,3px);border-radius:var(--r-lg,15px);
   background:var(--fill-0,rgba(255,255,255,.03));border:1px solid var(--line-1,rgba(255,255,255,.08));container-type:inline-size;touch-action:manipulation;-webkit-touch-callout:none}
 .arx-mn__c{position:relative;display:grid;place-items:center;min-width:0;min-height:0;padding:0;border:0;border-radius:var(--cr,6px);cursor:pointer;
   font:800 calc(100cqw / var(--n) * .5)/1 var(--font,system-ui);font-variant-numeric:tabular-nums;color:var(--ink-1,#ddd);outline:none;-webkit-tap-highlight-color:transparent;
@@ -90,6 +115,12 @@ const CSS = `
 .arx-mn.is-over .arx-mn__c{cursor:default}
 .arx-mn:not(.is-reduced) .arx-mn__c.is-open{animation:arx-mn-open .16s ease-out}
 @keyframes arx-mn-open{from{transform:scale(.86);opacity:.4}to{transform:none;opacity:1}}
+.arx-mn__custom{width:min(100%,720px);display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;padding:8px 10px;border-radius:var(--r-md,11px);background:var(--fill-0,rgba(255,255,255,.03));border:1px solid var(--line-1,rgba(255,255,255,.08));font-size:12px;flex:0 0 auto}
+.arx-mn__custom[hidden]{display:none}
+.arx-mn__custom label{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2,#bbb)}
+.arx-mn__custom input{width:4.2em;font:700 13px/1 var(--font,system-ui);color:var(--ink-0,#fff);background:var(--fill-1,rgba(255,255,255,.06));border:1px solid var(--line-1,rgba(255,255,255,.12));border-radius:8px;padding:6px 6px}
+.arx-mn__custom input:focus-visible{outline:2px solid var(--ga);outline-offset:1px}
+.arx-mn__custom small{color:var(--ink-3,#999)}
 .arx-mn__cover{position:absolute;inset:0;display:grid;place-items:center;border-radius:var(--r-lg,15px);background:#120b10;font-size:clamp(20px,5cqmin,30px);font-weight:800;color:#fff;z-index:3}
 .arx-mn__foot{width:min(100%,720px);min-height:34px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:var(--sp-3,8px);font-size:var(--fs-12,12px);color:var(--ink-3,#888);text-align:center}
 .arx-mn__foot kbd{font:600 calc(11px * var(--fs-k,1))/1 var(--mono,ui-monospace,monospace);padding:3px 6px;border-radius:5px;border:1px solid var(--line-2,rgba(255,255,255,.14));border-bottom-width:2px;background:var(--fill-1,rgba(255,255,255,.05));color:var(--ink-1,#ddd)}
@@ -110,8 +141,18 @@ export default {
     const onEnd = typeof ctx.onEnd === 'function' ? ctx.onEnd : () => {};
 
     let dead = false, paused = false;
+    /* an online race: Beginner, laid from the room's seed */
+    const NET = ctx.online?.kit && Number.isInteger(ctx.online.seed) ? ctx.online : null;
+    const raceRnd = NET ? rng((NET.seed >>> 0) ^ 0x6d1e5) : null;
+    let raceSafe = -1;
     const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-    let modeKey = MODES[store.get(`${PREF}.mode`)] ? store.get(`${PREF}.mode`) : 'easy';
+    const prefNow = () => { const p = store.get(PREF, null); return p && typeof p === 'object' ? p : {}; };
+    const savedCustom = prefNow().custom;
+    let custom = savedCustom ? customBoard(savedCustom.cols, savedCustom.rows, savedCustom.mines) : { cols: 12, rows: 10, mines: 20 };
+    const modeOf = key => (key === 'custom' ? customMode(custom) : MODES[key]);
+    let modeKey = NET ? 'easy' : MODES[store.get(`${PREF}.mode`)] || (store.get(`${PREF}.mode`) === 'custom' && savedCustom) ? store.get(`${PREF}.mode`) : 'easy';
+    const customBest = { ...(prefNow().customBest || {}) };
+    const customKey = b => `${b.cols}x${b.rows}x${b.mines}`;
     let M, N;                        // current mode, cell count
     let mine, adj, cell;             // Uint8Arrays; cell: 0 covered, 1 open, 2 flagged
     let laid = false, over = false, won = false;
@@ -130,7 +171,17 @@ export default {
     const modeBtns = Object.entries(MODES).map(([key, m]) =>
       h('button', { type: 'button', dataset: { mode: key }, 'aria-pressed': 'false', title: `${m.name}: ${m.short}, ${m.mines} mines` },
         h('span.arx-mn__long', { text: m.name }), h('small', { text: m.short })));
+    const customShort = h('small', { text: '' });
+    const customBtn = h('button', { type: 'button', dataset: { mode: 'custom' }, 'aria-pressed': 'false', title: 'Your own size and number of mines' }, h('span', { text: 'Custom' }), customShort);
+    modeBtns.push(customBtn);
     const seg = h('div.arx-mn__seg', { role: 'group', 'aria-label': 'Board size' }, modeBtns);
+    /* the custom board's settings */
+    const num = (label, v, lo, hi) => h('input', { type: 'number', min: String(lo), max: String(hi), step: '1', value: String(v), 'aria-label': label, inputmode: 'numeric' });
+    const colsIn = num('Columns', custom.cols, ...CUSTOM.cols), rowsIn = num('Rows', custom.rows, ...CUSTOM.rows), minesIn = num('Mines', custom.mines, CUSTOM.minMines, maxMines(custom.cols, custom.rows));
+    const densityV = h('small', { text: '' });
+    const playCustom = h('button.arx-mn__btn', { type: 'button', dataset: { act: 'play-custom' } }, icon('play'), h('span', { text: 'Play' }));
+    const customBar = h('div.arx-mn__custom', { hidden: true, role: 'group', 'aria-label': 'Custom board' },
+      h('label', 'Columns', colsIn), h('label', 'Rows', rowsIn), h('label', 'Mines', minesIn), densityV, playCustom);
     const vFlags = h('span', { text: '10' });
     const vTime = h('span', { text: '0' });
     const flagsRead = h('div.arx-mn__read.arx-mn__read--flags', { title: 'Mines left (mines minus flags)', 'aria-label': 'Mines left' }, h('span', { html: FLAG }), vFlags);
@@ -138,6 +189,7 @@ export default {
     const flagBtn = h('button.arx-mn__btn', { type: 'button', 'aria-pressed': 'false', title: 'Flag mode: taps place flags' }, h('span', { html: FLAG }), h('span', { text: 'Flag' }));
     const newBtn = h('button.arx-mn__btn', { type: 'button', title: 'New board', 'aria-label': 'New board' }, icon('refresh'), h('span.arx-mn__long', { text: 'New' }));
     const top = h('div.arx-mn__top', seg, h('div.arx-mn__grow'), flagsRead, timeRead, flagBtn, newBtn);
+    if (NET) { seg.hidden = true; newBtn.hidden = true; }
     const board = h('div.arx-mn__board', { role: 'group' });
     const wrap = h('div.arx-mn__wrap', board);
     const foot = h('div.arx-mn__foot');
@@ -145,8 +197,14 @@ export default {
     const reduced = !!ctx.reduced || document.body.classList.contains('reduce-motion')
       || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
     const root = h('div.arx-mn' + (reduced ? '.is-reduced' : ''), { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } },
-      h('style', { text: CSS }), top, wrap, foot, live);
+      h('style', { text: CSS }), top, customBar, wrap, foot, live);
     el.appendChild(root);
+    const paintDensity = () => {
+      const b = customBoard(colsIn.value, rowsIn.value, minesIn.value);
+      minesIn.max = String(maxMines(b.cols, b.rows));
+      densityV.textContent = `${Math.round(100 * b.mines / (b.cols * b.rows))}% mines · up to ${maxMines(b.cols, b.rows)}`;
+    };
+    paintDensity();
 
     /* A light board gets deeper number colours. Read the ink actually in
        effect, not the OS theme: the Arcade keeps its cabinet dark (and its
@@ -200,15 +258,18 @@ export default {
     function build(key) {
       clearInterval(ticker); ticker = 0;
       modeKey = key;
-      M = MODES[key];
+      M = modeOf(key);
       N = M.cols * M.rows;
       mine = new Uint8Array(N); adj = new Uint8Array(N); cell = new Uint8Array(N);
       laid = false; over = false; won = false; opened = 0; flags = 0; boomAt = -1;
       banked = 0; lastSec = -1; focusIdx = Math.floor(N / 2); hoverIdx = -1;
       root.classList.remove('is-over');
       board.style.setProperty('--n', String(M.cols));
-      board.style.setProperty('--gap', M.cols > 12 ? '2px' : '4px');
-      board.style.setProperty('--cr', M.cols > 12 ? '4px' : '7px');
+      board.style.setProperty('--m', String(M.rows));
+      const big = Math.max(M.cols, M.rows);
+      board.style.setProperty('--gap', big > 20 ? '1px' : big > 12 ? '2px' : '4px');
+      board.style.setProperty('--cr', big > 20 ? '3px' : big > 12 ? '4px' : '7px');
+      customShort.textContent = `${custom.cols}×${custom.rows}`;
       board.setAttribute('aria-label', `Minefield, ${M.rows} rows by ${M.cols} columns, ${M.mines} mines`);
       buttons = Array.from({ length: N }, (_, i) => h('button.arx-mn__c', { type: 'button', tabindex: i === focusIdx ? '0' : '-1', dataset: { i: String(i) } }));
       board.replaceChildren(...buttons);
@@ -223,8 +284,10 @@ export default {
       if (N - 9 >= M.mines) around(safe).forEach(n => spare.add(n));
       const pool = [];
       for (let i = 0; i < N; i++) if (!spare.has(i)) pool.push(i);
+      /* a race lays them from the room's seed, so both fields are the same */
+      const rnd = raceRnd || Math.random;
       for (let k = 0; k < M.mines; k++) {
-        const j = k + Math.floor(Math.random() * (pool.length - k));
+        const j = k + Math.floor(rnd() * (pool.length - k));
         [pool[k], pool[j]] = [pool[j], pool[k]];
         mine[pool[k]] = 1;
       }
@@ -295,6 +358,7 @@ export default {
         paint(k);
         if (!adj[k]) for (const n of around(k)) if (cell[n] === 0 && !mine[n]) stack.push(n);
       }
+      if (NET) NET.progress(opened / (N - M.mines));
       if (opened === N - M.mines) return win();
       paintReadouts();
     }
@@ -330,9 +394,24 @@ export default {
       end();
       const score = Math.round(banked / 100) / 10;
       onScore(score);
-      foot.replaceChildren(h('div.arx-mn__result', { role: 'status' }, icon('check'), 'Cleared in ', h('b', { text: `${score.toFixed(1)} s` }), ` · ${M.name}`));
+      if (NET) {
+        foot.replaceChildren(h('div.arx-mn__result', { role: 'status' }, icon('check'), 'Cleared in ', h('b', { text: `${score.toFixed(1)} s` }), ` · ${M.name}`));
+        say(`Cleared in ${score.toFixed(1)} seconds.`);
+        onEnd({ score, won: true, detail: `Race · cleared ${M.name} ${M.short} (${M.mines} mines) in ${score.toFixed(1)} s`, race: { done: true, ms: Math.round(banked), p: 1 } });
+        return;
+      }
+      /* a custom board: its own best, per size and mine count */
+      let note = '';
+      if (M.custom) {
+        const k = customKey(M), prev = customBest[k];
+        if (!Number.isFinite(prev) || score < prev) customBest[k] = score;
+        try { store.set(PREF, { ...prefNow(), customBest: { ...customBest } }); } catch (err) { /* a convenience */ }
+        note = Number.isFinite(prev) ? (score < prev ? ' · a new best for this board' : ` · best here ${prev.toFixed(1)} s`) : ' · the first time on this board';
+      }
+      foot.replaceChildren(h('div.arx-mn__result', { role: 'status' }, icon('check'), 'Cleared in ', h('b', { text: `${score.toFixed(1)} s` }), ` · ${M.name}${M.custom ? ` ${M.short}, ${M.mines} mines` : ''}${note}`));
       say(`Cleared in ${score.toFixed(1)} seconds.`);
-      onEnd({ score, won: true, detail: `Cleared ${M.name} ${M.short} (${M.mines} mines) in ${score.toFixed(1)} s`, mode: modeKey });
+      onEnd({ score, won: true, detail: `Cleared ${M.name} ${M.short} (${M.mines} mines) in ${score.toFixed(1)} s${note}`, mode: modeKey,
+        ...(M.custom ? { assisted: 'A custom board doesn’t change your best; it keeps its own' } : {}) });
     }
 
     function lose(i) {
@@ -345,6 +424,10 @@ export default {
       say(`Boom. You hit a mine. ${opened} of ${safe} safe cells cleared.`);
       /* a loss has no clearing time, so it reports no score: a quick bang
          must never become the "best" time in a lower-is-better game */
+      if (NET) {
+        onEnd({ score: null, won: false, detail: `Race · hit a mine after ${score.toFixed(1)} s · ${opened} of ${safe} safe cells cleared`, race: { done: false, p: opened / safe, ms: Math.round(banked) } });
+        return;
+      }
       onEnd({ score: null, won: false, detail: `Hit a mine after ${score.toFixed(1)} s · ${opened} of ${safe} safe cells cleared · ${M.name} ${M.short}`, mode: modeKey, seconds: score });
     }
 
@@ -450,6 +533,7 @@ export default {
        and Space/Enter open the focused cell. */
     listen(window, 'keydown', e => {
       if (dead || paused) return;
+      if (e.target instanceof Element && e.target.closest('input')) return;     /* typing a custom board's size */
       const fromBoard = e.target instanceof Node && board.contains(e.target);
       const isFlag = e.key === 'f' || e.key === 'F' || (!e.isTrusted && !!e.code && e.code === padFlagCode());
       const act = !fromBoard && (e.key === ' ' || e.key === 'Enter');
@@ -482,19 +566,53 @@ export default {
       const b = e.target.closest?.('button[data-mode]');
       if (!b || dead) return;
       const key = b.dataset.mode;
+      /* Custom first shows its settings; Play deals the board */
+      if (key === 'custom') {
+        customBar.hidden = !customBar.hidden;
+        if (!customBar.hidden) { paintDensity(); colsIn.focus({ preventScroll: true }); say('Custom board: set the columns, rows and mines, then Play.'); }
+        return;
+      }
+      customBar.hidden = true;
       try { store.set(PREF, { ...(store.get(PREF) || {}), mode: key }); } catch (err) { /* storage is a convenience */ }
       if (key === modeKey && !laid) return;
       build(key);
       say(`${MODES[key].name}, ${MODES[key].short}, ${MODES[key].mines} mines. New board.`);
     });
+    for (const inp of [colsIn, rowsIn, minesIn]) {
+      listen(inp, 'input', paintDensity);
+      listen(inp, 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); startCustom(); } });
+    }
+    listen(playCustom, 'click', () => startCustom());
+    function startCustom() {
+      if (dead) return;
+      const b = customBoard(colsIn.value, rowsIn.value, minesIn.value);
+      custom = { cols: b.cols, rows: b.rows, mines: b.mines };
+      colsIn.value = String(b.cols); rowsIn.value = String(b.rows); minesIn.value = String(b.mines);
+      paintDensity();
+      try { store.set(PREF, { ...prefNow(), mode: 'custom', custom }); } catch (err) { /* storage is a convenience */ }
+      customBar.hidden = true;
+      build('custom');
+      const fixedNote = b.fixed.length ? ` (${b.fixed.join(' and ')} kept to what fits)` : '';
+      say(`Custom: ${b.cols} columns by ${b.rows} rows, ${b.mines} mines${fixedNote}. New board.`);
+      foot.replaceChildren(h('span.arx-mn__hint', { text: `Custom ${b.cols}×${b.rows}, ${b.mines} mines${fixedNote}.${Number.isFinite(customBest[customKey(b)]) ? ` Best here ${customBest[customKey(b)].toFixed(1)} s.` : ''}` }));
+      requestAnimationFrame(() => { if (!dead) buttons[focusIdx]?.focus({ preventScroll: true }); });
+    }
     listen(flagBtn, 'click', () => {
       flagMode = !flagMode;
       flagBtn.setAttribute('aria-pressed', String(flagMode));
       say(flagMode ? 'Flag mode on: taps place flags' : 'Flag mode off');
     });
-    listen(newBtn, 'click', () => { build(modeKey); say('New board'); });
+    listen(newBtn, 'click', () => { if (NET) return; build(modeKey); say('New board'); });
 
     build(modeKey);
+    /* a race opens the same safe square on both screens, from the seed: the clock starts there */
+    if (NET) {
+      raceSafe = Math.floor(raceRnd() * N);
+      focusIdx = raceSafe;
+      buttons.forEach((b, i) => b.setAttribute('tabindex', i === raceSafe ? '0' : '-1'));
+      open(raceSafe);
+      say(`Race: the same Beginner field as ${NET.peer?.name || 'your friend'}, opened at the same square.`);
+    }
     requestAnimationFrame(() => { if (!dead) buttons[focusIdx]?.focus({ preventScroll: true }); });
 
     return {
@@ -519,6 +637,13 @@ export default {
         if (laid && !over) startAt = performance.now();
         board.querySelector('.arx-mn__cover')?.remove();
       },
+      /* a read-only snapshot for automated play-tests */
+      peek: () => ({
+        mode: modeKey, cols: M.cols, rows: M.rows, mines: M.mines, custom: { ...custom }, customBest: { ...customBest }, laid, over, won, opened, flags,
+        mineAt: laid ? [...mine].map((v, i) => (v ? i : -1)).filter(i => i >= 0) : [], cell: [...cell], customOpen: !customBar.hidden,
+        adj: laid ? [...adj] : [],
+        race: NET ? { seed: NET.seed >>> 0, safe: raceSafe } : null,
+      }),
     };
   },
 };

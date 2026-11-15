@@ -11,10 +11,12 @@
      bitmapOf(blob)                  -> Promise<ImageBitmap|HTMLImageElement>
      encode(canvas, type, quality)   -> Promise<Blob|null>   (null: can't)
      saveBlob(api, app, dir, name, blob)   keeps a copy + a notification
+                                           (Open in Photos, Send with Drop, Show in Files)
    ============================================================ */
 import * as media from '../core/media.js';
 import { importBlock } from '../core/fileimport.js';
 import vfs from '../core/vfs.js';
+import { t } from '../core/i18n.js';
 
 export const stemOf = n => { const i = String(n).lastIndexOf('.'); return i > 0 ? String(n).slice(0, i) : String(n); };
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -73,14 +75,21 @@ export function destFor(source) {
   return !importBlock(dir) && vfs.node(dir) ? dir : picturesDir();
 }
 
-export async function saveBlob(api, app, dir, name, blob, { title = 'Saved a copy' } = {}) {
+/** What a finished file offers next: a picture opens in Photos, anything can go to a friend with Drop. */
+export function nextActions(api, path, type = '') {
+  const pic = /^image\//.test(type) || media.kindOf(path) === 'image';
+  return [
+    pic ? { label: t('Open in Photos'), onClick: () => api.openApp('photos', { path }) } : { label: t('Open'), onClick: () => api.openFile(path) },
+    { label: t('Send with Drop'), onClick: () => api.openApp('drop', { send: [path] }) },
+    { label: t('Show in Files'), onClick: () => api.openApp('files', { path }) },
+  ];
+}
+
+export async function saveBlob(api, app, dir, name, blob, { title = 'Saved a copy', icon = 'image' } = {}) {
   const { path } = await media.save(dir, name, blob);
   api.notify({
-    app, icon: 'image', title, message: `${vfs.baseName(path)} · ${api.fmt.fmtBytes(blob.size)}`,
-    actions: [
-      { label: 'Open', onClick: () => api.openFile(path) },
-      { label: 'Show in Files', onClick: () => api.openApp('files', { path }) },
-    ],
+    app, icon, title, message: `${vfs.baseName(path)} · ${api.fmt.fmtBytes(blob.size)}`,
+    actions: nextActions(api, path, blob.type),
   });
   return path;
 }
@@ -92,11 +101,11 @@ export function pickerView(api, { multi = false, onChange = () => {}, label = 'P
   let alive = true;
   const items = listPictures();
   let sel = [];
-  const input = h('input', { type: 'file', accept: 'image/*', multiple: multi, hidden: true, 'aria-label': 'Choose pictures from this computer' });
+  const input = h('input', { type: 'file', accept: 'image/*', multiple: multi, hidden: true, 'aria-label': t('Choose pictures from this computer') });
   const grid = h('div.pt__thumbs', { role: 'listbox', 'aria-label': label, 'aria-multiselectable': String(!!multi) });
   const info = h('small.pt__hint');
   const el = h('div.pt__picker', grid, h('div.pt__pickbar',
-    h('button.btn.btn--sm', { type: 'button', onclick: () => input.click() }, icon('upload'), h('span', { text: 'From computer…' })),
+    h('button.btn.btn--sm', { type: 'button', onclick: () => input.click() }, icon('upload'), h('span', { text: t('From computer…') })),
     info, input));
   const thumbs = new Map();
   function cell(src) {

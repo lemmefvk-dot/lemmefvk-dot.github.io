@@ -379,3 +379,62 @@ body.is-mobile .dlx .dlx-ql__acts .btn{height:34px}
   .dlx *,.dlx *::before,.dlx *::after{animation:none!important;transition:none!important}
 }
 body.reduce-motion .dlx *,body.reduce-motion .dlx *::before,body.reduce-motion .dlx *::after{animation:none!important;transition:none!important}
+
+/* ==================================================================
+   bulk update: several picked at once, filters, Storage, Duplicates
+   ================================================================== */
+.dlx-acts[hidden]{display:none}
+.dlx-acts--multi .btn-clear,.dlx-m-clear{margin-left:var(--sp-1)}
+.dlx-m-clear .icon{width:12px;height:12px}
+.dlx-filters{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;padding:var(--sp-2) var(--sp-5) 0}
+.dlx-filters[hidden]{display:none}
+.dlx-filters__l{font-size:var(--fs-10);font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-right:2px}
+.dlx-chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-11);
+  color:var(--ink-2);background:var(--fill-0);box-shadow:inset 0 0 0 1px var(--line-1)}
+.dlx-chip:hover{background:var(--fill-1);color:var(--ink-1)}
+.dlx-chip[aria-pressed="true"]{color:var(--ink-0);background:var(--fill-accent);box-shadow:inset 0 0 0 1px var(--line-accent)}
+.dlx-chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.dlx-chip i{width:9px;height:9px;border-radius:50%;display:inline-block}
+
+/* Storage by kind */
+.dlx-store{display:flex;flex-direction:column;gap:var(--sp-4);padding:var(--sp-5);max-width:720px}
+.dlx-store__head{display:flex;align-items:baseline;gap:var(--sp-3)}
+.dlx-store__head b{font-size:var(--fs-20,20px);font-variant-numeric:tabular-nums}
+.dlx-store__head small{color:var(--ink-3);font-size:var(--fs-11)}
+.dlx-store__bar{display:flex;height:10px;border-radius:var(--r-pill);overflow:hidden;gap:1px;background:var(--fill-0)}
+.dlx-store__bar i{background:hsl(var(--hue) 55% 52%);min-width:2px}
+.dlx-store__rows{display:flex;flex-direction:column;gap:2px}
+.dlx-store__row{display:grid;grid-template-columns:26px 108px minmax(60px,1fr) 78px 120px;align-items:center;gap:var(--sp-3);padding:6px var(--sp-2);border-radius:var(--r-sm);text-align:left}
+.dlx-store__row:hover{background:var(--fill-0)}
+.dlx-store__row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.dlx-store__sw{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;color:#fff;background:hsl(var(--hue) 50% 42%)}
+.dlx-store__sw .icon{width:13px;height:13px}
+.dlx-store__n{font-size:var(--fs-12);color:var(--ink-1)}
+.dlx-store__meter{height:7px;border-radius:var(--r-pill);background:var(--fill-1);overflow:hidden}
+.dlx-store__meter i{display:block;height:100%;background:hsl(var(--hue) 55% 52%)}
+.dlx-store__b{font-size:var(--fs-11);color:var(--ink-1);font-variant-numeric:tabular-nums;text-align:right}
+.dlx-store__c{font-size:var(--fs-10);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.dlx-store__note{margin:0;font-size:var(--fs-10);line-height:1.5;color:var(--ink-3)}
+@container dlxmain (max-width:520px){
+  .dlx-store__row{grid-template-columns:26px minmax(0,1fr) auto}
+  .dlx-store__meter,.dlx-store__c{display:none}
+}
+
+/* Duplicates */
+.dlx-dups{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4) var(--sp-5)}
+.dlx-dups__head{display:flex;flex-direction:column;gap:3px}
+.dlx-dups__head small{color:var(--ink-3);font-size:var(--fs-11);line-height:1.45}
+.dlx-dup{display:flex;flex-direction:column;border-radius:var(--r-md,12px);background:var(--fill-0);box-shadow:inset 0 0 0 1px var(--line-1)}
+.dlx-dup__h{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);flex-wrap:wrap}
+.dlx-dup__h b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-12)}
+.dlx-dup__h small{color:var(--ink-3);font-size:var(--fs-10);white-space:nowrap}
+.dlx-dup__row{display:flex;align-items:center;gap:var(--sp-3);padding:4px var(--sp-4);border-top:1px solid var(--line-1);font-size:var(--fs-11)}
+.dlx-dup__w{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dlx-dup__row small{color:var(--ink-3);font-size:var(--fs-10);white-space:nowrap}
+.dlx-dup .btn .icon{width:12px;height:12px}
+
+/* the footer holds a summary or a message, and now up to seven buttons: wrap instead of overlapping */
+.dlx-foot{flex-wrap:wrap;row-gap:var(--sp-1);height:auto}
+.dlx-sum{flex:1 1 180px}
+.dlx-flash{flex:1 1 280px}
+.dlx-acts{flex-wrap:wrap;justify-content:flex-end;margin-left:auto}

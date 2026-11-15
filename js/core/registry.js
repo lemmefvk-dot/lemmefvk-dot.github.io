@@ -22,6 +22,7 @@
    BECOMES the real app (same object), so anything already holding it
    (an open window, the dock) sees the real mount from then on.
    ============================================================ */
+import { t } from './i18n.js';
 
 const apps = new Map();
 const order = [];
@@ -55,13 +56,14 @@ export function declareApp(meta, mount) {
 function normalise(def) {
   return {
     id: def.id,
-    name: def.name || def.id,
+    /* the name and blurb people see, in their language (data/i18n/es.json) */
+    name: t(def.name || def.id),
     icon: def.icon || 'box',
     g1: def.g1 || '#4a4a55',
     g2: def.g2 || '#26262e',
     category: def.category || 'Other',
     keywords: def.keywords || [],
-    desc: def.desc || '',
+    desc: def.desc ? t(def.desc) : '',
     pinned: !!def.pinned,
     dock: !!def.dock,
     singleton: !!def.singleton,

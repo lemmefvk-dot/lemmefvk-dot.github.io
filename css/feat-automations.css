@@ -316,6 +316,33 @@ html[data-theme="light"] .am-banner { background: rgba(245,158,11,.09); border-c
 html[data-theme="light"] .am-banner > .icon { color: #a15c07; }
 html[data-theme="light"] .am-link,
 html[data-theme="light"] .am-addact { color: var(--ink-0); }
+/* ---- reorder, dry run, rule codes, new controls ---- */
+.am-grip { flex: 0 0 auto; width: 22px; min-width: 22px; height: 30px; margin-left: calc(var(--sp-2) * -1); cursor: grab; color: var(--ink-3); touch-action: none; }
+.am-grip .icon { width: 14px; height: 14px; }
+.am-grip:active { cursor: grabbing; }
+.am-rule.is-dragging { opacity: .55; background: var(--fill-1); }
+.am-rule.is-drop-above::before, .am-rule.is-drop-below::after { content: ''; position: absolute; left: var(--sp-3); right: var(--sp-3); height: 2px; border-radius: 2px; background: var(--accent); z-index: 2; }
+.am-rule.is-drop-above::before { top: -1px; }
+.am-rule.is-drop-below::after { bottom: -1px; }
+.am-dry { display: flex; flex-direction: column; gap: 6px; margin: 0 var(--sp-4) var(--sp-3); padding: var(--sp-4) var(--sp-5); border-radius: var(--r-md); border: 1px dashed var(--line-2); background: var(--fill-0); }
+.am-dry__head { display: flex; align-items: center; gap: var(--sp-3); }
+.am-dry__head > .icon { width: 15px; height: 15px; color: var(--ink-2); }
+.am-codesec { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-6); }
+.am-codein { display: flex; align-items: center; gap: var(--sp-3); }
+.am-codefield { flex: 1 1 auto; min-width: 0; height: 30px; }
+.am-codefield input { font-size: var(--fs-12); font-family: var(--mono, ui-monospace, monospace); }
+.am-review { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border-radius: var(--r-md); border: 1px solid var(--line-accent); background: var(--fill-0); }
+.am-review__h { display: flex; align-items: center; gap: var(--sp-3); }
+.am-review__h .icon { width: 15px; height: 15px; }
+.am-review__n { font-size: var(--fs-11); color: var(--ink-2); }
+.am-review__b { display: flex; gap: var(--sp-2); }
+.am-preset__n { font-size: var(--fs-12); color: var(--ink-0); }
+.am-time { height: 30px; width: auto; font-size: var(--fs-12); font-weight: 600; }
+.am-vol { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.am-vol__r { width: 160px; accent-color: var(--accent); }
+.am-vol__n { min-width: 3ch; font-size: var(--fs-12); font-variant-numeric: tabular-nums; color: var(--ink-1); }
+.am-entry__head .am-chip { align-self: center; }
+
 html[data-theme="light"] .am-flash .icon,
 html[data-theme="light"] .am-addact .icon,
 html[data-theme="light"] .am-tile--sys { color: var(--ink-1); }

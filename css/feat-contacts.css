@@ -78,3 +78,57 @@
 .contacts.is-narrow.show-card .contacts__side { display: none; }
 .contacts.is-narrow.show-card .app__main { display: flex; }
 .contacts.is-narrow .contacts-editwrap, .contacts.is-narrow .contacts-card { padding-left: var(--sp-4); padding-right: var(--sp-4); }
+
+/* favourites, work, birthdays */
+.contacts__main { position: relative; }
+.contacts-row__star { margin-left: auto; flex: 0 0 auto; color: #f4c84f; }
+.contacts-row__star .icon, .contacts-star .icon { width: 14px; height: 14px; }
+.contacts-star.is-on { color: #f4c84f; }
+.contacts-star.is-on svg, .contacts-row__star svg { fill: currentColor; }
+.contacts-work { margin-top: 2px; font-size: var(--fs-12); color: var(--ink-2); overflow-wrap: anywhere; }
+.contacts-sub { display: block; font-size: calc(9.5px * var(--fs-k,1)); color: var(--ink-3); }
+.contacts-added { font-size: calc(9.5px * var(--fs-k,1)); color: var(--ink-3); }
+.contacts-hint { margin: 0; font-size: calc(9.5px * var(--fs-k,1)); color: var(--ink-3); line-height: 1.45; }
+.contacts-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.contacts-bday { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.contacts-bm { flex: 1 1 120px; height: 30px; }
+.contacts-bd { flex: 0 0 76px; height: 30px; }
+.contacts-by { flex: 0 1 130px; width: auto; }
+.contacts.is-narrow .contacts-pair { grid-template-columns: 1fr; }
+
+/* duplicates and the side-by-side merge */
+.contacts-dupes { display: flex; flex-direction: column; gap: var(--sp-2); }
+.contacts-dupe { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); border: 1px solid var(--line-0); background: var(--fill-0); }
+.contacts-dupe .contacts-av + .contacts-av { margin-left: -14px; box-shadow: 0 0 0 2px var(--bg-1); }
+.contacts-dupe .contacts-row__t { flex: 1; }
+.contacts-merge__heads, .contacts-merge__row, .contacts-merge__kept { display: grid; grid-template-columns: 74px 1fr 1fr; gap: var(--sp-3); align-items: start; }
+.contacts-merge__row { padding: var(--sp-2) 0; border-top: 1px solid var(--line-0); }
+.contacts-merge__col { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+.contacts-merge__opt { display: flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; font-size: var(--fs-12); color: var(--ink-0); white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
+.contacts-merge__opt.is-empty span { color: var(--ink-3); font-style: italic; }
+.contacts-merge__opt input { margin-top: 2px; flex: 0 0 auto; }
+.contacts-merge__both { grid-column: 2 / -1; }
+.contacts-merge__kept { padding-top: var(--sp-2); border-top: 1px solid var(--line-0); }
+.contacts-merge__kept .contacts-text { grid-column: 2 / -1; }
+.contacts.is-narrow .contacts-merge__heads, .contacts.is-narrow .contacts-merge__row, .contacts.is-narrow .contacts-merge__kept { grid-template-columns: 1fr; }
+.contacts.is-narrow .contacts-merge__both, .contacts.is-narrow .contacts-merge__kept .contacts-text { grid-column: auto; }
+
+/* a card as a QR code */
+.contacts-qr .contacts-picker__card { align-items: center; text-align: center; }
+.contacts-qr__code { display: block; image-rendering: pixelated; border-radius: 6px; background: #fff; }
+.contacts-qr__what { font-size: calc(9.5px * var(--fs-k,1)); color: var(--ink-3); max-width: 320px; }
+
+/* print: only the sheet goes to the printer */
+.contacts-print { display: none; }
+@media print {
+  html.contacts-printing, html.contacts-printing body { background: #fff !important; height: auto !important; min-height: 0 !important; overflow: visible !important; position: static !important; }
+  html.contacts-printing body > :not(.contacts-print) { display: none !important; }
+  html.contacts-printing .contacts-print { display: block !important; color: #000; font: 11pt/1.45 system-ui, sans-serif; }
+  .contacts-print * { color: #000 !important; }
+  .contacts-print h1 { font-size: 18pt; margin: 0 0 4pt; }
+  .contacts-print p { margin: 0 0 12pt; font-size: 9pt; }
+  .contacts-print ul { list-style: none; padding: 0; margin: 0; columns: 2; column-gap: 24pt; }
+  .contacts-print li { break-inside: avoid; margin: 0 0 10pt; }
+  .contacts-print__pre { white-space: pre-wrap; }
+  .contacts-print__dim { font-size: 9pt; }
+}

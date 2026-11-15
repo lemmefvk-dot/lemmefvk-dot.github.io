@@ -7,9 +7,16 @@
    corner grip). Arrow keys on the title bar move a widget,
    Shift+arrows resize it. Positions persist in prefs.deskWidgets.
 
+   Each desktop keeps its own set: a widget belongs to the desktop it was
+   added on (its entry's `desk`), shows only there, and the picker counts
+   only that desktop's. A widget saved before desktops had their own set
+   belongs to the first desktop. When a desktop is removed its widgets
+   move to the desktop you land on, so nothing you wrote on a sticky note
+   goes with it.
+
    Add one from the desktop's right-click menu (Add Widget…) or the
-   Store's Widgets section. Like the rail they are for signed-in
-   people, they step aside in Game Mode, and they don't exist on a
+   Store's Widgets section. Like the rail they need a profile on this
+   device (sign-in here is local), they step aside in Game Mode, and they don't exist on a
    phone-sized screen.
 
    Every widget shows real things only: this device's plays, the
@@ -28,6 +35,7 @@ import { bus } from '../core/bus.js';
 import * as L from '../core/layers.js';
 import { store } from '../core/store.js';
 import * as SEASON from '../core/season.js';
+import * as DESK from '../core/desktops.js';
 import * as MORE from './deskwidgets.more.js';
 import { appTile } from '../core/appart.js';
 
@@ -64,6 +72,9 @@ export const SEASONAL_WIDGETS = [
     season: 'spooky', pref: 'spookyCountdown', label: 'Halloween countdown', live: () => SEASON.spooky('countdown') },
   { type: 'christmas', name: 'Christmas', icon: 'gift', w: 264, h: 150, min: [220, 132], max: [420, 260],
     season: 'winter', pref: 'winterCountdown', label: 'Christmas countdown', live: () => SEASON.winter('countdown') },
+  /* summer: the days to the day you set in Settings › Celebrations (never a guessed one) */
+  { type: 'holidays', name: 'Holidays', icon: 'sun', w: 264, h: 150, min: [220, 132], max: [420, 260],
+    season: 'summer', pref: 'summerCountdown', label: 'Holidays countdown', live: () => SEASON.part('summer', 'countdown') && !!SEASON.holidays() },
 ];
 const byType = t => DESK_WIDGETS.find(d => d.type === t) || SEASONAL_WIDGETS.find(d => d.type === t) || null;
 const isDesk = t => DESK_WIDGETS.some(d => d.type === t);
@@ -86,6 +97,10 @@ function freeSpot(arr, w, h) {
   return { x: snap(140 + (n % 8) * 28), y: snap(80 + (n % 8) * 28) };
 }
 const list = () => { const v = store.get(KEY, []); return Array.isArray(v) ? v.filter(w => w && isDesk(w.type) && typeof w.uid === 'string') : []; };
+/* the desktop a widget is on: the one it was added to, else the first (older entries) */
+const firstDesk = () => DESK.list()[0]?.id || 'd1';
+const deskOf = w => (w.desk && DESK.has(w.desk) ? w.desk : firstDesk());
+const here = () => list().filter(w => deskOf(w) === DESK.current());
 const save = arr => store.set(KEY, arr.map(w => ({ ...w })));
 
 /** The seasonal widgets showing right now, each where it was last left —
@@ -110,13 +125,13 @@ export function addDeskWidget(type) {
   const arr = list();
   const uid = `w${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
   /* a seasonal widget holds its ground too */
-  const spot = freeSpot([...arr, ...seasonal()], def.w, def.h);
-  arr.push({ uid, type, x: spot.x, y: spot.y, w: def.w, h: def.h });
+  const spot = freeSpot([...here(), ...seasonal()], def.w, def.h);
+  arr.push({ uid, type, desk: DESK.current(), x: spot.x, y: spot.y, w: def.w, h: def.h });
   save(arr);
   bus.emit('deskwidgets:added', { type });
   return uid;
 }
-export const deskWidgetCount = type => list().filter(w => w.type === type).length;
+export const deskWidgetCount = type => here().filter(w => w.type === type).length;
 
 export function mountDeskWidgets(host) {
   const { h, icon, clear } = api;
@@ -267,6 +282,11 @@ export function mountDeskWidgets(host) {
       word: 'Christmas', left: SEASON.christmas, doneIcon: 'gift',
       doneTitle: now => (now.getMonth() === 11 && now.getDate() === 25 ? 'Merry Christmas!' : 'Happy holidays!'),
       doneSub: now => (now.getMonth() === 11 && now.getDate() === 25 ? 'It’s today. Enjoy it.' : 'Winter stays until January 1.'),
+    }),
+    /* ...and to midnight at the start of the day set for the holidays */
+    holidays: body => countdown(body, {
+      word: 'the holidays', left: now => SEASON.holidays(now) || SEASON.until(now, now), doneIcon: 'sun', doneTitle: () => 'The holidays are here!',
+      doneSub: () => 'Enjoy the break.',
     }),
   };
 
@@ -459,7 +479,7 @@ export function mountDeskWidgets(host) {
   }
 
   function sync() {
-    const want = signedIn() ? [...list(), ...seasonal()] : [];
+    const want = signedIn() ? [...here(), ...seasonal()] : [];
     const wantIds = new Set(want.map(w => w.uid));
     for (const [uid, inst] of live) if (!wantIds.has(uid)) { inst.stop(); inst.el.remove(); live.delete(uid); }
     for (const w of want) {
@@ -473,7 +493,7 @@ export function mountDeskWidgets(host) {
   function openPicker() {
     closePicker();
     if (!signedIn()) {
-      api.notify({ app: 'Widgets', icon: 'user', title: 'Sign in to use widgets', message: 'Widgets are for signed-in accounts — use the corner at the bottom right.' });
+      api.notify({ app: 'Widgets', icon: 'user', title: 'Make a profile to use widgets', message: 'Widgets need a profile on this device (it stays in this browser) — use the corner at the bottom right.' });
       return;
     }
     picker = h('div.dw-picker', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Add a widget', onclick: e => { if (e.target === picker) closePicker(); } },
@@ -497,7 +517,19 @@ export function mountDeskWidgets(host) {
     store.sub('session.user', sync),
     /* seasonal widgets come and go with their season and their switch */
     bus.on('season:change', sync),
+    /* another desktop has its own widgets */
+    bus.on('desktop:switch', sync),
+    bus.on('desktops:change', e => {
+      if (e && e.kind === 'remove') {
+        /* the removed desktop's widgets come along to the one you are on now */
+        const cur = DESK.current();
+        const moved = list().map(w => (w.desk && !DESK.has(w.desk) ? { ...w, desk: cur } : w));
+        if (moved.some((w, i) => w.desk !== list()[i].desk)) { save(moved); return; }
+      }
+      sync();
+    }),
     ...SEASONAL_WIDGETS.map(d => store.sub(`prefs.${d.pref}`, sync)),
+    store.sub('prefs.summerBreak', sync),   /* the holidays countdown appears once a day is set */
     bus.on('deskwidgets:picker', openPicker),
     bus.on('deskwidgets:add', t => { if (signedIn()) addDeskWidget(t); else openPicker(); }),
     api.on(window, 'keydown', e => { if (e.key === 'Escape' && picker) { e.stopPropagation(); closePicker(); } }, true),

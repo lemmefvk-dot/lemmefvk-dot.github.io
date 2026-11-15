@@ -28,14 +28,23 @@
 import { BRAND, LOCAL_PROXY_URL } from './brand.js?v=ps5-cloud-proxy-v11';
 import * as CD from './cloud.data.js?v=ps5-cloud-proxy-v11';
 import * as RB from './roblox.data.js';
-import * as UV from './uv.js';
 import * as CC from './cloud.catalog.js';
+import * as GD from './games.data.js';
+import { norm } from '../core/fuzzy.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-cloud-ps5-css')) {
   const link = document.createElement('link');
   link.id = 'feat-cloud-ps5-css';
   link.rel = 'stylesheet';
   link.href = 'css/feat-cloud-ps5.css?v=ps5-cloud-proxy-v11';
+  document.head.appendChild(link);
+}
+
+if (typeof document !== 'undefined' && !document.getElementById('gamesportal-css')) {
+  const link = document.createElement('link');
+  link.id = 'gamesportal-css';
+  link.rel = 'stylesheet';
+  link.href = 'css/gamesportal.css';
   document.head.appendChild(link);
 }
 
@@ -157,6 +166,53 @@ const toggleWhereFav = (api, g) => {
   api.store.set(WHERE_FAVS, on ? [{ k, t: g.t }, ...rows].slice(0, 200) : rows.filter(r => r.k !== k));
   return on;
 };
+/* Your own words about each service ("my plan: Game Pass Ultimate"), typed here
+   and kept on this device. Nothing about a service is filled in for you. */
+const SVC_NOTES = 'portal.cloud.svcNotes';
+const svcNotes = api => {
+  const v = api.store.get(SVC_NOTES, {});
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+};
+const setSvcNote = (api, id, text) => {
+  const all = { ...svcNotes(api) };
+  const t = String(text || '').slice(0, 160);
+  if (t.trim()) all[id] = t; else delete all[id];
+  api.store.set(SVC_NOTES, all);
+};
+
+/* Recent searches, newest first: one list for "Where can I play it?", one for the library */
+const RECENT_WHERE = 'portal.cloud.recentWhere';
+const RECENT_LIB = 'portal.cloud.recentLib';
+const MAX_RECENT = 8;
+const recents = (api, key) => {
+  const v = api.store.get(key, []);
+  return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
+};
+const pushRecent = (api, key, q) => {
+  const t = String(q || '').trim().slice(0, 60);
+  if (t.length < 2) return;
+  const low = t.toLowerCase();
+  api.store.set(key, [t, ...recents(api, key).filter(x => x.toLowerCase() !== low)].slice(0, MAX_RECENT));
+};
+
+/* Filters on what a service's own list says about a game. Each reads one field
+   the sync saved from that service; none is guessed. */
+const FILTERS = [
+  ['xfree', 'Free on Xbox', 'xcloud', o => !!o.f, 'Xbox’s list marks it free to play: a Microsoft account is all it needs.'],
+  ['xgp', 'In Game Pass', 'xcloud', o => !!o.gp, 'Included with Game Pass, per Xbox’s own list.'],
+  ['gfnany', 'GeForce NOW: free membership works', 'gfn', o => !o.i, 'Not install-to-play, so any membership can run it. You still need the game on a store it supports.'],
+  ['gfninst', 'GeForce NOW: install-to-play', 'gfn', o => !!o.i, 'GeForce NOW installs it for you, which needs a paid membership.'],
+];
+
+const dayOf = iso => {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 86400000));
+};
+const agoText = iso => {
+  const d = dayOf(iso);
+  return d === null ? '' : d === 0 ? 'today' : d === 1 ? '1 day ago' : `${d} days ago`;
+};
+
 const dateOf = iso => {
   const d = iso ? new Date(iso) : null;
   return d && !Number.isNaN(d.getTime())
@@ -192,12 +248,21 @@ export function buildCloud(ctx) {
     wsvc: (CC.LISTED.find(s => s.id === api.store.get('portal.cloud.whereSvc')) || { id: '' }).id,
     wfav: false,
     wlimit: PER,
+    wflt: '',                     // a FILTERS id
+    wcmp: '',                     // the game (key) whose services are laid side by side
     noLogin: api.store.get('portal.cloud.noLogin', false),
   };
   const E = {};
 
   paint();
-  life.add(() => { clearTimeout(E.timer); clearTimeout(E.wtimer); E.abort?.abort(); });
+  life.add(() => { clearTimeout(E.timer); clearTimeout(E.wtimer); clearTimeout(E.wrec); clearTimeout(E.lrec); E.abort?.abort(); });
+  /* a collection's archive.org game: static://cloud?play=<identifier>&t=<title> */
+  const playId = launchParams.get('play');
+  if (playId && /^[A-Za-z0-9._-]{1,120}$/.test(playId)) queueMicrotask(() => {
+    if (life.dead) return;
+    const title = (launchParams.get('t') || playId).slice(0, 90);
+    play({ title, url: CD.embedUrl(playId), kind: 'emulator', id: playId, art: CD.thumbUrl(playId) });
+  });
   const streamId = launchParams.get('stream');
   const startStream = CD.STREAMS.find(stream => stream.id === streamId);
   if (startStream) queueMicrotask(() => {
@@ -222,7 +287,7 @@ export function buildCloud(ctx) {
 
     wrap.appendChild(h('div.cx__hero.cl__hero',
       h('div.cx__hero-in',
-        h('div.cx__hero-kick', { text: 'AETHER CLOUD' }),
+        h('div.cx__hero-kick', { text: 'STATIC CLOUD' }),
         h('div.cx__hero-t', { text: 'Things that actually run here' }),
         h('div.cx__hero-s', { text: CD.VERDICT }),
         h('div.cx__hero-s.cl__nologin', { text: CD.NO_ACCOUNT_NOTE }),
@@ -241,7 +306,7 @@ export function buildCloud(ctx) {
     if (!surfaces.length) {
       rail.appendChild(h('div.empty', icon('check'),
         h('b', { text: 'Those both ask for an account' }),
-        h('small', { text: 'The emulated library below does not — that is 8,900 titles you can just start.' })));
+        h('small', { text: 'The emulated library below does not — start any of it right away.' })));
     }
     if (CD.STREAMS.length) {
       const toggle = h(S.noLogin ? 'button.chip.is-on' : 'button.chip', {
@@ -302,8 +367,20 @@ export function buildCloud(ctx) {
         S.q = e.target.value; S.page = 1;
         clearTimeout(E.timer);
         E.timer = setTimeout(loadLibrary, 340);
+        clearTimeout(E.lrec);
+        E.lrec = setTimeout(() => { if (!life.dead && S.q.trim() && S.res && S.res.total > 0) { pushRecent(api, RECENT_LIB, S.q); paintRecent(E.lrecent, RECENT_LIB, pickLib); } }, 1400);
+      },
+      onkeydown: e => {
+        if (e.key === 'Enter' && S.q.trim() && S.res && S.res.total > 0) {
+          clearTimeout(E.lrec);
+          pushRecent(api, RECENT_LIB, S.q);
+          paintRecent(E.lrecent, RECENT_LIB, pickLib);
+        }
       },
     });
+    const pickLib = q => { S.q = q; E.search.value = q; S.page = 1; loadLibrary(); };
+    E.lrecent = h('div.cl-recent', { 'aria-label': 'Recent library searches' });
+    paintRecent(E.lrecent, RECENT_LIB, pickLib);
 
     E.libT = h('div.cx__sec-t', { text: 'Emulated' });
     E.libN = h('div.cx__sec-n', { text: 'loading…' });
@@ -315,6 +392,7 @@ export function buildCloud(ctx) {
       E.collections,
       h('div.cx__bar', h('div.field', { style: { flex: '0 0 220px', height: '26px' } },
         icon('search'), E.search)),
+      E.lrecent,
       E.grid, E.pager));
 
     wrap.appendChild(blockedPanel());
@@ -345,7 +423,7 @@ export function buildCloud(ctx) {
       h('span.badge', {
         class: (s.account || 'none') === 'none' ? 'badge badge--ok' : 'badge',
         title: CD.accountOf(s).note,
-        text: s.via === 'tunnel' ? 'via tunnel' : 'in window',
+        text: 'in window',
       }));
   }
 
@@ -353,7 +431,7 @@ export function buildCloud(ctx) {
     const rail = h('div.cx__grid--rail');
     const sec = h('div.cx__sec',
       h('div.cx__sec-h', icon('box'), h('div.cx__sec-t', { text: 'Roblox experiences' }),
-        h('div.cx__sec-n', { text: 'live player counts' }),
+        h('div.cx__sec-n', { text: RB.asOf() ? `player counts as of ${RB.fmtDay(RB.asOf())}` : 'player counts from the last sync' }),
         h('button.btn.btn--ghost.btn--sm', {
           type: 'button', style: { marginLeft: 'auto' },
           onclick: () => navigate('static://roblox'),
@@ -374,7 +452,8 @@ export function buildCloud(ctx) {
               referrerpolicy: 'no-referrer', onerror: e => e.target.remove(),
             }));
           }
-          art.appendChild(h('div.rbx-card__live', h('i.rbx-dot'), h('span', { text: compact(row.playing) })));
+          art.appendChild(h('div.rbx-card__live', h('i.rbx-dot'), h('span', { text: compact(row.playing) }),
+            h('small.rbx-asof', { text: RB.countWhen(row) })));
           rail.appendChild(h('div.rbx-card', {
             role: 'button', tabindex: '0',
             'aria-label': `${row.name} — details`,
@@ -393,7 +472,7 @@ export function buildCloud(ctx) {
      themselves (cloud.catalog.js, data/cloud-games.json). Each result
      says what that service asks of you. Play is a plain link to the
      service's own page, opened in a new tab: these services refuse to
-     be framed, and they are never put through the tunnel. */
+     be framed, so they are never loaded in a frame here. */
   function whereSection() {
     const count = h('div.cx__sec-n', { text: 'loading…' });
     const input = h('input', {
@@ -403,13 +482,27 @@ export function buildCloud(ctx) {
         S.wq = e.target.value; S.wlimit = PER;
         clearTimeout(E.wtimer);
         E.wtimer = setTimeout(paintWhere, 160);
+        /* a search that has settled is worth remembering; one still being typed is not */
+        clearTimeout(E.wrec);
+        E.wrec = setTimeout(() => { if (!life.dead && S.wq.trim() && E.wlastTotal > 0) { pushRecent(api, RECENT_WHERE, S.wq); paintRecent(E.wrecent, RECENT_WHERE, q => { S.wq = q; E.winput.value = q; S.wlimit = PER; paintWhere(); }); } }, 1200);
+      },
+      onkeydown: e => {
+        if (e.key === 'Enter' && S.wq.trim() && E.wlastTotal > 0) {
+          clearTimeout(E.wrec);
+          pushRecent(api, RECENT_WHERE, S.wq);
+          paintRecent(E.wrecent, RECENT_WHERE, q => { S.wq = q; E.winput.value = q; S.wlimit = PER; paintWhere(); });
+        }
       },
     });
     const chips = h('div.cx__cats', { role: 'group', 'aria-label': 'Services' });
     const favBtn = h('button.chip', {
-      type: 'button', 'aria-pressed': String(S.wfav),
+      type: 'button', 'aria-pressed': String(S.wfav), title: 'The games you saved with the heart, and which services carry each',
       onclick: () => { S.wfav = !S.wfav; S.wlimit = PER; paintWhere(); },
-    }, icon('heart', { size: 12 }), h('span', { text: 'Favourites' }));
+    }, icon('heart', { size: 12 }), h('span', { text: 'Wishlist' }));
+    const recent = h('div.cl-recent', { 'aria-label': 'Recent searches' });
+    const asof = h('div.cl-asof', { 'aria-live': 'polite' });
+    const filters = h('div.cl-filters', { role: 'group', 'aria-label': 'Filters from each service’s own list' });
+    const wish = h('div');
     const hint = h('div.cl-where__hint', { 'aria-live': 'polite' });
     const listEl = h('div.cl-where__list', { role: 'list', 'aria-label': 'Where to play' });
     const more = h('div.cx__pager');
@@ -420,8 +513,10 @@ export function buildCloud(ctx) {
       h('div.cx__bar',
         h('div.field', { style: { flex: '1 1 260px', height: '26px' } }, icon('search'), input),
         favBtn),
-      chips, hint, listEl, more, foot);
-    Object.assign(E, { winput: input, wcount: count, wchips: chips, wfavBtn: favBtn, whint: hint, wlist: listEl, wmore: more, wfoot: foot });
+      recent, chips, asof, filters, hint, wish, listEl, more, foot);
+    Object.assign(E, { winput: input, wcount: count, wchips: chips, wfavBtn: favBtn, whint: hint, wlist: listEl, wmore: more, wfoot: foot,
+      wrecent: recent, wasof: asof, wfilters: filters, wwish: wish });
+    paintRecent(recent, RECENT_WHERE, q => { S.wq = q; input.value = q; S.wlimit = PER; paintWhere(); });
 
     for (let i = 0; i < 6; i++) listEl.appendChild(h('div.cl-skel.cl-where__skel'));
     CC.load().then(d => {
@@ -438,8 +533,40 @@ export function buildCloud(ctx) {
       paintWhereChips();
       paintWhereFoot();
       paintWhere();
+      /* Static Games' own catalogue, to offer a free web version first. It is
+         read only to match names; nothing is shown from it until it arrives. */
+      GD.load().then(() => { if (!life.dead) { E.gmap = null; paintWhere(); } }).catch(() => {});
     });
     return sec;
+  }
+
+  /** The "recent searches" chips under a search box, with a way to clear them. */
+  function paintRecent(host, key, pick) {
+    if (!host) return;
+    api.clear(host);
+    const list = recents(api, key);
+    if (!list.length) return;
+    host.append(h('span', { text: 'Recent:' }),
+      ...list.map(q => h('button.chip', { type: 'button', dataset: { recent: q }, onclick: () => pick(q) }, h('span', { text: q }))),
+      h('button.btn.btn--ghost.btn--sm', {
+        type: 'button', onclick: () => { api.store.set(key, []); paintRecent(host, key, pick); },
+      }, icon('x', { size: 11 }), 'Clear'));
+  }
+
+  /** Static Games rows by normalised title, skipping any this person hid. */
+  function gamesByName() {
+    if (E.gmap || !GD.isLoaded()) return E.gmap || null;
+    const hidden = new Set((api.store.get('portal.games.hidden', []) || []).map(r => r && r.id));
+    const m = new Map();
+    for (const g of GD.all()) {
+      if (hidden.has(g.id)) continue;
+      const k = norm(g.title);
+      const cur = m.get(k);
+      /* a copy that plays in the page beats one that opens on its own site */
+      if (!cur || (GD.opensOnTheirSite(cur) && !GD.opensOnTheirSite(g))) m.set(k, g);
+    }
+    E.gmap = m;
+    return m;
   }
 
   function paintWhereChips() {
@@ -452,10 +579,44 @@ export function buildCloud(ctx) {
         title: s.id ? `${counts[s.id] || 0} games on ${s.name}` : 'Every service',
         onclick: () => {
           S.wsvc = s.id; S.wlimit = PER;
+          if (S.wflt && FILTERS.find(f => f[0] === S.wflt)?.[2] !== s.id) S.wflt = '';
           api.store.set('portal.cloud.whereSvc', s.id);
           paintWhereChips(); paintWhere();
         },
       }, s.icon ? icon(s.icon, { size: 12 }) : null, h('span', { text: s.short })));
+    }
+    paintWhereMeta();
+  }
+
+  /* When each service's list was last read, and the filters its own fields allow. */
+  function paintWhereMeta() {
+    const d = CC.data();
+    if (!d || !E.wasof) return;
+    api.clear(E.wasof);
+    const src = id => d.sources && d.sources[id];
+    const stamp = id => {
+      const x = src(id);
+      return x && x.asOf ? `${dateOf(x.asOf)} (${agoText(x.asOf)})${x.stale ? ', the last update failed' : ''}` : 'not in this list';
+    };
+    if (S.wsvc) {
+      const sv = CC.serviceById(S.wsvc);
+      E.wasof.append(h('span', { text: `${sv.name} list last checked ` }), h('b', { text: stamp(S.wsvc) }), h('span', { text: '. A game may have come or gone since.' }));
+    } else {
+      E.wasof.append(h('span', { text: 'Lists last checked: ' }),
+        ...CC.LISTED.flatMap((sv, i) => [i ? h('span', { text: ' · ' }) : null, h('b', { text: sv.short }), h('span', { text: ` ${src(sv.id) && src(sv.id).asOf ? dateOf(src(sv.id).asOf) : '—'}` })]).filter(Boolean));
+    }
+    api.clear(E.wfilters);
+    for (const [id, label, svc, , tip] of FILTERS) {
+      const on = S.wflt === id;
+      E.wfilters.appendChild(h(on ? 'button.chip.is-on' : 'button.chip', {
+        type: 'button', 'aria-pressed': String(on), dataset: { filter: id }, title: tip,
+        onclick: () => {
+          S.wflt = on ? '' : id;
+          if (S.wflt) { S.wsvc = svc; api.store.set('portal.cloud.whereSvc', svc); }
+          S.wlimit = PER;
+          paintWhereChips(); paintWhere();
+        },
+      }, icon(on ? 'check' : 'filter', { size: 12 }), h('span', { text: label })));
     }
   }
 
@@ -465,6 +626,12 @@ export function buildCloud(ctx) {
     const only = S.wfav ? new Set(favs.map(r => r.k)) : null;
     const res = CC.search(S.wq, { service: S.wsvc, only });
     let items = res.items;
+    const flt = FILTERS.find(f => f[0] === S.wflt);
+    if (flt) {
+      items = items.filter(g => g.on && g.on[flt[2]] && flt[3](g.on[flt[2]]));
+      res.total = items.length;
+    }
+    E.wlastTotal = items.length;
     /* nothing typed: your favourites lead, then the most played */
     if (!S.wq.trim() && !S.wfav && favs.length) {
       const fk = new Set(favs.map(r => r.k));
@@ -474,7 +641,7 @@ export function buildCloud(ctx) {
     const total = d.games.length;
     const svcN = Object.keys(d.sources || {}).length;
     const asOf = dateOf(d.built);
-    E.wcount.textContent = S.wq.trim() || S.wsvc || S.wfav
+    E.wcount.textContent = S.wq.trim() || S.wsvc || S.wfav || S.wflt
       ? `${res.total.toLocaleString()} of ${total.toLocaleString()} games`
       : `${total.toLocaleString()} games on ${svcN} services${asOf ? ` · data as of ${asOf}` : ''}`;
     E.wfavBtn.classList.toggle('is-on', S.wfav);
@@ -490,6 +657,7 @@ export function buildCloud(ctx) {
         }, res.suggestion), h('span', { text: '?' }));
     }
 
+    paintWish(favs);
     api.clear(E.wlist);
     if (!items.length) {
       E.wlist.appendChild(h('div.empty', icon(S.wfav ? 'heart' : 'search'),
@@ -498,10 +666,10 @@ export function buildCloud(ctx) {
         h('small', { text: S.wfav && !favs.length
           ? 'Tap the heart on a game to keep it here.'
           : 'These are the lists the services publish, as of the date above. Luna and now.gg publish none — they are linked below to look there.' }),
-        (S.wq || S.wsvc || S.wfav) ? h('button.btn', {
+        (S.wq || S.wsvc || S.wfav || S.wflt) ? h('button.btn', {
           type: 'button',
           onclick: () => {
-            S.wq = ''; S.wsvc = ''; S.wfav = false; S.wlimit = PER;
+            S.wq = ''; S.wsvc = ''; S.wfav = false; S.wflt = ''; S.wlimit = PER;
             api.store.set('portal.cloud.whereSvc', '');
             E.winput.value = '';
             paintWhereChips(); paintWhere();
@@ -518,6 +686,32 @@ export function buildCloud(ctx) {
         onclick: () => { S.wlimit += PER; paintWhere(); },
       }, icon('chevron-down', { size: 13 }), `Show more (${(items.length - S.wlimit).toLocaleString()} left)`));
     }
+  }
+
+  /* The wishlist: every game you hearted, and which services carry it today —
+     including the ones no list has any more, which say so. */
+  function paintWish(favs) {
+    api.clear(E.wwish);
+    if (!S.wfav || !favs.length) return;
+    const d = CC.data();
+    const asOf = d && d.built ? dateOf(d.built) : null;
+    E.wwish.appendChild(h('div.cl-wish', { role: 'region', 'aria-label': 'Wishlist: which services carry each game' },
+      ...favs.map(r => {
+        const g = CC.byKey(r.k);
+        const rows = g ? CC.where(g) : [];
+        return h('div.cl-wish__row', { dataset: { key: r.k } },
+          h('b', { text: g ? g.t : r.t }),
+          rows.length
+            ? h('span', rows.map(w => h('a.chip.cl-wish__svc', {
+                href: w.url, target: '_blank', rel: 'noopener noreferrer', dataset: { service: w.service.id },
+                title: `${w.need.map(n => n.text).join('. ')} — opens ${new URL(w.url).host} in a new tab`,
+              }, icon(w.service.icon, { size: 11 }), h('span', { text: w.service.short }), icon('external-link', { size: 10 }))))
+            : h('span.cl-wish__none', { text: `Not on any listed service${asOf ? ` as of ${asOf}` : ''}` }),
+          h('button.btn.btn--ghost.btn--sm', {
+            type: 'button', 'aria-label': `Take ${r.t} off the wishlist`,
+            onclick: () => { api.store.set(WHERE_FAVS, whereFavs(api).filter(x => x.k !== r.k)); paintWhere(); },
+          }, icon('x', { size: 11 }), 'Remove'));
+      })));
   }
 
   function whereCard(g) {
@@ -541,25 +735,75 @@ export function buildCloud(ctx) {
       },
     }, icon('heart', { size: 14 }));
     const rows = CC.where(g);
+    const notes = svcNotes(api);
+    /* the same name in Static Games: a free web version comes first, when there is one.
+       A name can be shared by two different games, so it says "a game with this name". */
+    const free = gamesByName()?.get(k) || null;
+    const freeRow = free ? h('div.cl-wg__free', { dataset: { free: free.id } },
+      icon('gamepad', { size: 14 }),
+      h('div.grow',
+        h('b', { text: 'Play free in Static Games' }),
+        h('div', { text: GD.opensOnTheirSite(free)
+          ? `A game with this name is in Static Games; it opens on ${free.studio}, in a new tab.`
+          : 'A game with this name plays right in Static Games, with nothing to sign into.' })),
+      h('button.btn.btn--primary.btn--sm', {
+        type: 'button', 'aria-label': `Open ${free.title} in Static Games`, onclick: () => navigate(`static://games/${free.id}`),
+      }, icon('play', { size: 12, fill: true }), 'Open')) : null;
+    const cmpOn = S.wcmp === k;
     return h('article.cl-wg', { role: 'listitem', 'data-key': k, 'aria-label': g.t },
       art,
       h('div.cl-wg__b',
         h('div.cl-wg__h',
           h('h3.cl-wg__t', { text: g.t, title: g.t }),
           fav),
+        freeRow,
         h('div.cl-wg__n', { text: `On ${rows.length} service${rows.length === 1 ? '' : 's'}` }),
         h('ul.cl-wg__svcs', rows.map(w => h('li.cl-wg__svc', { 'data-service': w.service.id },
           h('span.cl-wg__ic', { style: { background: `linear-gradient(145deg,${w.service.g1},${w.service.g2})` } },
             icon(w.service.icon, { size: 13 })),
           h('div.cl-wg__sb',
             h('b', { text: w.service.name }),
-            ...w.need.map(n => h(`small.cl-need.is-${n.tone}`, { text: n.text }))),
+            ...w.need.map(n => h(`small.cl-need.is-${n.tone}`, { text: n.text })),
+            notes[w.service.id] ? h('small.cl-wg__mynote', { text: `Your note: ${notes[w.service.id]}` }) : null),
           h('a.btn.btn--sm.cl-wg__play', {
             href: w.url, target: '_blank', rel: 'noopener noreferrer',
             'data-service': w.service.id,
             title: `Opens ${new URL(w.url).host} in a new tab`,
             'aria-label': `Play ${g.t} on ${w.service.name} (opens in a new tab)`,
-          }, icon('play', { size: 12, fill: true }), h('span', { text: 'Play' }), icon('external-link', { size: 11 })))))));
+          }, icon('play', { size: 12, fill: true }), h('span', { text: 'Play' }), icon('external-link', { size: 11 }))))),
+        h('div.cl-wg__tools',
+          h('button.btn.btn--ghost.btn--sm', {
+            type: 'button', dataset: { act: 'compare' }, 'aria-expanded': String(cmpOn),
+            onclick: () => { S.wcmp = cmpOn ? '' : k; paintWhere(); },
+          }, icon('layers', { size: 12 }), cmpOn ? 'Hide the comparison' : 'Compare services')),
+        cmpOn ? comparePanel(g, rows) : null));
+  }
+
+  /* One game across every service that has a list, side by side: what each one's
+     own entry says it asks of you, or that it is not on that list. Your note for
+     each service sits in the row, so "my plan" is right next to "what it needs". */
+  function comparePanel(g, rows) {
+    const d = CC.data();
+    const notes = svcNotes(api);
+    return h('div.cl-cmp', { role: 'region', 'aria-label': `${g.t} across services` },
+      h('table',
+        h('thead', h('tr', ...['Service', 'On its list?', 'What it asks of you', 'Your note'].map(t => h('th', { text: t })))),
+        h('tbody', CC.LISTED.map(sv => {
+          const w = rows.find(x => x.service.id === sv.id);
+          const asOf = d && d.sources && d.sources[sv.id] && d.sources[sv.id].asOf;
+          const note = h('input', {
+            type: 'text', maxlength: '160', placeholder: 'e.g. my plan', value: notes[sv.id] || '',
+            'aria-label': `Your note about ${sv.name}`,
+            onchange: e => { setSvcNote(api, sv.id, e.target.value); paintWhere(); },
+          });
+          return h('tr', { dataset: { service: sv.id } },
+            h('td', h('b', { text: sv.name })),
+            h(w ? 'td' : 'td.no', w
+              ? [h('a', { href: w.url, target: '_blank', rel: 'noopener noreferrer', 'aria-label': `Play ${g.t} on ${sv.name} (opens in a new tab)`, text: 'Yes — open it' })]
+              : { text: `No${asOf ? ` (list of ${dateOf(asOf)})` : ''}` }),
+            h('td', w ? w.need.map(n => h('div', { text: n.text })) : { text: '—' }),
+            h('td', note));
+        }))));
   }
 
   function paintWhereFoot() {
@@ -584,7 +828,17 @@ export function buildCloud(ctx) {
             h('small', { text: src
               ? `${(src.titles || 0).toLocaleString()} games · as of ${dateOf(src.asOf) || 'unknown'}${src.stale ? ' (the last update failed, so this is older)' : ''} · ${s.account}`
               : 'not in this build of the list' }));
-        }))));
+        }))),
+      /* your own notes, one line per service: "my plan", "free month ends 3 Dec" */
+      h('details.cl-where__src', { dataset: { notes: 'services' } },
+        h('summary', { text: 'Your notes on each service' }),
+        h('div.cl-notes', CC.SERVICES.map(sv => h('label',
+          h('span', { text: sv.short }),
+          h('input', {
+            type: 'text', maxlength: '160', placeholder: 'Your own note', value: svcNotes(api)[sv.id] || '',
+            'aria-label': `Your note about ${sv.name}`,
+            onchange: e => { setSvcNote(api, sv.id, e.target.value); paintWhere(); },
+          }))))));
   }
 
   /* ---------- the emulated library ---------- */
@@ -678,6 +932,17 @@ export function buildCloud(ctx) {
     }, icon('heart', { size: 13 }));
     if (isFav(api, item.id)) fav.classList.add('is-on');
     art.appendChild(fav);
+    /* the person's own collections (the same ones as everywhere in StaticOS) */
+    art.appendChild(h('button.rbx-card__add', {
+      type: 'button', dataset: { act: 'collect' }, 'aria-label': `Add to collection: ${item.title}`,
+      onclick: e => {
+        e.stopPropagation();
+        const r = e.currentTarget.getBoundingClientRect();
+        import('../core/collections.js')
+          .then(C => C.pickMenu(api, { kind: 'cloud', id: item.id, title: item.title, art: item.art || null }, r.left, r.bottom))
+          .catch(() => api.notify({ app: BRAND.name, icon: 'alert', title: 'Collections could not load', message: 'Reload StaticOS and try again.' }));
+      },
+    }, icon('bookmark', { size: 13 })));
 
     return h('div.rbx-card', {
       role: 'button', tabindex: '0',
@@ -741,7 +1006,7 @@ export function buildCloud(ctx) {
           h('button.btn', {
             type: 'button',
             onclick: () => {
-              frame.src = what.via === 'tunnel' && UV.isReady() ? UV.encode(what.url) : what.url;
+              frame.src = what.url;
             },
           }, icon('refresh', { size: 13 }), 'Try again'))));
     }, 30000);
@@ -749,27 +1014,7 @@ export function buildCloud(ctx) {
 
     const wrap = h('div.cl__stagewrap', frame, veil);
 
-    /* A 'tunnel' surface refuses to be framed directly — the only reason it
-       renders at all is that the service worker serves it from our origin.
-       Setting .src to the raw URL would give a silently blank frame, which
-       is exactly the failure other sites ship. */
-    if (what.via === 'tunnel') {
-      (async () => {
-        const support = UV.isSupported();
-        if (!support.ok) { done(); wrap.appendChild(tunnelDown(support.why, false)); return; }
-        const up = await UV.boot();
-        if (life.dead) return;
-        if (!up) {
-          done();
-          const st = UV.status();
-          wrap.appendChild(tunnelDown(st.error ? String(st.error.message || st.error) : `Tunnel ${st.phase}.`));
-          return;
-        }
-        frame.src = UV.encode(what.url);
-      })();
-    } else {
-      frame.src = what.url;
-    }
+    frame.src = what.url;
 
     return h('div.cl__stage',
       h('div.cl__bar',
@@ -782,32 +1027,13 @@ export function buildCloud(ctx) {
         h('div.grow'),
         h('button.ibtn.tip', {
           type: 'button', 'data-tip': 'Reload', 'aria-label': 'Reload',
-          onclick: () => {
-            frame.src = what.via === 'tunnel' && UV.isReady() ? UV.encode(what.url) : what.url;
-          },
+          onclick: () => { frame.src = what.url; },
         }, icon('refresh')),
         h('button.ibtn.tip', {
           type: 'button', 'data-tip': 'Fill the window', 'aria-label': 'Fill the window',
           onclick: e => e.currentTarget.closest('.cl__stage').classList.toggle('is-full'),
         }, icon('maximize-2'))),
       wrap);
-  }
-
-  function tunnelDown(why, retry = true) {
-    return h('div.px2__overlay',
-      h('div.empty', icon('shield'),
-        h('b', { text: 'This one needs the Static tunnel' }),
-        h('small', { text: why }),
-        h('small.dim', { text: 'The player refuses to be placed in another page. The tunnel gets '
-          + 'past that by serving it from Static’s own origin — without it there is nothing to show.' }),
-        h('div.px2__altrow',
-          retry ? h('button.btn', { type: 'button', onclick: () => paint() },
-            icon('refresh', { size: 13 }), 'Try again') : null,
-          h('a.btn.btn--ghost', {
-            href: LOCAL_PROXY_URL,
-            target: '_blank',
-            rel: 'noopener noreferrer',
-          }, icon('shield', { size: 13 }), 'Open Proxy on localhost'))));
   }
 
   /* ---------- the honest footer ---------- */

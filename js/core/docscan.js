@@ -282,6 +282,32 @@ export function warpGray(gray, w, h, corners, outW, outH) {
 /* ---------- black and white ---------- */
 
 /** detail: 0 (cleanest, only strong marks) … 1 (keeps faint pencil). */
+/** The same straightening for colour: RGBA in, RGBA out (alpha 255). */
+export function warpRGBA(rgba, w, h, corners, outW, outH) {
+  const m = squareToQuad(corners);
+  const out = new Uint8ClampedArray(outW * outH * 4);
+  for (let j = 0; j < outH; j++) {
+    const v = (j + 0.5) / outH;
+    for (let i = 0; i < outW; i++) {
+      const u = (i + 0.5) / outW;
+      const den = m.g * u + m.h * v + 1;
+      const x = (m.a * u + m.b * v + m.c) / den - 0.5, y = (m.d * u + m.e * v + m.f) / den - 0.5;
+      const x0 = Math.floor(x), y0 = Math.floor(y);
+      const fx = x - x0, fy = y - y0;
+      const xa = Math.max(0, Math.min(w - 1, x0)), xb = Math.max(0, Math.min(w - 1, x0 + 1));
+      const ya = Math.max(0, Math.min(h - 1, y0)), yb = Math.max(0, Math.min(h - 1, y0 + 1));
+      const o = (j * outW + i) * 4;
+      for (let c = 0; c < 3; c++) {
+        const top = rgba[(ya * w + xa) * 4 + c] * (1 - fx) + rgba[(ya * w + xb) * 4 + c] * fx;
+        const bot = rgba[(yb * w + xa) * 4 + c] * (1 - fx) + rgba[(yb * w + xb) * 4 + c] * fx;
+        out[o + c] = top * (1 - fy) + bot * fy;
+      }
+      out[o + 3] = 255;
+    }
+  }
+  return out;
+}
+
 export function binarize(gray, w, h, { detail = 0.5 } = {}) {
   const win = Math.max(15, Math.round(Math.max(w, h) / 12)) | 1;
   const r = win >> 1;
@@ -320,4 +346,4 @@ export function pack1bit(bw, w, h) {
   return out;
 }
 
-export default { toGray, detectCorners, orderCorners, defaultCorners, outputSize, warpGray, binarize, pack1bit, squareToQuad, otsu };
+export default { toGray, detectCorners, orderCorners, defaultCorners, outputSize, warpGray, warpRGBA, binarize, pack1bit, squareToQuad, otsu };

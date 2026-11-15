@@ -64,6 +64,20 @@
    gets). Every count on screen — the sidebar, the title, the footer,
    aria-setsize on each row — is still measured over everything.
 
+   Several at once: ⌘/Ctrl-click or Shift-click picks more than one (⌘/Ctrl+A
+   takes everything shown). The footer then offers one zip of them all
+   (Download as zip, made here with core/zip.js — anything without bytes is
+   left out, by name), Send with Drop, Send to Notes (text files and pictures
+   become notes) and Delete together. Delete says what is kept in the Trash
+   (files; Undo, or Put Back in Files) and what is gone for good (projects,
+   clips and assets), and Undo (button, or ⌘/Ctrl+Z) brings back either:
+   files through core/fsops.js, the rest from a copy held until this window
+   closes. Filters sit under the title: "Older than 30 days" and the Files tags
+   (core/filetags.js) that are on files here. Storage shows the bytes used by
+   each kind, measured the same way as every total (no-data files left out).
+   Duplicates lists files that share a name and a size, said plainly as that and
+   not as "identical", with Show in Files and Move to Trash for each copy.
+
    Keyboard: arrows / Home / End move, Space previews, Enter opens,
    Delete removes (after a confirm), Shift+F10 or the Menu key opens
    the item menu, Ctrl/⌘+F or / jumps to search. Quick Look: ← → step
@@ -74,6 +88,10 @@ import * as media from '../core/media.js';
 import * as Projects from '../core/projects.js';
 import * as DB from '../core/db.js';
 import { fmtBytes, fmtAgo } from '../core/util.js';
+import * as ops from '../core/fsops.js';
+import * as Z from '../core/zip.js';
+import * as filetags from '../core/filetags.js';
+import * as NF from '../core/notesfmt.js';
 
 /* self-injected stylesheet, guarded so re-opening never double-adds it */
 if (typeof document !== 'undefined' && !document.getElementById('feat-downloads-css')) {
@@ -96,6 +114,7 @@ const PAGE = 300;                      /* rows painted at once; the rest follow 
 
 const SECTIONS = [
   { id: 'recent',   label: 'Recent',        icon: 'clock',    group: 'Library' },
+  { id: 'storage',  label: 'Storage',       icon: 'pie-chart', group: 'Library' },
   { id: 'images',   label: 'Images',        icon: 'image',    group: 'Kinds' },
   { id: 'videos',   label: 'Videos',        icon: 'film',     group: 'Kinds' },
   { id: 'audio',    label: 'Audio',         icon: 'music',    group: 'Kinds' },
@@ -103,7 +122,11 @@ const SECTIONS = [
   { id: 'clips',    label: 'Clips',         icon: 'play',     group: 'Kinds' },
   { id: 'assets',   label: 'Assets',        icon: 'layers',   group: 'Kinds' },
   { id: 'other',    label: 'Other files',   icon: 'file',     group: 'Kinds' },
+  { id: 'duplicates', label: 'Duplicates',  icon: 'copy',     group: 'Tools' },
 ];
+const KIND_IDS = ['images', 'videos', 'audio', 'projects', 'clips', 'assets', 'other'];
+const DAY30 = 30 * 86400000;
+const SPECIAL = new Set(['storage', 'duplicates']);    /* sections that are not a list of items to pick from */
 const SEC = Object.fromEntries(SECTIONS.map(s => [s.id, s]));
 /* the store each kind is read from — for loading and error states */
 const SOURCE_OF = { images: 'files', videos: 'files', audio: 'files', other: 'files', projects: 'projects', clips: 'clips', assets: 'assets' };
@@ -123,7 +146,7 @@ const TYPE_NAMES = {
   yml: 'YAML', yaml: 'YAML', toml: 'TOML', ini: 'Settings', conf: 'Settings', sh: 'Shell script',
   py: 'Python', rs: 'Rust', c: 'C source', h: 'C header', pdf: 'PDF document',
   zip: 'ZIP archive', tar: 'Tar archive', gz: 'Gzip archive',
-  aethergame: 'Game shortcut', aether: 'Theme', aetherclip: 'Clip shortcut',
+  aethergame: 'Game shortcut', staticgame: 'Game shortcut', aether: 'Theme', aetherclip: 'Clip shortcut',
 };
 const TEXT_MIME = {
   md: 'text/markdown', json: 'application/json', js: 'text/javascript', css: 'text/css',
@@ -290,10 +313,20 @@ defineApp({
   category: 'System',
   keywords: ['downloads', 'download', 'saved', 'recent', 'recents', 'screenshots', 'recordings', 'exports',
     'captures', 'clips', 'replays', 'projects', 'games', 'assets', 'sprites', 'sounds', 'pictures', 'photos',
-    'videos', 'music', 'audio', 'files', 'library', 'trash'],
+    'videos', 'music', 'audio', 'files', 'library', 'trash', 'zip', 'duplicates', 'storage', 'undo'],
   desc: 'Everything StaticOS has made or saved, in one place',
   singleton: true,
   win: { w: 900, h: 600, minW: 380, minH: 360 },
+  /* keys listed on the shortcut sheet (hold ⌘ / Ctrl) */
+  shortcuts: [
+    ['Left / Right / Up / Down', 'Move between items'],
+    ['Space', 'Quick Look the item (arrows step through)'],
+    ['Enter', 'Open the item'],
+    ['Mod+A', 'Pick everything shown'],
+    ['Delete', 'Move to the Trash (or delete, after a question)'],
+    ['Mod+Z', 'Undo the last delete'],
+    ['Mod+F', 'Search'],
+  ],
 
   mount(ctx) {
     const { root, win, opts, api } = ctx;
@@ -341,6 +374,11 @@ defineApp({
       inSecCount: 0,
       state: 'loading',     /* what the list shows: loading | error | empty | nomatch | list */
       selKey: null,
+      pick: new Set(),      /* every picked row (selKey is the one the keyboard is on) */
+      old30: false,         /* filter: only what is older than 30 days */
+      tagF: null,           /* filter: only files wearing this Files tag */
+      undos: [],            /* what Undo can bring back, newest last */
+      busy: false,
       narrow: false,
       ql: null,
     };
@@ -582,6 +620,7 @@ defineApp({
       h('div.dlx-tools', searchBox, viewSeg, sortSel));
 
     const hintId = `${uid}-hint`;
+    const filtersEl = h('div.dlx-filters', { role: 'group', 'aria-label': 'Filters', hidden: true });
     const listHost = h('div.app__content.app__content--flush.dlx-content');
     const sumEl = h('div.dlx-sum');
     const flashEl = h('div.dlx-flash', { role: 'status', 'aria-live': 'polite' });
@@ -596,10 +635,18 @@ defineApp({
       type: 'button', 'aria-label': 'More actions', title: 'More actions', 'aria-haspopup': 'menu',
       onclick: e => withSel(it => { const r = e.currentTarget.getBoundingClientRect(); itemMenu(it, r.left, r.bottom + 4); }),
     }, icon('more-horizontal'));
-    const actsEl = h('div.dlx-acts', { role: 'toolbar', 'aria-label': 'Selected item' }, aLook, aOpen, aShow, aDown, aDel, aMore);
-    const footEl = h('div.app__bar.app__bar--foot.dlx-foot', sumEl, flashEl, actsEl);
-    const mainEl = h('div.app__main.dlx-main', barEl, listHost, footEl,
-      h('span.sr', { id: hintId, text: 'Space previews, Enter opens, Delete removes, Shift+F10 shows more actions.' }));
+    const aDrop = actBtn('dlx-a-drop', 'send', 'Send with Drop', () => withSel(it => doDrop([it])));
+    const aNote = actBtn('dlx-a-note', 'sticky-note', 'Send to Notes', () => withSel(it => doNotes([it])));
+    const actsEl = h('div.dlx-acts', { role: 'toolbar', 'aria-label': 'Selected item' }, aLook, aOpen, aShow, aDown, aDrop, aNote, aDel, aMore);
+    const mZip = actBtn('dlx-m-zip', 'package', 'Download as zip', () => doZip(pickedItems()));
+    const mDrop = actBtn('dlx-m-drop', 'send', 'Send with Drop', () => doDrop(pickedItems()));
+    const mNote = actBtn('dlx-m-note', 'sticky-note', 'Send to Notes', () => doNotes(pickedItems()));
+    const mDel = actBtn('dlx-m-del', 'trash', 'Delete together', () => doDeleteMany(pickedItems()));
+    const mClear = h('button.btn.btn--sm.btn--ghost.dlx-m-clear', { type: 'button', onclick: () => { const k = S.selKey; selectKey(k); focusCurrent(); } }, icon('x'), h('span', { text: 'Select one' }));
+    const multiEl = h('div.dlx-acts.dlx-acts--multi', { role: 'toolbar', 'aria-label': 'Selected items', hidden: true }, mZip, mDrop, mNote, mDel, mClear);
+    const footEl = h('div.app__bar.app__bar--foot.dlx-foot', sumEl, flashEl, actsEl, multiEl);
+    const mainEl = h('div.app__main.dlx-main', barEl, filtersEl, listHost, footEl,
+      h('span.sr', { id: hintId, text: 'Space previews, Enter opens, Delete removes, Control or Command click picks more than one, Shift+F10 shows more actions.' }));
     const appEl = h('div.app.dlx', sideEl, mainEl);
     root.appendChild(appEl);
 
@@ -646,6 +693,7 @@ defineApp({
       const all = allItems();
       for (const it of all) counts[it.group]++;
       counts.recent = all.length;
+      counts.duplicates = duplicateGroups().length;
       for (const s of SECTIONS) {
         const { b, count } = sideBtns.get(s.id);
         const on = s.id === S.section;
@@ -654,8 +702,9 @@ defineApp({
         const src = SOURCE_OF[s.id];
         const waiting = s.id === 'recent' ? !S.loaded.files : src && !S.loaded[src];
         const failed = src && src !== 'files' && S.err[src];
-        count.textContent = waiting ? '…' : failed ? '!' : counts[s.id] ? String(counts[s.id]) : '';
-        b.setAttribute('aria-label', `${s.label}${waiting ? ', loading' : failed ? ', could not be read' : `, ${plural(counts[s.id], 'item')}`}`);
+        const noCount = s.id === 'storage';
+        count.textContent = waiting ? '…' : failed ? '!' : noCount ? '' : counts[s.id] ? String(counts[s.id]) : '';
+        b.setAttribute('aria-label', `${s.label}${waiting ? ', loading' : failed ? ', could not be read' : noCount ? '' : `, ${s.id === 'duplicates' ? plural(counts[s.id], 'group') : plural(counts[s.id], 'item')}`}`);
       }
       meterB.textContent = all.length ? plural(all.length, 'item') : 'Nothing yet';
       meterS.textContent = all.length ? `${totalText(all).replace(/^(\S+ \S+)/, '$1 in all')}` : 'Things you make or save land here.';
@@ -676,6 +725,8 @@ defineApp({
         b.setAttribute('aria-pressed', on ? 'true' : 'false');
       }
       searchIn.placeholder = S.section === 'recent' ? 'Search everything' : `Search ${sec.label.toLowerCase()}`;
+      const sp = SPECIAL.has(S.section);               /* Storage and Duplicates are not lists to search, view or sort */
+      for (const el of [searchBox, viewSeg, sortSel]) el.style.display = sp ? 'none' : '';
     }
     listen(viewSeg, 'click', e => {
       const b = e.target.closest('button[data-v]');
@@ -732,11 +783,15 @@ defineApp({
       name: (a, b) => collator.compare(a.name, b.name) || ((b.at || 0) - (a.at || 0)),
       size: (a, b) => ((Number.isFinite(b.size) ? b.size : -1) - (Number.isFinite(a.size) ? a.size : -1)) || collator.compare(a.name, b.name),
     };
+    const filtered = () => S.old30 || !!S.tagF;
     function visibleItems() {
+      if (SPECIAL.has(S.section)) return { inSec: [], shown: [] };
       const all = allItems();
       const inSec = S.section === 'recent' ? all : all.filter(i => i.group === S.section);
       const terms = S.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-      const hit = terms.length ? inSec.filter(i => terms.every(t => i.hay.includes(t))) : inSec;
+      let hit = terms.length ? inSec.filter(i => terms.every(t => i.hay.includes(t))) : inSec;
+      if (S.old30) { const cut = Date.now() - DAY30; hit = hit.filter(i => Number.isFinite(i.at) && i.at < cut); }
+      if (S.tagF) hit = hit.filter(i => i.src === 'file' && filetags.hasTag(i.node, S.tagF));
       return { inSec, shown: [...hit].sort(sortFns[S.sort] || sortFns.new) };
     }
 
@@ -747,14 +802,24 @@ defineApp({
       io?.disconnect();
       clear(listHost);
 
+      if (SPECIAL.has(S.section)) {
+        S.shown = []; S.inSecCount = 0; S.pick = new Set(); S.selKey = null;
+        filtersEl.hidden = true;
+        countEl.textContent = '';
+        S.state = 'special';
+        listHost.append(S.section === 'storage' ? storageView() : duplicatesView());
+        listHost.scrollTop = scroll;
+        return;
+      }
       const { inSec, shown } = visibleItems();
       S.shown = shown;
       S.inSecCount = inSec.length;
-      countEl.textContent = inSec.length ? plural(inSec.length, 'item') : '';
+      paintFilters(inSec);
+      countEl.textContent = inSec.length ? (filtered() ? `${shown.length} of ${plural(inSec.length, 'item')}` : plural(inSec.length, 'item')) : '';
+      { const keep = new Set(shown.map(i => i.key)); for (const k of [...S.pick]) if (!keep.has(k)) S.pick.delete(k); if (S.selKey && !S.pick.has(S.selKey)) S.selKey = [...S.pick].pop() || null; }
       /* a fresh view (another section, another sort, a new search) starts at page one */
       if (top) S.limit = PAGE;
       S.limit = Math.max(PAGE, Math.min(S.limit, Math.max(PAGE, shown.length)));
-      if (S.selKey && !shown.some(i => i.key === S.selKey)) S.selKey = null;
 
       const retry = s => () => { S.loaded[s] = false; S.err[s] = null; paintSide(); paintList({ keepFocus: false }); paintFoot(); reload(s); };
       const recent = S.section === 'recent';
@@ -827,6 +892,12 @@ defineApp({
     }
     function noMatches() {
       const sec = SEC[S.section];
+      if (!S.q.trim() && filtered()) {
+        return h('div.empty.dlx-empty', icon('filter'),
+          h('b', { text: S.old30 && S.tagF ? 'Nothing is older than 30 days and tagged that' : S.old30 ? 'Nothing here is older than 30 days' : `No file here wears the “${S.tagF}” tag` }),
+          h('small', { text: 'Everything you have made or saved here is newer, or has no tag to match.' }),
+          h('div.dlx-empty__acts', h('button.btn.btn--sm', { type: 'button', onclick: () => { S.old30 = false; S.tagF = null; paintList({ keepFocus: false, top: true }); paintFoot(); } }, h('span', { text: 'Clear filters' }))));
+      }
       return h('div.empty.dlx-empty', icon('search'),
         h('b', { text: `No matches for “${S.q.trim()}”` }),
         h('small', { text: S.section === 'recent' ? 'Nothing you have made or saved matches. Try another word.' : `Nothing in ${sec.label} matches. Try another word, or search everything.` }),
@@ -913,7 +984,7 @@ defineApp({
         it.where, Number.isFinite(it.at) ? fullDate(it.at) : 'date unknown'].join('. ');
     }
     function optionEl(it, view, pos, total) {
-      const sel = it.key === S.selKey;
+      const sel = S.pick.has(it.key);
       const gone = noData(it);
       const props = {
         role: 'option', tabindex: '-1', 'aria-selected': sel ? 'true' : 'false', 'aria-label': describe(it),
@@ -1065,23 +1136,55 @@ defineApp({
     const optFor = key => (key ? listHost.querySelector(`.dlx-opt[data-key="${CSS.escape(key)}"]`) : null);
     function selectKey(key, { focus = false } = {}) {
       S.selKey = key || null;
-      for (const el of listHost.querySelectorAll('.dlx-opt.is-sel')) {
-        el.classList.remove('is-sel');
-        el.setAttribute('aria-selected', 'false');
-      }
+      S.pick = new Set(key ? [key] : []);
+      S.anchor = S.selKey;
+      paintPick(focus);
+      paintFoot();
+    }
+    /** show S.pick on the rows that are painted: the class, aria-selected and the one tab stop */
+    function paintPick(focus = false) {
       for (const el of listHost.querySelectorAll('.dlx-opt[tabindex="0"]')) el.tabIndex = -1;
+      for (const el of listHost.querySelectorAll('.dlx-opt')) {
+        const on = S.pick.has(el.dataset.key);
+        if (el.classList.contains('is-sel') !== on) { el.classList.toggle('is-sel', on); el.setAttribute('aria-selected', on ? 'true' : 'false'); }
+      }
       const el = optFor(S.selKey);
       if (el) {
-        el.classList.add('is-sel');
-        el.setAttribute('aria-selected', 'true');
         el.tabIndex = 0;
         if (focus) { el.focus({ preventScroll: true }); reveal(el); }
       } else {
         const first = listHost.querySelector('.dlx-opt');
         if (first) first.tabIndex = 0;
       }
+    }
+    /** ⌘/Ctrl-click: add one to the picked rows, or take it off */
+    function toggleKey(key) {
+      if (S.pick.has(key)) {
+        S.pick.delete(key);
+        if (S.selKey === key) S.selKey = [...S.pick].pop() || null;
+      } else { S.pick.add(key); S.selKey = key; }
+      S.anchor = S.selKey;
+      paintPick(true);
       paintFoot();
     }
+    /** Shift-click: everything from the row you started on to this one */
+    function rangeKey(key) {
+      const a = S.shown.findIndex(i => i.key === (S.anchor || S.selKey)), b = S.shown.findIndex(i => i.key === key);
+      if (a < 0 || b < 0) { selectKey(key, { focus: true }); return; }
+      S.pick = new Set(S.shown.slice(Math.min(a, b), Math.max(a, b) + 1).map(i => i.key));
+      S.selKey = key;
+      paintPick(true);
+      paintFoot();
+    }
+    function pickAll() {
+      if (!S.shown.length) return;
+      S.pick = new Set(S.shown.map(i => i.key));
+      if (!S.selKey || !S.pick.has(S.selKey)) S.selKey = S.shown[0].key;
+      S.anchor = S.shown[0].key;
+      paintPick(false);
+      paintFoot();
+    }
+    const pickedItems = () => S.shown.filter(i => S.pick.has(i.key));
     /** scroll the list (only the list — never the window) so a row is in view, below any sticky header */
     function reveal(el) {
       const box = listHost.getBoundingClientRect();
@@ -1148,9 +1251,12 @@ defineApp({
         if (!e.target.closest('button,a,input,select,label')) selectKey(null);
         return;
       }
+      const touch = e.pointerType === 'touch';
+      if (!touch && (e.metaKey || e.ctrlKey)) { toggleKey(opt.dataset.key); return; }
+      if (!touch && e.shiftKey && S.selKey) { rangeKey(opt.dataset.key); return; }
       selectKey(opt.dataset.key, { focus: true });
       /* phones: one tap previews, like a gallery */
-      if (e.pointerType === 'touch') { const it = findItem(opt.dataset.key); if (it) openQL(it); }
+      if (touch) { const it = findItem(opt.dataset.key); if (it) openQL(it); }
     });
     listen(listHost, 'dblclick', e => {
       const opt = e.target.closest('.dlx-opt');
@@ -1166,6 +1272,7 @@ defineApp({
         return;
       }
       e.preventDefault();
+      if (S.pick.size > 1 && S.pick.has(opt.dataset.key)) { manyMenu(e.clientX, e.clientY); return; }
       selectKey(opt.dataset.key, { focus: true });
       const it = findItem(opt.dataset.key);
       if (it) itemMenu(it, e.clientX, e.clientY);
@@ -1187,7 +1294,10 @@ defineApp({
         if (it) { selectKey(it.key); openQL(it); }
       } else if (k === 'Delete' || (k === 'Backspace' && (e.metaKey || !e.ctrlKey))) {
         e.preventDefault();
-        if (it) doDelete(it);
+        if (S.pick.size > 1) doDeleteMany(pickedItems()); else if (it) doDelete(it);
+      } else if (k === 'Escape' && S.pick.size > 1) {
+        e.preventDefault();
+        selectKey(S.selKey, { focus: true });
       } else if (k === 'ContextMenu' || (k === 'F10' && e.shiftKey)) {
         e.preventDefault();
         const r = opt.getBoundingClientRect();
@@ -1202,6 +1312,12 @@ defineApp({
         e.preventDefault();
         searchIn.focus();
         searchIn.select();
+      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !typing && (e.key === 'a' || e.key === 'A') && !SPECIAL.has(S.section)) {
+        e.preventDefault();
+        pickAll();
+      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !typing && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        undoLast();
       }
     });
 
@@ -1212,18 +1328,31 @@ defineApp({
       clear(flashEl);
       flashEl.classList.toggle('is-bad', tone === 'bad');
       flashEl.append(h('span', { text }));
-      if (action) flashEl.append(h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => { action.run(); clearFlash(); } }, h('span', { text: action.label })));
+      const acts = [].concat(action || []).filter(Boolean);
+      for (const a of acts) flashEl.append(h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => { clearFlash(); a.run(); } }, h('span', { text: a.label })));
       footEl.classList.add('has-flash');
-      flashT = later(clearFlash, action ? 9000 : 6000);
+      flashT = later(clearFlash, acts.length ? 9000 : 6000);
     }
     function clearFlash() { cancel(flashT); flashT = 0; clear(flashEl); footEl.classList.remove('has-flash'); }
 
+    const sendable = it => it.src === 'file' && !noData(it) && !!vfs.node(it.path);
+    const notable = it => it.src === 'file' && !noData(it) && (it.mk === 'image' || (!it.isMedia && !it.hollow && typeof it.node.content === 'string' && it.node.content.length > 0));
     function paintFoot() {
-      const it = S.selKey ? S.shown.find(i => i.key === S.selKey) || null : null;
+      const many = S.pick.size > 1 && !SPECIAL.has(S.section);
+      const it = !many && S.selKey ? S.shown.find(i => i.key === S.selKey) || null : null;
       clear(sumEl);
       actsEl.hidden = !it;
-      footEl.classList.toggle('has-sel', !!it);
-      if (it) {
+      multiEl.hidden = !many;
+      footEl.classList.toggle('has-sel', !!it || many);
+      if (many) {
+        const picked = pickedItems();
+        sumEl.append(h('b', { text: `${picked.length} selected` }), h('small', { text: totalText(picked) }));
+        mDrop.disabled = !picked.some(sendable);
+        mDrop.title = mDrop.disabled ? 'Drop sends files; none of these is a file with bytes' : `Send ${plural(picked.filter(sendable).length, 'file')} with Drop`;
+        mNote.disabled = !picked.some(notable);
+        mNote.title = mNote.disabled ? 'Notes takes text files and pictures; none of these is one' : 'Make a note from each text file or picture';
+        mDel.title = picked.some(i => i.src !== 'file') ? 'Files go to the Trash; projects, clips and assets are deleted' : 'Move them to the Trash';
+      } else if (it) {
         sumEl.append(h('b', { text: it.name, title: it.name }),
           h('small', { text: [it.kindLabel, noData(it) ? 'No data' : bytesText(it.size), agoText(it.at)].join(' · ') }));
         const t = openTarget(it);
@@ -1236,6 +1365,11 @@ defineApp({
         const canDl = downloadable(it);
         aDown.disabled = !canDl;
         aDown.title = canDl ? 'Download to computer' : 'Nothing to download: no bytes are stored for it';
+        aDrop.hidden = !api.getApp('drop') || it.src !== 'file';
+        aDrop.disabled = !sendable(it);
+        aDrop.title = aDrop.disabled ? 'Nothing to send: no bytes are stored for it' : 'Send it to a friend with Static Drop';
+        aNote.disabled = !notable(it);
+        aNote.title = aNote.disabled ? 'Notes takes text files and pictures' : 'Make a note from it';
         aDel.title = it.src === 'file' ? 'Move to Trash' : 'Delete for good';
         aDel.setAttribute('aria-label', it.src === 'file' ? 'Move to Trash' : 'Delete permanently');
         aLook.title = 'Quick Look (Space)';
@@ -1243,7 +1377,8 @@ defineApp({
         const shown = S.shown;
         const q = S.q.trim();
         sumEl.append(h('small', {
-          text: S.state === 'loading' ? 'Reading…'
+          text: S.state === 'special' ? (S.section === 'storage' ? totalText(allItems()) : `${plural(duplicateGroups().length, 'group')} of files with the same name and size`)
+            : S.state === 'loading' ? 'Reading…'
             : S.state === 'error' ? 'Couldn’t be read'
               : !S.inSecCount ? 'Nothing here yet'
                 : q ? `${shown.length} of ${plural(S.inSecCount, 'item')} match “${q}”`
@@ -1373,17 +1508,84 @@ defineApp({
       flash(`Sent “${name}” (${bytesText(blob.size)}) to your browser’s downloads.`);
     }
 
+    /* ==================================================================== */
+    /*  Delete, and Undo                                                    */
+    /* ==================================================================== */
+    /* A file goes to the Trash through core/fsops.js (one line in the shared undo
+       journal, so Undo works here, in Files, and after a reload). A project, clip
+       or asset has no Trash: it is deleted from IndexedDB, and a copy of its record
+       is held here so Undo can write it back — until this window closes. */
+    const stashOf = async it => {
+      if (it.src === 'project') return { kind: 'project', name: it.name, rec: (await Projects.get(it.project.id)) || it.project };
+      if (it.src === 'clip') return { kind: 'clip', name: it.name, key: it.clipKey, rec: it.clip };
+      if (it.src === 'asset') return { kind: 'asset', name: it.name, key: it.assetKey, rec: it.asset };
+      return null;
+    };
+    async function removeOther(it) {
+      if (it.src === 'project') await Projects.remove(it.project.id);
+      else if (it.src === 'clip') { await DB.kv('clips').del(it.clipKey); bus.emit('clips:change', { id: it.clip.id || it.clipKey, kind: 'delete' }); }
+      else { await DB.kv('assets').del(it.assetKey); bus.emit('assets:change', { id: it.asset.id, kind: 'delete' }); }
+    }
+    async function restoreOther(st) {
+      if (st.kind === 'project') { await DB.kv('projects').set(st.rec.id, st.rec); bus.emit('projects:change', { id: st.rec.id, kind: 'restore' }); }
+      else if (st.kind === 'clip') { await DB.kv('clips').set(st.key, st.rec); bus.emit('clips:change', { id: st.rec.id || st.key, kind: 'restore' }); }
+      else { await DB.kv('assets').set(st.key, st.rec); bus.emit('assets:change', { id: st.rec.id, kind: 'restore', type: st.rec.kind === 'sprite' ? 'sprite' : 'sound' }); }
+    }
+    /** what a delete left behind: files in the Trash (fs), and held copies of the rest (stash) */
+    function pushUndo(label, { fs = false, stash = [] } = {}) {
+      const entry = { label, fs, mark: fs ? ops.journalTop() : null, stash };
+      S.undos.push(entry);
+      if (S.undos.length > 10) S.undos.shift();
+      return entry;
+    }
+    async function undoEntry(entry) {
+      const i = S.undos.indexOf(entry);
+      if (i >= 0) S.undos.splice(i, 1);
+      const problems = [];
+      if (entry.fs) {
+        if (ops.journalTop() === entry.mark) { const r = ops.undo(); if (r?.problems?.length) problems.push(...r.problems); }
+        else problems.push({ name: 'the files', why: 'something else was changed since — use Undo in Files' });
+      }
+      for (const st of entry.stash) {
+        try { await restoreOther(st); } catch (err) { problems.push({ name: st.name, why: errText(err) }); }
+      }
+      if (S.dead) return;
+      for (const k of ['files', 'projects', 'clips', 'assets']) reload(k);
+      if (problems.length) flash(`Couldn’t fully undo: “${problems[0].name}” — ${problems[0].why}.`, 'bad');
+      else flash(`Undid: ${entry.label}.`);
+    }
+    function undoLast() {
+      const e = S.undos[S.undos.length - 1];
+      if (!e) { flash('Nothing to undo here.'); return; }
+      undoEntry(e);
+    }
+    const undoAct = entry => ({ label: 'Undo', run: () => undoEntry(entry) });
+    /** take rows off screen at once; the re-read that follows confirms */
+    function dropRows(its, nextKey) {
+      for (const [srcKey, kind] of [['files', 'file'], ['projects', 'project'], ['clips', 'clip'], ['assets', 'asset']]) {
+        const gone = new Set(its.filter(i => i.src === kind).map(i => i.key));
+        if (!gone.size) continue;
+        S.items[srcKey] = S.items[srcKey].filter(i => !gone.has(i.key));
+        S.sig[srcKey] = '';
+      }
+      if (S.ql && its.some(i => i.key === S.ql.key)) closeQL({ refocus: false });
+      S.selKey = nextKey || null;
+      S.pick = new Set(nextKey ? [nextKey] : []);
+      S.anchor = S.selKey;
+      render();
+    }
+
     async function doDelete(it) {
       let ask;
       if (it.src === 'file') {
         ask = { title: `Move “${it.name}” to the Trash?`, message: `It leaves ${it.where}. You can put it back from the Trash in Files until the Trash is emptied.`, ok: 'Move to Trash', danger: true };
       } else if (it.src === 'project') {
         const p = it.project;
-        ask = { title: `Delete “${it.name}” for good?`, message: `The game and all ${plural(it.versions, 'version')} are deleted from this browser${p.published ? ', and it leaves your Workshop' : ''}. Files you exported are not affected. This can’t be undone.`, ok: 'Delete', danger: true };
+        ask = { title: `Delete “${it.name}” for good?`, message: `The game and all ${plural(it.versions, 'version')} are deleted from this browser${p.published ? ', and it leaves your Workshop' : ''}. Files you exported are not affected. Undo brings it back until you close this window.`, ok: 'Delete', danger: true };
       } else if (it.src === 'clip') {
-        ask = { title: 'Delete this clip for good?', message: `${it.name}${it.detail ? ` · ${it.detail}` : ''} · ${fullDate(it.at)}. Clips are kept only in this browser, so this can’t be undone.`, ok: 'Delete', danger: true };
+        ask = { title: 'Delete this clip for good?', message: `${it.name}${it.detail ? ` · ${it.detail}` : ''} · ${fullDate(it.at)}. Clips are kept only in this browser. Undo brings it back until you close this window.`, ok: 'Delete', danger: true };
       } else {
-        ask = { title: `Delete “${it.name}” for good?`, message: `The ${it.kindLabel.toLowerCase()} is deleted from your Asset Lab library in this browser. Copies already added to a game project stay there. This can’t be undone.`, ok: 'Delete', danger: true };
+        ask = { title: `Delete “${it.name}” for good?`, message: `The ${it.kindLabel.toLowerCase()} is deleted from your Asset Lab library in this browser. Copies already added to a game project stay there. Undo brings it back until you close this window.`, ok: 'Delete', danger: true };
       }
       const els = S.shown;
       const at = els.findIndex(i => i.key === it.key);
@@ -1395,41 +1597,278 @@ defineApp({
         if (S.ql) S.ql.wrap.focus({ preventScroll: true }); else focusCurrent();
         return;
       }
+      let entry = null;
       try {
         if (it.src === 'file') {
           /* the very file that was asked about, not whatever is at that path now */
           const now = vfs.node(it.path);
           if (!now) throw new Error('it is no longer there');
           if (it.node && now !== it.node) throw new Error('a different file is at that path now');
-          if (!vfs.rm(it.path)) throw new Error('it could not be moved');
-        } else if (it.src === 'project') {
-          await Projects.remove(it.project.id);
-        } else if (it.src === 'clip') {
-          await DB.kv('clips').del(it.clipKey);
-          bus.emit('clips:change', { id: it.clip.id || it.clipKey, kind: 'delete' });
+          if (!ops.trash([it.path]).done) throw new Error('it could not be moved');
+          entry = pushUndo(`Move “${it.name}” to the Trash`, { fs: true });
         } else {
-          await DB.kv('assets').del(it.assetKey);
-          bus.emit('assets:change', { id: it.asset.id, kind: 'delete' });
+          const st = await stashOf(it);
+          await removeOther(it);
+          entry = pushUndo(`Delete “${it.name}”`, { stash: [st] });
         }
       } catch (err) {
         if (!S.dead) flash(`Couldn’t delete “${it.name}” (${errText(err)}).`, 'bad');
         return;
       }
       if (S.dead) return;
-      /* take it off screen now; the source re-read that follows confirms it */
-      const srcKey = it.src === 'file' ? 'files' : it.src === 'project' ? 'projects' : it.src === 'clip' ? 'clips' : 'assets';
-      S.items[srcKey] = S.items[srcKey].filter(i => i.key !== it.key);
-      S.sig[srcKey] = '';
-      if (S.ql && S.ql.key === it.key) closeQL({ refocus: false });
-      S.selKey = next ? next.key : null;
-      render();
+      dropRows([it], next ? next.key : null);
       focusCurrent();
       if (it.src === 'file') {
-        flash(`Moved “${it.name}” to the Trash.`, null, api.getApp('files') ? { label: 'Open Trash', run: () => api.openApp('files', { path: TRASH }) } : null);
+        flash(`Moved “${it.name}” to the Trash.`, null, [undoAct(entry), api.getApp('files') ? { label: 'Open Trash', run: () => api.openApp('files', { path: TRASH }) } : null]);
       } else {
-        flash(`Deleted “${it.name}”.`);
+        flash(`Deleted “${it.name}”.`, null, undoAct(entry));
       }
-      reload(srcKey);
+      reload(it.src === 'file' ? 'files' : it.src === 'project' ? 'projects' : it.src === 'clip' ? 'clips' : 'assets');
+    }
+
+    /** Delete together: files to the Trash, the rest for good, said before it happens. */
+    async function doDeleteMany(its) {
+      if (its.length < 2) { if (its[0]) doDelete(its[0]); return; }
+      const files = its.filter(i => i.src === 'file');
+      const others = its.filter(i => i.src !== 'file');
+      const parts = [];
+      if (files.length) parts.push(`${plural(files.length, 'file')} ${files.length === 1 ? 'goes' : 'go'} to the Trash (Put Back in Files, or Undo here).`);
+      if (others.length) parts.push(`${plural(others.length, 'project, clip or asset', 'projects, clips and assets')} ${others.length === 1 ? 'is' : 'are'} deleted from this browser for good. Undo brings ${others.length === 1 ? 'it' : 'them'} back until you close this window.`);
+      const ok = await confirm({ title: `Delete ${plural(its.length, 'item')}?`, message: parts.join(' '), ok: others.length ? 'Delete' : 'Move to Trash', danger: true });
+      if (S.dead) return;
+      if (!ok) { focusCurrent(); return; }
+      const keys = new Set(its.map(i => i.key));
+      const next = S.shown.find(i => !keys.has(i.key)) || null;
+      const stash = [], bad = [];
+      let moved = 0, entryFs = false;
+      if (files.length) {
+        const live = files.filter(i => { const n = vfs.node(i.path); return n && (!i.node || n === i.node); });
+        const r = ops.trash(live.map(i => i.path));
+        moved = r.done; entryFs = r.done > 0;
+        for (const i of files) if (vfs.node(i.path)) bad.push(i.name);      /* still at its path: not removed */
+      }
+      const gone = files.filter(i => !vfs.node(i.path));
+      let others_done = 0;
+      const doneOthers = [];
+      for (const it of others) {
+        try { const st = await stashOf(it); await removeOther(it); stash.push(st); doneOthers.push(it); others_done++; }
+        catch (err) { bad.push(it.name); }
+      }
+      if (S.dead) return;
+      const total = moved + others_done;
+      const entry = total ? pushUndo(`Delete ${plural(total, 'item')}`, { fs: entryFs, stash }) : null;
+      dropRows([...gone, ...doneOthers], next ? next.key : null);
+      focusCurrent();
+      if (!total) { flash('Nothing was deleted.', 'bad'); return; }
+      flash(`${moved && others_done ? `Moved ${plural(moved, 'file')} to the Trash and deleted ${plural(others_done, 'other item')}` : moved ? `Moved ${plural(moved, 'file')} to the Trash` : `Deleted ${plural(others_done, 'item')}`}${bad.length ? `; ${plural(bad.length, 'item')} couldn’t be removed` : ''}.`,
+        bad.length ? 'bad' : null, [undoAct(entry), moved && api.getApp('files') ? { label: 'Open Trash', run: () => api.openApp('files', { path: TRASH }) } : null]);
+      for (const k of ['files', 'projects', 'clips', 'assets']) reload(k);
+    }
+
+    /* ==================================================================== */
+    /*  zip, Drop, Notes                                                    */
+    /* ==================================================================== */
+    const nameFor = it => {
+      if (it.src === 'file') return it.name;
+      if (it.src === 'project') return `${safeName(it.project.name)}.html`;
+      if (it.src === 'clip') {
+        const ext = /mp4/.test(it.clip.blob.type || it.clip.mime || '') ? 'mp4' : 'webm';
+        return `static-arcade-${safeName(it.clip.game || 'clip').replace(/\s+/g, '-')}-${stampOf(it.at)}.${ext}`;
+      }
+      return `${safeName(it.name)}.${it.asset.kind === 'sprite' ? 'png' : 'wav'}`;
+    };
+    /** the real bytes of an item as a Blob; throws a sentence when there are none */
+    async function blobFor(it) {
+      if (it.src === 'file') {
+        const n = vfs.node(it.path);
+        if (!n) throw new Error('it is no longer there');
+        if (media.isMedia(n)) { const b = await media.blobOf(n); if (!b) throw new Error('its bytes are missing from this browser'); return b; }
+        if (typeof n.content === 'string' && n.content.length) return new Blob([n.content]);
+        if (!n.size) return new Blob([]);
+        throw new Error('it has no content in this browser');
+      }
+      if (it.src === 'project') {
+        const p = (await Projects.get(it.project.id)) || it.project;
+        const html = Projects.current(p);
+        if (!html) throw new Error('no HTML is saved for it yet');
+        return new Blob([html], { type: 'text/html;charset=utf-8' });
+      }
+      if (it.src === 'clip') return it.clip.blob;
+      const b = dataUrlBlob(it.asset.kind === 'sprite' ? it.asset.png : it.asset.wav);
+      if (!b) throw new Error('nothing is stored for it');
+      return b;
+    }
+    async function doZip(its) {
+      if (!its.length) return;
+      if (S.busy) { flash('Still working on the last one.', 'bad'); return; }
+      S.busy = true;
+      flash(`Making a zip of ${plural(its.length, 'item')}…`);
+      const used = new Set();
+      const uniq = nm => {
+        const dot = nm.lastIndexOf('.');
+        const stem = dot > 0 ? nm.slice(0, dot) : nm, ext = dot > 0 ? nm.slice(dot) : '';
+        let out = nm, i = 1;
+        while (used.has(out.toLowerCase())) out = `${stem} (${++i})${ext}`;
+        used.add(out.toLowerCase());
+        return out;
+      };
+      const left = [];
+      let made = null, err = null;
+      try {
+        made = await Z.makeZip(its.map(it => ({
+          name: uniq(nameFor(it)), size: Number.isFinite(it.size) && !noData(it) ? it.size : 0, date: new Date(realDate(it.at) ? it.at : Date.now()),
+          read: async () => {
+            try { return await blobFor(it); }
+            catch (e) { left.push({ name: it.name, why: errText(e) }); throw new Z.ZipError('skip', errText(e)); }
+          },
+        })));
+      } catch (e) { err = e; }
+      S.busy = false;
+      if (S.dead) return;
+      if (err) { flash(`Couldn’t make the zip (${errText(err)}).`, 'bad'); return; }
+      if (!made.count) { flash(`Nothing could be zipped${left[0] ? `: “${left[0].name}” — ${left[0].why}` : ''}.`, 'bad'); return; }
+      const name = `Static Downloads ${stampOf(Date.now())}.zip`;
+      saveBlob(made.blob, name);
+      flash(`Sent “${name}” (${bytesText(made.blob.size)}, ${plural(made.count, 'item')}) to your browser’s downloads.${left.length ? ` Left out: “${left[0].name}” (${left[0].why})${left.length > 1 ? ` and ${plural(left.length - 1, 'more')}` : ''}.` : ''}`, left.length ? 'bad' : null);
+    }
+    function doDrop(its) {
+      if (!api.getApp('drop')) { flash('Static Drop isn’t in this build.', 'bad'); return; }
+      const files = its.filter(sendable);
+      if (!files.length) { flash('Drop sends files with bytes; none of these can be sent.', 'bad'); return; }
+      api.openApp('drop', { send: files.map(i => i.path) });
+      flash(`Opened Static Drop with ${plural(files.length, 'file')}${files.length < its.length ? ` (${plural(its.length - files.length, 'item')} can’t be sent)` : ''}. Nothing goes until your friend accepts.`);
+    }
+    let noteSeq = 0;
+    /** Text files become notes with their words; pictures become a note holding the picture. */
+    function doNotes(its) {
+      const made = [], left = [];
+      const list = Array.isArray(store.get('notes')) ? [...store.get('notes')] : [];
+      for (const it of its) {
+        if (!notable(it)) { left.push(it.name); continue; }
+        const title = it.name.replace(/\.[^.]+$/, '') || it.name;
+        let body;
+        if (it.mk === 'image') body = NF.serialize([{ t: 'img', alt: it.name, path: it.path, runs: [] }]);
+        else if (it.node.content.length > 100000) { left.push(it.name); continue; }
+        else body = NF.fromPlain(it.node.content);
+        const id = `note-${Date.now().toString(36)}-dl${++noteSeq}`;
+        list.push({ id, title, body, fmt: NF.FMT, mtime: new Date().toISOString() });
+        made.push({ id, title });
+      }
+      if (!made.length) { flash(`Notes takes text files and pictures${left[0] ? ` — “${left[0]}” isn’t one` : ''}.`, 'bad'); return; }
+      store.set('notes', list);
+      flash(`Made ${made.length === 1 ? `the note “${made[0].title}”` : plural(made.length, 'note')} in Notes.${left.length ? ` ${plural(left.length, 'item')} left out (not text or a picture).` : ''}`, left.length ? 'bad' : null,
+        api.getApp('notes') ? { label: 'Open Notes', run: () => api.openApp('notes', { noteId: made[0].id }) } : null);
+    }
+
+    /* ==================================================================== */
+    /*  filters under the title                                             */
+    /* ==================================================================== */
+    function paintFilters(inSec) {
+      if (SPECIAL.has(S.section) || !inSec.length) { filtersEl.hidden = true; return; }
+      const here = new Map();
+      for (const it of inSec) if (it.src === 'file') for (const t of filetags.tagsOf(it.node)) here.set(t, (here.get(t) || 0) + 1);
+      if (S.tagF && ![...here.keys()].some(t => t.toLowerCase() === S.tagF.toLowerCase())) S.tagF = null;
+      const focusF = document.activeElement?.closest?.('.dlx-filters') ? document.activeElement.dataset.f : null;
+      clear(filtersEl);
+      filtersEl.hidden = false;
+      const chip = (id, label, on, fn, css) => h('button.dlx-chip', { type: 'button', dataset: { f: id }, 'aria-pressed': String(on), onclick: fn },
+        css ? h('i', { style: { background: css }, 'aria-hidden': 'true' }) : null, h('span', { text: label }));
+      filtersEl.append(h('span.dlx-filters__l', { text: 'Filter' }),
+        chip('old30', 'Older than 30 days', S.old30, () => { S.old30 = !S.old30; paintList({ keepFocus: false, top: true }); paintFoot(); }));
+      for (const [t, n] of [...here].sort((a, b) => collator.compare(a[0], b[0]))) {
+        const on = !!S.tagF && S.tagF.toLowerCase() === t.toLowerCase();
+        filtersEl.append(chip(`tag:${t}`, `${t} · ${n}`, on, () => { S.tagF = on ? null : t; paintList({ keepFocus: false, top: true }); paintFoot(); }, filetags.cssOf(t)));
+      }
+      if (focusF) filtersEl.querySelector(`[data-f="${CSS.escape(focusF)}"]`)?.focus({ preventScroll: true });
+    }
+    offs.push(bus.on('tags:change', () => reload('paint')));
+
+    /* ==================================================================== */
+    /*  Storage by kind, and Duplicates                                     */
+    /* ==================================================================== */
+    function storageView() {
+      const all = allItems();
+      const rows = KIND_IDS.map((id, i) => {
+        const list = all.filter(x => x.group === id);
+        return { id, label: SEC[id].label, ic: SEC[id].icon, n: list.length, bytes: realBytes(list), missing: missingCount(list), unsized: unsizedCount(list), hue: (i * 51 + 200) % 360 };
+      });
+      const total = rows.reduce((a, r) => a + r.bytes, 0);
+      const waiting = ['projects', 'clips', 'assets'].filter(x => !S.loaded[x]);
+      const missing = rows.reduce((a, r) => a + r.missing, 0);
+      return h('div.dlx-store', { role: 'region', 'aria-label': 'Storage used by kind' },
+        h('div.dlx-store__head', h('b', { text: total ? bytesText(total) : 'Nothing stored yet' }),
+          h('small', { text: total ? `used by ${plural(all.length - missing, 'item')}` : 'Things you make or save land here.' })),
+        total ? h('div.dlx-store__bar', { role: 'img', 'aria-label': `By kind: ${rows.filter(r => r.bytes).map(r => `${r.label} ${bytesText(r.bytes)}`).join(', ')}` },
+          rows.filter(r => r.bytes > 0).map(r => h('i', { style: { flex: `${r.bytes} 1 0`, '--hue': String(r.hue) }, title: `${r.label}: ${bytesText(r.bytes)}` }))) : null,
+        h('div.dlx-store__rows', rows.map(r => h('button.dlx-store__row', { type: 'button', dataset: { kind: r.id }, onclick: () => go(r.id),
+          'aria-label': `${r.label}: ${r.bytes ? bytesText(r.bytes) : 'nothing stored'}, ${plural(r.n, 'item')}${r.missing ? `, ${r.missing} with no data` : ''}` },
+        h('span.dlx-store__sw', { style: { '--hue': String(r.hue) } }, icon(r.ic)),
+        h('span.dlx-store__n', { text: r.label }),
+        h('div.dlx-store__meter', h('i', { style: { width: `${total ? Math.max(r.bytes ? 1 : 0, (100 * r.bytes) / total).toFixed(1) : 0}%`, '--hue': String(r.hue) } })),
+        h('small.dlx-store__b', { text: r.bytes ? bytesText(r.bytes) : '—' }),
+        h('small.dlx-store__c', { text: `${plural(r.n, 'item')}${total && r.bytes ? ` · ${((100 * r.bytes) / total).toFixed(1)}%` : ''}` })))),
+        h('p.dlx-store__note', { text: `Measured from what StaticOS has stored for each item, added up the same way as every total here.${missing ? ` ${plural(missing, 'file')} with no data ${missing === 1 ? 'is' : 'are'} left out.` : ''}${waiting.length ? ` Still reading your ${waiting.map(s => SOURCE_NAME[s]).join(', ')}…` : ''} It does not include Notes, settings or text kept outside these folders.` }));
+    }
+
+    /** files that share a name and a size: the copies, newest first, groups that could free the most first */
+    function duplicateGroups() {
+      const map = new Map();
+      for (const it of S.items.files) {
+        if (noData(it) || !Number.isFinite(it.size) || it.size <= 0) continue;
+        const k = `${it.name.toLowerCase()}|${it.size}`;
+        (map.get(k) || map.set(k, []).get(k)).push(it);
+      }
+      return [...map.values()].filter(g => g.length > 1)
+        .map(g => [...g].sort((a, b) => (Number.isFinite(b.at) ? b.at : 0) - (Number.isFinite(a.at) ? a.at : 0) || collator.compare(a.path, b.path)))
+        .sort((a, b) => (b.length - 1) * b[0].size - (a.length - 1) * a[0].size || collator.compare(a[0].name, b[0].name));
+    }
+    async function trashCopies(its, label) {
+      const live = its.filter(i => { const n = vfs.node(i.path); return n && (!i.node || n === i.node); });
+      const r = ops.trash(live.map(i => i.path));
+      if (!r.done) { flash('Nothing was moved to the Trash.', 'bad'); return; }
+      const entry = pushUndo(label, { fs: true });
+      dropRows(live.filter(i => !vfs.node(i.path)), null);
+      flash(`Moved ${r.done === 1 ? `“${live[0].name}”` : plural(r.done, 'copy', 'copies')} to the Trash.`, null, [undoAct(entry), api.getApp('files') ? { label: 'Open Trash', run: () => api.openApp('files', { path: TRASH }) } : null]);
+      reload('files');
+    }
+    function duplicatesView() {
+      const groups = duplicateGroups();
+      if (!groups.length) {
+        return h('div.empty.dlx-empty', icon('copy'), h('b', { text: 'No files share a name and a size' }),
+          h('small', { text: 'Looked through Downloads, Pictures, Music and Videos. Files with no data, and empty files, are left out.' }));
+      }
+      const spare = groups.reduce((a, g) => a + (g.length - 1) * g[0].size, 0);
+      return h('div.dlx-dups', { role: 'region', 'aria-label': 'Files with the same name and size' },
+        h('div.dlx-dups__head', h('b', { text: `${plural(groups.length, 'group')} · up to ${bytesText(spare)} in extra copies` }),
+          h('small', { text: 'Same name and size usually means a copy, but it does not prove the contents match. Look before you delete; Move to Trash can be undone.' })),
+        groups.map(g => h('div.dlx-dup', { role: 'group', 'aria-label': `${g[0].name}, ${g.length} copies`, dataset: { name: g[0].name } },
+          h('div.dlx-dup__h', h('b', { text: g[0].name, title: g[0].name }), h('small', { text: `${bytesText(g[0].size)} · ${g.length} copies` }),
+            h('div.grow'),
+            h('button.btn.btn--sm.dlx-dup__keep', { type: 'button', title: `Keep the newest copy (${g[0].where}) and move the other ${g.length - 1} to the Trash`,
+              onclick: async () => {
+                const ok = await confirm({ title: `Keep one “${g[0].name}”?`, message: `The newest copy stays in ${g[0].where || 'Home'}. The other ${plural(g.length - 1, 'copy', 'copies')} move to the Trash (Undo brings them back).`, ok: 'Move to Trash', danger: true });
+                if (ok && !S.dead) trashCopies(g.slice(1), `Move ${plural(g.length - 1, 'extra copy', 'extra copies')} of “${g[0].name}” to the Trash`);
+              } }, icon('trash'), h('span', { text: 'Keep newest, trash the rest' }))),
+          g.map((it, i) => h('div.dlx-dup__row', { dataset: { path: it.path } },
+            h('span.dlx-dup__w', { text: it.where || 'Home', title: it.path }),
+            h('small', { text: `${agoText(it.at)}${i === 0 ? ' · newest' : ''}`, title: fullDate(it.at) }),
+            h('div.grow'),
+            h('button.btn.btn--sm.btn--ghost.dlx-dup__show', { type: 'button', disabled: !api.getApp('files'), onclick: () => api.openApp('files', { path: it.path }) }, icon('folder'), h('span', { text: 'Show in Files' })),
+            h('button.btn.btn--sm.btn--ghost.dlx-dup__trash', { type: 'button', onclick: () => trashCopies([it], `Move “${it.name}” to the Trash`) }, icon('trash'), h('span', { text: 'Move to Trash' }))))))
+      );
+    }
+
+    /** the menu for several picked rows */
+    function manyMenu(x, y) {
+      const its = pickedItems();
+      if (its.length < 2) return;
+      menu([
+        { label: `Download ${plural(its.length, 'item')} as zip`, icon: 'package', onClick: () => doZip(its) },
+        { label: 'Send with Drop…', icon: 'send', disabled: !api.getApp('drop') || !its.some(sendable), onClick: () => doDrop(its) },
+        { label: 'Send to Notes', icon: 'sticky-note', disabled: !its.some(notable), onClick: () => doNotes(its) },
+        '-',
+        { label: `Delete ${plural(its.length, 'item')}…`, icon: 'trash', hint: 'Del', danger: true, onClick: () => doDeleteMany(its) },
+      ], x, y, { label: `${plural(its.length, 'item')} selected` });
     }
 
     function itemMenu(it, x, y) {
@@ -1451,9 +1890,11 @@ defineApp({
         ...alts,
         { label: f ? 'Show in Files' : showBlocked(it), icon: 'folder', disabled: !f, onClick: () => doShow(it) },
         { label: downloadable(it) ? 'Download to computer' : 'Nothing to download', icon: 'download', disabled: !downloadable(it), onClick: () => doDownload(it) },
+        it.src === 'file' && api.getApp('drop') ? { label: 'Send with Drop…', icon: 'send', disabled: !sendable(it), onClick: () => doDrop([it]) } : null,
+        it.src === 'file' ? { label: 'Send to Notes', icon: 'sticky-note', disabled: !notable(it), onClick: () => doNotes([it]) } : null,
         '-',
         { label: it.src === 'file' ? 'Move to Trash' : 'Delete permanently…', icon: 'trash', hint: 'Del', danger: true, onClick: () => doDelete(it) },
-      ], x, y);
+      ].filter(Boolean), x, y);
     }
     function viewMenu(x, y) {
       const v = viewOf(S.section);
@@ -1716,6 +2157,7 @@ defineApp({
       if (S.section !== id) {
         S.section = id;
         S.selKey = null;
+        S.pick = new Set();
         savePrefs();
       }
       if (!keepQuery && S.q) { S.q = ''; searchIn.value = ''; }

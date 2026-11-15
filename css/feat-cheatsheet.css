@@ -50,3 +50,23 @@
 
 @media (prefers-reduced-motion:reduce){.csheet{animation:none;transition:none}}
 body.reduce-motion .csheet{animation:none;transition:none}
+
+/* ---- search in the pinned sheet ---------------------------------- */
+.csheet__bar{display:flex;align-items:center;gap:var(--sp-3);flex:0 0 auto;padding:var(--sp-3) var(--sp-5);border-bottom:1px solid var(--line-0)}
+.csheet__find{flex:1 1 auto;min-width:0}
+.csheet__bar .btn{flex:0 0 auto}
+.csheet__empty{margin:0;font-size:var(--fs-12);color:var(--ink-3);column-span:all}
+
+/* ---- Save as PDF (js/core/shortcutlist.js): the browser prints this sheet and nothing else ---- */
+.sc-print{display:none}
+@media print{
+  html.sc-printing,html.sc-printing body{background:#fff !important;height:auto !important;min-height:0 !important;overflow:visible !important;position:static !important}
+  html.sc-printing body>:not(.sc-print){display:none !important}
+  html.sc-printing .sc-print{display:block !important;color:#000;font-size:11pt;line-height:1.5}
+  .sc-print *{color:#000 !important}
+  .sc-print h1{font-size:18pt;margin:0 0 10pt}
+  .sc-print h2{font-size:12pt;margin:12pt 0 4pt;break-after:avoid}
+  .sc-print ul{list-style:none;margin:0;padding:0}
+  .sc-print li{break-inside:avoid;padding:1pt 0}
+  .sc-print b{display:inline-block;min-width:130pt;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10pt}
+}

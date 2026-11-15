@@ -8,7 +8,8 @@
    is only a colour or a picture.
 
      const c = createChart(canvas, { readout, live });
-     c.set({ bars, I, type, ind, tz, daily, range })   I = indicator arrays aligned to bars
+     c.set({ bars, I, type, ind, tz, daily, range, lines })   I = indicator arrays aligned to bars;
+                                                             lines = [{ price, hit }] the person's price lines
      c.destroy()
    canvas.dataset.bars / .draws say what was last drawn (tests read them).
    ============================================================ */
@@ -68,7 +69,7 @@ export function createChart(canvas, { readout, live } = {}) {
     const { bars, I, ind } = D, n = bars.length;
     const L = layout();
     const COL = palette(), UP = COL.up, DOWN = COL.down;
-    const ink = css('--ink-2', '#9aa4b2'), grid = css('--line-1', 'rgba(255,255,255,.08)'), ink0 = css('--ink-0', '#fff'), accent = css('--accent', '#4da3ff');
+    const ink = css('--ink-2', '#9aa4b2'), grid = css('--line-1', 'rgba(255,255,255,.08)'), ink0 = css('--ink-0', '#fff'), accent = css('--accent', '#4da3ff'), onAccent = css('--accent-ink', '#14060a');
     const X = i => L.left + (i + 0.5) * L.cw;
     ctx.font = '11px ' + (css('--font', 'system-ui')); ctx.textBaseline = 'middle';
 
@@ -135,6 +136,22 @@ export function createChart(canvas, { readout, live } = {}) {
     }
     if (ind.sma) { line(I.sma20, P, lo, hi, COL.sma20); line(I.sma50, P, lo, hi, COL.sma50); }
     if (ind.ema) line(I.ema20, P, lo, hi, COL.ema20);
+    /* the person's price lines: dashed across the price panel, the level on the axis; a line
+       outside the visible range is a chip at the top or bottom edge saying where it is */
+    let shown = 0;
+    for (const pl of D.lines || []) {
+      const inside = pl.price >= lo && pl.price <= hi;
+      const y = inside ? Math.round(Y(pl.price)) + .5 : pl.price > hi ? P.y + 9 : P.y + P.h - 9;
+      ctx.strokeStyle = accent; ctx.globalAlpha = pl.hit ? .5 : .95; ctx.lineWidth = 1.25;
+      if (inside) { ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.moveTo(L.left, y); ctx.lineTo(L.right, y); ctx.stroke(); ctx.setLineDash([]); }
+      const label = (inside ? '' : pl.price > hi ? '▲ ' : '▼ ') + fmtPrice(pl.price);
+      const w = ctx.measureText(label).width + 10;
+      ctx.fillStyle = accent; ctx.fillRect(inside ? L.right + 2 : L.right - w - 4, y - 8, w, 16);
+      ctx.fillStyle = onAccent; ctx.textAlign = 'left'; ctx.fillText(label, (inside ? L.right + 2 : L.right - w - 4) + 5, y);
+      ctx.globalAlpha = 1;
+      shown++;
+    }
+    canvas.dataset.lines = String(shown);
     /* last price marker */
     ctx.fillStyle = up ? UP : DOWN; const ly = Math.round(Y(bars[n - 1].c));
     ctx.fillRect(L.right + 2, ly - 8, W - L.right - 4, 16);
@@ -201,11 +218,11 @@ export function createChart(canvas, { readout, live } = {}) {
       if (Math.abs(cy - Math.round(Y(bars[n - 1].c))) > 18) {
         const pv = fmtPrice(bars[idx].c), pw = ctx.measureText(pv).width + 10;
         ctx.fillStyle = accent; ctx.fillRect(L.right + 2, cy - 8, pw, 16);
-        ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(pv, L.right + 7, cy);
+        ctx.fillStyle = onAccent; ctx.textAlign = 'left'; ctx.fillText(pv, L.right + 7, cy);
       }
       const dl = dateLabel(bars[idx]), dw = ctx.measureText(dl).width + 10;
       ctx.fillStyle = accent; ctx.fillRect(Math.min(W - dw, Math.max(0, x - dw / 2)), H - 18, dw, 16);
-      ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(dl, Math.min(W - dw, Math.max(0, x - dw / 2)) + 5, H - 10);
+      ctx.fillStyle = onAccent; ctx.textAlign = 'left'; ctx.fillText(dl, Math.min(W - dw, Math.max(0, x - dw / 2)) + 5, H - 10);
     }
     canvas.dataset.bars = String(n); canvas.dataset.draws = String(++draws);
     canvas.dataset.last = String(bars[n - 1].c);

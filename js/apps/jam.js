@@ -32,9 +32,35 @@
    opens anything. Everything received is parsed defensively,
    bounded, and rendered as text; anyone can be hidden on this
    device (store 'portal.jamMute').
+
+   Also here:
+   - Each week has two optional "constraints" (events.js
+     jamConstraints), chosen from the week number like the theme, so
+     every device shows the same pair. A dare, not a rule.
+   - Make it in Forge, or Build it in Studio.
+   - The Submit page checks a game against real data before you
+     enter it: its title and description, a thumbnail, code, whether
+     you have played it here, what Forge's own test said about this
+     version, whether it was worked on this week, its controls.
+     Nothing is blocked; it says what is missing.
+   - An entry can go to a friend: "Send" saves it as an .html file in
+     Downloads and opens Static Drop with a code, "Copy link" makes a
+     share link (the game inside the link, core/sharelink.js). Nothing
+     is hosted.
+   - Jam room: a private room for two (core/jamroom.js on core/pair.js)
+     where each of you sends entries and plays the other's in Shared
+     Game's sealed box.
+   - Your jam history, from the entries recorded on this device.
    ============================================================ */
 import { defineApp } from '../core/registry.js';
-import { JAM_THEMES, isoWeek, jamTheme } from '../core/events.js';
+import { JAM_THEMES, JAM_LINES, isoWeek, jamTheme, jamConstraints, weekNumber } from '../core/events.js';
+import * as ShareLink from '../core/sharelink.js';
+import * as media from '../core/media.js';
+import * as Plays from '../core/plays.js';
+import { vfs } from '../core/vfs.js';
+import { jamRoom } from '../core/jamroom.js';
+import { isCode, normalizeCode, spaced } from '../core/roomcode.js';
+import { hasIcon } from '../core/icons.js';
 import * as Projects from '../core/projects.js';
 import * as live from '../portal/live.js';
 import { me, clean, tidy, setName } from '../core/identity.js';
@@ -138,14 +164,18 @@ const MOODS = {
   'Broken World': { icon: 'globe', h1: 24, h2: 350, pat: 'shards', line: 'Something has fallen apart. Patch it, survive it, or break it further.' },
   'Speed': { icon: 'chevrons-right', h1: 44, h2: 12, pat: 'streaks', line: 'Faster and faster until something gives.' },
 };
+const PATS = ['button', 'stars', 'scan', 'grid', 'bubbles', 'skyline', 'shards', 'streaks', 'dots'];
+const GLYPHS = ['sparkles', 'flame', 'zap', 'globe', 'moon', 'star', 'heart', 'gamepad', 'clock', 'compass', 'droplet', 'sun', 'film', 'layers', 'music'];
 function moodOf(theme) {
   if (MOODS[theme]) return MOODS[theme];
   let n = 0;
   for (const c of String(theme)) n = (n * 31 + c.codePointAt(0)) >>> 0;
   const h1 = n % 360;
-  return { icon: 'sparkles', h1, h2: (h1 + 40) % 360, pat: 'dots', line: 'Make a small game around this idea, however you read it.' };
+  const glyphs = GLYPHS.filter(hasIcon);
+  return { icon: glyphs[(n >>> 3) % glyphs.length] || 'sparkles', h1, h2: (h1 + 40) % 360, pat: PATS[(n >>> 5) % PATS.length],
+    line: JAM_LINES[theme] || 'Make a small game around this idea, however you read it.' };
 }
-const themePrompt = theme => 'A small game for the jam theme "' + theme + '"';
+const themePrompt = (theme, rules = []) => 'A small game for the jam theme "' + theme + '"' + (rules.length ? '. Optional extra rules: ' + rules.join('; ') : '');
 
 /* ---------- formatting ---------------------------------------------- */
 const pad = n => String(n).padStart(2, '0');
@@ -180,6 +210,8 @@ const SECTIONS = [
   { id: 'submit', label: 'Submit a game', icon: 'upload', group: 'Jam' },
   { id: 'entries', label: 'Your entries', icon: 'bookmark', group: 'Submissions' },
   { id: 'live', label: 'Heard live', icon: 'activity', group: 'Submissions' },
+  { id: 'room', label: 'Jam room', icon: 'users', group: 'With a friend' },
+  { id: 'history', label: 'Your history', icon: 'clock', group: 'Calendar' },
   { id: 'themes', label: 'Themes', icon: 'calendar', group: 'Calendar' },
 ];
 const isSection = id => SECTIONS.some(s => s.id === id);
@@ -233,6 +265,7 @@ defineApp({
       status: live.status(),
       naming: false,
       askedAt: 0,                /* when this window's "who has entered?" went out */
+      jr: null,                  /* the open jam room: { session, role, pick, bad } */
     };
 
     /* ---------------- stored state, read defensively ---------------- */
@@ -289,6 +322,7 @@ defineApp({
     const projectById = id => (S.projects || []).find(p => p.id === id) || null;
     const ago = ms => (Number.isFinite(ms) && ms > 0 ? fmt.fmtAgo(new Date(ms).toISOString()) : '');
     const hasForge = () => !!api.getApp('forge');
+    const hasStudio = () => !!api.getApp('studio');
     const note = n => api.notify({ app: 'Static Jam', icon: 'flame', timeout: 6000, ...n });
 
     /* ---------------- chrome ---------------- */
@@ -354,9 +388,15 @@ defineApp({
       return h('div.jam-thumb', t ? { style: { backgroundImage: `url("${t}")` } } : null, t ? null : icon(p ? 'sparkles' : 'alert'));
     }
 
-    function startTheme(theme) {
+    function startTheme(theme, rules = []) {
       if (!hasForge()) { note({ icon: 'alert', title: 'Static Forge isn’t available', message: 'Forge makes the games Jam enters, and it isn’t installed on this StaticOS.' }); return; }
-      api.openApp('forge', { prompt: themePrompt(theme) });
+      api.openApp('forge', { prompt: themePrompt(theme, rules) });
+    }
+    /* Studio starts a blank scene; it does not take a prompt, so the theme is said here */
+    function startStudio(theme) {
+      if (!hasStudio()) { note({ icon: 'alert', title: 'Studio isn’t available', message: 'Static Studio is not installed on this StaticOS.' }); return; }
+      api.openApp('studio', { template: 'blank' });
+      note({ icon: 'code', title: 'Studio is open on a blank scene', message: `Build something for “${theme}”, then come back to enter it.` });
     }
 
     /* ---------------- live channel: sending ---------------- */
@@ -596,6 +636,7 @@ defineApp({
 
     /* ============== views ============== */
     function hero(wk, mood) {
+      const rules = jamConstraints(new Date(wk.start));
       const clock = { d: h('b'), h: h('b'), m: h('b'), s: h('b') };
       const seg = (el, label) => h('div.jam-clock__seg', el, h('small', { text: label }));
       clock.el = h('div.jam-clock', { role: 'timer' }, seg(clock.d, 'days'), seg(clock.h, 'hours'), seg(clock.m, 'min'), seg(clock.s, 'sec'));
@@ -611,11 +652,15 @@ defineApp({
           h('div.jam-hero__text',
             h('div.jam-hero__kicker', { text: 'This week’s theme' }),
             h(`h2.jam-hero__theme#${uid}-theme`, { text: wk.theme }),
-            h('p.jam-hero__line', { text: mood.line }))),
+            h('p.jam-hero__line', { text: mood.line }),
+            rules.length ? h('div.jam-rules', { 'aria-label': 'This week’s optional extra rules' },
+              h('span.jam-rules__l', { text: 'Optional dares' }),
+              h('ul.jam-rules__list', rules.map(r => h('li.jam-chip.jam-chip--rule', { text: r })))) : null)),
         h('div.jam-hero__foot',
           h('div.jam-hero__time', clock.el, h('div.jam-hero__ends', { text: `Ends ${endFmt(wk.end)} (your time)` })),
           h('div.jam-hero__acts',
-            btn('sparkles', 'Start a game for this theme', () => startTheme(wk.theme), '.btn--primary.jam-go', { disabled: !hasForge(), title: hasForge() ? `Opens Static Forge with a prompt for “${wk.theme}”` : 'Static Forge isn’t available' }),
+            btn('sparkles', 'Make it in Forge', () => startTheme(wk.theme, rules), '.btn--primary.jam-go', { disabled: !hasForge(), title: hasForge() ? `Opens Static Forge with a prompt for “${wk.theme}”` : 'Static Forge isn’t available', dataset: { act: 'forge' } }),
+            btn('code', 'Build it in Studio', () => startStudio(wk.theme), '.jam-ghost', { disabled: !hasStudio(), title: hasStudio() ? 'Opens Static Studio on a blank scene' : 'Static Studio isn’t available', dataset: { act: 'studio' } }),
             btn('upload', 'Submit a game', () => go('submit'), '.jam-ghost'))));
     }
 
@@ -637,7 +682,9 @@ defineApp({
         h('ol.jam-steps',
           step(1, 'Make', `Build something small for “${wk.theme}” in Static Forge. Describe it in a sentence and Forge writes a first version.`,
             loading ? 'Checking your games…' : made ? `${plural(made, 'game')} of yours changed this week` : 'Nothing made this week yet', made > 0,
-            btn('sparkles', 'Start in Forge', () => startTheme(wk.theme), '.btn--sm', { disabled: !hasForge() })),
+            h('div.jam-step__btns',
+              btn('sparkles', 'Forge', () => startTheme(wk.theme, jamConstraints(new Date(wk.start))), '.btn--sm', { disabled: !hasForge() }),
+              btn('code', 'Studio', () => startStudio(wk.theme), '.btn--sm', { disabled: !hasStudio() }))),
           step(2, 'Submit', `Pick one of your games and enter it for week ${wk.week}. You can enter more than one, and withdraw any time.`,
             mine.length ? `${plural(mine.length, 'entry', 'entries')} for week ${wk.week}` : 'No entry yet', mine.length > 0,
             btn('upload', 'Submit a game', () => go('submit'), '.btn--sm')),
@@ -667,6 +714,8 @@ defineApp({
         h('div.jam-row__t', h('b', { text: title }), h('small', { text: bits })),
         h('div.jam-row__acts',
           p ? btn('play', 'Play', () => api.openApp('forge', { project: pid }), '.btn--sm.btn--primary', { title: 'Open it in Static Forge' }) : null,
+          p ? btn('send', 'Send to a friend', () => sendToFriend(p, title), '.btn--sm', { title: 'Opens Static Drop with a code for this game', dataset: { act: 'send' } }) : null,
+          p ? btn('link', 'Copy link', () => copyLink(p, title), '.btn--sm', { title: 'A share link with the game inside it', dataset: { act: 'link' } }) : null,
           p ? btn('download', 'Save file', () => saveFile(p), '.btn--sm', { title: 'Save a standalone .html copy to send to people' }) : null,
           btn('x', p || loading ? 'Withdraw' : 'Remove', () => withdraw(key, pid, title), '.btn--sm.btn--ghost')));
     }
@@ -733,7 +782,9 @@ defineApp({
         return [head, h('div.empty.jam-empty', icon('sparkles'),
           h('b', { text: S.projErr ? 'Your games couldn’t be read' : 'No games on this device yet' }),
           h('small', { text: S.projErr ? 'This browser blocked the storage Forge uses, so there is nothing to enter.' : `Make something for “${wk.theme}” in Static Forge, then come back here to enter it.` }),
-          btn('sparkles', 'Start a game for this theme', () => startTheme(wk.theme), '.btn--primary', { disabled: !hasForge() }))];
+          h('div.jam-empty__btns',
+            btn('sparkles', 'Make it in Forge', () => startTheme(wk.theme, jamConstraints(new Date(wk.start))), '.btn--primary', { disabled: !hasForge() }),
+            btn('code', 'Build it in Studio', () => startStudio(wk.theme), '', { disabled: !hasStudio() })))];
       }
       R.pickList = h('div.jam-pick', { role: 'group', 'aria-label': 'Your games' });
       R.form = h('div.jam-form');
@@ -794,8 +845,10 @@ defineApp({
       const sw = h('button.switch', { type: 'button', role: 'switch', 'aria-labelledby': `${uid}-share`, 'aria-checked': String(d.share), class: d.share ? 'is-on' : null });
       const submit = btn('flame', `Enter it for week ${S.wk.week}`, () => doSubmit(p), '.btn--primary.jam-submit__go');
       const sync = () => { submit.disabled = !tidy(d.title, TITLE_MAX); };
-      title.addEventListener('input', () => { d.title = title.value; sync(); });
-      desc.addEventListener('input', () => { d.description = desc.value.slice(0, DESC_MAX); setCount(); });
+      const check = h('section.jam-check', { 'aria-label': 'Ready to submit' });
+      R.check = check;
+      title.addEventListener('input', () => { d.title = title.value; sync(); paintCheck(check, p, d); });
+      desc.addEventListener('input', () => { d.description = desc.value.slice(0, DESC_MAX); setCount(); paintCheck(check, p, d); });
       sw.addEventListener('click', () => {
         d.share = !d.share;
         sw.classList.toggle('is-on', d.share);
@@ -807,16 +860,52 @@ defineApp({
         : 'Recorded on this device only. Nobody else hears about it.');
       const shareNote = h('small.jam-form__note', { text: shareText(d.share) });
       sync();
+      paintCheck(check, p, d);
       R.form.append(
         h('div.jam-form__game', thumb(p), h('div', h('b', { text: titleOf(p) }), h('small', { text: `${plural(p.versions?.length || 1, 'version')} · changed ${ago(p.updatedAt)}` }))),
         h('label.jam-field', { for: `${uid}-title` }, h('span', { text: 'Title' }), title),
         h('label.jam-field', { for: `${uid}-desc` }, h('span.jam-field__row', h('span', { text: 'Description' }), count), desc),
+        check,
         h('div.jam-form__share',
           h('div.jam-form__sharet', h('b', { id: `${uid}-share`, text: 'Announce on the public live channel' }), shareNote),
           sw),
         h('div.jam-form__acts',
           submit,
           btn('external-link', 'Open in Forge', () => api.openApp('forge', { project: p.id }), '.jam-form__open')));
+    }
+
+    /** The "ready to submit" list: every line is read from this game's real data on this device. */
+    function readyChecks(p, d) {
+      const wk = S.wk;
+      let plays = [];
+      try { plays = Plays.recent(200, 'creation'); } catch (err) { plays = []; }
+      const head = p.versions?.[p.head];
+      const test = (store.get('portal.forge.changes', null) || {})[head?.id];
+      const hasThumb = !!(safeThumb(p.published?.thumbnail) || safeThumb(thumbs()[p.id]));
+      const touched = (p.createdAt || 0) >= wk.start || (p.versions || []).some(v => (v.at || 0) >= wk.start);
+      const errs = Number(test?.errors) || 0;
+      return [
+        { id: 'title', ok: !!tidy(d.title, TITLE_MAX), text: 'It has a title', fix: 'Type one above.' },
+        { id: 'desc', ok: !!tidy(d.description, DESC_MAX), text: 'It has a description', fix: 'One or two lines help people pick it.' },
+        { id: 'code', ok: !!Projects.current(p).trim(), text: 'The game has code', fix: 'Open it in Forge and make a first version.' },
+        { id: 'thumb', ok: hasThumb, text: 'It has a thumbnail', fix: 'Forge takes one when the game runs there; Static Creator can take one too (Publish).' },
+        { id: 'played', ok: plays.some(r => r.id === p.id), text: 'You have played it on this device', fix: 'Press Play and try it all the way through.' },
+        { id: 'test', ok: !!test && test.test !== 'errors', text: test ? (test.test === 'errors' ? `Forge’s test found ${plural(errs, 'error')}` : 'Forge’s test of this version passed') : 'Forge has tested this version',
+          fix: test ? 'Open it in Forge and fix the errors.' : 'Forge tests a version when it makes it. Games from Studio or an import have no result.' },
+        { id: 'week', ok: touched, text: `It was made or changed during week ${wk.week}`, fix: 'Entries from earlier weeks are allowed; it is just a reminder.' },
+        { id: 'controls', ok: !!controlsOf(p), text: 'Its controls are written down', fix: 'Add them when you publish the game in Static Creator.' },
+      ];
+    }
+    function paintCheck(box, p, d) {
+      const list = readyChecks(p, d);
+      const n = list.filter(x => x.ok).length;
+      clear(box);
+      box.append(
+        h('div.jam-check__head', h('b', { text: 'Ready to submit?' }), h('span', { text: `${n} of ${list.length}` })),
+        h('ul.jam-check__list', list.map(x => h(`li.jam-check__i${x.ok ? '.is-ok' : ''}`, { dataset: { check: x.id, ok: x.ok ? '1' : '0' } },
+          icon(x.ok ? 'check-circle' : 'circle'),
+          h('span', h('b', { text: x.text }), x.ok ? null : h('small', { text: x.fix }))))),
+        h('small.jam-check__note', { text: 'Read from this device. It only reminds you: nothing here stops you from entering.' }));
     }
 
     function doSubmit(p) {
@@ -857,12 +946,47 @@ defineApp({
       paint();
     }
 
-    function saveFile(p) {
+    /** The game as one standalone .html file's text, with a comment saying where it came from. */
+    function standalone(p) {
       const html = Projects.current(p);
-      if (!html) { note({ icon: 'alert', title: 'Nothing to save yet', message: `“${titleOf(p)}” has no code yet. Open it in Forge first.` }); return; }
+      if (!html) return '';
       const safe = s => String(s).replace(/--+/g, '—').replace(/[<>]/g, '');
       const stamp = `<!-- ${safe(p.name)} — made with Static Forge in StaticOS, entered in Static Jam. Saved ${new Date().toISOString().slice(0, 10)}. Open this file in any browser to play. -->`;
-      const out = /^\s*<!doctype[^>]*>/i.test(html) ? html.replace(/^(\s*<!doctype[^>]*>)/i, `$1\n${stamp}`) : `${stamp}\n${html}`;
+      return /^\s*<!doctype[^>]*>/i.test(html) ? html.replace(/^(\s*<!doctype[^>]*>)/i, `$1\n${stamp}`) : `${stamp}\n${html}`;
+    }
+    const controlsOf = p => tidy(p?.published?.controls || ((store.get('portal.forge.info', null) || {})[p?.id] || {}).controls, 300);
+
+    /** Send an entry to a friend: the game becomes an .html file in Downloads and Static Drop opens with a code. */
+    async function sendToFriend(p, title) {
+      const out = standalone(p);
+      if (!out) { note({ icon: 'alert', title: 'Nothing to send yet', message: `“${titleOf(p)}” has no code yet. Open it in Forge first.` }); return; }
+      if (!api.getApp('drop')) { note({ icon: 'alert', title: 'Static Drop isn’t available', message: 'Copy a link instead.' }); return; }
+      try {
+        const file = `${slug(title || p.name)}.html`;
+        const { path } = await media.save(`${vfs.HOME}/Downloads`, file, new Blob([out], { type: 'text/html' }));
+        if (dead) return;
+        api.openApp('drop', { send: [path], go: true });
+        note({ icon: 'send', title: 'Ready to send with Static Drop', message: `${vfs.baseName(path)} is in Downloads. Drop gives you a code: tell your friend, and they press Receive. Nothing is uploaded anywhere.` });
+      } catch (err) { note({ icon: 'alert', title: 'Couldn’t get it ready', message: String(err?.message || err) }); }
+    }
+    /** A share link with the game inside it (core/sharelink.js); whoever opens it sees it in Shared Game first. */
+    async function copyLink(p, title) {
+      if (!Projects.current(p)) { note({ icon: 'alert', title: 'Nothing to share yet', message: `“${titleOf(p)}” has no code yet. Open it in Forge first.` }); return; }
+      try {
+        const r = await ShareLink.encode({ name: title || titleOf(p), html: Projects.current(p), prompt: p.prompt, creator: me().name, note: p.versions?.[p.head]?.note, controls: controlsOf(p) });
+        if (dead) return;
+        if (!r.ok) { note({ icon: 'alert', title: 'This one can’t go in a link', message: r.error }); return; }
+        let copied = false;
+        try { await navigator.clipboard.writeText(r.link); copied = true; } catch (err) { copied = false; }
+        note(copied
+          ? { icon: 'link', title: 'Link copied', message: `${(r.chars / 1024).toFixed(1)} KB. Whoever opens it in StaticOS sees the game in Shared Game first, and chooses whether to play or save it.` }
+          : { icon: 'alert', title: 'The browser wouldn’t copy it', message: 'Use Save file and send the file, or try again.' });
+      } catch (err) { note({ icon: 'alert', title: 'The link couldn’t be made', message: String(err?.message || err) }); }
+    }
+
+    function saveFile(p) {
+      const out = standalone(p);
+      if (!out) { note({ icon: 'alert', title: 'Nothing to save yet', message: `“${titleOf(p)}” has no code yet. Open it in Forge first.` }); return; }
       const url = URL.createObjectURL(new Blob([out], { type: 'text/html' }));
       const a = h('a', { href: url, download: `${slug(p.name)}.html` });
       document.body.append(a);
@@ -974,18 +1098,159 @@ defineApp({
           h('div.jam-sched__glyph', { 'aria-hidden': 'true' }, icon(mood.icon)),
           h('div.jam-sched__t', h('b', { text: j.theme }), h('small', { text: `Week ${j.week}${j.year !== S.wk.year ? ` · ${j.year}` : ''} · ${rangeFmt(j)}` })),
           tag,
-          h('button.ibtn.tip', { type: 'button', 'data-tip': 'Make a game for this theme', 'aria-label': `Make a game for “${j.theme}” in Static Forge`, disabled: !hasForge(), onclick: () => startTheme(j.theme) }, icon('sparkles')));
+          h('div.jam-sched__btns',
+            h('button.ibtn.tip', { type: 'button', 'data-tip': 'Make it in Forge', 'aria-label': `Make a game for “${j.theme}” in Static Forge`, disabled: !hasForge(), onclick: () => startTheme(j.theme) }, icon('sparkles')),
+            h('button.ibtn.tip', { type: 'button', 'data-tip': 'Build it in Studio', 'aria-label': `Build a game for “${j.theme}” in Static Studio`, disabled: !hasStudio(), onclick: () => startStudio(j.theme) }, icon('code'))));
       };
       return [
         h('p.jam-lede', { text: 'This week’s theme, the three after it and the six before. Past and future themes still make good prompts — only this week takes entries.' }),
         h('section.jam-sec.jam-sec--first', secHead('This week'), h('ol.jam-sched', row(0))),
         h('section.jam-sec', secHead('Coming up'), h('ol.jam-sched', [1, 2, 3].map(row))),
         h('section.jam-sec', secHead('Past weeks'), h('ol.jam-sched', [-1, -2, -3, -4, -5, -6].map(row))),
-        h('p.jam-foot', { text: `Themes come from a fixed list of ${JAM_THEMES.length}, chosen by the ISO week number, so every StaticOS device shows the same one in the same week. Nobody picks them, and nobody judges the entries.` }),
+        h('p.jam-foot', { text: `Themes come from a fixed list of ${JAM_THEMES.length}, chosen by counting weeks, so every StaticOS device shows the same one in the same week and a theme does not come back for ${JAM_THEMES.length} weeks. The two optional dares come from a fixed list too. Nobody picks them, and nobody judges the entries.` }),
       ];
     }
 
-    const VIEWS = { week: viewWeek, submit: viewSubmit, entries: viewEntries, live: viewLive, themes: viewThemes };
+    /* ---- the jam room: two people, each other's entries ---- */
+    const ROOM_ERR = {
+      invalid: 'That code isn’t right. A room code is six letters and numbers.',
+      nobody: 'No one has opened a room with that code (or they closed it).',
+      full: 'That room already has two people in it.',
+      insecure: 'This page can’t make private rooms: it needs a secure (https) address.',
+    };
+    function openRoom(role, code) {
+      closeRoom();
+      let session;
+      try { session = jamRoom({ role, code }); } catch (err) { note({ icon: 'alert', title: 'Couldn’t open the room', message: String(err?.message || err) }); return; }
+      const jr = S.jr = { session, role, pick: null, bad: '' };
+      session.on((type, data) => {
+        if (dead || S.jr !== jr) return;
+        if (type === 'bad') jr.bad = `An entry from your friend couldn’t be opened (${data.error}).`;
+        if (type === 'entry') note({ icon: 'users', title: `${data.from} sent “${data.title}”`, message: 'It is in the Jam room. Play opens it in a sealed box first.' });
+        if (S.sec === 'room') soon();
+      });
+      if (S.sec === 'room') paint();
+    }
+    function closeRoom() {
+      if (!S.jr) return;
+      const jr = S.jr;
+      S.jr = null;
+      try { jr.session.leave(); } catch (err) { /* gone */ }
+    }
+    async function sendToRoom(pid) {
+      const jr = S.jr, p = projectById(pid);
+      if (!jr || !p) return;
+      if (jr.session.phase !== 'paired') { note({ icon: 'info', title: 'No one is here yet', message: 'It goes out as soon as your friend joins.' }); }
+      const m = logFor(S.wk.key, pid);
+      const r = await ShareLink.encode({ name: m?.title || titleOf(p), html: Projects.current(p), prompt: p.prompt, creator: me().name, note: p.versions?.[p.head]?.note, controls: controlsOf(p) });
+      if (dead || S.jr !== jr) return;
+      if (!r.ok) { note({ icon: 'alert', title: 'This game is too big for a room', message: r.error }); return; }
+      const id = jr.session.send({ title: m?.title || titleOf(p), description: m?.description || descOf(p), fragment: r.fragment });
+      if (!id) { note({ icon: 'alert', title: 'It couldn’t be sent', message: 'The packed game is bigger than a room can carry.' }); return; }
+      if (S.sec === 'room') soon();
+    }
+    function viewRoom() {
+      const jr = S.jr;
+      const wk = S.wk;
+      if (!jr) {
+        const codeIn = h('input.jam-in.jam-roomcode', { type: 'text', maxlength: '9', autocomplete: 'off', spellcheck: 'false', placeholder: 'ABC 123', 'aria-label': 'Room code to join', dataset: { f: 'code' } });
+        const join = () => {
+          const c = normalizeCode(codeIn.value);
+          if (!isCode(c)) { note({ icon: 'alert', title: 'That isn’t a room code', message: 'A code is six letters and numbers, like K7M2QX.' }); codeIn.focus(); return; }
+          openRoom('guest', c);
+        };
+        codeIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); join(); } });
+        return [
+          h('p.jam-lede', { text: 'A private room for you and one friend. Each of you sends your entries, and each plays the other’s. Nothing is hosted: the game goes straight through the room, and runs in a sealed box only when you press Play.' }),
+          h('div.jam-roomstart',
+            h('section.jam-card', h('h3.jam-h3', { text: 'Open a room' }), h('p.jam-sub', { text: 'You get a code. Tell it to your friend (treat it like a password).' }),
+              btn('users', 'Open a room', () => openRoom('host'), '.btn--primary', { dataset: { act: 'host' } })),
+            h('section.jam-card', h('h3.jam-h3', { text: 'Join a friend’s room' }), h('p.jam-sub', { text: 'Type the code they gave you.' }),
+              h('div.jam-roomjoin', codeIn, btn('arrow-right', 'Join', join, '.btn--primary', { dataset: { act: 'join' } })))),
+          h('p.jam-foot', { text: 'Rooms use the same public live channel as everything else here, sealed with the code. A game goes as a small packed file (up to 64 KB), so a very big game can’t be sent: use Send to a friend (Static Drop) for those.' }),
+        ];
+      }
+      const ses = jr.session;
+      const phase = ses.phase;
+      const entered = subsFor(wk.key);
+      const mine = (S.projects || []).slice().sort((a, b) => (entered.includes(b.id) - entered.includes(a.id)) || (b.updatedAt - a.updatedAt));
+      if (!jr.pick || !mine.some(p => p.id === jr.pick)) jr.pick = mine[0]?.id || null;
+      const status = phase === 'paired' ? `In the room with ${ses.peerName || 'your friend'}`
+        : phase === 'closed' ? (ROOM_ERR[ses.error] || 'The room is closed.')
+          : jr.role === 'host' ? 'Waiting for your friend to join…' : 'Joining…';
+      const sel = h('select.select.jam-in', { 'aria-label': 'Game to send', onchange: e => { jr.pick = e.target.value; } },
+        mine.map(p => h('option', { value: p.id, text: `${titleOf(p)}${entered.includes(p.id) ? ` · entered week ${wk.week}` : ''}` })));
+      if (jr.pick) sel.value = jr.pick;
+      const got = ses.entries;
+      return [
+        h('section.jam-roomhead', { dataset: { phase } },
+          h('div.jam-roomhead__code',
+            h('small', { text: jr.role === 'host' ? 'Room code' : 'You joined' }),
+            h('b.jam-roomcode__v', { text: spaced(ses.code), 'aria-label': `Room code ${ses.code.split('').join(' ')}` })),
+          h('div.jam-roomhead__st', h(`span.jam-dot.is-${phase === 'paired' ? 'live' : phase === 'closed' ? 'offline' : 'connecting'}`), h('span.jam-room__status', { text: status })),
+          btn('x', 'Leave', () => { closeRoom(); paint(); }, '.btn--ghost', { dataset: { act: 'leave' } })),
+        jr.bad ? h('p.jam-roombad', { text: jr.bad }) : null,
+        h('div.jam-roomcols',
+          h('section.jam-sec', secHead('Send a game'),
+            mine.length ? h('div.jam-roomsend', sel, btn('send', 'Send', () => sendToRoom(sel.value), '.btn--primary', { dataset: { act: 'sendroom' } }))
+              : h('p.jam-quiet', { text: 'You have no games on this device yet.' }),
+            ses.sent.length ? h('ul.jam-roomlist.jam-roomlist--sent', ses.sent.map(e => h('li', { dataset: { sent: e.id } }, h('b', { text: e.title }), h('small', { text: e.acked ? 'They have it' : phase === 'paired' ? 'Sending…' : 'Waiting for your friend' })))) : null),
+          h('section.jam-sec', secHead(`From ${ses.peerName || 'your friend'}`),
+            got.length ? h('ul.jam-roomlist', got.map(e => h('li', { dataset: { got: e.id } },
+              h('div.jam-roomlist__t', h('b', { text: e.title }), h('small', { text: [e.description, `${(e.bytes / 1024).toFixed(1)} KB`].filter(Boolean).join(' · ') })),
+              btn('play', 'Play', () => api.openApp('shared', { link: e.fragment }), '.btn--sm.btn--primary', { disabled: !api.getApp('shared'), title: 'Opens it in Shared Game: nothing runs until you press Play', dataset: { act: 'playgot' } }))))
+              : h('p.jam-quiet', { text: phase === 'paired' ? 'Nothing yet. When your friend sends a game it shows up here.' : 'Nothing yet.' }))),
+        h('p.jam-foot', { text: 'Names are whatever each person typed. A game your friend sends is code written by them: it runs in a sealed box with no access to your files or the rest of StaticOS, and only when you press Play.' }),
+      ];
+    }
+
+    /* ---- your jam history: from the entries recorded on this device ---- */
+    function historyData() {
+      const subs = readSubs();
+      const weeks = Object.keys(subs).map(k => ({ key: k, j: jamOfKey(k), ids: subs[k] })).filter(w => w.j).sort((a, b) => b.j.start - a.j.start);
+      const nums = weeks.map(w => weekNumber(new Date(w.j.start))).sort((a, b) => a - b);
+      const set = new Set(nums);
+      let best = 0, run = 0, prev = null;
+      for (const n of nums) { run = prev !== null && n === prev + 1 ? run + 1 : 1; best = Math.max(best, run); prev = n; }
+      /* the streak counts back from this week, or from last week while this one is still empty */
+      let cur = 0;
+      let at = weekNumber(new Date(S.wk.start));
+      if (!set.has(at)) at -= 1;
+      while (set.has(at)) { cur++; at -= 1; }
+      return {
+        weeks, best, cur,
+        entries: weeks.reduce((n, w) => n + w.ids.length, 0),
+        themes: new Set(weeks.map(w => w.j.theme)).size,
+      };
+    }
+    function viewHistory() {
+      const hd = historyData();
+      if (!hd.weeks.length) {
+        return h('div.empty.jam-empty', icon('clock'),
+          h('b', { text: 'No jam history yet' }),
+          h('small', { text: `Enter a game and this page keeps count: weeks you took part in, games entered, and your streak. This week is “${S.wk.theme}”.` }),
+          btn('upload', 'Submit a game', () => go('submit'), '.btn--primary'));
+      }
+      const tile = (v, l, tip) => h('div.jam-stat', { title: tip || null }, h('b', { text: String(v) }), h('span', { text: l }));
+      return [
+        h('div.jam-stats', { 'aria-label': 'Your jam numbers, counted on this device' },
+          tile(hd.weeks.length, hd.weeks.length === 1 ? 'week taken part in' : 'weeks taken part in'),
+          tile(hd.entries, hd.entries === 1 ? 'game entered' : 'games entered'),
+          tile(hd.themes, hd.themes === 1 ? 'theme' : 'themes'),
+          tile(hd.cur, hd.cur === 1 ? 'week in a row' : 'weeks in a row', 'Counted back from this week (or last week, while this one is empty)'),
+          tile(hd.best, 'best run', 'The most weeks in a row you have entered')),
+        h('section.jam-sec', secHead('Week by week'),
+          h('ul.jam-hist', hd.weeks.map(w => h('li.jam-hist__w', { dataset: { week: w.key } },
+            h('div.jam-hist__t', h('b', { text: w.j.theme }), h('small', { text: `Week ${w.j.week}${w.j.year !== S.wk.year ? ` · ${w.j.year}` : ''} · ${rangeFmt(w.j)}` })),
+            h('ul.jam-hist__e', w.ids.map(pid => {
+              const p = projectById(pid), m = logFor(w.key, pid);
+              return h('li', { text: m?.title || (p ? titleOf(p) : 'A game that’s gone') });
+            })))))),
+        h('p.jam-foot', { text: 'Counted from the entries recorded on this device. Withdrawing an entry takes it out of the count, and a different device has its own history.' }),
+      ];
+    }
+
+    const VIEWS = { week: viewWeek, submit: viewSubmit, entries: viewEntries, live: viewLive, room: viewRoom, history: viewHistory, themes: viewThemes };
 
     function paint(resetScroll) {
       if (dead) return;
@@ -1079,6 +1344,7 @@ defineApp({
       cancelAnimationFrame(paintQ);
       cancelAnimationFrame(fullQ);
       Q.length = 0;
+      closeRoom();
       offTopic?.();
       offTopic = null;
       offs.forEach(f => { try { f?.(); } catch (e) { /* already gone */ } });

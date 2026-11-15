@@ -46,6 +46,24 @@ export const FRAMES = [
   { id: 'bats', name: 'Bats' },
 ];
 
+/* year-round frames (any season, Photo mode) and the winter set (while season.js says it is winter) */
+export const YEAR_FRAMES = [
+  { id: 'none', name: 'None' },
+  { id: 'polaroid', name: 'Polaroid' },
+  { id: 'film', name: 'Film strip' },
+  { id: 'postcard', name: 'Postcard' },
+  { id: 'spotlight', name: 'Spotlight' },
+  { id: 'rounded', name: 'Rounded' },
+];
+export const WINTER_FRAMES = [
+  { id: 'frost', name: 'Frost' },
+  { id: 'lights', name: 'Fairy lights' },
+  { id: 'candy', name: 'Candy cane' },
+  { id: 'snow', name: 'Snowfall' },
+];
+const winterId = id => WINTER_FRAMES.some(f => f.id === id);
+const yearId = id => YEAR_FRAMES.some(f => f.id === id);
+
 const HAT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
   + '<ellipse cx="50" cy="80" rx="47" ry="11" fill="#1b0f26"/>'
   + '<path d="M26 80C35 62 40 41 47 25c4-9 12-17 25-21-6 8-9 18-8 30 1 16 5 31 11 46z" fill="#2c1740"/>'
@@ -314,11 +332,135 @@ function drawStickers(g, w, h, list) {
   }
 }
 
-/** The booth's part of a picture, over a canvas that already holds the camera frame. */
+/* a frame with a rectangular (or rounded) window cut out of a solid border */
+function hole(g, w, h, l, t, r, b, rad, fill) {
+  g.save();
+  g.beginPath();
+  g.rect(0, 0, w, h);
+  const x = l, y = t, iw = w - l - r, ih = h - t - b;
+  g.moveTo(x + rad, y);
+  g.arcTo(x + iw, y, x + iw, y + ih, rad);
+  g.arcTo(x + iw, y + ih, x, y + ih, rad);
+  g.arcTo(x, y + ih, x, y, rad);
+  g.arcTo(x, y, x + iw, y, rad);
+  g.closePath();
+  g.fillStyle = fill;
+  g.fill('evenodd');
+  g.restore();
+}
+const lcg = seed => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
+/* the year-round and winter frames: deterministic, so preview and photo agree */
+export function drawYearFrame(g, w, h, id) {
+  if (!id || id === 'none') return;
+  const m = Math.min(w, h);
+  if (id === 'polaroid') {
+    hole(g, w, h, m * 0.04, m * 0.04, m * 0.04, m * 0.15, 0, '#fbfaf6');
+  } else if (id === 'film') {
+    const bh = h * 0.1;
+    g.save();
+    g.fillStyle = '#111';
+    g.fillRect(0, 0, w, bh);
+    g.fillRect(0, h - bh, w, bh);
+    g.fillStyle = '#e8e4d8';
+    const n = 14, cw = w / n;
+    for (let i = 0; i < n; i++) {
+      g.fillRect(i * cw + cw * 0.28, bh * 0.3, cw * 0.44, bh * 0.4);
+      g.fillRect(i * cw + cw * 0.28, h - bh + bh * 0.3, cw * 0.44, bh * 0.4);
+    }
+    g.restore();
+  } else if (id === 'postcard') {
+    const t = m * 0.045;
+    hole(g, w, h, t, t, t, t, 0, '#f6ecd6');
+    g.save();
+    g.strokeStyle = '#b4423a';
+    g.lineWidth = Math.max(1, m / 220);
+    g.strokeRect(t * 1.5, t * 1.5, w - t * 3, h - t * 3);
+    g.fillStyle = '#e9d9b4';
+    g.strokeStyle = '#8c6a3a';
+    const sw = m * 0.1, sh2 = sw * 1.2;
+    g.fillRect(w - t * 2 - sw, t * 2, sw, sh2);
+    g.strokeRect(w - t * 2 - sw, t * 2, sw, sh2);
+    g.restore();
+  } else if (id === 'spotlight') {
+    vignette(g, w, h, 'rgba(0,0,0,.82)', 0.3);
+  } else if (id === 'rounded') {
+    hole(g, w, h, 0, 0, 0, 0, m * 0.12, '#101014');
+  } else if (id === 'frost') {
+    const t = m * 0.12;
+    g.save();
+    for (const [x0, y0, x1, y1, ax, ay, bx, by] of [[0, 0, 0, t, 0, 0, w, 0], [0, h, 0, h - t, 0, h, w, h], [0, 0, t, 0, 0, 0, 0, h], [w, 0, w - t, 0, w, 0, w, h]]) {
+      const gr = g.createLinearGradient(x0, y0, x1, y1);
+      gr.addColorStop(0, 'rgba(225,240,255,.85)');
+      gr.addColorStop(1, 'rgba(225,240,255,0)');
+      g.fillStyle = gr;
+      if (ay === by) g.fillRect(0, ay === 0 ? 0 : h - t, w, t); else g.fillRect(ax === 0 ? 0 : w - t, 0, t, h);
+    }
+    g.strokeStyle = 'rgba(255,255,255,.9)';
+    g.lineWidth = Math.max(1, m / 260);
+    g.lineCap = 'round';
+    for (const [cx, cy] of [[0, 0], [w, 0], [0, h], [w, h]]) {
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2, len = m * 0.2;
+        g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len); g.stroke();
+      }
+    }
+    g.restore();
+  } else if (id === 'lights') {
+    g.save();
+    g.strokeStyle = '#26301f';
+    g.lineWidth = Math.max(1.5, m / 200);
+    const n = 9, sag = h * 0.05, y0 = h * 0.04;
+    const cols = ['#ff4d5a', '#ffd24a', '#5ee08a', '#5eb0ff', '#ff8cf0'];
+    g.beginPath();
+    for (let i = 0; i <= 60; i++) { const x = (i / 60) * w; const y = y0 + Math.sin((i / 60) * Math.PI * n) * sag * 0.5 + sag * 0.5; i ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.stroke();
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n, x = t * w, y = y0 + Math.sin(t * Math.PI * n) * sag * 0.5 + sag * 0.5 + m * 0.02;
+      const c = cols[i % cols.length], r = m * 0.026;
+      const gr = g.createRadialGradient(x, y, 0, x, y, r * 3);
+      gr.addColorStop(0, c); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.globalAlpha = 0.5; g.fillStyle = gr; g.beginPath(); g.arc(x, y, r * 3, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 1; g.fillStyle = c; g.beginPath(); g.ellipse(x, y, r * 0.8, r, 0, 0, Math.PI * 2); g.fill();
+    }
+    g.restore();
+  } else if (id === 'candy') {
+    const t = m * 0.045;
+    g.save();
+    g.beginPath();
+    g.rect(0, 0, w, h);
+    g.rect(t, t, w - t * 2, h - t * 2);
+    g.clip('evenodd');
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, w, h);
+    g.strokeStyle = '#d6263b';
+    g.lineWidth = t * 0.5;
+    const step = t * 1.1;
+    g.beginPath();
+    for (let x = -h; x < w + h; x += step) { g.moveTo(x, 0); g.lineTo(x + h, h); }
+    g.stroke();
+    g.restore();
+  } else if (id === 'snow') {
+    const rnd = lcg(7);
+    g.save();
+    g.fillStyle = 'rgba(255,255,255,.88)';
+    for (let i = 0; i < 70; i++) {
+      const x = rnd() * w, y = rnd() * h, r = m * (0.004 + rnd() * 0.011);
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+    g.restore();
+  }
+}
+
+/** The booth's part of a picture, over a canvas that already holds the camera frame.
+    look.spooky === false leaves the Halloween filter, frame and stickers out. */
 export function paint(g, w, h, look) {
-  if (look.filter && look.filter !== 'none') grade(g, w, h, look.filter);
-  drawFrame(g, w, h, look.frame);
-  drawStickers(g, w, h, look.stickers || []);
+  if (look.spooky !== false) {
+    if (look.filter && look.filter !== 'none') grade(g, w, h, look.filter);
+    drawFrame(g, w, h, look.frame);
+    drawStickers(g, w, h, look.stickers || []);
+  }
+  drawYearFrame(g, w, h, look.yframe);
 }
 
 /* ======================================================================== */
@@ -341,6 +483,8 @@ export function createBooth(opts) {
       .slice(0, MAX_STICKERS)
       .map((s, i) => ({ uid: `s${Date.now().toString(36)}${i}`, id: s.id, x: clamp(s.x, 0, 1), y: clamp(s.y, 0, 1), s: clamp(s.s, SIZE.min, SIZE.max) })),
     open: saved.open === true,
+    yframe: yearId(saved.yframe) || winterId(saved.yframe) ? saved.yframe : 'none',
+    fopen: saved.fopen === true,
     dead: false,
   };
   let seq = 0;
@@ -348,7 +492,7 @@ export function createBooth(opts) {
 
   const persist = () => {
     try {
-      opts.save?.({ filter: S.filter, frame: S.frame, open: S.open,
+      opts.save?.({ filter: S.filter, frame: S.frame, open: S.open, yframe: S.yframe, fopen: S.fopen,
         stickers: S.stickers.map(({ id, x, y, s }) => ({ id, x: +x.toFixed(4), y: +y.toFixed(4), s: +s.toFixed(4) })) });
     } catch (err) { /* only the next visit loses it */ }
   };
@@ -382,18 +526,46 @@ export function createBooth(opts) {
     onclick: () => setOpen(!S.open),
   }, icon('pumpkin'), h('span.cam-tool__lbl', { text: 'Booth' }));
 
+  /* ---------------- the frames panel: year-round, plus a winter set ---------------- */
+  const yChip = f => h('button.cam-chip', {
+    type: 'button', dataset: { yframe: f.id }, 'aria-pressed': 'false', onclick: () => setYFrame(f.id),
+  }, f.name);
+  const yearChips = YEAR_FRAMES.map(yChip);
+  const winterChips = WINTER_FRAMES.map(yChip);
+  const winterGrp = group('Winter', winterChips);
+  const framesPanel = h('div.cam__frames', { role: 'group', 'aria-label': 'Photo frames', hidden: true },
+    h('div.cam-booth__in', h('div.cam-booth__row', group('Frame', yearChips), winterGrp)));
+  const framesButton = h('button.cam-tool.cam-tool--frames', {
+    type: 'button', hidden: true, 'aria-label': 'Photo frames', title: 'Frames for your photo',
+    onclick: () => setFramesOpen(!S.fopen),
+  }, icon('image'), h('span.cam-tool__lbl', { text: 'Frames' }));
+
   /* ---------------- state ---------------- */
   const inSeason = () => SEASON.spookyOn();
-  const shown = () => !S.dead && inSeason() && opts.photoMode();
-  const applies = () => shown() && (S.filter !== 'none' || S.frame !== 'none' || S.stickers.length > 0);
+  const shown = () => !S.dead && inSeason() && opts.photoMode();         /* the spooky booth */
+  const framesShown = () => !S.dead && opts.photoMode();
+  /* a winter frame chosen last December is not drawn in July */
+  const yNow = () => (S.yframe === 'none' ? 'none' : yearId(S.yframe) || (winterId(S.yframe) && SEASON.winterOn()) ? S.yframe : 'none');
+  const spookyAny = () => S.filter !== 'none' || S.frame !== 'none' || S.stickers.length > 0;
+  const applies = () => (shown() && spookyAny()) || (framesShown() && yNow() !== 'none');
   const running = () => applies() && opts.live();
+  const activeStickers = () => (shown() ? S.stickers : []);
 
   function setOpen(on) {
     S.open = !!on;
+    if (S.open) S.fopen = false;
     persist();
     if (S.open) opts.onOpen?.();
     sync();
   }
+  function setFramesOpen(on) {
+    S.fopen = !!on;
+    if (S.fopen) S.open = false;
+    persist();
+    if (S.fopen) opts.onOpen?.();
+    sync();
+  }
+  function setYFrame(id) { S.yframe = id; persist(); sync(); }
   function setFilter(id) { S.filter = id; persist(); sync(); }
   function setFrame(id) { S.frame = id; persist(); sync(); }
 
@@ -491,9 +663,10 @@ export function createBooth(opts) {
   }
 
   function paintHandles() {
-    const keep = new Set(S.stickers.map(s => s.uid));
+    const list = activeStickers();
+    const keep = new Set(list.map(s => s.uid));
     for (const el of [...handles.children]) if (!keep.has(el.dataset.uid)) el.remove();
-    for (const st of S.stickers) {
+    for (const st of list) {
       let el = handles.querySelector(`[data-uid="${st.uid}"]`);
       if (!el) { el = handleEl(st); handles.appendChild(el); }
       placeHandle(el, st);
@@ -515,7 +688,8 @@ export function createBooth(opts) {
 
   function render(g, w, hh) {
     opts.base(g, w, hh);
-    paint(g, w, hh, S);
+    const spooky = shown();
+    paint(g, w, hh, { spooky, filter: S.filter, frame: S.frame, stickers: activeStickers(), yframe: yNow() });
   }
 
   function draw() {
@@ -545,6 +719,13 @@ export function createBooth(opts) {
     button.classList.toggle('is-on', show && S.open);
     button.setAttribute('aria-expanded', String(show && S.open));
     panel.hidden = !(show && S.open);
+    const fs = framesShown();
+    framesButton.hidden = !fs;
+    framesButton.classList.toggle('is-on', fs && S.fopen);
+    framesButton.setAttribute('aria-expanded', String(fs && S.fopen));
+    framesPanel.hidden = !(fs && S.fopen);
+    winterGrp.hidden = !SEASON.winterOn();
+    for (const b of [...yearChips, ...winterChips]) { const on = b.dataset.yframe === yNow(); b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', String(on)); }
     for (const b of filterChips) { const on = b.dataset.filter === S.filter; b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', String(on)); }
     for (const b of frameChips) { const on = b.dataset.frame === S.frame; b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', String(on)); }
     clearBtn.hidden = !S.stickers.length;
@@ -571,11 +752,11 @@ export function createBooth(opts) {
   }
 
   return {
-    button, panel, layer, applies, capture, sync, destroy,
-    close: () => { if (S.open) setOpen(false); },
-    isOpen: () => S.open,
-    state: () => ({ filter: S.filter, frame: S.frame, stickers: S.stickers.map(s => ({ ...s })) }),
+    button, panel, layer, framesButton, framesPanel, applies, capture, sync, destroy,
+    close: () => { if (S.open) setOpen(false); if (S.fopen) setFramesOpen(false); },
+    isOpen: () => S.open || S.fopen,
+    state: () => ({ filter: S.filter, frame: S.frame, yframe: yNow(), stickers: S.stickers.map(s => ({ ...s })) }),
   };
 }
 
-export default { createBooth, paint, FILTERS, FRAMES, STICKERS };
+export default { createBooth, paint, FILTERS, FRAMES, STICKERS, YEAR_FRAMES, WINTER_FRAMES };

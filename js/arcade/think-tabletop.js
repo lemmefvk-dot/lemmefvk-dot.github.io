@@ -3,8 +3,9 @@
    tabletop games (Go, Gomoku, Five Dice, Dominoes). ./think.js calls
    tabletop(q) first and uses its answer when the query is one of ours.
 
-   in:  { game: 'go', moves: [m], base?, turn?, level, playouts? }  ->  { move }      (base: a start position, for set-ups)
-        { game: 'go', moves: [m], dead: true }              ->  { dead: [point] }   (the computer's judgement)
+   in:  { game: 'go', n?, moves: [m], base?, turn?, level, playouts? }  ->  { move }      (n: 9, 13 or 19, from 9;
+                                                                        base: a start position, for set-ups — its size wins)
+        { game: 'go', n?, moves: [m], dead: true }              ->  { dead: [point] }   (the computer's judgement)
         { game: 'gomoku', moves: [point], level }           ->  { move }
         { game: 'dice', card, dice, left }                  ->  { hold } | { cat }
         { game: 'domino', view, level }                     ->  { mv }
@@ -18,7 +19,7 @@ import * as DOM from './domino-rules.js';
 export function tabletop(q) {
   if (q.game === 'go') {
     const list = Array.isArray(q.moves) ? q.moves : [];
-    const g = q.base ? GO.fromBase(q.base, list) : GO.fromMoves(list);
+    const g = q.base ? GO.fromBase(q.base, list) : GO.fromMoves(list, GO.sizeOk(q.n) ? q.n : 9);
     if (q.turn === 1 || q.turn === -1) g.turn = q.turn;           /* the side to move, when the page knows better than a replay */
     if (q.dead) return { dead: GO.judgeDead(g, q.playouts ? { playouts: q.playouts } : {}) };
     const r = GO.think(g, { level: q.level, ...(q.playouts ? { playouts: q.playouts } : {}), ...(q.timeMs ? { timeMs: q.timeMs } : {}) });

@@ -7,34 +7,66 @@
    bought, and nothing here is about real money. When you run out
    (under 10 points) the round ends; Finish saves whatever you have.
 
-   Rules (full text in ./blackjack-rules.js and in the panel): six
-   decks; the dealer draws to 16 and stands on every 17, soft 17
-   included; blackjack scores 3 for every 2 points in play; double on
-   any first two cards (also after a split); split pairs of the same
-   value up to four hands, aces once with one card each; the dealer
-   peeks for blackjack; no insurance, no surrender.
+   Rules (full text in ./blackjack-rules.js and in the panel): a shoe
+   of 1, 2, 4, 6 or 8 decks (six to start), shuffled before a hand once
+   three quarters of it are dealt; the dealer draws to 16 and stands on
+   every 17, soft 17 included; blackjack scores 3 for every 2 points in
+   play; double on any first two cards (also after a split); split
+   pairs of the same value up to four hands, aces once with one card
+   each; the dealer peeks for blackjack; no insurance, no surrender.
+
+   RECORD: every hand you finish counts as won (a blackjack too), lost
+   (a bust too) or pushed — split hands count one each — kept on this
+   device for each shoe size, and added up over all of them.
+   STRATEGY TIPS (a switch, on to start): after each hand, every move
+   you made is checked against basic strategy for these rules and this
+   shoe (the charts in ./blackjack-rules.js), with only the moves the
+   table allowed at that moment: "Basic strategy: double 11 against a 6
+   — you hit."
+   TABLE (./cardlook.js, shared by the five card games): card backs on
+   the shoe and the dealer's hole card, the felt, larger cards, and
+   left-handed (the panel and the shoe on the left).
 
    Mouse or touch: the buttons, or the cards' own table. Keyboard: Enter
    / Space deals, H hits, S stands, D doubles, P splits, 1–4 choose the
    points in play, F finishes. Score: your points when the round ends.
-   Prefs (the last points in play) live in portal.arcadeBlackjack.
+   Prefs (the last points in play, the shoe size, tips on or off, the
+   record) live in portal.arcadeBlackjack.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { store } from '../core/store.js';
+import { icon } from '../core/icons.js';
 import * as B from './blackjack-rules.js';
 import { cardBook } from './cardtable.js';
+import { drawBack } from './cards.js';
+import { readLook, backHue, feltColors, lookCard } from './cardlook.js';
 import { KIT_CSS, surface, ownsKey, sounder, looper, rr, segment, button, confirmButton } from './boardkit.js';
 
 const PREF = 'portal.arcadeBlackjack';
 const FONT = 'Inter,ui-sans-serif,system-ui,sans-serif';
+const BACK_HUE = 140;              /* the backs' own colour, as before the Table look */
 
+const count = v => (Number.isInteger(v) && v >= 0 ? v : 0);
 const readPrefs = () => {
   let p = null;
   try { p = store.get(PREF, null); } catch (err) { p = null; }
-  return { stake: B.STAKES.includes(p?.stake) ? p.stake : 20 };
+  /* record: { [decks]: { w, l, p } } — hands won, lost and pushed with that shoe */
+  const record = {};
+  for (const d of B.DECKS) { const r = p?.record?.[d]; if (r && typeof r === 'object') record[d] = { w: count(r.w), l: count(r.l), p: count(r.p) }; }
+  return { stake: B.STAKES.includes(p?.stake) ? p.stake : 20, decks: B.deckCount(p?.decks), tips: p?.tips !== false, record };
 };
 const writePrefs = patch => { try { store.set(PREF, { ...readPrefs(), ...patch }); } catch (err) { /* a convenience */ } };
-const CSS = `.bj-note{font-weight:650;color:var(--ink-1)}`;
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+/* the panel never scrolls: when it is short of room the log and the rule text give way, not the points or the buttons */
+const CSS = `.bj-note{font-weight:650;color:var(--ink-1)}
+.bj .arx-bg__side{overflow:hidden}
+.bj .bj-log{flex:0 1 auto;min-height:0;overflow:hidden}
+.bj .bj-rules{flex:0 1 auto;min-height:0;overflow:auto}
+.arx-bg.is-left{flex-direction:row-reverse}
+@container (max-aspect-ratio: 11/10){.arx-bg.is-left{flex-direction:column}}
+.bj-tip{color:var(--ink-1)}
+.bj-tip[hidden]{display:none}
+.bj .arx-bg__chk{flex:1;padding:2px}`;
 const OUT_TEXT = { win: 'Win', lose: 'Lose', push: 'Push', bust: 'Bust', blackjack: 'Blackjack!' };
 
 export default {
@@ -44,7 +76,8 @@ export default {
     const prefs = readPrefs();
     let dead = false;
     const seed = B.cryptoSeed();
-    const S = { t: B.newTable(B.rng32(seed), B.START_POINTS, { manual: true }), stake: prefs.stake, log: [], timer: 0, ended: false, busy: false, born: new WeakMap(), geo: null, rejected: 0, endT: 0, shown: [], peakPoints: B.START_POINTS };
+    const S = { t: B.newTable(B.rng32(seed), B.START_POINTS, { manual: true, decks: prefs.decks }), stake: prefs.stake, log: [], timer: 0, ended: false, busy: false, born: new WeakMap(), geo: null, rejected: 0, endT: 0, shown: [], peakPoints: B.START_POINTS,
+      tips: prefs.tips, record: prefs.record, moves: [], tip: '', look: readLook() };
     S.t.points = B.START_POINTS;
 
     /* ------------------------------ the page ------------------------------ */
@@ -59,36 +92,85 @@ export default {
     const dblBtn = button('Double', 'chevron-up', () => { act('double'); refocus(); }, { title: 'Double the points in play, take one card (D)' });
     const splitBtn = button('Split', 'copy', () => { act('split'); refocus(); }, { title: 'Split a pair into two hands (P)' });
     const finishBtn = confirmButton('Finish', 'Finish? Click again', 'check', () => { finish('finished'); refocus(); });
-    const logEl = h('div.arx-bg__note', { 'aria-hidden': 'true' });
+    const tipEl = h('p.arx-bg__rules.bj-tip', { hidden: true, dataset: { k: 'tip' }, 'aria-live': 'polite' });
+    const decksSeg = segment('Decks', B.DECKS.map(id => ({ id, label: String(id), title: `A shoe of ${plural(id, 'deck')} (${52 * id} cards)` })), S.t.decks, v => { setDecks(v); refocus(); });
+    const shoeLine = h('div.arx-bg__rec', { dataset: { k: 'shoe' } });
+    const recLine = h('div.arx-bg__rec', { dataset: { k: 'record' } });
+    const tipsChk = h('label.arx-bg__chk', { title: 'After each hand, check your moves against basic strategy for these rules and this shoe' },
+      h('input', { type: 'checkbox', dataset: { opt: 'tips' }, checked: S.tips, onchange: e => setTips(e.target.checked) }), h('span', { text: 'Strategy tips' }));
+    const tableBtn = button('Table', 'palette', () => openLook(), { title: 'Card backs, the table, larger cards, left-handed', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' });
+    const logEl = h('div.arx-bg__note.bj-log', { 'aria-hidden': 'true' });
     const notice = h('div.arx-bg__note.bj-note', { text: 'Points are just for fun. They aren’t money and can’t be bought, won or exchanged.' });
-    const note = h('div.arx-bg__note', {
-      text: 'Six decks. The dealer draws to 16 and stands on every 17, soft 17 too. Blackjack scores 3 for every 2 points in play. '
-        + 'Double on any first two cards, also after a split. Split pairs of the same value (up to four hands, aces once, one card each). '
-        + 'The dealer checks for blackjack. No insurance, no surrender.',
-    });
-    const side = h('div.arx-bg__side', pointsEl, statusEl, stakeSeg.el, h('div.arx-bg__row', dealBtn, hitBtn, standBtn), h('div.arx-bg__row', dblBtn, splitBtn, finishBtn), logEl, notice, note);
-    const root = h('div.arx-bgc', h('style', { text: KIT_CSS + CSS }), h('div.arx-bg', boardEl, side), sr);
+    const note = h('div.arx-bg__note.bj-rules');
+    const side = h('div.arx-bg__side', pointsEl, statusEl, stakeSeg.el, h('div.arx-bg__row', dealBtn, hitBtn, standBtn), h('div.arx-bg__row', dblBtn, splitBtn, finishBtn),
+      tipEl, decksSeg.el, shoeLine, recLine, h('div.arx-bg__row', tipsChk, tableBtn), notice, logEl, note);
+    const tableEl = h('div.arx-bg', boardEl, side);
+    const root = h('div.arx-bgc.bj', h('style', { text: KIT_CSS + CSS }), tableEl, sr);
     el.appendChild(root);
+    tableEl.classList.toggle('is-left', S.look.left);
     const sf = surface(boardEl, 'Blackjack table', () => { book.clear(); draw(); });
     const book = cardBook(() => sf.dpr);
     const loop = looper(() => draw());
     const refocus = () => el.closest('[tabindex]')?.focus({ preventScroll: true });
     const later = (fn, ms) => { clearTimeout(S.timer); S.timer = setTimeout(fn, ms); };
 
+    /* ------------------------------ the Table look ------------------------------ */
+    let lookOv = null;
+    function openLook() {
+      if (lookOv) { closeLook(); return; }
+      const card = lookCard({
+        h, icon, gameHue: BACK_HUE,
+        paintBack: (g, w, hh, pattern, hue) => drawBack(g, w, hh, hue, pattern),
+        onChange: () => { S.look = readLook(); tableEl.classList.toggle('is-left', S.look.left); draw(); },
+        onClose: () => closeLook(),
+      });
+      lookOv = h('div.arx-bg__dlg', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Table and cards',
+        onpointerdown: e => { if (e.target === lookOv) closeLook(); },
+        onkeydown: e => { e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); closeLook(); } } }, card.el);
+      boardEl.appendChild(lookOv);
+      tableBtn.setAttribute('aria-expanded', 'true');
+      setTimeout(() => { if (lookOv) card.focus(); }, 30);
+    }
+    function closeLook() {
+      if (!lookOv) return;
+      lookOv.remove(); lookOv = null;
+      tableBtn.setAttribute('aria-expanded', 'false');
+      refocus();
+    }
+
     /* ------------------------------ the game ------------------------------ */
     const t = () => S.t;
     function setStake(v) { S.stake = v; writePrefs({ stake: v }); stakeSeg.set(v); paint(); }
+    /* a new shoe: between hands only */
+    function setDecks(v) {
+      const s = t();
+      if (S.busy || S.ended || !B.setDecks(s, v)) { snd.blip(140, 0.08, 'sawtooth', 0.4); say('Change the shoe between hands.'); decksSeg.set(s.decks); return; }
+      writePrefs({ decks: v });
+      decksSeg.set(v);
+      addLog(`New shoe: ${plural(v, 'deck')} (${B.shoeSize(s)} cards), shuffled.`);
+      say(`A new shoe of ${plural(v, 'deck')}.`);
+      paint();
+    }
+    function setTips(on) {
+      S.tips = !!on;
+      writePrefs({ tips: S.tips });
+      paint();
+    }
 
     function deal() {
       if (dead || S.busy || S.ended) return;
       const s = t();
       if (!B.canDeal(s, S.stake)) { snd.blip(140, 0.08, 'sawtooth', 0.4); say(s.phase === 'play' ? 'Finish this hand first.' : `You only have ${s.points} points: choose fewer in play.`); return; }
+      const shuffled = s.shuffled;
       B.deal(s, S.stake);
       S.shown = [];
+      S.moves = [];
+      S.tip = '';
       snd.wake();
       snd.blip(400, 0.05, 'triangle', 0.6, 520);
       loop.kick(0.8);
       say(`Dealt. You have ${B.textOf(s.hands[0].cards)}. The dealer shows ${B.codeOf(s.dealer[0])}.`);
+      if (s.shuffled > shuffled) addLog(`The shoe was shuffled (fewer than ${B.cutAt(s)} cards were left).`);
       addLog(`New hand: ${S.stake} points in play.`);
       afterAction();
     }
@@ -98,6 +180,10 @@ export default {
       const s = t();
       const can = { hit: B.canHit, stand: B.canStand, double: B.canDouble, split: B.canSplit }[kind];
       if (!can(s)) { S.rejected++; snd.blip(140, 0.08, 'sawtooth', 0.4); say(`You can’t ${kind} now.`); return; }
+      /* the move, and what basic strategy says with what the table allowed at this moment */
+      const cur = B.current(s);
+      S.moves.push({ hand: s.active, cards: cur.cards.slice(), up: s.dealer[0], choice: kind,
+        adv: B.basicMove(cur.cards, s.dealer[0], { decks: s.decks, canDouble: B.canDouble(s), canSplit: B.canSplit(s) }) });
       snd.wake();
       const which = s.active;
       let c = null;
@@ -135,6 +221,12 @@ export default {
       const msg = `Dealer ${d > 21 ? 'busts' : d}${B.isBlackjack(s.dealer) ? ' (blackjack)' : ''}. ${parts.join(' · ')}. ${s.points} points.`;
       addLog(msg); say(msg);
       S.peakPoints = Math.max(S.peakPoints, s.points);
+      /* the record for this shoe size: each of your hands once */
+      const rec = { w: 0, l: 0, p: 0, ...(S.record[s.decks] || {}) };
+      for (const hd of s.hands) rec[hd.outcome === 'win' || hd.outcome === 'blackjack' ? 'w' : hd.outcome === 'push' ? 'p' : 'l']++;
+      S.record = { ...S.record, [s.decks]: rec };
+      writePrefs({ record: S.record });
+      S.tip = B.tipText(S.moves);
       const won = s.net > 0;
       snd.blip(won ? 660 : s.net < 0 ? 200 : 400, 0.14, won ? 'triangle' : 'sine', 0.8, won ? 990 : 0);
       loop.kick(0.6);
@@ -183,17 +275,41 @@ export default {
       finishBtn.disabled = S.ended || s.phase === 'play' || s.phase === 'dealer';
       stakeSeg.disable(s.phase === 'play' || s.phase === 'dealer' || S.ended);
       stakeSeg.el.querySelectorAll('button').forEach(b => { if (Number(b.dataset.id) > s.points) b.disabled = true; });
+      decksSeg.disable(!idle);
+      decksSeg.set(s.decks);
+      shoeLine.textContent = `Shoe: ${s.shoe.length} of ${B.shoeSize(s)} cards left · shuffled under ${B.cutAt(s)}`;
+      shoeLine.title = `${plural(s.decks, 'deck')}: the shoe is shuffled before a hand once fewer than ${B.cutAt(s)} cards are left`;
+      paintRecord(s.decks);
+      tipEl.hidden = !(S.tips && S.tip);
+      tipEl.textContent = S.tips ? S.tip : '';
+      note.textContent = `${plural(s.decks, 'deck')}. The dealer draws to 16 and stands on every 17, soft 17 too. Blackjack scores 3 for every 2 points in play. `
+        + 'Double on any first two cards, also after a split. Split pairs of the same value (up to four hands, aces once, one card each). '
+        + 'The dealer checks for blackjack. No insurance, no surrender.';
       sf.cv.setAttribute('aria-label', `Blackjack table. ${text}. Dealer: ${s.dealer.length ? s.dealer.map((c, i) => (i === 1 && s.hole ? 'a face-down card' : B.codeOf(c))).join(', ') : 'no cards'}. ${s.hands.map((hd, i) => `Hand ${i + 1}: ${hd.cards.map(B.codeOf).join(', ')} (${B.textOf(hd.cards)})`).join('. ')}`);
       ctx.onScore(s.points);
       draw();
     }
+    /* "Hands with 6 decks: 3 won · 2 lost · 1 pushed", and all shoes together once there are others */
+    function paintRecord(d) {
+      const sum = r => (r ? r.w + r.l + r.p : 0);
+      const r = S.record[d], all = { w: 0, l: 0, p: 0 };
+      for (const k of Object.keys(S.record)) for (const f of ['w', 'l', 'p']) all[f] += S.record[k][f];
+      const line = x => [h('b', { text: `${x.w} won` }), ' · ', h('b', { text: `${x.l} lost` }), ' · ', h('b', { text: `${x.p} pushed` })];
+      recLine.replaceChildren(
+        h('div', ...(sum(r) ? [h('span', { text: `Hands with ${plural(d, 'deck')}: ` }), ...line(r)] : [h('span', { text: `No hands finished with ${plural(d, 'deck')} yet.` })])),
+        sum(all) > sum(r) ? h('div', h('span', { text: 'All shoe sizes: ' }), ...line(all)) : null);
+      recLine.dataset.n = String(sum(r));
+    }
 
     /* ------------------------------ drawing ------------------------------ */
+    /* "Larger cards" lifts the width limit and the cap, never the height one: the rows still fit */
     function layout() {
-      const W = sf.w, H = sf.h;
-      const cw = Math.round(Math.max(36, Math.min(W / 8, H / 4.2 / 1.4, 92))), ch = Math.round(cw * 1.4);
-      return { W, H, cw, ch };
+      const W = sf.w, H = sf.h, big = S.look.big;
+      const cw = Math.round(Math.max(36, Math.min(W / (big ? 6.6 : 8), H / 4.2 / 1.4, big ? 118 : 92))), ch = Math.round(cw * 1.4);
+      return { W, H, cw, ch, big };
     }
+    const backOf = (w, hh) => book.back(w, hh, backHue(S.look, BACK_HUE), S.look.back);
+    const faceOf = (c, w, hh) => book.face(c, w, hh, S.look.big);
     function place(L, cards, cx, y, entering) {
       const step = Math.min(L.cw * 0.64, Math.max(8, (L.W * 0.46 - L.cw) / Math.max(1, cards.length - 1)));
       const x0 = cx - (L.cw + step * (cards.length - 1)) / 2;
@@ -206,11 +322,13 @@ export default {
       sf.begin();
       const L = S.geo = layout();
       const s = t(), now = performance.now();
-      g.fillStyle = '#04120e';
+      /* felt: the game's own dark table, or the one chosen under Table */
+      const fc = feltColors(S.look);
+      g.fillStyle = fc ? fc[1] : '#04120e';
       g.fillRect(0, 0, L.W, L.H);
       const felt = g.createRadialGradient(L.W / 2, L.H * 0.5, 0, L.W / 2, L.H * 0.5, Math.max(L.W, L.H) * 0.7);
-      felt.addColorStop(0, 'hsla(150,55%,20%,.95)');
-      felt.addColorStop(1, 'hsla(160,60%,5%,1)');
+      felt.addColorStop(0, fc ? fc[0] : 'hsla(150,55%,20%,.95)');
+      felt.addColorStop(1, fc ? fc[1] : 'hsla(160,60%,5%,1)');
       g.fillStyle = felt;
       g.fillRect(0, 0, L.W, L.H);
       g.textAlign = 'center'; g.textBaseline = 'alphabetic';
@@ -219,8 +337,13 @@ export default {
       g.fillText('BLACKJACK · FOR POINTS ONLY', L.W / 2, L.H / 2 + L.cw * 0.1);
       g.font = `600 ${Math.round(L.cw * 0.17)}px ${FONT}`;
       g.fillText('Dealer stands on all 17s · blackjack scores 3 to 2', L.W / 2, L.H / 2 + L.cw * 0.38);
-      const shoe = { x: L.W - L.cw * 1.1, y: 14 };
-      for (let i = 2; i >= 0; i--) g.drawImage(book.back(L.cw * 0.7, L.ch * 0.7, 140), shoe.x - i * 2, shoe.y - i * 2, L.cw * 0.7, L.ch * 0.7);
+      /* the shoe: top right, or top left for a left-handed table */
+      const shoe = { x: S.look.left ? L.cw * 0.4 : L.W - L.cw * 1.1, y: 14, w: L.cw * 0.7, h: L.ch * 0.7 };
+      S.geoShoe = shoe;
+      for (let i = 2; i >= 0; i--) g.drawImage(backOf(shoe.w, shoe.h), shoe.x - i * 2, shoe.y - i * 2, shoe.w, shoe.h);
+      g.fillStyle = 'rgba(255,255,255,.55)';
+      g.font = `600 ${Math.max(10, Math.round(L.cw * 0.14))}px ${FONT}`;
+      g.fillText(`${s.shoe.length} left`, shoe.x + shoe.w / 2, shoe.y + shoe.h + 14);
       const drawCards = (list, faceDown, hl) => {
         for (const p of list) {
           const born = S.born.get(p.c) ?? (S.born.set(p.c, now), now);
@@ -228,8 +351,8 @@ export default {
           const x = shoe.x + (p.x - shoe.x) * e, y = shoe.y + (p.y - shoe.y) * e;
           if (k < 1) loop.kick(0.1);
           g.globalAlpha = 0.35 + 0.65 * e;
-          if (faceDown && p.i === 1) g.drawImage(book.back(L.cw, L.ch, 140), x, y, L.cw, L.ch);
-          else g.drawImage(book.face(p.c, L.cw, L.ch), x, y, L.cw, L.ch);
+          if (faceDown && p.i === 1) g.drawImage(backOf(L.cw, L.ch), x, y, L.cw, L.ch);
+          else g.drawImage(faceOf(p.c, L.cw, L.ch), x, y, L.cw, L.ch);
           g.globalAlpha = 1;
         }
       };
@@ -273,7 +396,7 @@ export default {
 
     /* ------------------------------ input ------------------------------ */
     const onKey = e => {
-      if (!ownsKey(el, e) || dead) return;
+      if (!ownsKey(el, e) || dead || lookOv) return;
       const k = e.key.toLowerCase();
       const s = t();
       if (k === 'enter' || k === ' ') { if (s.phase === 'idle' || s.phase === 'settled') { e.preventDefault(); deal(); } return; }
@@ -312,11 +435,20 @@ export default {
           active: s.active, can: { hit: B.canHit(s), stand: B.canStand(s), double: B.canDouble(s), split: B.canSplit(s), deal: B.canDeal(s, S.stake) },
           shoe: s.shoe.length, shuffled: s.shuffled, status: statusEl.textContent, reduced,
           buttons: { deal: !dealBtn.disabled, hit: !hitBtn.disabled, stand: !standBtn.disabled, double: !dblBtn.disabled, split: !splitBtn.disabled },
+          decks: s.decks, shoeSize: B.shoeSize(s), cutAt: B.cutAt(s), shoeText: shoeLine.textContent, record: JSON.parse(JSON.stringify(S.record)), recordText: recLine.textContent,
+          tips: S.tips, tip: S.tips ? S.tip : null, tipShown: !tipEl.hidden ? tipEl.textContent : null,
+          moves: S.moves.map(m => ({ hand: m.hand, cards: m.cards.map(B.codeOf), up: B.codeOf(m.up), choice: m.choice, advice: m.adv.move, code: m.adv.code })),
+          decksOn: !decksSeg.el.querySelector('button').disabled, lookOpen: !!lookOv,
+          /* the Table look in use, and where it put things (CSS px in the canvas; the panel's side of the board) */
+          look: { ...S.look }, backHue: backHue(S.look, BACK_HUE),
+          geo: S.geo ? { W: S.geo.W, H: S.geo.H, cw: S.geo.cw, ch: S.geo.ch, shoe: S.geoShoe ? { x: Math.round(S.geoShoe.x), y: Math.round(S.geoShoe.y), w: Math.round(S.geoShoe.w), h: Math.round(S.geoShoe.h) } : null,
+            panel: side.getBoundingClientRect().x < boardEl.getBoundingClientRect().x ? 'left' : 'right' } : null,
         };
       },
-      /* test hook, inert unless a test calls it: stack the next cards to be drawn, in order */
+      /* test hook, inert unless a test calls it: stack the next cards to be drawn, in order
+         (a shoe due for its shuffle is shuffled first, so the deal keeps the stacked cards) */
       hook: cmd => {
-        if (cmd && Array.isArray(cmd.stack)) { const cards = cmd.stack.map(B.parseCode).filter(Boolean); t().shoe.push(...cards.reverse()); }
+        if (cmd && Array.isArray(cmd.stack)) { if (B.needsShuffle(t())) B.reshuffle(t()); const cards = cmd.stack.map(B.parseCode).filter(Boolean); t().shoe.push(...cards.reverse()); }
         if (cmd && Number.isInteger(cmd.points)) { t().points = cmd.points; paint(); }
         return true;
       },

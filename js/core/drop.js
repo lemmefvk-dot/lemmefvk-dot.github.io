@@ -32,7 +32,12 @@
    file is listed as refused and never requested, and a sender that
    sends more bytes than it declared has the drop stopped.
 
-     startSend({ items:[{ name, type, blob:()=>Promise<Blob> }], mode })
+   A code can expire: startSend({ ttl }) (minutes) closes the room if nobody has
+   joined by then, with reason 'expired' (expiresAt says when). Once someone has
+   joined, the transfer is theirs to finish and the timer is off.
+   Received files go to session.dest (setDest(dir); default ~/Downloads).
+
+     startSend({ items:[{ name, type, blob:()=>Promise<Blob> }], mode, ttl })
      startReceive(code)
        -> session { role, mode, state, reason, code, peer, link, files,
                     progress { done, total }, saved, room,
@@ -43,7 +48,7 @@
 import { openPair } from './pair.js';
 import { cleanText } from './roomcode.js';
 import { vfs } from './vfs.js';
-import { importFiles } from './fileimport.js';
+import { importFiles, importBlock } from './fileimport.js';
 import { bus } from './bus.js';
 
 const MB = 1024 * 1024;
@@ -63,6 +68,8 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const MIME_RE = /^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,80}$/i;
 
 export const DOWNLOADS = () => `${vfs.HOME}/Downloads`;
+/** a folder files may be saved into (core/fileimport.js: exists, in Home, not the Trash) */
+const destOk = d => typeof d === 'string' && !!d && !importBlock(d);
 
 /** A file name from someone else: one line, no path separators, no hidden-file dot, capped. */
 export function cleanName(s) {
@@ -114,7 +121,7 @@ function emitter() {
 }
 
 /* ======================= sending ======================= */
-export function startSend({ items, mode = 'files', from = '' }) {
+export function startSend({ items, mode = 'files', from = '', ttl = 0 }) {
   const E = emitter();
   const S = {
     role: 'send', mode, state: 'opening', reason: null,
@@ -122,7 +129,8 @@ export function startSend({ items, mode = 'files', from = '' }) {
     progress: { done: 0, total: 0, confirmed: 0 },
     accepted: [],
   };
-  let room = null, offerT = 0, gotT = 0, stop = false, offs = [];
+  let room = null, offerT = 0, gotT = 0, expT = 0, stop = false, offs = [];
+  const ttlMs = Number.isFinite(ttl) && ttl > 0 ? Math.round(ttl * 60000) : 0;
   const setState = (st, reason = null) => {
     if (S.state === st && S.reason === reason) return;
     S.state = st; S.reason = reason;
@@ -133,7 +141,7 @@ export function startSend({ items, mode = 'files', from = '' }) {
   function finish(st, reason = null, { tell = null } = {}) {
     if (ended()) return;
     stop = true;
-    clearInterval(offerT); clearTimeout(gotT);
+    clearInterval(offerT); clearTimeout(gotT); clearTimeout(expT);
     if (tell && room) room.send(tell, {});
     setState(st, reason);
     /* let a last message (cancel, or the data channel's tail) leave first */
@@ -241,6 +249,10 @@ export function startSend({ items, mode = 'files', from = '' }) {
     if (stop) return;
     room = openPair({ kind: 'drop', role: 'host', types: TYPES, rtc: true, binary: false });
     S.code = room.code;
+    if (ttlMs && room.phase !== 'closed') {
+      S.expiresAt = Date.now() + ttlMs;
+      expT = setTimeout(() => { if (S.state === 'waiting' || S.state === 'opening') finish('failed', 'expired'); }, ttlMs);
+    }
     if (room.phase === 'closed') { S.room = room; setState('failed', room.error || 'error'); return; }
     offs = [
       room.on((type, data) => {
@@ -250,6 +262,8 @@ export function startSend({ items, mode = 'files', from = '' }) {
         } else if (type === 'peer') {
           S.peer = data;
           E.emit('peer', data);
+          clearTimeout(expT);            /* someone joined: the code did its job */
+          S.expiresAt = 0;
           setState('offered');
           offer();
           offerT = setInterval(() => { if (S.state === 'offered') offer(); else clearInterval(offerT); }, OFFER_EVERY);
@@ -275,6 +289,7 @@ export function startSend({ items, mode = 'files', from = '' }) {
     get state() { return S.state; },
     get reason() { return S.reason; },
     get detail() { return S.detail || ''; },
+    get expiresAt() { return S.expiresAt || 0; },
     get code() { return room?.code || null; },
     get peer() { return S.peer || null; },
     get link() { return room?.link || 'off'; },
@@ -284,7 +299,7 @@ export function startSend({ items, mode = 'files', from = '' }) {
     get room() { return room; },
     on: E.on,
     cancel() { if (!ended()) finish('cancelled', 'me', { tell: 'cancel' }); },
-    close() { stop = true; clearInterval(offerT); clearTimeout(gotT); offs.forEach(f => f()); if (!ended()) { room?.send('cancel', {}); setState('closed'); } try { room?.leave(); } catch (err) { /* gone */ } },
+    close() { stop = true; clearInterval(offerT); clearTimeout(gotT); clearTimeout(expT); offs.forEach(f => f()); if (!ended()) { room?.send('cancel', {}); setState('closed'); } try { room?.leave(); } catch (err) { /* gone */ } },
   };
 }
 
@@ -297,6 +312,7 @@ export function startReceive(code) {
     progress: { done: 0, total: 0 },
     saved: [],                        /* { name, path, ok, why } */
     backup: null,
+    dest: '',                         /* where files land; '' = ~/Downloads */
   };
   let cur = null, accT = 0, rxT = 0, lastRx = 0, offs = [];
   const room = openPair({ kind: 'drop', role: 'guest', code, types: TYPES, rtc: true, binary: true });
@@ -350,7 +366,7 @@ export function startReceive(code) {
       return next();
     }
     /* checked: now it may be saved, by the same rules as Files' Import */
-    const dir = DOWNLOADS();
+    const dir = destOk(S.dest) ? S.dest : DOWNLOADS();
     if (!vfs.node(dir)) vfs.mkdir(dir);
     let r;
     try {
@@ -447,6 +463,9 @@ export function startReceive(code) {
     get saved() { return S.saved.slice(); },
     get backup() { return S.backup; },
     get room() { return room; },
+    get dest() { return destOk(S.dest) ? S.dest : DOWNLOADS(); },
+    /** Where received files go. Only an existing folder is taken; anything else keeps the last choice. */
+    setDest(dir) { if (destOk(dir)) { S.dest = dir; return true; } return false; },
     on: E.on,
     accept() {
       if (S.state !== 'offered') return false;

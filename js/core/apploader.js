@@ -154,6 +154,7 @@ export function declareApps() {
       declareApp(meta, lazyMount(meta.id));
     }
   }
+  bus.emit('apps:declared');       /* the desktop drew before this: app shortcuts need the names */
   for (const [mod, events] of Object.entries(WAKE)) {
     for (const evt of events) {
       bus.on(evt, (...args) => {

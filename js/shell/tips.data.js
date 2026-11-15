@@ -98,7 +98,7 @@ export const TIPS = [
   { id: 'screensaver', text: () => 'Settings › Desktop can start a screensaver after you have been away a while: bubbles, stars, an aquarium, 3D pipes or a night sky.', show: set('desktop'), proof: ['js/shell/screensaver.js', 'screensaver'] },
   { id: 'lowgfx', text: () => 'On a slow computer, Settings › Performance has a Low graphics mode that turns off everything costing frames.', show: set('performance'), proof: ['js/apps/settings.js', 'Low graphics mode'] },
   { id: 'motion', text: () => 'Prefer calm? Reduce motion, reduce transparency and larger text are all in Settings › Accessibility.', show: set('accessibility'), proof: ['js/apps/settings.js', "label: 'Reduce motion'"] },
-  { id: 'backup', text: () => 'Settings › Privacy can back up everything you saved here and restore it on another browser.', show: set('privacy'), proof: ['js/apps/settings.js', 'Back up your data'] },
+  { id: 'backup', text: () => 'Settings › Privacy can back up everything you saved here and restore it on another browser.', show: set('privacy'), proof: ['js/apps/settings-data.js', 'Back up your data'] },
 
   /* ---- games and people ---- */
   { id: 'play', text: () => 'Static Play is the home for your games: continue where you left off, discover something new, or pick Quick Play.', show: app('play'), proof: ['js/apps/play.js', 'Quick Play'] },
@@ -112,7 +112,7 @@ export const TIPS = [
   { id: 'coop-note', text: () => 'In Notes, Write together gives you a code. Pass it on and you both type in the same note, live.', show: app('notes'), proof: ['js/apps/notes.js', 'Write together…'] },
   { id: 'old-games', text: () => 'Scroll to the bottom of Static Arcade for Old Games: free classics such as Beneath a Steel Sky and Sopwith.', show: app('arcade'), proof: ['js/classics/catalog.js', 'Beneath a Steel Sky'] },
   { id: 'jumper-editor', text: () => 'Pixel Jumper in Static Arcade has a level editor. Build a level and share it as a link.', show: app('arcade', { game: 'jumper' }), proof: ['js/arcade/jumper.js', 'Level editor'] },
-  { id: 'python', text: () => 'VS Code runs real Python. Open a .py file or a Python template and press Run.', show: app('code'), proof: ['js/core/pyrun.js', 'Pyodide'] },
+  { id: 'python', text: () => 'Static Code runs real Python. Open a .py file or a Python template and press Run.', show: app('code'), proof: ['js/core/pyrun.js', 'Pyodide'] },
   { id: 'dev-tools', text: () => 'Dev Tools has a regex tester, a JSON viewer and a password generator, all on this device.', show: app('dev-tools'), proof: ['js/apps/dev-tools.js', 'defineApp'] },
   { id: 'birthday', text: () => 'Tell Settings › Celebrations your birthday, and StaticOS has a card and some confetti for you on the day.', show: set('celebrations'), proof: ['js/apps/celebrate-pane.js', 'prefs.birthday'] },
 
@@ -123,7 +123,7 @@ export const TIPS = [
   { id: 'study-cite', text: () => 'Static Study makes MLA, APA and Chicago citations that keep their italics when you paste them.', show: app('study', { tab: 'cite' }), proof: ['js/study/cite.js', 'Copied, with italics.'] },
   { id: 'study-quiz', text: () => 'Write a quiz in Static Study and host it live: friends join with a code and answer on their own screens.', show: app('study', { tab: 'quiz' }), proof: ['js/study/quiz.js', "btn('Host live'"] },
   { id: 'study-equations', text: () => 'The Equations tab in Static Study solves linear and quadratic equations, step by step.', show: app('study', { tab: 'equations' }), proof: ['js/study/equations.js', "quadratic: 'A quadratic equation'"] },
-  { id: 'sheets', text: () => 'Static Sheets has formulas, and bar, line and pie charts that update as you type. It opens and saves CSV files.', show: app('sheets'), proof: ['js/sheets/chart.js', "TYPES = ['bar', 'line', 'pie']"] },
+  { id: 'sheets', text: () => 'Static Sheets has formulas, and bar, line, pie, stacked, area and scatter charts that update as you type. It opens and saves CSV files.', show: app('sheets'), proof: ['js/sheets/chart.js', "TYPES = ['bar', 'line', 'pie', 'stacked', 'area', 'scatter']"] },
   { id: 'typing', text: () => 'Typing Lessons teaches touch typing, from the home row to whole sentences.', show: app('typing'), proof: ['js/apps/typing-lessons.js', "id: 'typing'"] },
   { id: 'periodic', text: () => 'In the Periodic Table, slide the temperature to see which elements are solid, liquid or gas.', show: app('periodic'), proof: ['js/apps/periodic.js', "'aria-label': 'Temperature in kelvin'"] },
   { id: 'mindmap', text: () => 'Mind Maps lets you drag bubbles and connect ideas, then save the map or export it as a picture.', show: app('mindmap'), proof: ['js/apps/mindmap.js', "id: 'mindmap'"] },
@@ -165,6 +165,19 @@ export const TIPS = [
   { id: 'watch-films', text: () => 'Static Watch has a Free films section of full-length films from archive.org.', show: app('watch'), proof: ['js/apps/watch.js', "label: 'Free films'"] },
   { id: 'manga-library', text: () => 'Static Manga comes with a library: all of Pepper&Carrot, free to read.', show: app('manga'), proof: ['js/apps/manga.js', "id: 'manga'"] },
   { id: 'flex-battle', text: () => 'Flex Battle: show a friend your coolest item on camera and let an AI guess what it is worth. It only guesses.', show: app('flex-battle'), proof: ['js/apps/flexbattle.js', "id: 'flex-battle'"] },
+
+  /* ---- widgets, the pet, badges (4.11) ---- */
+  { id: 'widget-edit', text: () => 'The widget rail has an Edit button: drag a card from anywhere to move it, and press ✕ on one to take it out.', show: set('desktop'), proof: ['js/shell/widgets.js', 'wgr__edit'] },
+  { id: 'widget-due', text: () => 'Add Due Next to the widget rail to see the next three things due, from your Study homework and your tasks.', show: set('desktop'), proof: ['js/shell/widgets.more.js', 'dueNext'] },
+  { id: 'widget-habits', text: () => 'The Habits widget ticks off today’s habits from Static Life, right in the rail.', show: set('desktop'), proof: ['js/shell/widgets.more.js', 'HAB.toggleDay'] },
+  { id: 'desk-widgets', text: () => 'Each desktop keeps its own desktop widgets, so one can have a clock and another a to-do list.', show: set('desktop'), proof: ['js/shell/deskwidgets.js', 'deskOf'] },
+  { id: 'pet-choose', text: () => 'Settings › Desktop lets you choose a cat or a dog for the pet, and give it a name.', show: set('desktop'), proof: ['js/apps/settings.js', 'petKind'] },
+  { id: 'pet-focus', text: () => 'The pet naps while a Focus session runs, and wakes up when it ends.', show: app('clock', { tab: 'focus' }), proof: ['js/shell/pet.js', 'focusing'] },
+  { id: 'tryit', text: () => 'The Try it card in the widget rail lists things worth trying once, and ticks them off as you do.', show: set('desktop'), proof: ['js/core/tryit.js', 'spotlight:shown'] },
+  { id: 'badge-progress', text: () => 'The Achievements tab in the notification centre can show every badge with a goal, and how far along you are.', show: ['bus', 'noti:toggle', 'ach'], proof: ['js/shell/notifications.js', 'ach-progress'] },
+  { id: 'tabs', text: () => 'Drag a window by its title bar onto another window’s title bar to put them in one frame as tabs.', show: set('shortcuts'), proof: ['js/core/wintabs.js', 'TEAR'] },
+  { id: 'dnd-schedule', text: () => 'Do Not Disturb can turn itself on and off at times you set, such as school hours: Settings › Notifications.', show: set('notifications'), proof: ['js/core/dndsched.js', 'dndrules'] },
+  { id: 'tips-replay', text: () => 'Missed a tip? Settings › Desktop › Startup has Replay a tip, which lists the ones you have seen.', show: set('desktop'), proof: ['js/shell/tips.js', 'tips:replay'] },
 
   /* ---- this tour ---- */
   { id: 'tour', text: () => 'New here, or forgot where things are? Help › Take the Tour walks through the desktop again.', show: ['bus', 'tour:start'], proof: ['js/shell/tour.js', 'tour:start'] },

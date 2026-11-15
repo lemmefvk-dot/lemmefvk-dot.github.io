@@ -14,7 +14,7 @@ const KEY = key('staticos.state.v3');
 const PERSIST = ['prefs', 'dock', 'notes', 'noteFolders', 'wallpaper', 'session', 'portal', 'desktops', 'lens', 'markets', 'ai', 'manga'];
 
 const defaults = {
-  user: { name: 'Static', handle: 'aether', initials: 'A', role: 'Administrator' },
+  user: { name: 'Static', handle: 'static', initials: 'S', role: 'Administrator' },
   prefs: {
     accent: 'aether',
     theme: 'dark',
@@ -37,28 +37,19 @@ const defaults = {
     autoUpdate: 'notify',   /* 'notify' | 'reload' | 'off' — see js/core/updater.js */
   },
   dock: ['launcher', 'files', 'play', 'store', 'browser', 'chat', 'aetherium', 'lens', 'code', 'settings', 'music', 'monitor'],
+  /* Names of StaticOS's own parts. Nothing here describes the computer: the
+     browser does not say what CPU, GPU, disk or screen a person has, so the
+     Terminal, Monitor and Staticum print only what it does report. */
   system: {
     hostname: 'staticos',
     os: 'StaticOS 4.0',
-    kernel: 'Linux 4.0.0-static',
     shell: 'staticsh 3.0.1',
-    wm: 'Static Compositor (Wayland)',
+    wm: 'Static window manager',
     de: 'Static Shell 3.0',
-    theme: 'static-dark [GTK4]',
+    theme: 'Static',
     icons: 'Static Icons',
     term: 'static-term',
-    cpu: 'AMD Ryzen 7 7840HS',
-    gpu: 'AMD Radeon 780M',
-    ramTotal: 16,
-    resolution: '2560x1440',
-    packages: '1412 (rpm), 31 (flatpak)',
-    uptimeBase: 2 * 3600 + 36 * 60,
-    diskTotal: 512,
-    diskUsed: 282,
-    battery: 100,
-    charging: false,
   },
-  live: { cpu: 23, gpu: 45, ram: 38, net: 12, temp: 54 },
   session: { bootedOnce: false },
   notes: null,
   wallpaper: 'canopy',

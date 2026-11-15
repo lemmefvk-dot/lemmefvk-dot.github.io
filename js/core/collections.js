@@ -18,6 +18,13 @@
    as 'manga:<id>' / 'movie:<id>' so they never collide with it.
    `at` is when you added it — the only date this module ever shows.
 
+   A SMART collection has `rule` instead of items: a rule such as
+   "web games, Horror, that I've played" or "anime I mark as Watching".
+   It stores no items; evaluate() reads the stores again every time
+   it is opened, so it is never out of date and never invents a row.
+     rule = { src: 'web'|'arcade'|'anime'|'roblox',
+              cat?, state?: 'played'|'fav'|'unplayed', status?, players2? }
+
    API
      list()                     every collection (fresh copies)
      get(id)
@@ -31,6 +38,11 @@
                                 collection, or make a new one
      askName(api, opts)         small accessible naming sheet -> Promise<name|null>
      openItem(api, item)        open the item in the app that owns it
+     createSmart(name, rule)    a smart collection; evaluate(col) -> { items, note }
+     exportJson(col, items) / parseExport(text)   a collection as a list of ids,
+                                never a URL; the receiver looks each up itself
+     wireIds(items) / importIds(name, pairs)      the same list, for friends.js
+                                and for the file import
      subscribe(fn)              store subscription; returns unsubscribe
 
    store.set short-circuits on identical references, so every write
@@ -113,9 +125,10 @@ function normCol(c) {
     seen.add(k);
     return true;
   });
+  const rule = normRule(c.rule);
   return {
     id: c.id, name: cleanName(c.name) || 'Untitled collection', icon: cleanIcon(c.icon),
-    createdAt: Number(c.createdAt) || 0, items,
+    createdAt: Number(c.createdAt) || 0, items: rule ? [] : items, ...(rule ? { rule } : {}),
   };
 }
 
@@ -178,6 +191,7 @@ export function add(colId, item) {
   if (!it) return false;
   let added = false;
   change(colId, c => {
+    if (c.rule) return null;                       /* a smart collection fills itself */
     if (c.items.some(x => keyOf(x) === keyOf(it))) return null;
     if (c.items.length >= MAX_ITEMS) return null;
     added = true;
@@ -273,7 +287,7 @@ export function askName(api, { title = 'New collection', label = 'Name', value =
 export function pickMenu(api, item, x = 0, y = 0) {
   const it = normItem(item);
   if (!it) return;
-  const cols = read();
+  const cols = read().filter(c => !c.rule);
   const k = keyOf(it);
   const short = it.title.length > 28 ? `${it.title.slice(0, 27)}…` : it.title;
   const say = (title, message, ic = 'bookmark') => api.notify({ app: 'Library', icon: ic, title, message, timeout: 3500 });
@@ -338,19 +352,209 @@ export function openItem(api, item) {
     }
     case 'roblox': return launch('aether-roblox', { url: `static://roblox/${it.id}` }, 'Static Roblox');
     case 'cloud': {
-      /* Static Cloud has no deep link to one title, so it opens on its home
-         (Jump back in and Favourites are the first rows) and says which. */
-      const ok = launch('aether-cloud', {}, 'Static Cloud');
-      if (ok) api.notify({ app: 'Library', icon: 'cast', title: `Opening Static Cloud`, timeout: 4000,
-        message: `Find “${it.title}” under Jump back in or Favourites.` });
-      return ok;
+      /* the archive.org identifier opens straight into its emulator */
+      return launch('aether-cloud', { url: `static://cloud?play=${encodeURIComponent(it.id)}&t=${encodeURIComponent(it.title || it.id)}` }, 'Static Cloud');
     }
     default: return false;
   }
+}
+
+/* ---------------- smart collections ---------------- */
+export const RULE_SRC = {
+  web:    { label: 'Web games', kind: 'web',    icon: 'globe' },
+  arcade: { label: 'Arcade',    kind: 'arcade', icon: 'zap' },
+  anime:  { label: 'Anime',     kind: 'anime',  icon: 'star' },
+  roblox: { label: 'Roblox',    kind: 'roblox', icon: 'box' },
+};
+/** The anime statuses Static Anime keeps in portal.anime.status. */
+export const ANIME_STATUS = { watching: 'Watching', plan: 'Plan to watch', completed: 'Completed', dropped: 'Dropped' };
+export const RULE_STATES = { any: 'any', played: 'I have played', fav: 'in my favorites', unplayed: 'not tried yet' };
+const SMART_MAX = 200;
+
+export function normRule(r) {
+  if (!r || typeof r !== 'object' || !RULE_SRC[r.src]) return null;
+  const out = { src: r.src };
+  if (r.src === 'web' && typeof r.cat === 'string' && /^[a-z0-9_-]{1,30}$/i.test(r.cat) && r.cat !== 'all') out.cat = r.cat;
+  if (r.src === 'anime') {
+    out.status = ANIME_STATUS[r.status] ? r.status : 'watching';
+  } else {
+    out.state = RULE_STATES[r.state] && r.state !== 'any' ? r.state : 'any';
+    if (r.src === 'arcade' && r.players2 === true) out.players2 = true;
+    if (r.src === 'roblox' && out.state === 'unplayed') out.state = 'any';
+  }
+  return out;
+}
+
+/** The rule in words, for the page under a smart collection's name. */
+export function describeRule(rule, catName = c => c) {
+  const r = normRule(rule);
+  if (!r) return '';
+  if (r.src === 'anime') return `Anime I marked ${ANIME_STATUS[r.status]}`;
+  const what = r.src === 'web' ? `${r.cat ? `${catName(r.cat)} ` : ''}web games` : r.src === 'arcade' ? `${r.players2 ? 'two-player ' : ''}Arcade games` : 'Roblox experiences';
+  const st = r.state === 'played' ? (r.src === 'roblox' ? ' I opened' : ' I have played') : r.state === 'fav' ? ' in my favorites'
+    : r.state === 'unplayed' ? ' I have not tried yet' : '';
+  return `${what[0].toUpperCase()}${what.slice(1)}${st}`;
+}
+
+export function createSmart(name, rule, { icon: ic } = {}) {
+  const all = read();
+  if (all.length >= MAX_COLLECTIONS) return null;
+  const nm = cleanName(name);
+  const r = normRule(rule);
+  if (!nm || !r) return null;
+  const col = { id: uid(), name: nm, icon: cleanIcon(ic || 'sparkles'), createdAt: Date.now(), items: [], rule: r };
+  write([col, ...all]);
+  bus.emit('collection:create', { id: col.id, name: col.name, smart: true });
+  return { ...col, items: [] };
+}
+
+/** Change the rule of a smart collection (a manual one is left alone). */
+export function setRule(id, rule) {
+  const r = normRule(rule);
+  if (!r) return null;
+  return change(id, c => (c.rule ? { ...c, rule: r } : null));
+}
+
+const memo = {};
+const lazy = (k, fn) => (memo[k] || (memo[k] = fn().catch(() => null)));
+const gamesMod  = () => lazy('games', () => import('../portal/games.data.js').then(m => m.load().then(() => m)));
+const robloxMod = () => lazy('roblox', () => import('../portal/roblox.data.js').then(m => m.load().then(() => m)));
+const animeMod  = () => lazy('anime', () => import('../portal/anime.data.js').then(m => m.load('anime').then(() => m)));
+const arcadeMod = () => lazy('arcade', () => import('../arcade/index.js'));
+const playsMod  = () => lazy('plays', () => import('./plays.js'));
+
+/**
+ * What a smart collection holds right now -> { items, note }. Read from the
+ * stores on every call; nothing is remembered between calls.
+ */
+export async function evaluate(col) {
+  const rule = col && normRule(col.rule);
+  if (!rule) return { items: [], note: '' };
+  const arrOf = v => (Array.isArray(v) ? v : []);
+  const P = await playsMod();
+  const playedKeys = P ? P.playedKeys() : new Set();
+  const mk = (kind, id, title, art, at = 0) => normItem({ kind, id, title, art, at });
+  let items = [];
+  const note = '';
+  if (rule.src === 'web') {
+    const G = await gamesMod();
+    if (!G) return { items: [], note: 'The games catalogue did not load.' };
+    const favs = new Set(arrOf(store.get('portal.games.favs')).filter(x => typeof x === 'string'));
+    /* launches from before plays.js existed still count as played */
+    const old = new Map(arrOf(store.get('portal.games.recent')).filter(r => r && typeof r.id === 'string').map(r => [r.id, Number(r.at) || 0]));
+    const lastAt = new Map(arrOf(P ? P.recent(80, 'web') : []).map(r => [r.id, Number(r.at) || 0]));
+    const played = id => playedKeys.has(`web:${id}`) || old.has(id);
+    const rows = G.query({ category: rule.cat || 'all', sort: 'catalogue', perPage: 6000 }).items.filter(g => {
+      if (rule.state === 'played') return played(g.id);
+      if (rule.state === 'fav') return favs.has(g.id);
+      if (rule.state === 'unplayed') return !played(g.id);
+      return true;
+    });
+    if (rule.state === 'played') rows.sort((a, b) => (lastAt.get(b.id) || old.get(b.id) || 0) - (lastAt.get(a.id) || old.get(a.id) || 0));
+    items = rows.slice(0, SMART_MAX).map(g => mk('web', g.id, g.title, g.art, lastAt.get(g.id) || old.get(g.id) || 0));
+  } else if (rule.src === 'arcade') {
+    const A = await arcadeMod();
+    const list = A ? arrOf(A.ARCADE) : [];
+    const lastAt = new Map(arrOf(P ? P.recent(80, 'arcade') : []).map(r => [r.id, Number(r.at) || 0]));
+    items = list.filter(a => {
+      if (rule.players2 && !arrOf(a.players).includes(2)) return false;
+      if (rule.state === 'played') return playedKeys.has(`arcade:${a.id}`);
+      if (rule.state === 'unplayed') return !playedKeys.has(`arcade:${a.id}`);
+      return true;
+    }).slice(0, SMART_MAX).map(a => mk('arcade', a.id, a.title, null, lastAt.get(a.id) || 0));
+  } else if (rule.src === 'roblox') {
+    const key = rule.state === 'fav' ? 'portal.roblox.favs' : rule.state === 'played' ? 'portal.roblox.recent' : '';
+    const RB = await robloxMod();
+    if (!RB) return { items: [], note: 'The Roblox catalogue did not load.' };
+    const ids = key ? arrOf(store.get(key)).map(String) : RB.all().map(r => r.id);
+    items = ids.map(id => RB.byId(id)).filter(Boolean).slice(0, SMART_MAX).map(r => mk('roblox', r.id, r.name, r.art));
+  } else {
+    const st = store.get('portal.anime.status', {}) || {};
+    const rows = Object.entries(st).filter(([k, v]) => k.startsWith('anime:') && v && v.s === rule.status)
+      .sort((a, b) => (Number(b[1].at) || 0) - (Number(a[1].at) || 0));
+    if (!rows.length) return { items: [], note: '' };
+    const A = await animeMod();
+    if (!A) return { items: [], note: 'The anime catalogue did not load, so these titles cannot be listed yet.' };
+    items = rows.map(([k, v]) => {
+      const rec = A.byId(k.slice(6), 'anime');
+      return rec ? mk('anime', rec.id, rec.title, rec.image, Number(v.at) || 0) : null;
+    }).filter(Boolean).slice(0, SMART_MAX);
+  }
+  return { items, note };
+}
+
+/* ---------------- sharing: a list of ids, never a link ----------------
+   Only kinds the receiver can look up in a catalogue of its own travel:
+   web games, Arcade games, Roblox experiences, anime. Your own creations
+   and Cloud titles stay on this device. */
+const WIRE_KIND = { web: 'w', arcade: 'a', anime: 'n', roblox: 'r' };
+const FROM_WIRE = { w: 'web', a: 'arcade', n: 'anime', r: 'roblox' };
+const WIRE_ID = /^[A-Za-z0-9_:.-]{1,96}$/;
+export const SHARE_MAX = 100;
+
+/** [[code, id], …] for the kinds that can be shared, at most SHARE_MAX. */
+export function wireIds(items) {
+  return (Array.isArray(items) ? items : []).map(normItem).filter(it => it && WIRE_KIND[it.kind] && WIRE_ID.test(it.id))
+    .slice(0, SHARE_MAX).map(it => [WIRE_KIND[it.kind], it.id]);
+}
+
+/** Clean a received or pasted list: only known kinds and plain ids survive. */
+export function cleanPairs(pairs) {
+  const seen = new Set();
+  const out = [];
+  for (const p of Array.isArray(pairs) ? pairs : []) {
+    if (!Array.isArray(p) || !FROM_WIRE[p[0]] || typeof p[1] !== 'string' || !WIRE_ID.test(p[1])) continue;
+    const k = `${p[0]}:${p[1]}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push([p[0], p[1]]);
+    if (out.length >= SHARE_MAX) break;
+  }
+  return out;
+}
+
+export function exportJson(col, items) {
+  return JSON.stringify({ staticos: 'collection', v: 1, name: cleanName(col.name),
+    items: wireIds(items).map(([k, id]) => ({ kind: FROM_WIRE[k], id })) }, null, 2);
+}
+
+/** -> { name, pairs } or null when the text is not a collection export. */
+export function parseExport(text) {
+  let d;
+  try { d = JSON.parse(String(text || '')); } catch (e) { return null; }
+  if (!d || d.staticos !== 'collection' || !Array.isArray(d.items)) return null;
+  const pairs = cleanPairs(d.items.map(i => (i && WIRE_KIND[i.kind] ? [WIRE_KIND[i.kind], String(i.id)] : null)).filter(Boolean));
+  return { name: cleanName(d.name) || 'Shared collection', pairs };
+}
+
+/**
+ * Make a collection from a received list. Each id is looked up in THIS
+ * device's own catalogues: one it does not have is skipped, and the title and
+ * picture come from here, never from the sender.
+ * -> { col, added, skipped } or null (full)
+ */
+export async function importIds(name, pairs) {
+  const clean = cleanPairs(pairs);
+  const [G, RB, A, AR] = await Promise.all([gamesMod(), robloxMod(), animeMod(), arcadeMod()]);
+  const found = [];
+  for (const [code, id] of clean) {
+    const kind = FROM_WIRE[code];
+    let it = null;
+    if (kind === 'web') { const g = G && G.byId(id); if (g) it = { kind, id: g.id, title: g.title, art: g.art }; }
+    else if (kind === 'roblox') { const r = RB && RB.byId(id); if (r) it = { kind, id: r.id, title: r.name, art: r.art }; }
+    else if (kind === 'arcade') { const a = AR && AR.arcadeById && AR.arcadeById(id); if (a) it = { kind, id: a.id, title: a.title, art: null }; }
+    else if (kind === 'anime' && /^[0-9]{1,9}$/.test(id)) { const r = A && A.byId(id, 'anime'); if (r) it = { kind, id: r.id, title: r.title, art: r.image }; }
+    if (it) found.push(it);
+  }
+  const col = create(name);
+  if (!col) return null;
+  for (const it of found.reverse()) add(col.id, it);
+  return { col: get(col.id), added: found.length, skipped: clean.length - found.length };
 }
 
 export default {
   KEY, KINDS, KIND_META, ICONS, SUGGESTED, keyOf, normItem,
   list, get, create, rename, setIcon, remove, add, removeItem, has, containing,
   pickMenu, askName, openItem, subscribe,
+  createSmart, setRule, evaluate, normRule, describeRule, wireIds, cleanPairs, exportJson, parseExport, importIds,
 };

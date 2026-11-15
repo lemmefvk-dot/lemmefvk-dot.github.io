@@ -203,6 +203,9 @@ const P = {
      the old mark was a dark slab that vanished against the green tile. */
   'brand-roblox':'<g transform="rotate(10 12 12)"><path fill-rule="evenodd" fill="#fff" d="M8.6 4.6H15.4A4 4 0 0 1 19.4 8.6V15.4A4 4 0 0 1 15.4 19.4H8.6A4 4 0 0 1 4.6 15.4V8.6A4 4 0 0 1 8.6 4.6ZM10.9 9.6H13.1A1.3 1.3 0 0 1 14.4 10.9V13.1A1.3 1.3 0 0 1 13.1 14.4H10.9A1.3 1.3 0 0 1 9.6 13.1V10.9A1.3 1.3 0 0 1 10.9 9.6Z"/></g>',
   'brand-playstation':'<circle cx="12" cy="12" r="11" fill="#0756B5"/><path d="M9.2 4.1v14.8l3.2 1V8.1c0-1 .4-1.6 1.1-1.4.8.2 1.1.9 1.1 1.9v2.8l3.1 1V9.8c0-3-1.6-4.7-4.6-5.5-1.5-.4-2.8-.6-3.9-.2zM7.8 14.1l-3.1 1c-1.5.5-2 1.3-1.1 1.7.8.4 2.2.3 3.6-.2l.6-.2v2.1l-.5.2c-3 1-5.8 1-7.1.1-1.6-1.1-.5-2.8 2.5-3.8l5.1-1.7zM16 16.5l3.4-1.1c1.5-.5 2.8-.5 3.6-.1.8.4.4 1.1-1.1 1.6l-5.9 1.9v-2.3z" fill="#fff"/>',
+  /* accessibility: a person with arms out; captions: a speech box with two lines */
+  'accessibility':'<circle cx="12" cy="4.5" r="1.8"/><path d="M5 8.5l7 1.5 7-1.5M12 10v4.5m0 0l-2.6 5.5m2.6-5.5l2.6 5.5"/>',
+  'captions':'<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 11h3.5M13.5 11H17M7 14.5h6M15.5 14.5H17"/>',
 };
 
 const ALIAS = {

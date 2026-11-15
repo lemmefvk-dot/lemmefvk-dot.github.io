@@ -22,11 +22,24 @@
    ends open, ← → choose the end and Enter again; ↑ cancels), D draw,
    P pass, N next round, U / Z / Backspace undo.
    Score: your points when you win the match.
+
+   ONLINE (ctx.online, a friend through the Arcade's room): a match to
+   50, and the host's Arcade is the table (./hostlink.js). It shuffles
+   with crypto.getRandomValues, deals, keeps the boneyard and both
+   hands, and checks every play, draw and pass the friend sends before
+   it changes anything. The friend's Arcade is sent only its own tiles,
+   the line, how many tiles the host holds and how many are left in the
+   boneyard — never the host's tiles or the boneyard's, not even when a
+   round ends (the pips left are counted for both, as numbers). The
+   highest double leads each round, as always. On each screen you are
+   the hand at the bottom; there is no undo, and Give up concedes the
+   match. Either of you can deal the next round.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { store } from '../core/store.js';
 import * as R from './domino-rules.js';
 import { thinker } from './thinker.js';
+import { hostLink, guestLink } from './hostlink.js';
 import { KIT_CSS, surface, ownsKey, sounder, looper, rr, playerStrip, segment, button, confirmButton } from './boardkit.js';
 
 const { TILES } = R;
@@ -42,28 +55,40 @@ const writePrefs = patch => { try { store.set(PREF, { ...readPrefs(), ...patch }
 const cryptoRnd = () => { const a = new Uint32Array(1); (globalThis.crypto || crypto).getRandomValues(a); return a[0] / 4294967296; };
 const seeded = seed => { let s = seed >>> 0; return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const ONLINE_TARGET = 50;
+const isTile = v => Number.isInteger(v) && v >= 0 && v < TILES.length;
 const PIPS = { 0: [], 1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [-1, 0], [-1, 1], [1, -1], [1, 0], [1, 1]] };
 
 export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
-    const brain = thinker();
+    /* online: a duel through the room (a kit race is something else); the host holds the table */
+    const NET = ctx.online && typeof ctx.online.send === 'function' && !ctx.online.kit ? ctx.online : null;
+    const host = NET?.role === 'host', guest = !!NET && !host;
+    const peerName = NET?.peer?.name || 'Your friend';
+    const brain = NET ? null : thinker();
     const prefs = readPrefs();
     let dead = false;
     let rnd = cryptoRnd;
+    let link = null;
     const hue = Number(getComputedStyle(el).getPropertyValue('--h')) || 200;
+    /* who the other hand is, in a sentence: "The computer" / "Ben" */
+    const Them = NET ? peerName : 'The computer', them = NET ? peerName : 'the computer';
 
     const S = {
-      g: null, level: prefs.level, target: prefs.target, thinking: false, runId: 0, undo: [], sel: -1, side: 'L', cursor: 0,
+      g: null, level: prefs.level, target: NET ? ONLINE_TARGET : prefs.target, thinking: false, runId: 0, undo: [], sel: -1, side: 'L', cursor: 0,
       ended: false, endT: 0, flash: '', shake: 0, lastPlay: -1, geo: {}, hover: null, matchOver: false,
+      /* online: inAct — the host is applying the friend's move (hostlink sends the view itself);
+         pending — the guest's move is on its way; q — the last view the guest drew */
+      inAct: false, pending: false, q: -1,
     };
 
     /* ------------------------------ the page ------------------------------ */
     const boardEl = h('div.arx-bg__board');
     const sr = h('div.arx-bg__sr', { 'aria-live': 'polite' });
     const statusEl = h('div.arx-bg__status', { role: 'status' });
-    const topStrip = playerStrip('#ff8a4d', 'Computer', '');
+    const topStrip = playerStrip('#ff8a4d', NET ? peerName : 'Computer', '');
     const botStrip = playerStrip('#4dd2ff', 'You', '');
     const levelSeg = segment('Level', [1, 2, 3].map(id => ({ id, label: R.LEVELS[id].name })), S.level, v => { S.level = v; writePrefs({ level: v }); levelSeg.set(v); paint(); refocus(); });
     const targetSeg = segment('Play to', [25, 50, 100].map(id => ({ id, label: String(id) })), S.target, v => { if (v !== S.target) { S.target = v; writePrefs({ target: v }); targetSeg.set(v); newMatch(); } refocus(); });
@@ -74,8 +99,11 @@ export default {
     const undoBtn = button('Undo', 'corner-up-left', () => { undo(); refocus(); }, { title: 'Take back your last move (U)' });
     const resignBtn = confirmButton('Give up', 'Give up? Click again', 'x', () => { giveUp(); refocus(); });
     const note = h('div.arx-bg__note', {
-      text: 'Double-six, draw game. Match a number at either end; draw when you cannot play, pass when the boneyard is empty. Going out scores the pips left in the other hand; a blocked game goes to the side with fewer pips, for the difference. First to the target wins.',
+      text: 'Double-six, draw game. Match a number at either end; draw when you cannot play, pass when the boneyard is empty. Going out scores the pips left in the other hand; a blocked game goes to the side with fewer pips, for the difference. First to the target wins.'
+        + (NET ? ` Online: first to ${ONLINE_TARGET}. ${host ? 'Your' : `${peerName}’s`} Arcade deals and checks every move; each screen sees only its own tiles.` : ''),
     });
+    /* online there is no level, the target is fixed and nothing can be taken back */
+    if (NET) { levelSeg.el.hidden = true; targetSeg.el.hidden = true; undoBtn.hidden = true; }
     const side = h('div.arx-bg__side', topStrip.el, statusEl, levelSeg.el, targetSeg.el, h('div.arx-bg__row', drawBtn, passBtn, nextBtn), h('div.arx-bg__row', undoBtn, resignBtn), note, botStrip.el);
     const root = h('div.arx-bgc', h('style', { text: KIT_CSS + '\n.arx-bg [hidden]{display:none!important}' }), h('div.arx-bg', boardEl, side), sr);
     el.appendChild(root);
@@ -85,23 +113,38 @@ export default {
 
     /* ------------------------------ rules glue ------------------------------ */
     const g = () => S.g;
-    const myTurn = () => !dead && g().phase === 'play' && g().turn === 0 && !S.thinking;
+    const myTurn = () => !dead && g().phase === 'play' && g().turn === 0 && !S.thinking && !S.pending;
     const legalNow = () => (myTurn() ? R.moves(g()) : []);
     const sidesOf = id => legalNow().filter(m => m.k === 'play' && m.id === id).map(m => m.side);
     const mustDraw = () => legalNow().some(m => m.k === 'draw');
     const mustPass = () => legalNow().some(m => m.k === 'pass');
+    /* the host's table moved on by its own hand: the friend's screen is sent its view */
+    const changed = () => { if (host && link && !S.inAct) link.changed(); };
+    /* the guest's move goes to the host's Arcade, which answers with the next view */
+    function send(m) {
+      if (!guest || !link || S.pending) return false;
+      if (!link.act(m)) return false;
+      S.pending = true;
+      S.sel = -1;
+      paint();
+      return true;
+    }
+    /* a guest's empty table until the host's first view arrives */
+    const blank = () => ({ hands: [[], []], yard: [], chain: [], ends: null, turn: 1, passes: 0, phase: 'wait', scores: [0, 0], round: 0, target: ONLINE_TARGET, voids: [[], []], opened: null, last: null, result: null, log: [] });
 
     function newMatch() {
       clearTimeout(S.endT);
       S.runId++;
-      brain.cancel();
+      brain?.cancel();
       S.matchOver = false;
       S.ended = false;
+      if (guest) { S.g = blank(); paint(); return; }
       S.g = R.deal(rnd, null, S.target);
       startRound();
     }
     function nextRound() {
       if (g().phase !== 'round') return;
+      if (guest) { send({ k: 'next' }); return; }
       S.runId++;
       S.g = R.deal(rnd, g(), S.target);
       startRound();
@@ -110,19 +153,21 @@ export default {
       Object.assign(S, { undo: [], sel: -1, side: 'L', thinking: false, flash: '', lastPlay: -1, cursor: 0 });
       const gg = g();
       const [a, b] = TILES[gg.opened];
-      say(`Round ${gg.round}. ${gg.turn === 0 ? 'You hold' : 'The computer holds'} the highest ${a === b ? 'double' : 'tile'} (${a}-${b}) and leads it.`);
+      say(`Round ${gg.round}. ${gg.turn === 0 ? 'You hold' : `${Them} holds`} the highest ${a === b ? 'double' : 'tile'} (${a}-${b}) and leads it.`);
       ctx.onScore(gg.scores[0]);
       paint();
-      if (gg.turn === 1) computerTurns();
+      changed();
+      if (gg.turn === 1 && !NET) computerTurns();
     }
 
-    function snapshot() { S.undo.push(R.copy(g())); if (S.undo.length > 60) S.undo.shift(); }
+    function snapshot() { if (NET) return; S.undo.push(R.copy(g())); if (S.undo.length > 60) S.undo.shift(); }
 
     function flash(t) { S.flash = t; S.shake = performance.now(); snd.blip(140, 0.08, 'sawtooth', 0.4); loop.kick(0.25); paint(); return false; }
 
     function play(id, side) {
       if (!myTurn()) return false;
       if (!sidesOf(id).includes(side)) return flash(sidesOf(id).length ? 'That tile does not fit that end.' : 'That tile does not fit either end.');
+      if (guest) return send({ k: 'play', id, side });
       snapshot();
       commit({ k: 'play', id, side });
       return true;
@@ -130,6 +175,7 @@ export default {
     function draw1() {
       if (!myTurn()) return false;
       if (!mustDraw()) return flash(mustPass() ? 'The boneyard is empty: pass.' : 'You have a tile to play, so you cannot draw.');
+      if (guest) return send({ k: 'draw' });
       snapshot();
       commit({ k: 'draw' });
       return true;
@@ -137,13 +183,28 @@ export default {
     function pass() {
       if (!myTurn()) return false;
       if (!mustPass()) return flash(mustDraw() ? 'Draw from the boneyard first.' : 'You have a tile to play.');
+      if (guest) return send({ k: 'pass' });
       snapshot();
       commit({ k: 'pass' });
       return true;
     }
+    /* the host checks the friend's move against the rules before it touches the table */
+    function friendMove(a) {
+      if (!a || typeof a !== 'object' || dead) return false;
+      const gg = g();
+      if (a.k === 'next') { if (gg.phase !== 'round') return false; nextRound(); return true; }
+      if (a.k === 'resign') { if (S.matchOver || gg.phase === 'over') return false; resign(1); return true; }
+      if (gg.phase !== 'play' || gg.turn !== 1) return false;
+      let m = null;
+      if (a.k === 'play' && isTile(a.id) && (a.side === 'L' || a.side === 'R')) m = { k: 'play', id: a.id, side: a.side };
+      else if (a.k === 'draw' || a.k === 'pass') m = { k: a.k };
+      if (!m || !R.isLegal(gg, m)) return false;
+      commit(m);
+      return true;
+    }
     function commit(m) {
       const gg = g(), side = gg.turn;
-      const who = side === 0 ? 'You' : 'The computer';
+      const who = side === 0 ? 'You' : Them;
       R.apply(gg, m);
       S.sel = -1;
       S.flash = '';
@@ -151,9 +212,10 @@ export default {
       else if (m.k === 'draw') { say(`${who} drew from the boneyard.`); snd.blip(180, 0.06, 'square', 0.5, 240); }
       else { say(`${who} passed.`); snd.blip(150, 0.08, 'sine', 0.5); }
       loop.kick(reduced ? 0.05 : 0.5);
-      if (gg.phase !== 'play') { roundEnded(); return; }
+      if (gg.phase !== 'play') { roundEnded(); changed(); return; }
       paint();
-      if (gg.turn === 1 && side === 0) computerTurns();
+      changed();
+      if (gg.turn === 1 && side === 0 && !NET) computerTurns();
     }
 
     async function computerTurns() {
@@ -188,7 +250,7 @@ export default {
       const gg = g(), r = gg.result;
       S.thinking = false;
       S.runId++;
-      brain.cancel();
+      brain?.cancel();
       const text = roundText();
       say(text);
       snd.blip(r.winner === 0 ? 520 : 220, 0.14, 'triangle', 0.9, r.winner === 0 ? 780 : 150);
@@ -199,7 +261,7 @@ export default {
     }
 
     function undo() {
-      if (dead || S.matchOver || g().phase === 'over') return;
+      if (dead || NET || S.matchOver || g().phase === 'over') return;
       const prev = S.undo.pop();
       if (!prev) return;
       S.runId++;
@@ -216,14 +278,20 @@ export default {
 
     function giveUp() {
       if (dead || S.matchOver) return;
+      if (guest) { if (g().phase !== 'wait') send({ k: 'resign' }); return; }
+      resign(0);
+    }
+    /* side 0 (this screen's player) or 1 concedes the match */
+    function resign(by) {
       S.runId++;
-      brain.cancel();
+      brain?.cancel();
       S.thinking = false;
       S.matchOver = true;
       g().phase = 'over';
-      g().result = { winner: 1, pts: 0, how: 'gaveup', left: [0, 0], matchOver: true, matchWinner: 1 };
-      say('You gave up the match.');
+      g().result = { winner: 1 - by, pts: 0, how: 'gaveup', by, left: [0, 0], matchOver: true, matchWinner: 1 - by };
+      say(roundText());
       paint();
+      changed();
       finishSoon();
     }
 
@@ -237,6 +305,16 @@ export default {
       paint();
       const gg = g(), mine = gg.scores[0], theirs = gg.scores[1], lv = R.LEVELS[S.level].name;
       const won = gg.result.matchWinner === 0;
+      if (NET) {
+        const r = gg.result, mw = r.matchWinner;
+        const detail = r.how === 'gaveup'
+          ? (r.by === 0 ? `You gave up at ${mine} to ${theirs}.` : `${peerName} gave up at ${theirs} to ${mine}.`)
+          : mw === 0 ? `You won the match ${mine} to ${theirs} in ${gg.round} round${gg.round === 1 ? '' : 's'} (first to ${gg.target}).`
+            : mw === 1 ? `${peerName} won the match ${theirs} to ${mine} in ${gg.round} round${gg.round === 1 ? '' : 's'} (first to ${gg.target}).`
+              : `The match ended level at ${mine} each.`;
+        ctx.onEnd({ score: mine, won: mw === 0 ? true : mw === 1 ? false : null, versus: { me: mine, them: theirs }, detail });
+        return;
+      }
       ctx.onEnd(won ? { score: mine, won: true, detail: `You won the match ${mine} to ${theirs} in ${gg.round} rounds against the computer (${lv}, first to ${gg.target}).` }
         : gg.result.how === 'gaveup' ? { score: null, won: false, detail: `You gave up at ${mine} to ${theirs} against the computer (${lv}).` }
           : { score: null, won: false, detail: gg.result.matchWinner < 0 ? `The match ended level at ${mine} each against the computer (${lv}).` : `The computer (${lv}) won the match ${theirs} to ${mine}.` });
@@ -247,12 +325,12 @@ export default {
     function roundText() {
       const r = g().result, gg = g();
       if (!r) return '';
-      if (r.how === 'gaveup') return 'You gave up the match.';
+      if (r.how === 'gaveup') return r.by === 1 ? `${Them} gave up the match.` : 'You gave up the match.';
       let t;
-      if (r.how === 'domino') t = r.winner === 0 ? `You went out and score ${r.pts} (the computer had ${r.left[1]} pips left).` : `The computer went out and scores ${r.pts} (you had ${r.left[0]} pips left).`;
+      if (r.how === 'domino') t = r.winner === 0 ? `You went out and score ${r.pts} (${them} had ${r.left[1]} pips left).` : `${Them} went out and scores ${r.pts} (you had ${r.left[0]} pips left).`;
       else if (r.winner < 0) t = `Blocked: ${r.left[0]} pips each. Nobody scores.`;
-      else t = `Blocked: you have ${r.left[0]} pips, the computer ${r.left[1]}. ${r.winner === 0 ? 'You score' : 'The computer scores'} ${r.pts}.`;
-      if (gg.phase === 'over') t += r.matchWinner === 0 ? ' You win the match!' : r.matchWinner === 1 ? ' The computer wins the match.' : ' The match is level.';
+      else t = `Blocked: you have ${r.left[0]} pips, ${them} ${r.left[1]}. ${r.winner === 0 ? 'You score' : `${Them} scores`} ${r.pts}.`;
+      if (gg.phase === 'over') t += r.matchWinner === 0 ? ' You win the match!' : r.matchWinner === 1 ? ` ${Them} wins the match.` : ' The match is level.';
       return t;
     }
 
@@ -260,8 +338,11 @@ export default {
       if (dead) return;
       const gg = g(), ph = gg.phase;
       let text;
-      if (ph === 'round' || ph === 'over') text = roundText();
+      if (ph === 'wait') text = `Waiting for ${peerName}’s Arcade to deal…`;
+      else if (ph === 'round' || ph === 'over') text = roundText();
       else if (S.thinking) text = 'The computer is thinking…';
+      else if (S.pending) text = 'Sending your move…';
+      else if (NET && gg.turn === 1) text = `${peerName}’s move…`;
       else if (gg.turn === 0) {
         if (mustDraw()) text = 'Nothing fits: draw from the boneyard (click it, or press D).';
         else if (mustPass()) text = 'Nothing fits and the boneyard is empty: pass (P).';
@@ -273,15 +354,16 @@ export default {
       statusEl.textContent = text;
       statusEl.classList.toggle('is-alert', !!S.flash && ph === 'play');
       statusEl.classList.toggle('is-done', ph !== 'play');
-      topStrip.set({ note: `${gg.scores[1]} points · ${gg.hands[1].length} tiles · ${R.LEVELS[S.level].name}`, turn: ph === 'play' && gg.turn === 1, thinking: S.thinking });
-      botStrip.set({ note: `${gg.scores[0]} points · ${gg.hands[0].length} tiles · round ${gg.round}, first to ${gg.target}`, turn: ph === 'play' && gg.turn === 0 });
+      topStrip.set({ note: `${gg.scores[1]} points · ${gg.hands[1].length} tiles · ${NET ? 'online' : R.LEVELS[S.level].name}`, turn: ph === 'play' && gg.turn === 1, thinking: S.thinking });
+      botStrip.set({ note: `${gg.scores[0]} points · ${gg.hands[0].length} tiles · round ${Math.max(1, gg.round)}, first to ${gg.target}`, turn: ph === 'play' && gg.turn === 0 });
       drawBtn.disabled = !myTurn() || !mustDraw();
       passBtn.disabled = !myTurn() || !mustPass();
       nextBtn.hidden = ph !== 'round';
+      nextBtn.disabled = S.pending;
       drawBtn.hidden = ph === 'round';
       passBtn.hidden = ph === 'round';
       undoBtn.disabled = S.matchOver || !S.undo.length;
-      resignBtn.disabled = S.matchOver;
+      resignBtn.disabled = S.matchOver || ph === 'wait' || S.pending;
       if (S.matchOver) resignBtn.reset();
       sf.cv.setAttribute('aria-label', `Dominoes table. ${text} Your hand: ${gg.hands[0].map(id => TILES[id].join('-')).join(', ') || 'empty'}. Line: ${gg.chain.map(c => `${c.l}-${c.r}`).join(' ') || 'empty'}.`);
       paintCanvas();
@@ -346,7 +428,8 @@ export default {
       /* the computer's hand across the top, the boneyard at its right */
       const topH = Math.max(34, Math.min(76, H * 0.15));
       const oa = Math.max(10, Math.min(topH * 0.5, (W - 150) / (Math.max(7, gg.hands[1].length) * 1.2)));
-      const reveal = gg.phase !== 'play';
+      /* online the other hand stays face down even after a round: neither screen is sent the other's tiles */
+      const reveal = gg.phase !== 'play' && gg.phase !== 'wait' && !NET;
       gg.hands[1].forEach((id, i) => {
         const x = 12 + i * (oa * 1.2), y = 8;
         if (reveal) tile(c, x, y, oa, oa * 2, TILES[id][0], TILES[id][1], { alpha: 0.9 }); else tile(c, x, y, oa, oa * 2, 0, 0, { back: true });
@@ -483,6 +566,77 @@ export default {
     sf.cv.addEventListener('pointerdown', onDown);
     sf.cv.addEventListener('pointermove', onMove);
 
+    /* ------------------------------ online ------------------------------ */
+    /* host side 0 is the host, side 1 the friend; the friend's view is turned round so it is side 0 there */
+    const flip = s => (s === 0 || s === 1 ? 1 - s : -1);
+    function view() {
+      const gg = g(), r = gg.result;
+      return {
+        hd: gg.hands[1].slice(),                         /* the friend's own tiles: the only tiles of a hand ever sent */
+        ph: gg.phase, tu: flip(gg.turn), rd: gg.round, tg: gg.target, sc: [gg.scores[1], gg.scores[0]],
+        oc: gg.hands[0].length, yc: gg.yard.length, op: gg.opened, ps: gg.passes, lp: S.lastPlay,
+        ch: gg.chain.map(c => [c.id, c.l, c.r]), en: gg.ends ? gg.ends.slice() : null,
+        rs: r ? { w: flip(r.winner), pts: r.pts, how: r.how, by: flip(r.by), left: [r.left[1], r.left[0]], mw: flip(r.matchWinner) } : null,
+      };
+    }
+    const pip = v => Number.isInteger(v) && v >= 0 && v <= 6;
+    const small = (v, hi) => Number.isInteger(v) && v >= 0 && v <= hi;
+    /* the host's view, checked field by field before it is drawn */
+    function cleanView(v) {
+      if (!['play', 'round', 'over'].includes(v.ph) || ![0, 1].includes(v.tu) || !small(v.rd, 999) || v.tg !== ONLINE_TARGET) return null;
+      if (!Array.isArray(v.hd) || v.hd.length > 28 || !v.hd.every(isTile) || !small(v.oc, 28) || !small(v.yc, 28) || !Array.isArray(v.sc) || v.sc.length !== 2 || !v.sc.every(x => small(x, 9999))) return null;
+      if (!Array.isArray(v.ch) || v.ch.length > 28 || !v.ch.every(c => Array.isArray(c) && isTile(c[0]) && pip(c[1]) && pip(c[2]))) return null;
+      if (v.ch.length ? !(Array.isArray(v.en) && v.en.length === 2 && v.en.every(pip)) : v.en !== null) return null;
+      if (v.hd.length + v.oc + v.yc + v.ch.length > 28 || new Set([...v.hd, ...v.ch.map(c => c[0])]).size !== v.hd.length + v.ch.length || (v.op !== null && !isTile(v.op))) return null;
+      let rs = null;
+      if (v.rs) {
+        const x = v.rs;
+        if (![-1, 0, 1].includes(x.w) || ![-1, 0, 1].includes(x.mw) || !small(x.pts, 999) || !['domino', 'blocked', 'gaveup'].includes(x.how) || !Array.isArray(x.left) || !x.left.every(n => small(n, 200))) return null;
+        rs = { winner: x.w, pts: x.pts, how: x.how, by: x.by, left: x.left.slice(0, 2), matchOver: v.ph === 'over', matchWinner: x.mw };
+      }
+      if (v.ph !== 'play' && !rs) return null;
+      return {
+        hands: [v.hd.slice(), new Array(v.oc).fill(-1)], yard: new Array(v.yc).fill(-1), chain: v.ch.map(([id, l, r]) => ({ id, l, r })),
+        ends: v.en ? v.en.slice() : null, turn: v.tu, passes: small(v.ps, 2) ? v.ps : 0, phase: v.ph, scores: v.sc.slice(), round: v.rd, target: v.tg,
+        voids: [[], []], opened: v.op, last: null, result: rs, log: [], lp: isTile(v.lp) ? v.lp : -1,
+      };
+    }
+    /* the guest's screen: a new view from the host */
+    function show(v, q, refused) {
+      if (dead) return;
+      if (q === S.q && !refused) return;                  /* the same view again (the host's beat) */
+      const ng = cleanView(v);
+      if (!ng) { S.badViews = (S.badViews || 0) + 1; return; }
+      const prev = S.g;
+      S.q = q;
+      S.pending = false;
+      S.g = ng;
+      S.lastPlay = ng.lp;
+      if (ng.round !== prev.round) {
+        Object.assign(S, { sel: -1, side: 'L', flash: '', cursor: 0 });
+        const [a, b] = TILES[ng.opened] || [0, 0];
+        say(`Round ${ng.round}. ${ng.turn === 0 && !ng.chain.length ? 'You hold' : `${Them} holds`} the highest ${a === b ? 'double' : 'tile'} (${a}-${b})${ng.chain.length ? '' : ' and leads it'}.`);
+      }
+      ctx.onScore(ng.scores[0]);
+      if (refused) { flash(`${peerName}’s Arcade didn’t take that move.`); return; }
+      if (ng.phase !== 'play' && prev.phase === 'play') {
+        say(roundText());
+        snd.blip(ng.result.winner === 0 ? 520 : 220, 0.14, 'triangle', 0.9, ng.result.winner === 0 ? 780 : 150);
+        loop.kick(1.2);
+      } else if (ng.chain.length !== prev.chain.length) {
+        snd.blip(240, 0.07, 'triangle', 0.8);
+        loop.kick(reduced ? 0.05 : 0.5);
+      }
+      if (ng.phase === 'over' && !S.matchOver) { S.matchOver = true; finishSoon(); }
+      paint();
+    }
+    if (host) {
+      link = hostLink(NET, {
+        view, dead: () => dead,
+        act: a => { S.inAct = true; try { return friendMove(a); } finally { S.inAct = false; } },
+      });
+    } else if (guest) link = guestLink(NET, { show, dead: () => dead });
+
     newMatch();
 
     return {
@@ -490,7 +644,8 @@ export default {
         dead = true;
         S.runId++;
         clearTimeout(S.endT);
-        brain.close();
+        link?.stop();
+        brain?.close();
         loop.stop();
         window.removeEventListener('keydown', onKey);
         sf.cv.removeEventListener('pointerdown', onDown);
@@ -502,7 +657,26 @@ export default {
       },
       /* test hook (inert unless a test calls it): 'seed' restarts the match on a repeatable deal */
       hook(cmd, arg) {
+        if (guest) return false;
         if (cmd === 'seed') { rnd = seeded(arg); newMatch(); return true; }
+        /* 'rig' { hands: [[ids], [ids]], yard: [ids], scores }: a fresh round on these tiles (side 0 is this screen);
+           the highest double still leads */
+        if (cmd === 'rig' && arg && Array.isArray(arg.hands)) {
+          const all = [...arg.hands[0], ...arg.hands[1], ...(arg.yard || [])];
+          if (!all.every(isTile) || new Set(all).size !== all.length) return false;
+          S.runId++;
+          brain?.cancel();
+          const gg = R.deal(rnd, null, S.target);
+          gg.hands = [arg.hands[0].slice(), arg.hands[1].slice()];
+          gg.yard = Array.isArray(arg.yard) ? arg.yard.slice() : TILES.map((_, i) => i).filter(i => !all.includes(i));
+          gg.scores = Array.isArray(arg.scores) ? arg.scores.slice(0, 2) : [0, 0];
+          const o = R.opener(gg.hands);
+          gg.turn = o.side; gg.opened = o.id;
+          S.g = gg;
+          S.matchOver = false; S.ended = false;
+          startRound();
+          return true;
+        }
         return false;
       },
       peek: () => {
@@ -512,9 +686,14 @@ export default {
           phase: gg.phase, turn: gg.turn, round: gg.round, target: gg.target, scores: gg.scores.slice(), level: S.level,
           hand: gg.hands[0].map(id => ({ id, t: TILES[id].slice() })), oppCount: gg.hands[1].length, yard: gg.yard.length,
           chain: gg.chain.map(t => [t.l, t.r]), ends: gg.ends && gg.ends.slice(), legal: legal.map(m => ({ ...m })), sel: S.sel,
-          opened: gg.opened, result: gg.result && { ...gg.result }, thinking: S.thinking, worker: !!brain.worker, matchOver: S.matchOver, ended: S.ended,
+          opened: gg.opened, result: gg.result && { ...gg.result }, thinking: S.thinking, worker: !!brain?.worker, matchOver: S.matchOver, ended: S.ended,
           geo: { hand: (S.geo.hand || []).map(b => ({ ...b })), pile: S.geo.pile && { ...S.geo.pile }, zones: S.geo.zones && JSON.parse(JSON.stringify(S.geo.zones)) },
-          status: statusEl.textContent, undo: S.undo.length, oppHand: gg.phase === 'play' ? null : gg.hands[1].slice(),
+          status: statusEl.textContent, undo: S.undo.length, oppHand: gg.phase === 'play' || NET ? null : gg.hands[1].slice(),
+          /* online: what this screen holds of the other hand and the boneyard — on the guest, nothing but counts */
+          online: NET ? {
+            role: NET.role, step: link?.step ?? -1, rejected: link?.rejected ?? 0, pending: S.pending, badViews: S.badViews || 0,
+            known: { opp: gg.hands[1].filter(isTile).length, yard: gg.yard.filter(isTile).length },
+          } : null,
         };
       },
     };

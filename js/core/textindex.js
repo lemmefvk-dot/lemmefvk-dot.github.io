@@ -144,7 +144,7 @@ function syncNotes() {
   const seen = new Set();
   if (Array.isArray(list)) {
     for (const n of list) {
-      if (!n || !n.id) continue;
+      if (!n || !n.id || n.trashed) continue;          /* a note in Notes' Trash is not searched */
       const key = `n:${n.id}`;
       seen.add(key);
       const old = docs.get(key);

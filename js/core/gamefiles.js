@@ -2,7 +2,7 @@
    gamefiles.js — Game Projects and Replays in the file system.
 
    Keeps two real folders in step with real data (section 31):
-     ~/Game Projects  one .aethergame shortcut per project you made in
+     ~/Game Projects  one .staticgame shortcut per project you made in
                       Forge or Studio (opens it)
      ~/Replays        one .aetherclip file per Arcade clip you recorded
    Only files this module manages are added or removed there — anything
@@ -23,10 +23,10 @@ async function syncProjects() {
   const list = await P.list();
   const dir = PROJ_DIR();
   if (!vfs.node(dir)) vfs.mkdir(dir);
-  const managed = vfs.ls(dir).filter(n => n.type === 'file' && n.name.endsWith('.aethergame') && parse(n).kind === 'creation');
+  const managed = vfs.ls(dir).filter(n => n.type === 'file' && /\.(static|aether)game$/.test(n.name) && parse(n).kind === 'creation');
   const want = new Map(list.map(p => [p.id, p]));
   for (const n of managed) if (!want.has(parse(n).id)) vfs.rm(`${dir}/${n.name}`, { permanent: true });
-  const have = new Map(vfs.ls(dir).filter(n => n.name.endsWith('.aethergame')).map(n => [parse(n).id, n]));
+  const have = new Map(vfs.ls(dir).filter(n => /\.(static|aether)game$/.test(n.name)).map(n => [parse(n).id, n]));
   const used = new Set(vfs.ls(dir).map(n => n.name));
   for (const p of list) {
     const body = JSON.stringify({ kind: 'creation', id: p.id, title: p.name }, null, 2);
@@ -37,8 +37,8 @@ async function syncProjects() {
         used.delete(cur.name);
       } else continue;
     }
-    let name = `${safe(p.name)}.aethergame`, k = 2;
-    while (used.has(name)) name = `${safe(p.name)} (${k++}).aethergame`;
+    let name = `${safe(p.name)}.staticgame`, k = 2;
+    while (used.has(name)) name = `${safe(p.name)} (${k++}).staticgame`;
     used.add(name);
     vfs.write(`${dir}/${name}`, body);
   }

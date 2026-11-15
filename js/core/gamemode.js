@@ -25,15 +25,26 @@ let last = null;
 
 export const isOn = () => document.documentElement.dataset.gamemode === 'on';
 
+/* The wallpaper video also holds still under Reduce motion (the switch in
+   Settings › Accessibility, or the computer's own request): it is the
+   biggest moving thing on the desktop. */
+const reducedMotion = () => !!store.get('prefs.reduceMotion')
+  || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+let lastHeld = null;
+
 function apply() {
   const on = !!store.get('prefs.gameMode') || autoOn;
+  const hold = on || reducedMotion();
+  if (hold !== lastHeld) {
+    lastHeld = hold;
+    /* the wallpaper video is the single most expensive decoration */
+    for (const v of document.querySelectorAll('.wp__video')) {
+      try { hold ? v.pause() : v.play()?.catch?.(() => {}); } catch (e) {}
+    }
+  }
   if (on === last) return;
   last = on;
   document.documentElement.dataset.gamemode = on ? 'on' : 'off';
-  /* the wallpaper video is the single most expensive decoration */
-  for (const v of document.querySelectorAll('.wp__video')) {
-    try { on ? v.pause() : v.play()?.catch?.(() => {}); } catch (e) {}
-  }
   bus.emit('gamemode:change', { on, auto: autoOn && !store.get('prefs.gameMode') });
 }
 
@@ -46,7 +57,10 @@ export function init() {
     if (want !== autoOn) { autoOn = want; apply(); }
   });
   /* a wallpaper repainted while on must come up paused */
-  bus.on('wallpaper:changed', () => requestAnimationFrame(() => { last = null; apply(); }));
+  bus.on('wallpaper:changed', () => requestAnimationFrame(() => { last = null; lastHeld = null; apply(); }));
+  /* the computer's own setting, both ways; and a look every 5 s for engines that never send the change */
+  try { matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', apply); } catch (e) { /* old engine */ }
+  bus.on('tick:5s', apply);
   apply();
 }
 

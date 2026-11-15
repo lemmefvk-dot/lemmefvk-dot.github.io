@@ -398,3 +398,51 @@ body.reduce-motion .wt-art__play{transform:none}
 .wf-fine{font-size:var(--fs-10);color:var(--ink-3)}
 .wt.is-narrow .wf-info{flex-direction:column}
 .wt.is-narrow .wf-grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr))}
+
+/* ---- Free films: shelves, saved for later, double feature, download queue, keys ---- */
+.wf-shelves,.wf-views{display:flex;flex-wrap:wrap;gap:var(--sp-2);align-items:center;margin-bottom:var(--sp-4)}
+.wf-shelves__k{font-size:var(--fs-10);color:var(--ink-3);margin-right:var(--sp-2)}
+.wf-chk{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-11);color:var(--ink-2)}
+.wf-card{position:relative}
+.wf-card__heart,.wf-card__more{position:absolute;top:6px;width:26px;height:26px;display:grid;place-items:center;border-radius:99px;background:rgba(0,0,0,.55);color:#fff;opacity:0;transition:opacity var(--t-fast)}
+.wf-card__heart{right:36px}.wf-card__more{right:6px}
+.wf-card__heart .icon,.wf-card__more .icon{width:14px;height:14px}
+.wf-card:hover .wf-card__heart,.wf-card:hover .wf-card__more,.wf-card:focus-within .wf-card__heart,.wf-card:focus-within .wf-card__more,.wf-card__heart.is-on{opacity:1}
+.wf-card__heart.is-on{color:var(--accent-soft)}
+.wf-card__pick{position:absolute;top:6px;left:6px;padding:4px;border-radius:6px;background:rgba(0,0,0,.6)}
+.wf-pickbar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-4);font-size:var(--fs-11);color:var(--ink-2)}
+.wf-queue,.wf-dlq{margin-bottom:var(--sp-4);padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);border:1px solid var(--line)}
+.wf-queue[hidden],.wf-dlq[hidden]{display:none}
+.wf-queue__head{display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-2);font-size:var(--fs-12)}
+.wf-queue__list{margin:0;padding-left:var(--sp-5);font-size:var(--fs-11);color:var(--ink-2)}
+.wf-queue__list li{display:flex;align-items:center;gap:var(--sp-2);padding:2px 0}
+.wf-dlq__list{list-style:none;margin:0;padding:0}
+.wf-dlq__row{display:grid;grid-template-columns:1fr auto;gap:2px var(--sp-3);align-items:center;padding:var(--sp-2) 0;font-size:var(--fs-11)}
+.wf-dlq__t{font-weight:620;color:var(--ink-1)}
+.wf-dlq__s{grid-column:1;color:var(--ink-3);font-size:var(--fs-10)}
+.wf-dlq__row .wf-meter{grid-column:1;margin:2px 0 0}
+.wf-dlq__row .btn{grid-column:2;grid-row:1 / span 2}
+.wf-acts--more{margin-top:0}
+.wf-acts .is-on{background:var(--fill-accent);border-color:var(--line-accent)}
+.wf-acts .is-off{opacity:.6}
+.wf-keys{min-height:1.2em;font-size:var(--fs-10);color:var(--ink-3)}
+.wf-next{border-top:1px solid var(--line)}
+
+/* ---- Static Watch: Next up, Lists, Stats ---- */
+.wt-newlist{display:flex;gap:var(--sp-3);align-items:center;margin-bottom:var(--sp-4);max-width:460px}
+.wt-newlist .field{flex:1}
+.wt-listhead{display:flex;align-items:center;gap:var(--sp-3);margin:var(--sp-4) 0 var(--sp-3)}
+.wt-card.is-gone{display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--sp-3);border:1px dashed var(--line);border-radius:var(--r-md)}
+.wt-air{color:var(--accent-soft)}
+.wt-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:var(--sp-4);margin-bottom:var(--sp-5)}
+.wt-stat{padding:var(--sp-4);border-radius:var(--r-md);border:1px solid var(--line);background:var(--fill-1)}
+.wt-stat__v{font-size:var(--fs-18);font-weight:660;color:var(--ink-0);font-variant-numeric:tabular-nums}
+.wt-stat__k{font-size:var(--fs-11);color:var(--ink-2)}
+.wt-stat__d{font-size:var(--fs-10);color:var(--ink-3)}
+.wt-statsh{margin:var(--sp-4) 0 var(--sp-3)}
+.wt-stlist{display:flex;flex-direction:column;gap:2px;max-width:620px}
+.wt-strow{display:grid;grid-template-columns:1fr auto;gap:2px var(--sp-4);align-items:center;padding:var(--sp-2) var(--sp-3);border-radius:var(--r-md);text-align:left;color:inherit;background:none}
+.wt-strow:hover{background:var(--fill-1)}
+.wt-strow__t{font-size:var(--fs-12);color:var(--ink-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wt-strow__n{font-size:var(--fs-10);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.wt-strow .wt-meter{grid-column:1 / -1}

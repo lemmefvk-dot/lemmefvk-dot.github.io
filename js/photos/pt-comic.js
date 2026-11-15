@@ -13,6 +13,11 @@
    sticker maker (~/Pictures/Stickers); shapes are boxes, ovals, stars
    and bursts. "Save PNG" draws the page afresh at its real size.
 
+   A comic can have several pages: Add page starts a fresh one beside the
+   one you are on (same page shape), the numbered buttons move between
+   them, and "Save PDF" draws every page afresh and writes them as one
+   multi-page PDF (js/core/pdfwrite.js, each page a JPEG) in ~/Documents.
+
    Lettering is Bangers (Vernon Adams / the Bangers Project Authors),
    bundled in css/fonts/ under the SIL Open Font License 1.1 — licence
    file beside it, credited in About.
@@ -23,17 +28,21 @@
 import { pickerView, blobOfSource, bitmapOf, sizeOfBitmap, sourceOfPath, encode, saveBlob, clamp, picturesDir, listPictures } from './pt-common.js';
 import { LAYOUTS, cellRects } from './pt-collage.js';
 import * as media from '../core/media.js';
+import { makePdf } from '../core/pdfwrite.js';
+import vfs from '../core/vfs.js';
 import * as HW from '../core/halloween.js';
+import { t } from '../core/i18n.js';
 
 export const COMIC_FONT = '"Bangers", "Comic Sans MS", "Chalkboard SE", "Comic Neue", cursive, sans-serif';
 export const PAGES = [
-  { id: 'portrait', w: 1200, h: 1600, label: 'Portrait page · 1200 × 1600' },
-  { id: 'landscape', w: 1600, h: 1200, label: 'Landscape page · 1600 × 1200' },
-  { id: 'square', w: 1400, h: 1400, label: 'Square page · 1400 × 1400' },
+  { id: 'portrait', w: 1200, h: 1600, label: t('Portrait page · 1200 × 1600') },
+  { id: 'landscape', w: 1600, h: 1200, label: t('Landscape page · 1600 × 1200') },
+  { id: 'square', w: 1400, h: 1400, label: t('Square page · 1400 × 1400') },
 ];
 const ONE = { id: '1-full', n: 1, name: 'One panel', cells: [[0, 0, 1, 1]] };
 export const COMIC_LAYOUTS = [ONE, ...LAYOUTS];
 const GAP_PCT = 3;
+const MAX_PAGES = 12;
 const KINDS = { speech: 'Speech', thought: 'Thought', caption: 'Caption' };
 const SHAPES = { rect: 'Box', ellipse: 'Oval', star: 'Star', burst: 'Burst' };
 
@@ -194,13 +203,16 @@ export function mountComic({ api, root, opts }) {
   const S = {
     page: PAGES[0], layout: ONE, panels: Array(6).fill(null), items: [], sel: { kind: 'panel', i: 0 },
     imgs: new Map(), alive: true, busy: false, raf: 0, drag: null, nextId: 1, fill: '#ffd166',
+    book: [], cur: 0,             /* the other pages: each { layout, panels, items, sel } while it isn't the one on screen */
   };
+  const snap = () => ({ layout: S.layout, panels: S.panels, items: S.items, sel: S.sel });
+  const pagesNow = () => { S.book[S.cur] = snap(); return S.book; };
   const W = () => S.page.w, H = () => S.page.h;
   const panels = () => S.panels.slice(0, S.layout.n);
   const rectsNow = () => cellRects(S.layout, W(), H(), GAP_PCT / 100 * Math.min(W(), H()));
   const selItem = () => (S.sel?.kind === 'item' ? S.items.find(i => i.id === S.sel.id) : null);
 
-  const cv = h('canvas.pt-comic__canvas', { 'aria-label': 'Comic page', tabindex: 0 });
+  const cv = h('canvas.pt-comic__canvas', { 'aria-label': t('Comic page'), tabindex: 0 });
   const g = cv.getContext('2d');
   const stage = h('div.pt__stage', h('div.pt-col__paper', cv));
   const foot = h('div.pt__foot', { role: 'status', 'aria-live': 'polite' });
@@ -235,7 +247,7 @@ export function mountComic({ api, root, opts }) {
 
   /* ---------- page and layout ---------- */
   const layoutBtns = new Map();
-  const layoutRow = h('div.pt-col__layouts', { role: 'radiogroup', 'aria-label': 'Panel layout' }, COMIC_LAYOUTS.map(l => {
+  const layoutRow = h('div.pt-col__layouts', { role: 'radiogroup', 'aria-label': t('Panel layout') }, COMIC_LAYOUTS.map(l => {
     const tile = h('svg', { viewBox: '0 0 30 30', 'aria-hidden': 'true' },
       l.cells.map(([x, y, w, hh]) => h('rect', { x: x * 30 + 1.2, y: y * 30 + 1.2, width: w * 30 - 2.4, height: hh * 30 - 2.4, rx: 1.5 })));
     const b = h('button.pt-col__layout', {
@@ -251,10 +263,10 @@ export function mountComic({ api, root, opts }) {
     for (const [k, b] of layoutBtns) b.setAttribute('aria-checked', String(k === S.layout.id));
     redraw();
   }
-  const pageSel = h('select', { 'aria-label': 'Page size', onchange: () => {
+  const pageSel = h('select', { 'aria-label': t('Page size'), onchange: () => {
     const to = PAGES.find(p => p.id === pageSel.value) || S.page;
     const sx = to.w / S.page.w, sy = to.h / S.page.h;
-    for (const it of S.items) {
+    for (const pg of pagesNow()) for (const it of pg.items) {
       it.x *= sx; it.y *= sy; it.w *= sx; it.h *= sx;
       if (it.type === 'bubble') { it.tx *= sx; it.ty *= sy; }
     }
@@ -264,19 +276,19 @@ export function mountComic({ api, root, opts }) {
 
   /* ---------- the picked panel ---------- */
   const zoomOut = h('output', { text: '100%' });
-  const zoomIn = h('input', { type: 'range', min: 100, max: 400, step: 1, value: 100, 'aria-label': 'Zoom the picture in this panel',
+  const zoomIn = h('input', { type: 'range', min: 100, max: 400, step: 1, value: 100, 'aria-label': t('Zoom the picture in this panel'),
     oninput: () => { const c = S.panels[S.sel?.i]; if (S.sel?.kind !== 'panel' || !c) return; c.zoom = Number(zoomIn.value) / 100; redraw(); } });
   const panelName = h('b', { text: '' });
-  const resetPanel = h('button.btn.btn--sm', { type: 'button', onclick: () => { const c = S.sel?.kind === 'panel' && S.panels[S.sel.i]; if (c) { c.zoom = 1; c.px = 0; c.py = 0; redraw(); } } }, icon('refresh'), h('span', { text: 'Reset' }));
-  const emptyPanel = h('button.btn.btn--sm', { type: 'button', onclick: () => { if (S.sel?.kind === 'panel') { S.panels[S.sel.i] = null; redraw(); } } }, icon('x'), h('span', { text: 'Empty' }));
+  const resetPanel = h('button.btn.btn--sm', { type: 'button', onclick: () => { const c = S.sel?.kind === 'panel' && S.panels[S.sel.i]; if (c) { c.zoom = 1; c.px = 0; c.py = 0; redraw(); } } }, icon('refresh'), h('span', { text: t('Reset') }));
+  const emptyPanel = h('button.btn.btn--sm', { type: 'button', onclick: () => { if (S.sel?.kind === 'panel') { S.panels[S.sel.i] = null; redraw(); } } }, icon('x'), h('span', { text: t('Empty') }));
   const panelBox = h('div.pt-col__cell', h('div.pt__rowhead', panelName, h('span.pt__spacer'), resetPanel, emptyPanel),
-    h('label.pt__slider', h('span', { text: 'Zoom' }), zoomIn, zoomOut));
+    h('label.pt__slider', h('span', { text: t('Zoom') }), zoomIn, zoomOut));
 
   /* ---------- the picked item ---------- */
-  const textIn = h('textarea.pt-comic__text', { rows: 3, 'aria-label': 'Bubble text', placeholder: 'What are they saying?',
+  const textIn = h('textarea.pt-comic__text', { rows: 3, 'aria-label': t('Bubble text'), placeholder: t('What are they saying?'),
     oninput: () => { const it = selItem(); if (it?.type === 'bubble') { it.text = textIn.value; redraw(); } } });
   const sizeOut = h('output', { text: '' });
-  const sizeIn = h('input', { type: 'range', min: 4, max: 100, step: 1, value: 30, 'aria-label': 'Size of the picked item',
+  const sizeIn = h('input', { type: 'range', min: 4, max: 100, step: 1, value: 30, 'aria-label': t('Size of the picked item'),
     oninput: () => {
       const it = selItem();
       if (!it) return;
@@ -286,16 +298,16 @@ export function mountComic({ api, root, opts }) {
       if (it.type === 'bubble') { it.tx = cx + (it.tx - cx) * k; it.ty = cy + (it.ty - cy) * k; }
       redraw();
     } });
-  const fillIn = h('input', { type: 'color', value: S.fill, 'aria-label': 'Shape colour',
+  const fillIn = h('input', { type: 'color', value: S.fill, 'aria-label': t('Shape colour'),
     oninput: () => { S.fill = fillIn.value; const it = selItem(); if (it?.type === 'shape') { it.fill = S.fill; redraw(); } } });
-  const delBtn = h('button.btn.btn--sm', { type: 'button', 'aria-label': 'Remove the picked item', onclick: () => removeSel() }, icon('trash'), h('span', { text: 'Remove' }));
-  const frontBtn = h('button.btn.btn--sm', { type: 'button', onclick: () => { const it = selItem(); if (it) { S.items = S.items.filter(x => x !== it).concat(it); redraw(); } } }, icon('layers'), h('span', { text: 'To front' }));
+  const delBtn = h('button.btn.btn--sm', { type: 'button', 'aria-label': t('Remove the picked item'), onclick: () => removeSel() }, icon('trash'), h('span', { text: t('Remove') }));
+  const frontBtn = h('button.btn.btn--sm', { type: 'button', onclick: () => { const it = selItem(); if (it) { S.items = S.items.filter(x => x !== it).concat(it); redraw(); } } }, icon('layers'), h('span', { text: t('To front') }));
   const itemName = h('b', { text: '' });
-  const textRow = h('div.pt__group', h('b.pt__label', { text: 'Text' }), textIn);
-  const fillRow = h('label.pt__line', h('span', { text: 'Colour' }), fillIn);
+  const textRow = h('div.pt__group', h('b.pt__label', { text: t('Text') }), textIn);
+  const fillRow = h('label.pt__line', h('span', { text: t('Colour') }), fillIn);
   const itemBox = h('div.pt-col__cell.pt-comic__item', { hidden: true },
     h('div.pt__rowhead', itemName, h('span.pt__spacer'), frontBtn, delBtn),
-    textRow, fillRow, h('label.pt__slider', h('span', { text: 'Size' }), sizeIn, sizeOut));
+    textRow, fillRow, h('label.pt__slider', h('span', { text: t('Size') }), sizeIn, sizeOut));
   function paintSide() {
     const it = selItem();
     itemBox.hidden = !it;
@@ -342,7 +354,7 @@ export function mountComic({ api, root, opts }) {
     const c = centre();
     const w = W() * (kind === 'caption' ? 0.4 : 0.34), hh = W() * (kind === 'caption' ? 0.1 : 0.2);
     const it = addItem({ type: 'bubble', kind, x: clamp(c.x - w / 2, 0, W() - w), y: clamp(c.y - hh / 2, 0, H() - hh), w, h: hh,
-      text: kind === 'caption' ? 'Meanwhile…' : kind === 'thought' ? 'Hmm…' : 'Hello!', tx: 0, ty: 0 });
+      text: kind === 'caption' ? t('Meanwhile…') : kind === 'thought' ? t('Hmm…') : t('Hello!'), tx: 0, ty: 0 });
     it.tx = it.x + w * 0.3; it.ty = it.y + hh + W() * 0.09;
     if (kind !== 'caption') { textIn.focus(); textIn.select(); }
   }
@@ -366,22 +378,22 @@ export function mountComic({ api, root, opts }) {
       const w = W() * 0.2, hh = w * ih / iw, c = centre();
       addItem({ type: 'sticker', key, name, x: clamp(c.x - w / 2, 0, W() - w), y: clamp(c.y - hh / 2, 0, Math.max(0, H() - hh)), w, h: hh });
     } catch (err) {
-      api.notify({ app: 'Picture Tools', icon: 'alert', title: 'Can’t use that sticker', message: err?.message || String(err) });
+      api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Can’t use that sticker'), message: err?.message || String(err) });
     }
   }
   const bubbleBtns = Object.entries(KINDS).map(([k, label]) => h('button.btn.btn--sm', { type: 'button', dataset: { add: k }, onclick: () => addBubble(k) }, icon('message-circle'), h('span', { text: label })));
   const shapeBtns = Object.entries(SHAPES).map(([k, label]) => h('button.btn.btn--sm', { type: 'button', dataset: { shape: k }, onclick: () => addShape(k) }, h('span', { text: label })));
-  const stickerGrid = h('div.pt-comic__stickers', { role: 'group', 'aria-label': 'Stickers' });
+  const stickerGrid = h('div.pt-comic__stickers', { role: 'group', 'aria-label': t('Stickers') });
   function fillStickers() {
     const cells = HW.STICKERS.map(s => h('button.pt-comic__sticker', {
-      type: 'button', title: s.name, 'aria-label': `Add the ${s.name} sticker`, dataset: { sticker: s.id }, onclick: () => addSticker(`hw:${s.id}`, HW.artUrl('sticker', s.id), s.name),
+      type: 'button', title: s.name, 'aria-label': t('Add the {name} sticker', { name: s.name }), dataset: { sticker: s.id }, onclick: () => addSticker(`hw:${s.id}`, HW.artUrl('sticker', s.id), s.name),
     }, h('img', { src: HW.artUrl('sticker', s.id), alt: '', draggable: 'false' })));
     const mine = listPictures().filter(p => p.path.includes('/Pictures/Stickers/'));
     for (const p of mine) {
       const img = h('img', { alt: '', draggable: 'false' });
       media.urlOf(p.path).then(u => { if (u && S.alive) img.src = u; }).catch(() => {});
       cells.push(h('button.pt-comic__sticker', {
-        type: 'button', title: p.name, 'aria-label': `Add your sticker ${p.name}`, dataset: { sticker: `user:${p.name}` },
+        type: 'button', title: p.name, 'aria-label': t('Add your sticker {name}', { name: p.name }), dataset: { sticker: `user:${p.name}` },
         onclick: async () => { const u = await media.urlOf(p.path); if (u) addSticker(`user:${p.path}`, u, p.name); },
       }, img));
     }
@@ -389,7 +401,7 @@ export function mountComic({ api, root, opts }) {
   }
 
   /* ---------- pictures ---------- */
-  const picker = pickerView(api, { label: 'Pictures for the panels', onChange: async (list, src, added) => {
+  const picker = pickerView(api, { label: t('Pictures for the panels'), onChange: async (list, src, added) => {
     if (!added) return;
     picker.clear();
     const i = S.sel?.kind === 'panel' ? S.sel.i : Math.max(0, panels().findIndex(c => !c));
@@ -401,7 +413,7 @@ export function mountComic({ api, root, opts }) {
       S.sel = { kind: 'panel', i: next >= 0 ? next : i };
       redraw();
     } catch (err) {
-      api.notify({ app: 'Picture Tools', icon: 'alert', title: 'Can’t use that picture', message: err?.message || String(err) });
+      api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Can’t use that picture'), message: err?.message || String(err) });
     }
   } });
 
@@ -492,7 +504,7 @@ export function mountComic({ api, root, opts }) {
   });
 
   /* ---------- export ---------- */
-  const saveBtn = h('button.btn.btn--primary', { type: 'button', 'aria-label': 'Save comic page to Pictures', onclick: () => save() }, icon('save'), h('span', { text: 'Save PNG' }));
+  const saveBtn = h('button.btn.btn--primary', { type: 'button', 'aria-label': t('Save comic page to Pictures'), onclick: () => save() }, icon('save'), h('span', { text: t('Save PNG') }));
   async function save() {
     if (S.busy) return;
     S.busy = true; saveBtn.disabled = true;
@@ -504,25 +516,94 @@ export function mountComic({ api, root, opts }) {
       const blob = await encode(c, 'image/png');
       c.width = c.height = 0;
       if (!blob) throw new Error('This browser couldn’t make a PNG.');
-      await saveBlob(api, 'Picture Tools', picturesDir(), `Comic ${W()}x${H()}.png`, blob, { title: 'Comic saved' });
+      await saveBlob(api, 'Picture Tools', picturesDir(), `Comic ${W()}x${H()}.png`, blob, { title: t('Comic saved') });
     } catch (err) {
-      api.notify({ app: 'Picture Tools', icon: 'alert', title: 'Not saved', message: err?.message || String(err) });
+      api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Not saved'), message: err?.message || String(err) });
     } finally {
       S.busy = false;
       if (S.alive) redraw();
     }
   }
 
+  /* ---------- several pages, one PDF ---------- */
+  const pageBtns = h('div.pt__seg.pt-comic__pages', { role: 'radiogroup', 'aria-label': t('Pages of the comic') });
+  const addPageBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'comic-addpage' }, onclick: () => addPage() }, icon('plus'), h('span', { text: t('Add page') }));
+  const delPageBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'comic-delpage' }, onclick: () => delPage() }, icon('trash'), h('span', { text: t('Remove page') }));
+  const pdfBtn = h('button.btn', { type: 'button', 'aria-label': t('Save every page as a PDF'), dataset: { fk: 'comic-pdf' }, onclick: () => savePdf() }, icon('file-text'), h('span', { text: t('Save PDF') }));
+  function paintPages() {
+    pageBtns.replaceChildren(...S.book.map((_, i) => h('button.pt__segbtn', {
+      type: 'button', role: 'radio', 'aria-checked': String(i === S.cur), dataset: { page: String(i + 1) }, 'aria-label': `Page ${i + 1}`, onclick: () => goPage(i),
+    }, String(i + 1))));
+    delPageBtn.disabled = S.book.length < 2;
+    addPageBtn.disabled = S.book.length >= MAX_PAGES;
+  }
+  function goPage(i) {
+    if (i === S.cur || i < 0 || i >= S.book.length) return;
+    S.book[S.cur] = snap();
+    S.cur = i;
+    Object.assign(S, S.book[i]);
+    setLayout(S.layout.id);
+    paintPages();
+  }
+  function addPage() {
+    if (S.book.length >= MAX_PAGES) return;
+    S.book[S.cur] = snap();
+    S.book.splice(S.cur + 1, 0, { layout: S.layout, panels: Array(6).fill(null), items: [], sel: { kind: 'panel', i: 0 } });
+    S.cur++;
+    Object.assign(S, S.book[S.cur]);
+    setLayout(S.layout.id);
+    paintPages();
+  }
+  function delPage() {
+    if (S.book.length < 2) return;
+    S.book[S.cur] = snap();
+    for (const c of S.panels) try { c?.bmp?.close?.(); } catch (e) { /* already closed */ }
+    S.book.splice(S.cur, 1);
+    S.cur = Math.min(S.cur, S.book.length - 1);
+    Object.assign(S, S.book[S.cur]);
+    setLayout(S.layout.id);
+    paintPages();
+  }
+  async function savePdf() {
+    if (S.busy) return;
+    S.busy = true; pdfBtn.disabled = true;
+    try {
+      try { await document.fonts.load(`40px ${COMIC_FONT}`); } catch (e) { /* the fallback font is fine */ }
+      const out = [];
+      for (const pg of pagesNow()) {
+        const c = document.createElement('canvas');
+        c.width = W(); c.height = H();
+        const gg = c.getContext('2d');
+        gg.fillStyle = '#ffffff'; gg.fillRect(0, 0, W(), H());
+        paintPage(gg, W(), H(), { layout: pg.layout, panels: pg.panels.slice(0, pg.layout.n), items: pg.items, imgs: S.imgs, ui: null });
+        const blob = await encode(c, 'image/jpeg', 0.9);
+        c.width = c.height = 0;
+        if (!blob) throw new Error('This browser couldn’t make a JPEG for a page.');
+        out.push({ width: W(), height: H(), jpeg: new Uint8Array(await blob.arrayBuffer()) });
+      }
+      const pdf = await makePdf(out, { title: t('Comic') });
+      await saveBlob(api, 'Picture Tools', `${vfs.HOME}/Documents`, `Comic (${out.length} ${out.length === 1 ? 'page' : 'pages'}).pdf`, pdf, { title: t('Comic PDF saved'), icon: 'file-text' });
+    } catch (err) {
+      api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Not saved'), message: err?.message || String(err) });
+    } finally {
+      S.busy = false;
+      if (S.alive) { pdfBtn.disabled = false; redraw(); }
+    }
+  }
+
   const side = h('div.pt__side',
-    h('div.pt__group', h('b.pt__label', { text: 'Page' }), pageSel, layoutRow),
+    h('div.pt__group', h('b.pt__label', { text: t('Page') }), pageSel, layoutRow,
+      h('div.pt__rowhead', pageBtns, h('span.pt__spacer'), addPageBtn, delPageBtn)),
     panelBox, itemBox,
-    h('div.pt__group', h('b.pt__label', { text: 'Bubbles' }), h('div.pt-comic__adds', bubbleBtns)),
-    h('div.pt__group', h('b.pt__label', { text: 'Shapes' }), h('div.pt-comic__adds', shapeBtns)),
-    h('div.pt__group', h('b.pt__label', { text: 'Stickers' }), stickerGrid),
-    h('div.pt__group', h('b.pt__label', { text: 'Pictures' }), picker.el),
-    h('div.pt__actions', saveBtn));
+    h('div.pt__group', h('b.pt__label', { text: t('Bubbles') }), h('div.pt-comic__adds', bubbleBtns)),
+    h('div.pt__group', h('b.pt__label', { text: t('Shapes') }), h('div.pt-comic__adds', shapeBtns)),
+    h('div.pt__group', h('b.pt__label', { text: t('Stickers') }), stickerGrid),
+    h('div.pt__group', h('b.pt__label', { text: t('Pictures') }), picker.el),
+    h('div.pt__actions', saveBtn, pdfBtn));
   root.append(h('div.pt__split', h('div.pt__col', stage, foot), side));
   fillStickers();
+  pagesNow();
+  paintPages();
   setLayout(S.layout.id);
   document.fonts?.load?.(`40px ${COMIC_FONT}`).then(() => redraw()).catch(() => {});
 
@@ -535,6 +616,7 @@ export function mountComic({ api, root, opts }) {
     W: W(), H: H(), page: S.page.id, layout: S.layout.id, sel: S.sel,
     rects: rectsNow().slice(0, S.layout.n),
     panels: panels().map(c => c && { name: c.name, zoom: c.zoom, px: c.px, py: c.py }),
+    pages: S.book.length, cur: S.cur,
     items: S.items.map(i => ({ ...i, fontPx: i.type === 'bubble' ? fitText(meas, i.text, textBox(i).w, textBox(i).h).px : 0 })),
     preview: (() => { const r = cv.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })(),
   });
@@ -544,7 +626,7 @@ export function mountComic({ api, root, opts }) {
     cancelAnimationFrame(S.raf);
     ro.disconnect();
     picker.destroy();
-    for (const c of S.panels) try { c?.bmp?.close?.(); } catch (e) { /* already closed */ }
+    for (const pg of pagesNow()) for (const c of pg.panels) try { c?.bmp?.close?.(); } catch (e) { /* already closed */ }
     cv.width = cv.height = 0;
   };
 }

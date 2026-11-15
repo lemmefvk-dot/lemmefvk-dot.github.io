@@ -92,3 +92,14 @@ p.drp__warn{color:#ffd48a}
 :root[data-theme="light"] .drp__warn b,:root[data-theme="light"] p.drp__warn{color:#8a5300}
 :root[data-theme="light"] .drp__live[data-st="offline"],:root[data-theme="light"] .drp-link[data-link="failed"],:root[data-theme="light"] .drp-link[data-link="lost"]{color:#b4233c}
 @media (prefers-reduced-motion:reduce){.drp-spin{animation-duration:2.4s}}
+
+/* ---- folders, expiry, friends, destination, history ---- */
+.drp-ttl,.drp-dest{display:inline-flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-11);color:var(--ink-2)}
+.drp-ttl__sel,.drp-dest__sel{height:26px;padding:0 var(--sp-3);border-radius:var(--r-sm);background:var(--fill-1);color:var(--ink-0);border:1px solid var(--line-1);font-size:var(--fs-11);max-width:240px}
+.drp-dest{margin:var(--sp-3) 0}
+.drp-expire{display:flex;align-items:center;gap:var(--sp-2);margin:0 0 var(--sp-3);font-size:var(--fs-11);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.drp-expire .icon{width:13px;height:13px}
+.drp-friends{display:flex;flex-direction:column;gap:var(--sp-2)}
+.drp-zip .drp-file__st{font-variant-numeric:tabular-nums}
+.drp-hist .drp-file__t b{white-space:normal}
+.drp-hist[data-result="failed"] .drp-file__ic,.drp-hist[data-result="expired"] .drp-file__ic{opacity:.55}

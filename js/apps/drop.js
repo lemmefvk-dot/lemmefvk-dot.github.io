@@ -31,7 +31,17 @@
    refuse a direct path (some school and work networks) can't Drop,
    and Drop says so rather than pretending.
 
-   opts: { send: [paths], go? } adds those files (go: and gets a code
+   A folder can go too: it is zipped (core/zip.js) when you add it and the
+   zip's real size is shown before any code exists. A code can expire (you
+   choose 5 to 60 minutes) and says how long is left. "Send to a friend"
+   starts the drop and sends its code to that friend over Friends (a
+   pointer only: they still press Receive, then Accept). On the receiving
+   side you choose which folder files are saved into; each is still checked
+   with SHA-256 first. History keeps names, sizes and results on this
+   device, and Clear empties it. A file or folder dropped on Drop's dock icon
+   arrives as opts.path and gets a code at once.
+
+   opts: { send: [paths], go? } adds those files or folders (go: and gets a code
    at once) · { join: CODE } fills
    the code on Receive · { move: true } shows Move my StaticOS.
    Emits bus 'drop:hosting' { code, names } when a send gets its code
@@ -45,6 +55,7 @@ import { isCode, normalizeCode, spaced } from '../core/roomcode.js';
 import { rtcAvailable } from '../core/pair.js';
 import { fmtSize } from '../core/fileimport.js';
 import * as profiles from '../core/profiles.js';
+import { paintMediaPanel } from '../portal/sendfriend.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-drop-css')) {
   const l = document.createElement('link');
@@ -73,7 +84,13 @@ const JOIN_ERR = {
   nobody: ['Nobody answered', 'No Drop is waiting with that code right now. Check the code, and that your friend still has Drop open.'],
   full: ['That Drop is taken', 'Someone else already joined it. Ask your friend for a new code.'],
   insecure: ['Drop can’t run here', 'Drop needs a secure (https) page for its encryption.'],
+  expired: ['That code ran out', 'Nobody joined in time, so the code stopped working. Press Back and make a new one: your files are still picked.'],
 };
+const TTL_CHOICES = [5, 10, 30, 60];
+const HISTORY_KEY = 'drop.history';
+const PREFS_KEY = 'drop.prefs';
+const HISTORY_MAX = 50;
+const clock = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 const FAIL_TEXT = who => ({
   nolink: `A direct connection to ${who} couldn’t be made, so nothing was sent. StaticOS has no relay server: when both networks block direct links (some school and work networks do), Drop can’t work between them. Try again on another network — or both on the same Wi-Fi.`,
   lost: `The direct link to ${who} dropped partway. Files that finished and checked out were kept; the rest weren’t.`,
@@ -120,15 +137,31 @@ defineApp({
       joinCode: '',
       note: '',
       noteErr: false,
+      zipping: null,              /* { name, pct } while a folder is being zipped */
+      pendingDirs: [],
+      friendOpen: false,
+      ttl: 10,                    /* minutes a code lasts */
+      dest: '',                   /* folder received files go to ('' = Downloads) */
+      history: [],
+      recorded: null,
     };
+    const prefs = api.store.get(PREFS_KEY, null) || {};
+    if (TTL_CHOICES.includes(prefs.ttl)) S.ttl = prefs.ttl;
+    if (typeof prefs.dest === 'string') S.dest = prefs.dest;
+    const savePrefs = () => api.store.set(PREFS_KEY, { ttl: S.ttl, dest: S.dest });
+    const loadHistory = () => {
+      const v = api.store.get(HISTORY_KEY, null);
+      S.history = Array.isArray(v) ? v.filter(x => x && typeof x === 'object').slice(0, HISTORY_MAX) : [];
+    };
+    loadHistory();
 
     const body = h('div.drp__body');
-    const tabs = h('div.tabs.drp__tabs', { role: 'tablist', 'aria-label': 'Send or receive' });
+    const tabs = h('div.tabs.drp__tabs', { role: 'tablist', 'aria-label': 'Send, receive or history' });
     const tabBtn = (id, label, ic) => h('button', {
       type: 'button', role: 'tab', id: `drp-tab-${id}`, 'aria-selected': 'false', dataset: { tab: id },
       onclick: () => { if (S.session && !ended()) return; S.tab = id; paint(); },
     }, icon(ic), h('span', { text: label }));
-    tabs.append(tabBtn('send', 'Send', 'upload'), tabBtn('receive', 'Receive', 'download'));
+    tabs.append(tabBtn('send', 'Send', 'upload'), tabBtn('receive', 'Receive', 'download'), tabBtn('history', 'History', 'rotate-ccw'));
     const liveEl = h('div.drp__live', { role: 'status' }, h('i.drp__dot'), h('span'));
     const foot = h('div.drp__foot',
       icon('shield'),
@@ -171,10 +204,41 @@ defineApp({
       const blob = new Blob([text], { type: 'text/plain' });
       return { key: `vfs:${path}`, path, name: n.name, size: blob.size, type: 'text/plain', blob: async () => blob };
     }
+    /* A folder becomes one zip, built now so its real size is known before a code is made. */
+    async function addFolder(path) {
+      const n = vfs.node(path);
+      if (!n || n.type !== 'dir') { say('That isn’t a folder.', true); paint(); return false; }
+      if (S.zipping) { say('Wait for the folder being zipped to finish.', true); paint(); return false; }
+      const key = `zip:${path}`;
+      if (S.queue.some(q => q.key === key)) return true;
+      S.note = '';
+      S.zipping = { name: n.name, pct: 0 };
+      paint();
+      try {
+        const { zipBlob } = await import('../core/archive.js');
+        const z = await zipBlob(vfs.parentPath(path), [n.name], {
+          onProgress: ({ done, bytes }) => { if (S.zipping && bytes) { S.zipping.pct = Math.round((done / bytes) * 100); const el = body.querySelector('.drp-zip__pct'); if (el) el.textContent = `${S.zipping.pct}%`; } },
+        });
+        if (S.dead) return false;
+        S.zipping = null;
+        const ok = addItem({
+          key, path, name: z.name, size: z.size, type: 'application/zip', blob: async () => z.blob,
+          note: `${z.files} file${z.files === 1 ? '' : 's'} zipped${z.skipped.length ? `, ${z.skipped.length} left out (no content here)` : ''}`,
+        });
+        if (ok && z.skipped.length) say(`${z.skipped.length} file${z.skipped.length === 1 ? '' : 's'} in “${n.name}” had no content in this browser and ${z.skipped.length === 1 ? 'was' : 'were'} left out.`, false);
+        paint();
+        return ok;
+      } catch (err) {
+        S.zipping = null;
+        if (!S.dead) { say(String(err?.message || err), true); paint(); }
+        return false;
+      }
+    }
     function addPaths(paths) {
       let added = 0;
       S.note = '';
       for (const p of paths || []) {
+        if (vfs.node(p)?.type === 'dir') { S.pendingDirs.push(p); continue; }
         const it = itemFromPath(p);
         if (it.err) { say(it.err, true); continue; }
         if (addItem(it)) added++;
@@ -188,20 +252,41 @@ defineApp({
     }
 
     /* ---------- sessions ---------- */
+    function record(sess) {
+      if (S.recorded === sess) return;
+      const fin = ['done', 'restore', 'declined', 'cancelled', 'failed'].includes(sess.state);
+      if (!fin || !(sess.peer || sess.reason === 'expired')) return;
+      S.recorded = sess;
+      const files = sess.files;
+      const moved = sess.role === 'send' ? files.filter(f => f.accepted && f.status === 'saved') : files.filter(f => f.status === 'saved');
+      const entry = {
+        at: Date.now(), dir: sess.role === 'send' ? 'sent' : 'received', mode: sess.mode,
+        peer: sess.peer?.name || '', result: sess.state === 'restore' ? 'done' : sess.state === 'failed' && sess.reason === 'expired' ? 'expired' : sess.state,
+        count: moved.length, names: (moved.length ? moved : files).slice(0, 4).map(f => f.name ?? f.n),
+        bytes: moved.reduce((a, f) => a + (f.size ?? f.s ?? 0), 0), of: files.length,
+        dest: sess.role === 'receive' && sess.mode !== 'move' ? vfs.baseName(sess.dest) : '',
+      };
+      S.history = [entry, ...S.history].slice(0, HISTORY_MAX);
+      api.store.set(HISTORY_KEY, S.history);
+    }
     function watch(sess) {
       S.offs.forEach(f => f());
       S.session = sess;
+      S.recorded = null;
+      S.friendOpen = S.friendOpen && sess.role === 'send';
+      if (sess.role === 'receive' && S.dest) sess.setDest(S.dest);
       let lastState = sess.state;
       S.offs = [sess.on((type, data) => {
         if (S.dead) return;
         if (type === 'progress') { paintProgress(); return; }
         if (type === 'state' && data === 'waiting' && sess.role === 'send') api.bus.emit('drop:hosting', { code: sess.code, names: S.queue.map(q => q.name) });
+        if (type === 'state') record(sess);
         if (type === 'state' && data !== lastState) {
           lastState = data;
           if (data === 'done') api.bus.emit('drop:done', { role: sess.role });
           if (data === 'done' && sess.role === 'receive') {
             const ok = sess.saved.filter(s => s.ok).length;
-            if (ok) notify({ app: 'Static Drop', icon: 'download', title: `Saved ${ok} file${ok === 1 ? '' : 's'} from ${peerName()}`, message: 'They’re in Downloads.' });
+            if (ok) notify({ app: 'Static Drop', icon: 'download', title: `Saved ${ok} file${ok === 1 ? '' : 's'} from ${peerName()}`, message: `They’re in ${vfs.baseName(sess.dest)}.` });
           }
         }
         paint();
@@ -209,9 +294,9 @@ defineApp({
       paint();
     }
     function sendQueue() {
-      if (!S.queue.length || (S.session && !ended())) return;
+      if (!S.queue.length || S.zipping || (S.session && !ended())) return;
       if (!rtcAvailable()) { say('This browser can’t make direct links (WebRTC), so it can’t Drop.', true); paint(); return; }
-      watch(startSend({ items: S.queue.map(q => ({ name: q.name, type: q.type, blob: q.blob })), mode: 'files' }));
+      watch(startSend({ items: S.queue.map(q => ({ name: q.name, type: q.type, blob: q.blob })), mode: 'files', ttl: S.ttl }));
     }
     async function sendMove() {
       if (S.session && !ended()) return;
@@ -228,7 +313,7 @@ defineApp({
       const { createBackup } = await import('../core/backup.js');
       const stamp = new Date().toISOString().slice(0, 10);
       watch(startSend({
-        mode: 'move', from: hostName(),
+        mode: 'move', from: hostName(), ttl: S.ttl,
         items: [{ name: `StaticOS backup ${hostName()} ${stamp}.json`, type: 'application/json', blob: async () => new Blob([JSON.stringify(await createBackup())], { type: 'application/json' }) }],
       }));
     }
@@ -261,7 +346,7 @@ defineApp({
     const btn = (label, ic, onclick, cls = '', extra = {}) => h(`button.btn${cls}`, { type: 'button', onclick, ...extra }, ic ? icon(ic) : null, h('span', { text: label }));
     const noteEl = () => (S.note ? h('p.drp__note', { class: S.noteErr ? 'is-err' : '', role: S.noteErr ? 'alert' : 'status', text: S.note }) : null);
     function fileRow(f, { remove = null, status = null, bar = false } = {}) {
-      const meta = `${fmtSize(f.size ?? f.s)} · ${typeLabel(f.name ?? f.n, f.type ?? f.ty)}`;
+      const meta = `${fmtSize(f.size ?? f.s)} · ${f.note || typeLabel(f.name ?? f.n, f.type ?? f.ty)}`;
       return h('li.drp-file', { dataset: { status: status || '' } },
         h('span.drp-file__ic', icon(kindIcon(f.name ?? f.n, f.type ?? f.ty))),
         h('span.drp-file__t', h('b.trunc', { text: f.name ?? f.n }), h('small', { text: meta })),
@@ -323,9 +408,13 @@ defineApp({
     function paintSendIdle() {
       const total = S.queue.reduce((a, q) => a + q.size, 0);
       const list = S.queue.length
-        ? h('ul.drp-list', S.queue.map(q => fileRow(q, { remove: () => { S.queue = S.queue.filter(x => x !== q); S.note = ''; paint(); } })))
+        ? h('ul.drp-list', S.queue.map(q => fileRow(q, { remove: () => { S.queue = S.queue.filter(x => x !== q); S.note = ''; paint(); } })), S.zipping ? zipRow() : null)
+        : S.zipping ? h('ul.drp-list', zipRow())
         : h('div.drp-empty', icon('send'), h('b', { text: 'Pick something to send' }), h('small', { text: 'Add files from Files or from this computer. Your friend sees each name, size and type, and nothing is sent until they accept.' }));
-      const go = btn(S.queue.length ? `Get a code for ${S.queue.length} file${S.queue.length === 1 ? '' : 's'} (${fmtSize(total)})` : 'Get a code', 'send', sendQueue, '.btn--primary.drp-go', { disabled: !S.queue.length });
+      const go = btn(S.queue.length ? `Get a code for ${S.queue.length} item${S.queue.length === 1 ? '' : 's'} (${fmtSize(total)})` : 'Get a code', 'send', sendQueue, '.btn--primary.drp-go', { disabled: !S.queue.length || !!S.zipping });
+      const ttl = h('label.drp-ttl', h('span', { text: 'Code lasts' }),
+        h('select.drp-ttl__sel', { 'aria-label': 'How long the code works', onchange: e => { S.ttl = Number(e.target.value); savePrefs(); } },
+          TTL_CHOICES.map(n => h('option', { value: String(n), selected: n === S.ttl ? true : null, text: `${n} minutes` }))));
       return h('div.drp-pane', { dataset: { pane: 'send' } },
         h('h2.drp__h', { text: 'Send files to a friend' }),
         list,
@@ -334,21 +423,67 @@ defineApp({
           btn('Add from this computer…', 'upload', () => fileIn.click(), '.btn--sm')),
         S.picking ? picker() : null,
         noteEl(),
-        h('div.drp-row', go),
+        h('div.drp-row', go, ttl,
+          btn('Send to a friend…', 'users', () => { S.friendOpen = !S.friendOpen; paint(); }, '.btn--sm.drp-tofriend', { disabled: !S.queue.length || !!S.zipping, 'aria-expanded': String(S.friendOpen) })),
+        S.friendOpen && S.queue.length ? friendPanel() : null,
         h('p.drp__fine', { text: `Up to ${LIMITS.files} files, ${fmtSize(LIMITS.fileMax)} each, ${fmtSize(LIMITS.totalMax)} in one drop.` }),
         h('section.drp-move',
           h('div.drp-move__t', icon('refresh'), h('b', { text: 'Move my StaticOS' })),
           h('p', { text: 'staticos.surge.sh and the AWS link are separate web addresses, so each keeps its own settings and files. Open Drop on both, send from the one you’ve been using, and receive on the other — it’s offered to replace that link’s data with yours.' }),
           btn('Move my StaticOS…', null, sendMove, '.btn--sm.drp-move__go')));
     }
+    function zipRow() {
+      return h('li.drp-file.drp-zip', { dataset: { status: 'zipping' } },
+        h('span.drp-file__ic', icon('file')),
+        h('span.drp-file__t', h('b.trunc', { text: `Zipping “${S.zipping.name}”…` }), h('small', { text: 'The size shows here before any code is made.' })),
+        h('span.drp-file__st.drp-zip__pct', { text: `${S.zipping.pct}%` }));
+    }
+    /* a code, to one friend, over Friends: they still have to press Receive and then Accept */
+    function friendPanel() {
+      const hold = h('div.drp-friends', { dataset: { role: 'drop-friends' } });
+      const names = S.queue.map(q => q.name);
+      paintMediaPanel(ctx, hold, {
+        label: 'your Drop code',
+        note: S.session && !ended() && S.session.code
+          ? 'This sends the code to your friend, nothing else. They press Receive, then Accept; nothing is saved before that.'
+          : 'This makes a code and sends it to your friend, nothing else. They press Receive, then Accept; nothing is saved before that.',
+        noun: 'it',
+        send: async fp => {
+          if (!S.session || ended()) {
+            sendQueue();
+            for (let i = 0; i < 150 && !S.dead && !(S.session?.code && S.session.state === 'waiting'); i++) {
+              if (!S.session || ended()) return { ok: false, error: 'friend' };
+              await new Promise(r => setTimeout(r, 100));
+            }
+          }
+          const sess = S.session;
+          if (!sess?.code) return { ok: false, error: 'friend' };
+          const F = await import('../core/friends.js');
+          return F.sendMedia(fp, { kind: 'drop', id: sess.code, title: names.length === 1 ? names[0] : `${names.length} files` });
+        },
+      }, () => !S.dead && body.contains(hold));
+      return h('div.drp-pick', { role: 'group', 'aria-label': 'Send to a friend' }, hold);
+    }
     function picker() {
       const dirs = PICK_DIRS.map(d => `${HOME}/${d}`).filter(p => vfs.node(p));
       if (!dirs.includes(S.pickDir)) S.pickDir = dirs[0] || HOME;
       const sel = h('select.drp-pick__dir', { 'aria-label': 'Folder', onchange: e => { S.pickDir = e.target.value; paint(); } },
         dirs.map(p => h('option', { value: p, text: vfs.baseName(p), selected: p === S.pickDir ? true : null })));
-      const files = vfs.ls(S.pickDir).filter(n => n.type === 'file');
+      const all = vfs.ls(S.pickDir);
+      const files = all.filter(n => n.type === 'file');
+      const subdirs = all.filter(n => n.type === 'dir');
       return h('div.drp-pick', { role: 'group', 'aria-label': 'Add from Files' },
-        h('div.drp-row', sel, h('small', { text: files.length ? 'Press a file to add it' : 'No files in this folder' })),
+        h('div.drp-row', sel, h('small', { text: files.length ? 'Press a file to add it' : 'No files in this folder' }),
+          btn('Send this folder as a zip', 'archive', () => addFolder(S.pickDir), '.btn--sm.drp-pick__zip', { disabled: !!S.zipping || !all.length })),
+        subdirs.length ? h('ul.drp-pick__list', subdirs.map(n => {
+          const p = `${S.pickDir}/${n.name}`;
+          const inQ = S.queue.some(q => q.key === `zip:${p}`);
+          return h('li', h('button.drp-pick__f.drp-pick__d', {
+            type: 'button', 'aria-pressed': String(inQ), dataset: { path: p }, disabled: !!S.zipping,
+            title: 'Zip this folder and send it',
+            onclick: () => { if (inQ) { S.queue = S.queue.filter(q => q.key !== `zip:${p}`); paint(); } else addFolder(p); },
+          }, icon(inQ ? 'check' : 'folder'), h('span.trunc', { text: `${n.name} (zip)` })));
+        })) : null,
         h('ul.drp-pick__list', files.map(n => {
           const p = `${S.pickDir}/${n.name}`;
           const inQ = S.queue.some(q => q.key === `vfs:${p}`);
@@ -372,7 +507,10 @@ defineApp({
             h('h2.drp__h', { text: 'Your Drop code' }),
             codeBlock(sess.code),
             h('p.drp__p', { text: sess.mode === 'move' ? 'On your other StaticOS: open Static Drop → Receive, and type this code.' : 'Send it to your friend. On their StaticOS: Static Drop → Receive, then type the code — or open the invite link.' }),
-            h('div.drp-row', btn('Copy invite', 'copy', () => copyInvite(sess.code), '.btn--primary'), cancel),
+            sess.expiresAt ? h('p.drp-expire', { dataset: { role: 'drop-expire' }, role: 'timer' }, icon('clock'), h('span.drp-expire__t', { text: `Code works for ${clock(sess.expiresAt - Date.now())} more` })) : null,
+            h('div.drp-row', btn('Copy invite', 'copy', () => copyInvite(sess.code), '.btn--primary'),
+              sess.mode === 'move' ? null : btn('Send to a friend…', 'users', () => { S.friendOpen = !S.friendOpen; paint(); }, '.drp-tofriend', { 'aria-expanded': String(S.friendOpen) }), cancel),
+            S.friendOpen && sess.mode !== 'move' ? friendPanel() : null,
             moveNote,
             h('div.drp-wait', h('i.drp-spin'), h('span', { text: 'Waiting for your friend to join…' })),
             sessFiles(sess));
@@ -411,6 +549,34 @@ defineApp({
       }
     }
 
+    const when = at => {
+      const d = new Date(at), now = new Date();
+      const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return d.toDateString() === now.toDateString() ? `today ${t}` : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${t}`;
+    };
+    function paintHistory() {
+      const rows = S.history;
+      const line = e => {
+        const who = e.peer || 'someone';
+        const what = e.mode === 'move' ? 'a StaticOS backup' : `${e.count || e.of} file${(e.count || e.of) === 1 ? '' : 's'}`;
+        const res = { done: '', declined: ' · declined', cancelled: ' · cancelled', failed: ' · did not finish', expired: ' · the code ran out' }[e.result] || '';
+        return e.result === 'expired'
+          ? `Code for ${what} ran out before anyone joined`
+          : `${e.dir === 'sent' ? 'Sent' : 'Received'} ${what} ${e.dir === 'sent' ? 'to' : 'from'} ${who}${res}`;
+      };
+      return h('div.drp-pane', { dataset: { pane: 'history' } },
+        h('h2.drp__h', { text: 'History' }),
+        rows.length
+          ? h('ul.drp-list', rows.map(e => h('li.drp-file.drp-hist', { dataset: { dir: e.dir, result: e.result } },
+              h('span.drp-file__ic', icon(e.dir === 'sent' ? 'upload' : 'download')),
+              h('span.drp-file__t', h('b.trunc', { text: line(e) }),
+                h('small', { text: [when(e.at), e.bytes ? fmtSize(e.bytes) : '', e.names?.length ? e.names.join(', ') : '', e.dest ? `in ${e.dest}` : ''].filter(Boolean).join(' · ') })))))
+          : h('div.drp-empty', icon('rotate-ccw'), h('b', { text: 'Nothing yet' }), h('small', { text: 'Drops you send or receive are listed here.' })),
+        h('div.drp-row',
+          btn('Clear history', 'trash', () => { S.history = []; api.store.set(HISTORY_KEY, []); paint(); }, '.btn--sm.drp-clear', { disabled: !rows.length })),
+        h('p.drp__fine', { text: 'This list keeps names, sizes and results, only on this device. It never keeps the files.' }));
+    }
+
     function paintReceiveIdle() {
       const input = h('input.drp-in', {
         type: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '80',
@@ -423,7 +589,27 @@ defineApp({
         h('h2.drp__h', { text: 'Receive from a friend' }),
         h('p.drp__p', { text: 'Type the code your friend’s Static Drop shows. You’ll see who it’s from and every file’s name, size and type — nothing is saved until you press Accept.' }),
         form, noteEl(),
-        h('p.drp__fine', { text: `This device takes files up to ${fmtSize(LIMITS.fileMax)} each and ${fmtSize(LIMITS.totalMax)} in one drop. They’re saved to Downloads.` }));
+        h('p.drp__fine', { text: `This device takes files up to ${fmtSize(LIMITS.fileMax)} each and ${fmtSize(LIMITS.totalMax)} in one drop. They’re saved to ${vfs.baseName(S.dest && vfs.node(S.dest) ? S.dest : DOWNLOADS())} unless you pick another folder when you accept.` }));
+    }
+
+    /* folders files may be saved into: Home's own folders and the ones inside them */
+    function destOptions(sess) {
+      const out = [];
+      for (const d of vfs.ls(HOME).filter(n => n.type === 'dir' && n.name !== 'Trash')) {
+        const p = `${HOME}/${d.name}`;
+        out.push(p);
+        for (const c of vfs.ls(p).filter(n => n.type === 'dir').slice(0, 20)) out.push(`${p}/${c.name}`);
+      }
+      if (!out.includes(sess.dest)) out.push(sess.dest);
+      return out;
+    }
+    function destPicker(sess) {
+      const rel = p => p.replace(`${HOME}/`, '');
+      return h('label.drp-dest', h('span', { text: 'Save to' }),
+        h('select.drp-dest__sel', {
+          'aria-label': 'Folder to save received files in',
+          onchange: e => { if (sess.setDest(e.target.value)) { S.dest = e.target.value; savePrefs(); paint(); } },
+        }, destOptions(sess).map(p => h('option', { value: p, selected: p === sess.dest ? true : null, text: rel(p) }))));
     }
 
     function paintReceiveSession(sess) {
@@ -450,7 +636,8 @@ defineApp({
               h('p', { text: `It’s a full backup${sess.from ? ` from ${sess.from}` : ''}: settings, files, projects, account details and keys. Accepting only downloads and checks it — you’ll be asked once more before anything here is replaced. Only accept a move from your own device.` })) : null,
             sessFiles(sess),
             !takeable.length ? h('p.drp__note.is-err', { role: 'alert', text: 'Everything here is over this device’s limits, so it can’t be accepted.' }) : null,
-            h('p.drp__fine', { text: 'Names aren’t verified — anyone can call themselves anything. Received files are saved to Downloads and never opened by themselves.' }),
+            move ? null : destPicker(sess),
+            h('p.drp__fine', { text: `Names aren’t verified — anyone can call themselves anything. Received files are saved to ${vfs.baseName(sess.dest)} and never opened by themselves, and each is checked with SHA-256 first.` }),
             linkLine(sess),
             h('div.drp-row', accept, decline));
         }
@@ -461,7 +648,7 @@ defineApp({
         case 'done': {
           const saved = sess.saved.filter(s => s.ok);
           return card('done',
-            h('h2.drp__h', { text: saved.length ? `Saved ${saved.length} file${saved.length === 1 ? '' : 's'} to Downloads` : 'Nothing was saved' }),
+            h('h2.drp__h', { text: saved.length ? `Saved ${saved.length} file${saved.length === 1 ? '' : 's'} to ${vfs.baseName(sess.dest)}` : 'Nothing was saved' }),
             h('p.drp__p', { text: 'Each one was checked with SHA-256 before it was saved.' }),
             sessFiles(sess),
             h('div.drp-row',
@@ -486,7 +673,7 @@ defineApp({
           return card('declined', h('h2.drp__h', { text: 'Declined' }), h('p.drp__p', { text: 'Nothing was received or saved.' }), h('div.drp-row', back('Back')));
         case 'cancelled':
           return card('cancelled', h('h2.drp__h', { text: sess.reason === 'them' ? `${who} stopped the drop` : 'Cancelled' }),
-            h('p.drp__p', { text: sess.saved.some(s => s.ok) ? 'Files that had already arrived and checked out were kept in Downloads; the rest were thrown away.' : 'Nothing was saved.' }),
+            h('p.drp__p', { text: sess.saved.some(s => s.ok) ? `Files that had already arrived and checked out were kept in ${vfs.baseName(sess.dest)}; the rest were thrown away.` : 'Nothing was saved.' }),
             sess.saved.length ? sessFiles(sess) : null, h('div.drp-row', back('Back')));
         default: {
           const err = JOIN_ERR[sess.reason];
@@ -509,21 +696,26 @@ defineApp({
       }
       liveEl.hidden = !sess || ended();
       const view = sess ? (sess.role === 'send' ? paintSendSession(sess) : paintReceiveSession(sess))
-        : (S.tab === 'send' ? paintSendIdle() : paintReceiveIdle());
+        : (S.tab === 'send' ? paintSendIdle() : S.tab === 'history' ? paintHistory() : paintReceiveIdle());
       body.replaceChildren(view);
       body.dataset.tab = S.tab;
       paintProgress();
       win.setSubtitle(sess && !ended() ? (sess.role === 'send' ? 'Sending' : 'Receiving') : '');
     }
 
-    function fromOpts(o) {
+    async function fromOpts(o) {
       if (!o) return;
+      /* a file or folder dropped on Drop's dock icon arrives as { path }: it is sent, with a code at once */
+      if (!o.send && typeof o.path === 'string') o = { send: [o.path], go: true };
       if (Array.isArray(o.send) && o.send.length) {
         if (S.session && !ended()) { notify({ app: 'Static Drop', icon: 'info', title: 'A drop is already running', message: 'Finish or cancel it, then add more files.' }); return; }
         S.session = null;
         S.tab = 'send';
+        S.pendingDirs = [];
         addPaths(o.send.slice(0, LIMITS.files));
         paint();
+        for (const d of S.pendingDirs.splice(0)) await addFolder(d);
+        if (S.dead) return;
         /* "Send it with Drop" from Watch Together: the person asked for a code already */
         if (o.go && S.queue.length) sendQueue();
       } else if (o.join) {
@@ -540,6 +732,11 @@ defineApp({
       }
     }
     win.onReopen(fromOpts);
+    const tick = setInterval(() => {
+      const sess = S.session;
+      const el = body.querySelector('.drp-expire__t');
+      if (el && sess?.expiresAt) el.textContent = `Code works for ${clock(sess.expiresAt - Date.now())} more`;
+    }, 500);
     paint();
     fromOpts(opts);
 
@@ -548,7 +745,7 @@ defineApp({
       const s = S.session;
       return s ? {
         role: s.role, mode: s.mode, state: s.state, reason: s.reason, code: s.code, topic: s.room?.topic || null,
-        link: s.link, stats: s.room?.stats?.() || null, files: s.files, progress: s.progress, saved: s.role === 'receive' ? s.saved : null,
+        link: s.link, expiresAt: s.expiresAt || 0, dest: s.dest || null, stats: s.room?.stats?.() || null, files: s.files, progress: s.progress, saved: s.role === 'receive' ? s.saved : null,
         peer: s.peer, hasBackup: !!s.backup,
       } : { state: 'idle', queue: S.queue.map(q => ({ name: q.name, size: q.size })) };
     };
@@ -556,6 +753,7 @@ defineApp({
 
     return () => {
       S.dead = true;
+      clearInterval(tick);
       offLive();
       S.offs.forEach(f => f());
       try { S.session?.close(); } catch (e) { /* gone */ }

@@ -13,16 +13,31 @@
    taken) and never touches the original unless "Replace the originals" is
    on and confirmed. A browser that can't encode WebP says so and the
    option is switched off. Pictures are converted one at a time.
+
+   Size can also be "Longest side": a preset (256, 640, 1024, 1280, 1920,
+   2560 px) or your own number. A picture already smaller than that stays
+   as it is; nothing is ever enlarged by it.
+
+   Photo data (EXIF: where a photo was taken, the camera, the date) is
+   removed by default. Every picture is re-drawn on a canvas and written
+   again, which carries pixels only; the Original column says whether the
+   file had photo data, and after each save the new file's own bytes are
+   read back and checked for an EXIF or XMP block (JPG APP1, PNG eXIf, WebP
+   EXIF/XMP). Switch the option off to keep it: that is only possible when
+   the original and the result are both JPG, where the EXIF block is copied
+   across with its Orientation set to "upright" (the pixels already are).
    ============================================================ */
 import { pickerView, blobOfSource, bitmapOf, sizeOfBitmap, sourceOfPath, encode, stemOf, clamp, destFor, picturesDir } from './pt-common.js';
 import * as media from '../core/media.js';
 import vfs from '../core/vfs.js';
+import { t } from '../core/i18n.js';
 
 export const FORMATS = [
   { id: 'png', label: 'PNG', type: 'image/png', ext: 'png', lossy: false },
   { id: 'jpeg', label: 'JPG', type: 'image/jpeg', ext: 'jpg', lossy: true },
   { id: 'webp', label: 'WebP', type: 'image/webp', ext: 'webp', lossy: true },
 ];
+export const LONG_PRESETS = [[256, 'Thumbnail'], [640, 'Small'], [1024, 'Web'], [1280, 'Email'], [1920, 'Full HD'], [2560, 'Large']];
 const PROXY = 480;
 const MAX_PIXELS = 48_000_000;
 
@@ -30,10 +45,96 @@ const MAX_PIXELS = 48_000_000;
 export function outSize(iw, ih, o) {
   let w, hh;
   if (o.mode === 'percent') { w = iw * o.pct / 100; hh = ih * o.pct / 100; }
+  else if (o.mode === 'long') { const k = Math.min(1, o.long / Math.max(iw, ih)); w = iw * k; hh = ih * k; }
   else if (!o.lock) { w = o.w; hh = o.h; }
   else if (o.last === 'h') { hh = o.h; w = iw * o.h / ih; }
   else { w = o.w; hh = ih * o.w / iw; }
   return { w: Math.max(1, Math.round(w)), h: Math.max(1, Math.round(hh)) };
+}
+
+/* ---------- photo data (EXIF / XMP) ---------- */
+const u16 = (b, i, le = false) => (le ? b[i] | (b[i + 1] << 8) : (b[i] << 8) | b[i + 1]);
+const u32 = (b, i, le = false) => (le ? (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) >>> 0 : ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0);
+const ascii = (b, i, n) => String.fromCharCode(...b.subarray(i, i + n));
+const EXIF_ID = 'Exif\0\0';
+const XMP_ID = 'http://ns.adobe.com/xap/1.0/\0';
+
+/** Walk a JPEG's header segments: fn(marker, at, len) for each one; stops at the picture data. */
+function jpegSegments(b, fn) {
+  if (!(b[0] === 0xff && b[1] === 0xd8)) return;
+  let at = 2;
+  while (at + 4 <= b.length && b[at] === 0xff) {
+    const m = b[at + 1];
+    if (m === 0xda || m === 0xd9) break;
+    if (m === 0x01 || (m >= 0xd0 && m <= 0xd8) || m === 0xff) { at += m === 0xff ? 1 : 2; continue; }
+    const len = u16(b, at + 2);
+    if (fn(m, at, len + 2) === false) return;
+    at += 2 + len;
+  }
+}
+
+/** The JPEG's Exif block, as { at, len } (at the 0xFF of its marker), or null. */
+export function jpegExif(b) {
+  let found = null;
+  jpegSegments(b, (m, at, len) => {
+    if (m === 0xe1 && ascii(b, at + 4, 6) === EXIF_ID) { found = { at, len }; return false; }
+    return true;
+  });
+  return found;
+}
+
+/** What kinds of photo data this picture file carries: { exif, xmp } (booleans). Reads the bytes; guesses nothing. */
+export function findPhotoData(b) {
+  const out = { exif: false, xmp: false };
+  if (b[0] === 0xff && b[1] === 0xd8) {
+    jpegSegments(b, (m, at) => {
+      if (m === 0xe1) {
+        if (ascii(b, at + 4, 6) === EXIF_ID) out.exif = true;
+        else if (ascii(b, at + 4, 28) === XMP_ID) out.xmp = true;
+      }
+      return true;
+    });
+  } else if (b[0] === 0x89 && ascii(b, 1, 3) === 'PNG') {
+    let at = 8;
+    while (at + 8 <= b.length) {
+      const len = u32(b, at), type = ascii(b, at + 4, 4);
+      if (type === 'eXIf') out.exif = true;
+      else if (type === 'iTXt' && ascii(b, at + 8, 17) === 'XML:com.adobe.xmp') out.xmp = true;
+      if (type === 'IEND') break;
+      at += 12 + len;
+    }
+  } else if (ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 4) === 'WEBP') {
+    let at = 12;
+    while (at + 8 <= b.length) {
+      const type = ascii(b, at, 4), len = u32(b, at + 4, true);
+      if (type === 'EXIF') out.exif = true;
+      else if (type === 'XMP ') out.xmp = true;
+      at += 8 + len + (len & 1);
+    }
+  }
+  return out;
+}
+
+/** The JPEG `out` with the Exif block of the JPEG `orig` put back in, its Orientation set to upright (1). Null when orig has none. */
+export function carryExif(orig, out) {
+  const seg = jpegExif(orig);
+  if (!seg || !(out[0] === 0xff && out[1] === 0xd8)) return null;
+  const exif = orig.slice(seg.at, seg.at + seg.len);
+  const t = 10;                                     /* the TIFF header: marker(2) + length(2) + "Exif\0\0"(6) */
+  const le = exif[t] === 0x49;
+  const ifd = t + u32(exif, t + 4, le);
+  if (ifd + 2 <= exif.length) {
+    const n = u16(exif, ifd, le);
+    for (let k = 0; k < n && ifd + 2 + k * 12 + 12 <= exif.length; k++) {
+      const e = ifd + 2 + k * 12;
+      if (u16(exif, e, le) === 0x0112) { if (le) { exif[e + 8] = 1; exif[e + 9] = 0; } else { exif[e + 8] = 0; exif[e + 9] = 1; } }
+    }
+  }
+  const res = new Uint8Array(out.length + exif.length);
+  res.set(out.subarray(0, 2), 0);
+  res.set(exif, 2);
+  res.set(out.subarray(2), 2 + exif.length);
+  return res;
 }
 
 export const webpWorks = () => new Promise(res => {
@@ -56,33 +157,34 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 
 export function mountConvert({ api, root, opts }) {
   const { h, icon } = api;
-  const O = { mode: 'percent', pct: 50, w: 0, h: 0, lock: true, last: 'w', fmt: 'png', q: 85, replace: false };
+  const O = { mode: 'percent', pct: 50, long: 1280, w: 0, h: 0, lock: true, last: 'w', fmt: 'png', q: 85, replace: false, strip: true };
   const S = { items: [], alive: true, running: false, estSeq: 0, estTimer: 0, webp: true };
   const fmtBytes = api.fmt.fmtBytes;
   const fmtOf = () => FORMATS.find(f => f.id === O.fmt);
 
   /* ---------- the list ---------- */
-  const listEl = h('div.pt-conv__list', { role: 'list', 'aria-label': 'Pictures to convert' });
-  const emptyEl = h('div.pt__empty', icon('image'), h('b', { text: 'Pick some pictures' }),
-    h('small', { text: 'Choose one or many on the right. Nothing changes until you press Convert.' }));
-  const prog = h('progress.pt-conv__progress', { max: 1, value: 0, hidden: true, 'aria-label': 'Conversion progress' });
+  const listEl = h('div.pt-conv__list', { role: 'list', 'aria-label': t('Pictures to convert') });
+  const emptyEl = h('div.pt__empty', icon('image'), h('b', { text: t('Pick some pictures') }),
+    h('small', { text: t('Choose one or many on the right. Nothing changes until you press Convert.') }));
+  const prog = h('progress.pt-conv__progress', { max: 1, value: 0, hidden: true, 'aria-label': t('Conversion progress') });
   const progText = h('div.pt__foot', { role: 'status', 'aria-live': 'polite' });
   const main = h('div.pt__col', h('div.pt__stage.pt-conv__stage', emptyEl, listEl), h('div.pt-conv__progwrap', prog), progText);
 
   const rowOf = new Map();
   function makeRow(it) {
     const name = h('b.pt-conv__name', { text: it.src.name, title: it.src.name });
-    const from = h('span.pt-conv__from', { text: 'Reading…' });
+    const from = h('span.pt-conv__from', { text: t('Reading…') });
     const to = h('span.pt-conv__to');
     const est = h('span.pt-conv__est', { text: '' });
     const real = h('span.pt-conv__real', { text: '' });
+    const data = h('small.pt-conv__data', { text: '' });
     const row = h('div.pt-conv__row', { role: 'listitem', dataset: { name: it.src.name } },
       name, h('div.pt-conv__cols',
-        h('span.pt-conv__col', h('small', { text: 'Original' }), from),
-        h('span.pt-conv__col', h('small', { text: 'Output size' }), to),
-        h('span.pt-conv__col', h('small', { text: 'Estimated' }), est),
-        h('span.pt-conv__col', h('small', { text: 'Result' }), real)));
-    rowOf.set(it, { row, from, to, est, real });
+        h('span.pt-conv__col', h('small', { text: t('Original') }), from, data),
+        h('span.pt-conv__col', h('small', { text: t('Output size') }), to),
+        h('span.pt-conv__col', h('small', { text: t('Estimated') }), est),
+        h('span.pt-conv__col', h('small', { text: t('Result') }), real)));
+    rowOf.set(it, { row, from, to, est, real, data });
     return row;
   }
   function paintRows() {
@@ -95,6 +197,8 @@ export function mountConvert({ api, root, opts }) {
       if (it.error) { r.from.textContent = it.error; r.to.textContent = ''; continue; }
       if (!it.w) continue;
       r.from.textContent = `${it.w} × ${it.h}${it.bytes ? ` · ${fmtBytes(it.bytes)}` : ''}`;
+      r.data.textContent = !it.pd ? '' : it.pd.exif || it.pd.xmp ? `Has photo data (${[it.pd.exif && 'EXIF', it.pd.xmp && 'XMP'].filter(Boolean).join(', ')})` : 'No photo data found';
+      r.data.dataset.has = it.pd ? String(!!(it.pd.exif || it.pd.xmp)) : '';
       const o = outSize(it.w, it.h, O);
       it.out = o;
       r.to.textContent = `${o.w} × ${o.h}`;
@@ -108,6 +212,7 @@ export function mountConvert({ api, root, opts }) {
   async function loadInfo(it) {
     try {
       const blob = await blobOfSource(it.src);
+      try { it.pd = findPhotoData(new Uint8Array(await blob.slice(0, 262144).arrayBuffer())); } catch (e) { it.pd = null; }
       const bmp = await bitmapOf(blob);
       const { w, h: hh } = sizeOfBitmap(bmp);
       if (!w || !hh) throw new Error('No size of its own');
@@ -168,8 +273,8 @@ export function mountConvert({ api, root, opts }) {
     if (O.replace) {
       const n = todo.filter(i => i.src.path).length;
       const okay = await api.confirm({
-        title: n === 1 ? `Replace “${todo.find(i => i.src.path).src.name}”?` : `Replace ${n} originals?`,
-        message: 'Each original picture is overwritten with its converted version (its name may change to match the new format). This can’t be undone.',
+        title: n === 1 ? `Replace “${todo.find(i => i.src.path).src.name}”?` : t('Replace {n} originals?', { n }),
+        message: t('Each original picture is overwritten with its converted version (its name may change to match the new format). This can’t be undone.'),
         ok: 'Replace originals', danger: true,
       });
       if (!okay || !S.alive) return;
@@ -195,16 +300,31 @@ export function mountConvert({ api, root, opts }) {
         const blob = await encode(c, fmt.type, O.q / 100);
         c.width = c.height = 0;
         if (!blob) throw new Error(`This browser can’t save ${fmt.label}`);
+        /* photo data: gone unless asked to keep, and the bytes written are read back to prove it */
+        let outBlob = blob, note = '';
+        if (!O.strip && fmt.id === 'jpeg') {
+          try {
+            const orig = new Uint8Array(await (await blobOfSource(it.src)).arrayBuffer());
+            const kept = carryExif(orig, new Uint8Array(await blob.arrayBuffer()));
+            if (kept) { outBlob = new Blob([kept], { type: 'image/jpeg' }); note = 'photo data kept'; }
+          } catch (e) { /* the copy stays without it */ }
+        }
+        if (!note) {
+          const left = findPhotoData(new Uint8Array(await outBlob.arrayBuffer()));
+          if (left.exif || left.xmp) throw new Error('Photo data was still in the result, so it was not saved');
+          note = it.pd && (it.pd.exif || it.pd.xmp) ? 'photo data removed' : (O.strip ? 'no photo data' : 'no photo data to keep');
+        }
         let saved;
         if (O.replace && it.src.path && vfs.node(it.src.path)) {
-          saved = (await media.replace(it.src.path, blob, { name: `${stemOf(it.src.name)}.${fmt.ext}` })).path;
+          saved = (await media.replace(it.src.path, outBlob, { name: `${stemOf(it.src.name)}.${fmt.ext}` })).path;
         } else {
-          saved = (await media.save(destFor(it.src), `${stemOf(it.src.name)} (${o.w}×${o.h}).${fmt.ext}`, blob)).path;
+          saved = (await media.save(destFor(it.src), `${stemOf(it.src.name)} (${o.w}×${o.h}).${fmt.ext}`, outBlob)).path;
         }
-        it.real = blob.size; it.savedPath = saved;
-        inBytes += it.bytes; outBytes += blob.size;
-        const pct = it.bytes ? Math.round((blob.size / it.bytes - 1) * 100) : 0;
-        r.real.textContent = `${fmtBytes(blob.size)}${it.bytes ? ` (${pct > 0 ? '+' : ''}${pct}%)` : ''} · ${vfs.baseName(saved)}`;
+        it.real = outBlob.size; it.savedPath = saved;
+        inBytes += it.bytes; outBytes += outBlob.size;
+        const pct = it.bytes ? Math.round((outBlob.size / it.bytes - 1) * 100) : 0;
+        r.real.textContent = `${fmtBytes(outBlob.size)}${it.bytes ? ` (${pct > 0 ? '+' : ''}${pct}%)` : ''} · ${vfs.baseName(saved)} · ${note}`;
+        r.row.dataset.photodata = note;
         r.row.classList.add('is-done');
         r.row.dataset.saved = saved;
         done++;
@@ -220,9 +340,17 @@ export function mountConvert({ api, root, opts }) {
     progText.textContent = `${done} of ${todo.length} converted${failed ? `, ${failed} failed` : ''}${done ? ` · ${fmtBytes(inBytes)} → ${fmtBytes(outBytes)}` : ''}`;
     api.notify({
       app: 'Picture Tools', icon: failed && !done ? 'alert' : 'image',
-      title: failed ? `${done} converted, ${failed} failed` : `${done} ${done === 1 ? 'picture' : 'pictures'} converted`,
-      message: O.replace ? 'The originals were replaced.' : 'Copies were saved beside the originals.',
-      actions: [{ label: 'Show in Files', onClick: () => api.openApp('files', { path: todo.find(i => i.savedPath)?.savedPath || picturesDir() }) }],
+      title: failed ? t('{done} converted, {failed} failed', { done, failed }) : `${done} ${done === 1 ? 'picture' : 'pictures'} converted`,
+      message: O.replace ? t('The originals were replaced.') : t('Copies were saved beside the originals.'),
+      actions: (() => {
+        const saved = todo.filter(i => i.savedPath).map(i => i.savedPath);
+        const first = saved[0];
+        return [
+          first && { label: t('Open in Photos'), onClick: () => api.openApp('photos', { path: first }) },
+          saved.length && { label: t('Send with Drop'), onClick: () => api.openApp('drop', { send: saved }) },
+          { label: t('Show in Files'), onClick: () => api.openApp('files', { path: first || picturesDir() }) },
+        ].filter(Boolean);
+      })(),
     });
     paintRows();
   }
@@ -234,15 +362,15 @@ export function mountConvert({ api, root, opts }) {
     return h('div.pt__seg', { role: 'radiogroup', 'aria-label': name }, btns);
   };
   const pctOut = h('output', { text: `${O.pct}%` });
-  const pctIn = h('input', { type: 'range', min: 5, max: 400, step: 1, value: O.pct, 'aria-label': 'Scale in percent',
+  const pctIn = h('input', { type: 'range', min: 5, max: 400, step: 1, value: O.pct, 'aria-label': t('Scale in percent'),
     oninput: () => { O.pct = Number(pctIn.value); pctOut.textContent = `${O.pct}%`; pctNum.value = O.pct; scheduleEstimate(); } });
-  const pctNum = h('input', { type: 'number', min: 1, max: 1000, step: 1, value: O.pct, 'aria-label': 'Scale percent, exact',
+  const pctNum = h('input', { type: 'number', min: 1, max: 1000, step: 1, value: O.pct, 'aria-label': t('Scale percent, exact'),
     oninput: () => { const v = clamp(Math.round(Number(pctNum.value) || 1), 1, 1000); O.pct = v; pctIn.value = clamp(v, 5, 400); pctOut.textContent = `${v}%`; scheduleEstimate(); } });
-  const pctRow = h('div.pt__group', h('label.pt__slider', h('span', { text: 'Scale' }), pctIn, pctOut), h('label.pt__line', h('span', { text: 'Exact %' }), pctNum));
+  const pctRow = h('div.pt__group', h('label.pt__slider', h('span', { text: t('Scale') }), pctIn, pctOut), h('label.pt__line', h('span', { text: t('Exact %') }), pctNum));
 
-  const wIn = h('input', { type: 'number', min: 1, max: 16384, step: 1, value: '', placeholder: 'width', 'aria-label': 'Width in pixels',
+  const wIn = h('input', { type: 'number', min: 1, max: 16384, step: 1, value: '', placeholder: 'width', 'aria-label': t('Width in pixels'),
     oninput: () => { O.w = clamp(Math.round(Number(wIn.value) || 1), 1, 16384); O.last = 'w'; followLock(); scheduleEstimate(); } });
-  const hIn = h('input', { type: 'number', min: 1, max: 16384, step: 1, value: '', placeholder: 'height', 'aria-label': 'Height in pixels',
+  const hIn = h('input', { type: 'number', min: 1, max: 16384, step: 1, value: '', placeholder: 'height', 'aria-label': t('Height in pixels'),
     oninput: () => { O.h = clamp(Math.round(Number(hIn.value) || 1), 1, 16384); O.last = 'h'; followLock(); scheduleEstimate(); } });
   function followLock() {
     const first = S.items.find(i => i.w);
@@ -250,33 +378,44 @@ export function mountConvert({ api, root, opts }) {
     if (O.last === 'w') { O.h = Math.max(1, Math.round(first.h * O.w / first.w)); hIn.value = O.h; }
     else { O.w = Math.max(1, Math.round(first.w * O.h / first.h)); wIn.value = O.w; }
   }
-  const lock = h('button.ibtn.pt-conv__lock', { type: 'button', 'aria-pressed': 'true', 'aria-label': 'Keep the shape (aspect lock)', title: 'Keep the shape',
+  const lock = h('button.ibtn.pt-conv__lock', { type: 'button', 'aria-pressed': 'true', 'aria-label': t('Keep the shape (aspect lock)'), title: t('Keep the shape'),
     onclick: () => { O.lock = !O.lock; lock.setAttribute('aria-pressed', String(O.lock)); lock.replaceChildren(icon(O.lock ? 'lock' : 'unlock')); followLock(); scheduleEstimate(); } }, icon('lock'));
+  const longNum = h('input', { type: 'number', min: 16, max: 16384, step: 1, value: O.long, 'aria-label': t('Longest side in pixels'),
+    oninput: () => { O.long = clamp(Math.round(Number(longNum.value) || 16), 16, 16384); paintPresets(); scheduleEstimate(); } });
+  const presetBtns = LONG_PRESETS.map(([n, label]) => h('button.pt__segbtn', { type: 'button', role: 'radio', 'aria-checked': 'false', dataset: { long: String(n) }, title: t('{label}: {n} px on the longest side', { label, n }),
+    onclick: () => { O.long = n; longNum.value = n; paintPresets(); scheduleEstimate(); } }, h('span', { text: `${label} ${n}` })));
+  function paintPresets() { for (const b of presetBtns) b.setAttribute('aria-checked', String(Number(b.dataset.long) === O.long)); }
+  const longRow = h('div.pt__group', { hidden: true }, h('div.pt__seg.pt-conv__presets', { role: 'radiogroup', 'aria-label': t('Size presets') }, presetBtns),
+    h('label.pt__line', h('span', { text: t('Longest side') }), longNum, h('span', { text: 'px' })),
+    h('small.pt__hint', { text: t('Wide or tall, the longest side becomes this. A picture already smaller stays as it is.') }));
   const pxRow = h('div.pt__group', { hidden: true }, h('div.pt__pair', wIn, lock, hIn, h('span', { text: 'px' })),
-    h('small.pt__hint', { text: 'With the lock on, the other side follows, so every picture keeps its own shape.' }));
-  const modeSeg = segBtns('Resize by', [['percent', 'Percent'], ['pixels', 'Pixels']], () => O.mode, id => {
-    O.mode = id; pctRow.hidden = id !== 'percent'; pxRow.hidden = id !== 'pixels';
+    h('small.pt__hint', { text: t('With the lock on, the other side follows, so every picture keeps its own shape.') }));
+  const modeSeg = segBtns('Resize by', [['percent', 'Percent'], ['pixels', 'Pixels'], ['long', 'Longest side']], () => O.mode, id => {
+    O.mode = id; pctRow.hidden = id !== 'percent'; pxRow.hidden = id !== 'pixels'; longRow.hidden = id !== 'long';
     if (id === 'pixels') { const f = S.items.find(i => i.w); if (f && !O.w) { O.w = f.w; O.h = f.h; wIn.value = f.w; hIn.value = f.h; } }
     scheduleEstimate();
   });
 
   const qOut = h('output', { text: `${O.q}` });
-  const qIn = h('input', { type: 'range', min: 1, max: 100, step: 1, value: O.q, 'aria-label': 'Quality for JPG and WebP',
+  const qIn = h('input', { type: 'range', min: 1, max: 100, step: 1, value: O.q, 'aria-label': t('Quality for JPG and WebP'),
     oninput: () => { O.q = Number(qIn.value); qOut.textContent = String(O.q); scheduleEstimate(); } });
-  const qRow = h('label.pt__slider', { hidden: true }, h('span', { text: 'Quality' }), qIn, qOut);
-  const webpNote = h('small.pt__warn', { hidden: true, role: 'note', text: 'This browser can’t save WebP pictures, so WebP is turned off. PNG and JPG work.' });
+  const qRow = h('label.pt__slider', { hidden: true }, h('span', { text: t('Quality') }), qIn, qOut);
+  const webpNote = h('small.pt__warn', { hidden: true, role: 'note', text: t('This browser can’t save WebP pictures, so WebP is turned off. PNG and JPG work.') });
   const fmtSeg = segBtns('Convert to', FORMATS.map(f => [f.id, f.label]), () => O.fmt, id => {
     if (id === 'webp' && !S.webp) { O.fmt = 'png'; for (const b of fmtSeg.children) b.setAttribute('aria-checked', String(b.dataset.v === 'png')); return; }
     O.fmt = id; qRow.hidden = !fmtOf().lossy; scheduleEstimate();
   });
-  const replaceBox = h('input', { type: 'checkbox', 'aria-label': 'Replace the originals instead of saving copies', onchange: () => { O.replace = replaceBox.checked; } });
-  const picker = pickerView(api, { multi: true, label: 'Pictures to convert', onChange: list => setItems(list) });
-  const convertBtn = h('button.btn.btn--primary', { type: 'button', onclick: () => convert() }, icon('refresh'), h('span', { text: 'Convert' }));
+  const stripBox = h('input', { type: 'checkbox', checked: true, 'aria-label': t('Remove photo data'), dataset: { fk: 'conv-strip' }, onchange: () => { O.strip = stripBox.checked; stripNote.hidden = O.strip; } });
+  const stripNote = h('small.pt__hint', { hidden: true, text: t('Kept only when the original and the result are both JPG. Anywhere else the copy is saved without it.') });
+  const replaceBox = h('input', { type: 'checkbox', 'aria-label': t('Replace the originals instead of saving copies'), onchange: () => { O.replace = replaceBox.checked; } });
+  const picker = pickerView(api, { multi: true, label: t('Pictures to convert'), onChange: list => setItems(list) });
+  const convertBtn = h('button.btn.btn--primary', { type: 'button', onclick: () => convert() }, icon('refresh'), h('span', { text: t('Convert') }));
   const side = h('div.pt__side',
     picker.el,
-    h('div.pt__group', h('b.pt__label', { text: 'Size' }), modeSeg, pctRow, pxRow),
-    h('div.pt__group', h('b.pt__label', { text: 'Format' }), fmtSeg, webpNote, qRow),
-    h('label.pt__check', replaceBox, h('span', { text: 'Replace the originals (asks first; otherwise copies are saved)' })),
+    h('div.pt__group', h('b.pt__label', { text: t('Size') }), modeSeg, pctRow, pxRow, longRow),
+    h('div.pt__group', h('b.pt__label', { text: t('Format') }), fmtSeg, webpNote, qRow),
+    h('div.pt__group', h('label.pt__check', stripBox, h('span', { text: t('Remove photo data (where it was taken, the camera, the date)') })), stripNote),
+    h('label.pt__check', replaceBox, h('span', { text: t('Replace the originals (asks first; otherwise copies are saved)') })),
     h('div.pt__actions', convertBtn));
   root.append(h('div.pt__split', main, side));
   paintRows();

@@ -1,19 +1,24 @@
 /* ============================================================
    arcade/moles.js — Whack-a-Mole for Static Arcade.
 
-   Nine holes in a 3 x 3 lawn and a 30-second round. Critters pop
-   up; whack them before they duck back down.
+   Nine holes in a 3 x 3 lawn (or sixteen in a 4 x 4) and a 30-second
+   round. Critters pop up; whack them before they duck back down.
 
      Mole         +10   the usual
      Golden mole  +30   quick, and rare
      Spike hog    -15   not one to whack (the score never drops below 0)
 
-   · Three speeds: Slow, Medium and Fast, chosen before the round
-     starts (click one, or press ← / →). The round gets a little
-     quicker as the clock runs down.
-   · Mouse or touch: press a hole. Keyboard: the number keys 1-9 are
-     the holes in reading order (1 2 3 along the top); on a numeric
-     keypad the keys sit where the holes do, 7 8 9 along the top.
+   · Three speeds (Slow, Medium, Fast) and two lawns (3 x 3, 4 x 4),
+     chosen before the round starts: click one, or press ← / → for the
+     speed and G for the lawn. The lawn is the Arcade's mode (ctx.mode),
+     so each lawn keeps its own best; picking one here asks the Arcade
+     for it (ctx.setMode) and the round is set up again, on the speed
+     you had picked. The round gets a little quicker as the clock runs
+     down.
+   · Mouse or touch: press a hole. Keyboard on 3 x 3: the number keys
+     1-9 are the holes in reading order (1 2 3 along the top); on a
+     numeric keypad the keys sit where the holes do, 7 8 9 along the
+     top. On 4 x 4: 1 2 3 4 / Q W E R / A S D F / Z X C V, row by row.
    · Space / Enter (or pressing anywhere off the speed buttons) starts.
    · Reduced motion: critters appear and vanish without sliding, and
      nothing bobs or flashes.
@@ -36,18 +41,26 @@ const KINDS = {
   hog:  { pts: -15, name: 'Spike hog', mult: 1 },
 };
 const BTN = SPEED_IDS.map((id, i) => ({ id, x: 60 + i * 130, y: 62, w: 120, h: 34 }));
-const holeXY = i => ({ x: GRID_X + (i % 3) * CELL + CELL / 2, y: GRID_Y + Math.floor(i / 3) * CELL + CELL / 2 + 22 });
+const GRID_BTN = [3, 4].map((n, i) => ({ n, x: 150 + i * 95, y: 14, w: 85, h: 30 }));
+/* the 4 x 4 lawn's keys, row by row */
+const KEYS4 = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyZ', 'KeyX', 'KeyC', 'KeyV'];
+/* the speed last picked, so a change of lawn (a new round, ctx.setMode) keeps it */
+let lastSpeed = 'medium';
 /* a numeric keypad is laid out with 7 8 9 on top: map it to holes spatially */
 const PAD = { Numpad7: 0, Numpad8: 1, Numpad9: 2, Numpad4: 3, Numpad5: 4, Numpad6: 5, Numpad1: 6, Numpad2: 7, Numpad3: 8 };
 
 export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
+    const pace = Number.isFinite(ctx.speed) ? clamp(ctx.speed, 0.5, 1) : 1;   /* the Arcade's game speed: the whole clock runs at this rate */
     const snd = sounder(ctx);
+    const N = ctx.mode === 'big' ? 4 : 3, HOLES = N * N;
+    const C = N === 4 ? 105 : CELL, K = C / CELL;                /* a hole's cell, and how much smaller than 3 x 3 it is drawn */
+    const holeXY = i => ({ x: GRID_X + (i % N) * C + C / 2, y: GRID_Y + Math.floor(i / N) * C + C / 2 + 22 * K });
     const S = {
       state: 'ready',                    /* ready | play | over */
       paused: false, manual: false, auto: true,
-      speed: 'medium', score: 0, left: ROUND, time: 0,
+      speed: SPEEDS[lastSpeed] ? lastSpeed : 'medium', score: 0, left: ROUND, time: 0,
       crit: [], spawnT: 0.5, hits: { mole: 0, gold: 0, hog: 0 }, misses: 0,
       pops: [], swing: null, sel: 0,
     };
@@ -57,6 +70,13 @@ export default {
 
     /* ------------------------------ rules ------------------------------ */
     const sp = () => SPEEDS[S.speed];
+    /* a speed is picked here; a different lawn is a different mode, so the Arcade sets the round up again in it */
+    function choose(speed, n) {
+      if (S.state !== 'ready') return;
+      S.speed = speed; lastSpeed = speed;
+      if (n !== N && typeof ctx.setMode === 'function') ctx.setMode(n === 4 ? 'big' : 'small');
+    }
+    const maxUp = () => sp().max + (N === 4 ? 1 : 0);
     const ramp = () => 1 - 0.28 * clamp((ROUND - S.left) / ROUND, 0, 1);
     const critAt = h => S.crit.find(c => c.hole === h && c.state === 'up');
 
@@ -71,7 +91,7 @@ export default {
       return true;
     }
     function randomSpawn() {
-      const free = [...Array(9).keys()].filter(h => !S.crit.some(c => c.hole === h));
+      const free = [...Array(HOLES).keys()].filter(h => !S.crit.some(c => c.hole === h));
       if (!free.length) return;
       const hole = free[Math.floor(Math.random() * free.length)];
       const r = Math.random();
@@ -109,19 +129,19 @@ export default {
       S.crit = S.crit.filter(c => c.state !== 'gone');
       if (S.left <= 0) {
         S.left = 0; S.state = 'over'; S.crit = [];
-        ctx.onEnd({ score: S.score, won: false, detail: `${S.hits.mole + S.hits.gold} critter${S.hits.mole + S.hits.gold === 1 ? '' : 's'} whacked${S.hits.gold ? ` (${S.hits.gold} golden)` : ''}${S.hits.hog ? ` · ${S.hits.hog} spike hog${S.hits.hog === 1 ? '' : 's'} hit` : ''} · ${sp().name}` });
+        ctx.onEnd({ score: S.score, won: false, detail: `${S.hits.mole + S.hits.gold} critter${S.hits.mole + S.hits.gold === 1 ? '' : 's'} whacked${S.hits.gold ? ` (${S.hits.gold} golden)` : ''}${S.hits.hog ? ` · ${S.hits.hog} spike hog${S.hits.hog === 1 ? '' : 's'} hit` : ''} · ${sp().name} · ${N} × ${N}` });
         return;
       }
       if (S.auto) {
         S.spawnT -= dt;
         if (S.spawnT <= 0) {
-          if (S.crit.filter(c => c.state === 'up').length < sp().max) randomSpawn();
+          if (S.crit.filter(c => c.state === 'up').length < maxUp()) randomSpawn();
           S.spawnT = sp().spawn * ramp() * (0.7 + Math.random() * 0.6);
         }
       }
     }
     const loop = looper(dt => {
-      if (!S.manual) update(dt);
+      if (!S.manual) update(dt * pace);
       draw();
       if (S.state === 'over' && !S.pops.length) loop.stop();
     });
@@ -187,6 +207,13 @@ export default {
       g.fillStyle = lawn; g.fillRect(0, 0, VW, VH);
       g.fillStyle = 'rgba(255,255,255,.05)';
       for (let i = 0; i < 40; i++) g.fillRect((i * 97) % VW, 112 + (i * 61) % (VH - 120), 3, 8);
+      if (S.state === 'ready') for (const b of GRID_BTN) {          /* the lawn: 3 x 3 or 4 x 4 */
+        const on = b.n === N;
+        g.fillStyle = on ? hsl(140, 70, 52) : 'rgba(0,0,0,.35)'; rr(g, b.x, b.y, b.w, b.h, 9); g.fill();
+        g.strokeStyle = on ? hsl(140, 80, 78) : 'rgba(255,255,255,.2)'; g.lineWidth = 1.5; rr(g, b.x, b.y, b.w, b.h, 9); g.stroke();
+        g.fillStyle = on ? '#06200c' : '#e8f0e6'; g.font = `700 13px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(`${b.n} × ${b.n}`, b.x + b.w / 2, b.y + b.h / 2 + 1);
+      }
 
       /* header: speed buttons or the clock */
       if (S.state === 'ready') {
@@ -206,8 +233,11 @@ export default {
       }
 
       /* the lawn */
-      for (let i = 0; i < 9; i++) {
-        const { x, y } = holeXY(i);
+      for (let i = 0; i < HOLES; i++) {
+        const { x: hx, y: hy } = holeXY(i);
+        /* each hole is drawn at the 3 x 3 size round its own centre, scaled down on 4 x 4 */
+        g.save(); g.translate(hx, hy); g.scale(K, K);
+        const x = 0, y = 0;
         g.fillStyle = hsl(28, 40, 24); g.beginPath(); g.ellipse(x, y + 4, 62, 24, 0, 0, Math.PI * 2); g.fill();
         g.fillStyle = hsl(24, 30, 10); g.beginPath(); g.ellipse(x, y, 52, 18, 0, 0, Math.PI * 2); g.fill();
         const c = S.crit.find(q => q.hole === i);
@@ -215,13 +245,14 @@ export default {
         g.fillStyle = hsl(28, 45, 34); g.beginPath(); g.ellipse(x, y + 4, 62, 24, 0, 0, Math.PI); g.fill();   /* the front lip hides the critter's base */
         g.fillStyle = hsl(28, 40, 42); g.beginPath(); g.ellipse(x, y + 8, 56, 17, 0, 0, Math.PI); g.fill();
         g.fillStyle = 'rgba(255,255,255,.78)'; g.font = `700 14px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.fillText(String(i + 1), x, y + 11);
+        g.fillText(N === 4 ? KEYS4[i].slice(-1) : String(i + 1), x, y + 11);
+        g.restore();
       }
-      if (S.swing) { const { x, y } = holeXY(S.swing.hole); mallet(g, x, y, S.swing.t); }
+      if (S.swing) { const { x, y } = holeXY(S.swing.hole); g.save(); g.translate(x, y); g.scale(K, K); mallet(g, 0, 0, S.swing.t); g.restore(); }
       for (const q of S.pops) { g.fillStyle = hsl(q.hue, 100, 72, clamp(q.t * 2, 0, 1)); g.font = `800 24px ${FONT}`; g.textAlign = 'center'; g.fillText(q.text, q.x, q.y); }
       g.restore();
 
-      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Tap a speed, then tap anywhere to start' : 'Pick a speed, then press Space', coarse() ? 'Tap the moles. Skip the spike hogs.' : 'Click or press 1-9 to whack. Skip the spike hogs.', 48, sf.h * 0.9);
+      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Tap a speed and a lawn, then tap anywhere to start' : 'Pick a speed (← →) and a lawn (G), then press Space', coarse() ? 'Tap the moles. Skip the spike hogs.' : N === 4 ? 'Click, or 1-4 Q-R A-F Z-V, to whack. Skip the spike hogs.' : 'Click or press 1-9 to whack. Skip the spike hogs.', 48, sf.h * 0.9);
     }
 
     /* ------------------------------ input ------------------------------ */
@@ -230,9 +261,9 @@ export default {
       return { x: (e.clientX - r.left - V.ox) / V.s, y: (e.clientY - r.top - V.oy) / V.s };
     };
     const holeAt = p => {
-      for (let i = 0; i < 9; i++) {
+      for (let i = 0; i < HOLES; i++) {
         const { x, y } = holeXY(i);
-        if (Math.abs(p.x - x) < 66 && p.y > y - 96 && p.y < y + 34) return i;
+        if (Math.abs(p.x - x) < 66 * K && p.y > y - 96 * K && p.y < y + 34 * K) return i;
       }
       return -1;
     };
@@ -242,7 +273,9 @@ export default {
       const p = toWorld(e);
       if (S.state === 'ready') {
         const b = BTN.find(q => p.x >= q.x && p.x <= q.x + q.w && p.y >= q.y && p.y <= q.y + q.h);
-        if (b) { S.speed = b.id; draw(); return; }
+        if (b) { choose(b.id, N); draw(); return; }
+        const gb = GRID_BTN.find(q => p.x >= q.x && p.x <= q.x + q.w && p.y >= q.y && p.y <= q.y + q.h);
+        if (gb) { choose(S.speed, gb.n); return; }
         start(); draw(); return;
       }
       const h = holeAt(p);
@@ -252,7 +285,8 @@ export default {
       if (!ownsKey(el, e)) return;
       if (S.paused || S.state === 'over') return;
       let h = -1;
-      if (/^Digit[1-9]$/.test(e.code)) h = Number(e.code.slice(5)) - 1;
+      if (N === 4) h = KEYS4.indexOf(e.code);
+      else if (/^Digit[1-9]$/.test(e.code)) h = Number(e.code.slice(5)) - 1;
       else if (e.code in PAD) h = PAD[e.code];
       if (h >= 0) {
         e.preventDefault();
@@ -262,7 +296,9 @@ export default {
       } else if (S.state === 'ready' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault();
         const i = SPEED_IDS.indexOf(S.speed);
-        S.speed = SPEED_IDS[clamp(i + (e.key === 'ArrowLeft' ? -1 : 1), 0, 2)];
+        choose(SPEED_IDS[clamp(i + (e.key === 'ArrowLeft' ? -1 : 1), 0, 2)], N);
+      } else if (S.state === 'ready' && e.code === 'KeyG') {
+        e.preventDefault(); choose(S.speed, N === 3 ? 4 : 3);
       } else if (S.state === 'ready' && (e.key === ' ' || e.key === 'Enter')) {
         e.preventDefault(); snd.wake(); start();
       } else return;
@@ -286,10 +322,11 @@ export default {
       resume() { S.paused = false; if (S.state !== 'over') loop.start(); },
       /* a read-only snapshot for automated play-tests; hole centres are in canvas pixels */
       peek: () => ({
-        state: S.state, paused: S.paused, score: S.score, left: S.left, time: S.time, speed: S.speed, hits: { ...S.hits }, misses: S.misses,
+        state: S.state, paused: S.paused, score: S.score, left: S.left, time: S.time, speed: S.speed, pace, hits: { ...S.hits }, misses: S.misses,
         crit: S.crit.map(c => ({ hole: c.hole, kind: c.kind, state: c.state, t: c.t, life: c.life })),
-        holes: [...Array(9).keys()].map(i => { const p = holeXY(i); return { x: V.ox + p.x * V.s, y: V.oy + (p.y - 30) * V.s, r: 30 * V.s }; }),
+        holes: [...Array(HOLES).keys()].map(i => { const p = holeXY(i); return { x: V.ox + p.x * V.s, y: V.oy + (p.y - 30 * K) * V.s, r: 30 * K * V.s }; }),
         buttons: BTN.map(b => ({ id: b.id, x: V.ox + (b.x + b.w / 2) * V.s, y: V.oy + (b.y + b.h / 2) * V.s })),
+        grids: GRID_BTN.map(b => ({ n: b.n, x: V.ox + (b.x + b.w / 2) * V.s, y: V.oy + (b.y + b.h / 2) * V.s })), grid: N, mode: N === 4 ? 'big' : 'small',
       }),
       /* test hook — nothing in the game calls it:
          manual(bool: stop the clock, step it by hand) · step(seconds) · auto(bool: spawn on its own)

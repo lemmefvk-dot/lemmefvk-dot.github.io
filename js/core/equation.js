@@ -17,6 +17,26 @@
        { ok:true, type:'linear'|'quadratic'|'none'|'all', v, input,
          steps:[{ say, eq? }], answer:{ lines:[...] }, check:[{ say, eq? }],
          verified, roots:[{ exact, decimal }] }
+     A text with <, >, ≤ or ≥ (or <= >=) instead of = is a LINEAR
+     INEQUALITY, solved the same way, with the one extra rule that
+     multiplying or dividing both sides by a negative number flips the
+     sign: { type:'inequality', rel, bound:{ exact, decimal, value },
+     interval, line:{ dir, open } (for the number line), …, 'all' or
+     'none' when no x is left }. The check tries a number inside the
+     answer, one outside it and the boundary itself, exactly.
+
+     solveSystem(text1, text2) -> two LINEAR equations in two letters
+       (2x + 3y = 12, x − y = 1), by elimination: both are written as
+       ax + by = c with whole numbers, one is scaled so a letter has the
+       same coefficient in both, they are added or subtracted, and the
+       value found is put back into one equation for the other letter.
+       D = a₁b₂ − a₂b₁ = 0 means parallel lines (no solution) or the same
+       line twice (infinitely many). { type:'system'|'none'|'all', vars,
+       lines:[{ a, b, c }], solution:{ [letter]: exact } , … }
+
+     graphExprs(result) -> what Static Graph can plot for it: each side
+       of an equation or inequality as y = …, each line of a system
+       solved for y (a vertical line as a parametric curve).
    ============================================================ */
 
 export class EqError extends Error {
@@ -72,6 +92,11 @@ function tokenize(src) {
     if (/[A-Za-z]/.test(ch)) { out.push({ k: 'var', v: ch.toLowerCase(), pos: i, raw: ch }); i++; continue; }
     if (ch === '²' || ch === '³') { out.push({ k: 'op', v: '^', pos: i, raw: ch }, { k: 'num', v: F(ch === '²' ? 2 : 3), pos: i, raw: ch }); i++; continue; }
     if (ch === '*' && src[i + 1] === '*') { out.push({ k: 'op', v: '^', pos: i, raw: '**' }); i += 2; continue; }
+    if (ch === '<' || ch === '>' || ch === '≤' || ch === '≥') {
+      const eq = src[i + 1] === '=';
+      out.push({ k: 'rel', v: ch === '≤' || (ch === '<' && eq) ? '<=' : ch === '≥' || (ch === '>' && eq) ? '>=' : ch, pos: i, raw: eq ? src.slice(i, i + 2) : ch });
+      i += eq ? 2 : 1; continue;
+    }
     const map = { '−': '-', '–': '-', '—': '-', '×': '*', '·': '*', '∙': '*', '÷': '/', '＝': '=' };
     const c = map[ch] || ch;
     if ('+-*/^'.includes(c)) { out.push({ k: 'op', v: c, pos: i, raw: ch }); i++; continue; }
@@ -84,8 +109,8 @@ function tokenize(src) {
 }
 
 /* ---------- parser: tokens of one side -> syntax tree ---------- */
-function parseSide(tokens, side, srcLen) {
-  if (!tokens.length) throw new EqError(`There’s nothing ${side === 'left' ? 'before' : 'after'} the equals sign. Write something on both sides, like 2x + 1 = 7.`, srcLen);
+function parseSide(tokens, side, srcLen, sign = 'the equals sign') {
+  if (!tokens.length) throw new EqError(`There’s nothing ${side === 'left' ? 'before' : 'after'} ${sign}. Write something on both sides, like ${sign === 'the equals sign' ? '2x + 1 = 7' : '2x + 1 < 7'}.`, srcLen);
   let i = 0;
   const peek = () => tokens[i];
   const startsFactor = t => t && (t.k === 'num' || t.k === 'var' || t.k === '(');
@@ -142,6 +167,7 @@ function parseSide(tokens, side, srcLen) {
   function unexpected(t) {
     if (t.k === ')') throw new EqError(`There’s a closing bracket “${t.raw}” at character ${t.pos + 1} with no matching “(”.`, t.pos);
     if (t.k === 'op' && i === 0) throw new EqError(`An equation can’t start with “${t.raw}” (character ${t.pos + 1}).`, t.pos);
+    if (t.k === 'rel' || t.k === '=') throw new EqError(`I didn’t expect “${t.raw}” at character ${t.pos + 1}.`, t.pos);
     throw new EqError(`I didn’t expect “${t.raw}” at character ${t.pos + 1}${t.k === 'op' ? ': two operators in a row, or an operator with nothing after it' : ''}.`, t.pos);
   }
   const tree = expr();
@@ -149,20 +175,35 @@ function parseSide(tokens, side, srcLen) {
   return tree;
 }
 
-export function parseEquation(text) {
+export const REL_SIGN = { '=': '=', '<': '<', '>': '>', '<=': '≤', '>=': '≥' };
+/** Text -> { left, right, v, names, rel }: one relation (= < > ≤ ≥) between two sides, at most `vars` letters. */
+export function parseRelation(text, { vars = 1 } = {}) {
   const src = String(text ?? '');
   if (src.length > 200) throw new EqError('That’s too long for me. Keep the equation under 200 characters.');
   if (!src.trim()) throw new EqError('Type an equation, like 3x + 5 = 2x − 7 or x^2 − 5x + 6 = 0.');
   const toks = tokenize(src);
-  const eqs = toks.filter(t => t.k === '=');
-  if (!eqs.length) throw new EqError('An equation needs an equals sign (=), like 2x + 1 = 7. I can’t solve an expression on its own.');
-  if (eqs.length > 1) throw new EqError(`Only one equals sign (=) is allowed; I found ${eqs.length} (the second is at character ${eqs[1].pos + 1}).`, eqs[1].pos);
-  const at = toks.findIndex(t => t.k === '=');
-  const left = parseSide(toks.slice(0, at), 'left', eqs[0].pos);
-  const right = parseSide(toks.slice(at + 1), 'right', src.length);
+  const rels = toks.filter(t => t.k === '=' || t.k === 'rel');
+  if (!rels.length) throw new EqError('An equation needs an equals sign (=), like 2x + 1 = 7. I can’t solve an expression on its own.');
+  if (rels.length > 1) {
+    if (rels.every(t => t.k === '=')) throw new EqError(`Only one equals sign (=) is allowed; I found ${rels.length} (the second is at character ${rels[1].pos + 1}).`, rels[1].pos);
+    throw new EqError(`Use one sign between the two sides (=, <, >, ≤ or ≥); I found ${rels.length} (the second is at character ${rels[1].pos + 1}). A double inequality like 1 < x < 5 is two inequalities: solve each one.`, rels[1].pos);
+  }
+  const at = toks.indexOf(rels[0]);
+  const rel = rels[0].k === '=' ? '=' : rels[0].v;
+  const sign = rel === '=' ? 'the equals sign' : `the “${REL_SIGN[rel]}” sign`;
+  const left = parseSide(toks.slice(0, at), 'left', rels[0].pos, sign);
+  const right = parseSide(toks.slice(at + 1), 'right', src.length, sign);
   const names = [...new Set(toks.filter(t => t.k === 'var').map(t => t.v))];
-  if (names.length > 1) throw new EqError(`I found more than one unknown letter (${names.join(', ')}). I can only solve for one letter at a time.`);
-  return { left, right, v: names[0] || 'x' };
+  if (names.length > vars) {
+    if (vars === 1) throw new EqError(`I found more than one unknown letter (${names.join(', ')}). I can only solve for one letter at a time; for two unknowns, use Two equations.`);
+    throw new EqError(`I found ${names.length} unknown letters (${names.join(', ')}). Two equations can only have two unknowns, like x and y.`);
+  }
+  return { left, right, v: names[0] || 'x', names, rel };
+}
+export function parseEquation(text) {
+  const p = parseRelation(text);
+  if (p.rel !== '=') throw new EqError('That’s an inequality, not an equation.');
+  return p;
 }
 
 /* ---------- polynomials with exact coefficients ---------- */
@@ -281,7 +322,7 @@ function show(n, sub, v) {
   function go(m) {
     switch (m.t) {
       case 'num': return num(m.v);
-      case 'var': return sub != null ? sub : v;
+      case 'var': return sub != null ? (typeof sub === 'object' ? (sub[m.name] ?? m.name) : sub) : v;
       case 'grp': return `(${go(m.a)})`;
       case 'neg': return '−' + wrap(m.a, 4);
       case 'add': return `${wrap(m.a, 1)} + ${wrap(m.b, 2)}`;
@@ -338,11 +379,11 @@ const mono = (c, v = 'x', k = 1) => polyStr([...Array(k).fill(ZERO), c], v);
 /* ---------- the solver ---------- */
 export function solveEquation(text) {
   let P;
-  try { P = parseEquation(text); } catch (e) {
+  try { P = parseRelation(text); } catch (e) {
     if (e instanceof EqError) return { ok: false, error: e.message, pos: e.pos };
     throw e;
   }
-  try { return solveParsed(P); } catch (e) {
+  try { return P.rel === '=' ? solveParsed(P) : solveInequality(P); } catch (e) {
     if (e instanceof EqError) return { ok: false, error: e.message, pos: e.pos };
     throw e;
   }
@@ -359,7 +400,7 @@ function solveParsed({ left, right, v }) {
   const d = Math.max(deg(L), deg(R));
   if (d > 2 && deg(Pp) > 2) throw TOO_HIGH(deg(Pp));
 
-  const base = { ok: true, v, input };
+  const base = { ok: true, v, input, graph: [polyAscii(L), polyAscii(R)] };
   const finish = (type, answerLines, extra = {}) => ({ ...base, type, steps, answer: { lines: answerLines }, check, ...extra });
   const eqLine = (l, r) => `${l} = ${r}`;
   say('Start with the equation.', input);
@@ -535,4 +576,282 @@ function solveParsed({ left, right, v }) {
   return finish('linear', [`${v} = ${fstr(root)}${dec ? ` (= ${dec})` : ''}`], { verified: check.every(c => !/does NOT/.test(c.say)), roots: [{ exact: fstr(root), decimal: dec }] });
 }
 
-export default { solveEquation, parseEquation, EqError };
+
+/* ---------- inequalities ---------- */
+const FLIP = { '<': '>', '>': '<', '<=': '>=', '>=': '<=' };
+const holds = (cmp, rel) => (rel === '<' ? cmp < 0 : rel === '>' ? cmp > 0 : rel === '<=' ? cmp <= 0 : cmp >= 0);
+const fcmp = (a, b) => fsign(fsub(a, b));
+
+function solveInequality({ left, right, v, rel }) {
+  const L = toPoly(left), R = toPoly(right);
+  if (deg(psub(L, R)) > 1) throw new EqError(`That inequality has an ${v}² term that doesn’t cancel. I can solve linear inequalities, like 3${v} + 5 < 2${v} − 7. For a quadratic one, solve the equation (= 0) here, then test a number between the roots and one outside them.`);
+  const sg = r => REL_SIGN[r];
+  const steps = [], check = [];
+  const say = (s, eq) => steps.push(eq === undefined ? { say: s } : { say: s, eq });
+  const input = `${show(left, null, v)} ${sg(rel)} ${show(right, null, v)}`;
+  const line = (l, r, op) => `${l} ${sg(op)} ${r}`;
+  say('Start with the inequality. It is solved like an equation, with one extra rule: multiplying or dividing both sides by a negative number flips the sign.', input);
+  const L2 = L[2] || ZERO, R2 = R[2] || ZERO;
+  const l1 = L[1] || ZERO, l0 = L[0] || ZERO, r1 = R[1] || ZERO, r0 = R[0] || ZERO;
+  if (!fz(L2) || !fz(R2)) say(`The ${v}² terms are the same on both sides, so they cancel (subtract ${mono(L2, v, 2)} from both sides).`);
+  const sideStr = (c1, c0) => polyStr([c0, c1], v);
+  const simplified = line(sideStr(l1, l0), sideStr(r1, r0), rel);
+  if (input.replace(/[\s()·]/g, '') !== simplified.replace(/[\s()·]/g, '') || !fz(L2) || !fz(R2)) say('Expand the brackets and combine like terms on each side.', simplified);
+  let A = l1;
+  if (!fz(r1)) {
+    A = fsub(l1, r1);
+    say(`Subtract ${mono(r1, v)} from both sides to collect the ${v} terms on the left. Adding or subtracting the same thing on both sides never changes the sign.`, line(sideStr(A, l0), fstr(r0), rel));
+  }
+  const base = { ok: true, v, input, rel, graph: [polyAscii(L), polyAscii(R)] };
+  const done = (type, lines, extra = {}) => ({ ...base, type, steps, answer: { lines }, check, ...extra });
+  let verified = true;
+  const sx = x => (/[−\s/]/.test(fstr(x)) ? `(${fstr(x)})` : fstr(x));
+  const tryAt = (x, want, label) => {
+    const X = lift(x, 1);
+    const lv = evalAst(left, X).a, rv = evalAst(right, X).a;
+    const good = holds(fcmp(lv, rv), rel);
+    verified = verified && good === want;
+    check.push({ say: `${label}: put ${v} = ${fstr(x)} into the original inequality.`, eq: [`Left: ${show(left, sx(x), v)} = ${fstr(lv)}`, `Right: ${show(right, sx(x), v)} = ${fstr(rv)}`] });
+    check.push({ say: `${fstr(lv)} ${sg(rel)} ${fstr(rv)} is ${good ? 'true' : 'false'}${good === want ? ', as the answer says it should be' : ', which does NOT fit the answer'}.` });
+  };
+  if (fz(A)) {
+    const always = holds(fcmp(l0, r0), rel);
+    say(`The ${v} terms cancel completely, leaving a statement about numbers only.`, line(fstr(l0), fstr(r0), rel));
+    say(always ? `${fstr(l0)} ${sg(rel)} ${fstr(r0)} is always true, whatever ${v} is, so every number is a solution.` : `${fstr(l0)} ${sg(rel)} ${fstr(r0)} is never true, whatever ${v} is, so no number is a solution.`);
+    for (const x of [F(0), F(5)]) tryAt(x, always, 'Try a number');
+    return done(always ? 'all' : 'none', [always ? `True for every ${v}: all real numbers.` : 'No solution.'], { verified, interval: always ? '(−∞, ∞)' : 'none', line: always ? { all: true } : { none: true } });
+  }
+  let B = r0;
+  if (!fz(l0)) {
+    B = fsub(r0, l0);
+    say(`${l0.n > 0n ? 'Subtract' : 'Add'} ${fstr(fabs(l0))} ${l0.n > 0n ? 'from' : 'to'} both sides to collect the numbers on the right (${fstr(r0)} ${l0.n > 0n ? '−' : '+'} ${fstr(fabs(l0))} = ${fstr(B)}).`, line(polyStr([ZERO, A], v), fstr(B), rel));
+  }
+  const bound = fdiv(B, A);
+  let op = rel;
+  if (!feq(A, ONE)) {
+    if (A.n < 0n) { op = FLIP[rel]; say(`Divide both sides by ${fstr(A)}. That is a negative number, so the sign flips: ${sg(rel)} becomes ${sg(op)}.`, line(v, fstr(bound), op)); }
+    else say(`Divide both sides by ${fstr(A)} to get ${v} on its own. ${fstr(A)} is positive, so the sign stays ${sg(rel)}.`, line(v, fstr(bound), op));
+  }
+  const open = op === '<' || op === '>';
+  const dir = op === '<' || op === '<=' ? 'left' : 'right';
+  tryAt(dir === 'left' ? fsub(bound, ONE) : fadd(bound, ONE), true, 'A number in the answer');
+  tryAt(dir === 'left' ? fadd(bound, ONE) : fsub(bound, ONE), false, 'A number outside it');
+  tryAt(bound, !open, 'The boundary');
+  check.push({ say: open ? `At ${v} = ${fstr(bound)} the sides are equal, and equal is not ${sg(op)}, so ${fstr(bound)} itself is left out: an open circle on the number line.` : `At ${v} = ${fstr(bound)} the sides are equal, which ${sg(op)} allows, so ${fstr(bound)} is included: a filled circle on the number line.` });
+  const dec = isInt(bound) ? null : approx(fnum(bound));
+  const interval = dir === 'left' ? `(−∞, ${fstr(bound)}${open ? ')' : ']'}` : `${open ? '(' : '['}${fstr(bound)}, ∞)`;
+  return done('inequality', [`${v} ${sg(op)} ${fstr(bound)}${dec ? ` (≈ ${dec})` : ''}`, `In interval notation: ${interval}`],
+    { verified, op, interval, bound: { exact: fstr(bound), decimal: dec, value: fnum(bound) }, line: { dir, open, at: fnum(bound), label: fstr(bound) } });
+}
+
+/* ---------- two equations in two letters ---------- */
+/* the tree as  k₀·X + k₁·Y + c, exactly; anything not linear is refused */
+function toLin(n, names) {
+  const none = () => [ZERO, ZERO];
+  const hasV = a => !fz(a.k[0]) || !fz(a.k[1]);
+  const each = (a, f) => ({ c: f(a.c), k: a.k.map(f) });
+  const NONLIN = 'Two unknowns multiplied together, or a power of one (like xy or x²), make it non-linear. Two equations here must be linear, like 2x + 3y = 12.';
+  switch (n.t) {
+    case 'num': return { c: n.v, k: none() };
+    case 'var': { const k = none(); k[names.indexOf(n.name)] = ONE; return { c: ZERO, k }; }
+    case 'grp': return toLin(n.a, names);
+    case 'neg': return each(toLin(n.a, names), fneg);
+    case 'add': case 'sub': {
+      const a = toLin(n.a, names), b = toLin(n.b, names), op = n.t === 'add' ? fadd : fsub;
+      return { c: op(a.c, b.c), k: [op(a.k[0], b.k[0]), op(a.k[1], b.k[1])] };
+    }
+    case 'mul': {
+      const a = toLin(n.a, names), b = toLin(n.b, names);
+      if (hasV(a) && hasV(b)) throw new EqError(NONLIN);
+      const [k, other] = hasV(a) ? [b.c, a] : [a.c, b];
+      return each(other, x => fmul(x, k));
+    }
+    case 'div': {
+      const b = toLin(n.b, names);
+      if (hasV(b)) throw new EqError('There’s an unknown in a denominator. Divide only by plain numbers, like x/2.');
+      if (fz(b.c)) throw new EqError('That divides by zero.');
+      return each(toLin(n.a, names), x => fdiv(x, b.c));
+    }
+    case 'pow': {
+      const e = toLin(n.b, names);
+      if (hasV(e) || !isInt(e.c)) throw new EqError('Powers must be whole numbers, like 2^3.');
+      const k = Number(e.c.n), a = toLin(n.a, names);
+      if (hasV(a)) { if (k === 1) return a; if (k === 0) return { c: ONE, k: none() }; throw new EqError(NONLIN); }
+      if (Math.abs(k) > 12) throw new EqError('That power is too large for me to work out exactly.');
+      let r = ONE;
+      for (let i = 0; i < Math.abs(k); i++) r = fmul(r, a.c);
+      if (k < 0) { if (fz(r)) throw new EqError('That divides by zero.'); r = fdiv(ONE, r); }
+      return { c: r, k: none() };
+    }
+    default: throw new EqError('I couldn’t read that.');
+  }
+}
+/* the exact value of a tree, with each letter given */
+function evalF(n, env) {
+  switch (n.t) {
+    case 'num': return n.v;
+    case 'var': return env[n.name];
+    case 'grp': return evalF(n.a, env);
+    case 'neg': return fneg(evalF(n.a, env));
+    case 'add': return fadd(evalF(n.a, env), evalF(n.b, env));
+    case 'sub': return fsub(evalF(n.a, env), evalF(n.b, env));
+    case 'mul': return fmul(evalF(n.a, env), evalF(n.b, env));
+    case 'div': return fdiv(evalF(n.a, env), evalF(n.b, env));
+    case 'pow': {
+      const k = Number(evalF(n.b, env).n), b = evalF(n.a, env);
+      let r = ONE;
+      for (let i = 0; i < Math.abs(k); i++) r = fmul(r, b);
+      return k < 0 ? fdiv(ONE, r) : r;
+    }
+    default: throw new EqError('I couldn’t read that.');
+  }
+}
+const lin2 = (a, b, X, Y) => {
+  const parts = [];
+  if (!fz(a)) parts.push({ neg: a.n < 0n, body: mono(fabs(a), X) });
+  if (!fz(b)) parts.push({ neg: b.n < 0n, body: mono(fabs(b), Y) });
+  if (!parts.length) return '0';
+  return parts.map((t, i) => (i ? (t.neg ? ' − ' : ' + ') : (t.neg ? '−' : '')) + t.body).join('');
+};
+
+export function solveSystem(text1, text2) {
+  try {
+    const P = [text1, text2].map((t, i) => {
+      try { return parseRelation(t, { vars: 2 }); } catch (e) { if (e instanceof EqError) e.message = `Equation ${i + 1}: ${e.message}`; throw e; }
+    });
+    if (P.some(p => p.rel !== '=')) throw new EqError('Each of the two needs an equals sign. An inequality goes in One equation, on its own.');
+    const names = [...new Set([...P[0].names, ...P[1].names])].sort();
+    if (names.length > 2) throw new EqError(`I found ${names.length} unknown letters (${names.join(', ')}). Two equations can have two unknowns, like x and y.`);
+    if (names.length < 2) throw new EqError(names.length ? `Both equations only have ${names[0]} in them. Two equations need two unknowns, like x and y; for one, use One equation.` : 'There are no unknown letters in these equations.');
+    return solveSys(P, names);
+  } catch (e) {
+    if (e instanceof EqError) return { ok: false, error: e.message, pos: e.pos };
+    throw e;
+  }
+}
+
+function solveSys(P, names) {
+  const [X, Y] = names;
+  const steps = [], check = [];
+  const say = (s, eq) => steps.push(eq === undefined ? { say: s } : { say: s, eq });
+  const inputs = P.map(p => `${show(p.left, {}, X)} = ${show(p.right, {}, X)}`);
+  say('Start with the two equations, numbered (1) and (2).', inputs.map((t, i) => `(${i + 1})  ${t}`));
+  /* ax + by = c with whole numbers, no common factor, a positive first coefficient */
+  const rows = P.map(p => {
+    const l = toLin(p.left, names), r = toLin(p.right, names);
+    let a = fsub(l.k[0], r.k[0]), b = fsub(l.k[1], r.k[1]), c = fsub(r.c, l.c);
+    let m = 1n;
+    for (const q of [a, b, c]) m = (m * q.d) / gcdB(m, q.d);
+    if (m > 1n) [a, b, c] = [a, b, c].map(q => fmul(q, F(m)));
+    const g = gcdB(gcdB(a.n, b.n), c.n);
+    if (g > 1n) [a, b, c] = [a, b, c].map(q => fdiv(q, F(g)));
+    if (a.n < 0n || (fz(a) && b.n < 0n)) [a, b, c] = [a, b, c].map(fneg);
+    return { a, b, c };
+  });
+  const rowText = r => `${lin2(r.a, r.b, X, Y)} = ${fstr(r.c)}`;
+  if (rows.some((r, i) => rowText(r).replace(/\s/g, '') !== inputs[i].replace(/\s/g, ''))) {
+    say(`Tidy each one: the ${X} and ${Y} terms on the left, the number on the right, in whole numbers with no common factor.`, rows.map((r, i) => `(${i + 1})  ${rowText(r)}`));
+  }
+  const graph = rows.map(r => (fz(r.b) ? (fz(r.a) ? null : { kind: 'param', expr: numAscii(fdiv(r.c, r.a)), expr2: 't', tmin: '-100', tmax: '100' }) : { kind: 'y', expr: polyAscii([fdiv(r.c, r.b), fneg(fdiv(r.a, r.b))]) })).filter(Boolean);
+  const base = { ok: true, vars: names, inputs, rows: rows.map(r => ({ a: fstr(r.a), b: fstr(r.b), c: fstr(r.c) })), graph };
+  const done = (type, lines, extra = {}) => ({ ...base, type, steps, answer: { lines }, check, ...extra });
+  /* an equation with no letters left is a plain statement */
+  for (const [i, r] of rows.entries()) {
+    if (!fz(r.a) || !fz(r.b)) continue;
+    if (fz(r.c)) {
+      say(`Equation (${i + 1}) is 0 = 0 once it is tidied: true for every ${X} and ${Y}, so it tells you nothing. Every point on the other line is a solution.`);
+      return done('all', ['Infinitely many solutions: one equation is always true.'], { verified: true });
+    }
+    say(`Equation (${i + 1}) is 0 = ${fstr(r.c)} once it is tidied, which is never true, so no ${X} and ${Y} can make both true.`);
+    return done('none', ['No solution.'], { verified: true });
+  }
+  const [r1, r2] = rows;
+  const D = fsub(fmul(r1.a, r2.b), fmul(r2.a, r1.b));
+  if (fz(D)) {
+    const same = fz(fsub(fmul(r1.a, r2.c), fmul(r2.a, r1.c))) && fz(fsub(fmul(r1.b, r2.c), fmul(r2.b, r1.c)));
+    say(`Work out D = a₁b₂ − a₂b₁ = ${fstr(r1.a)} · ${fstr(r2.b)} − ${fstr(r2.a)} · ${fstr(r1.b)} = 0. D = 0 means the two lines have the same slope.`);
+    if (same) {
+      say('The two equations are the same line (one is a multiple of the other), so every point on it works.');
+      return done('all', [`Infinitely many solutions: every point on ${rowText(r1)}.`], { verified: true });
+    }
+    say('They are parallel lines that never meet, so no point is on both.');
+    return done('none', ['No solution: the lines are parallel.'], { verified: true });
+  }
+  let xv;
+  const solo = fz(r1.b) ? 0 : fz(r2.b) ? 1 : -1;
+  if (solo >= 0) {
+    const r = rows[solo];
+    xv = fdiv(r.c, r.a);
+    say(`Equation (${solo + 1}) has no ${Y} in it, so it gives ${X} straight away${feq(r.a, ONE) ? '' : `: divide both sides by ${fstr(r.a)}`}.`, `${X} = ${fstr(xv)}`);
+  } else {
+    const B1 = fabs(r1.b).n, B2 = fabs(r2.b).n;
+    const L = (B1 * B2) / gcdB(B1, B2);
+    const m1 = L / B1, m2 = L / B2;
+    const s1 = { a: fmul(r1.a, F(m1)), b: fmul(r1.b, F(m1)), c: fmul(r1.c, F(m1)) };
+    const s2 = { a: fmul(r2.a, F(m2)), b: fmul(r2.b, F(m2)), c: fmul(r2.c, F(m2)) };
+    if (m1 > 1n || m2 > 1n) {
+      say(`Make the ${Y} terms the same size (${L}${Y}): ${[m1 > 1n ? `multiply (1) by ${m1}` : '', m2 > 1n ? `multiply (2) by ${m2}` : ''].filter(Boolean).join(' and ')}.`,
+        [`(1)  ${rowText(s1)}`, `(2)  ${rowText(s2)}`]);
+    }
+    const sameSign = fsign(s1.b) === fsign(s2.b);
+    const ax = sameSign ? fsub(s1.a, s2.a) : fadd(s1.a, s2.a), cx = sameSign ? fsub(s1.c, s2.c) : fadd(s1.c, s2.c);
+    say(sameSign ? `The ${Y} terms are equal, so subtract (2) from (1): the ${Y} terms cancel.` : `The ${Y} terms are opposites, so add (1) and (2): the ${Y} terms cancel.`, `${mono(ax, X)} = ${fstr(cx)}`);
+    xv = fdiv(cx, ax);
+    if (!feq(ax, ONE)) say(`Divide both sides by ${fstr(ax)}.`, `${X} = ${fstr(xv)}`);
+  }
+  /* put x back into an equation that has y in it */
+  const k = fz(r1.b) ? 1 : 0;
+  const r = rows[k];
+  const ax = fmul(r.a, xv), rest = fsub(r.c, ax), yv = fdiv(rest, r.b);
+  const paren = f => (/[−\s/]/.test(fstr(f)) ? `(${fstr(f)})` : fstr(f));
+  const coef = feq(r.a, ONE) ? '' : feq(r.a, F(-1)) ? '−' : fstr(r.a);
+  const aPart = fz(r.a) ? '' : `${coef}${coef && coef !== '−' ? `(${fstr(xv)})` : paren(xv)}`;
+  say(`Put ${X} = ${fstr(xv)} into equation (${k + 1}) to find ${Y}.`, [
+    `${aPart}${aPart ? (r.b.n < 0n ? ' − ' : ' + ') : (r.b.n < 0n ? '−' : '')}${mono(fabs(r.b), Y)} = ${fstr(r.c)}`,
+    `${mono(r.b, Y)} = ${fstr(r.c)} − ${paren(ax)} = ${fstr(rest)}`,
+    `${Y} = ${fstr(yv)}`]);
+  /* check in the equations as typed, exactly */
+  let verified = true;
+  const env = { [X]: xv, [Y]: yv };
+  const subs = { [X]: paren(xv), [Y]: paren(yv) };
+  P.forEach((p, i) => {
+    const lv = evalF(p.left, env), rv = evalF(p.right, env);
+    const good = feq(lv, rv);
+    verified = verified && good;
+    check.push({ say: `Put ${X} = ${fstr(xv)} and ${Y} = ${fstr(yv)} into equation (${i + 1}) as you typed it.`, eq: [`Left: ${show(p.left, subs, X)} = ${fstr(lv)}`, `Right: ${show(p.right, subs, X)} = ${fstr(rv)}`] });
+    check.push({ say: good ? `Both sides are ${fstr(lv)}, so equation (${i + 1}) is true.` : `The sides differ, so equation (${i + 1}) does NOT hold.` });
+  });
+  const dec = f => (isInt(f) ? '' : ` (≈ ${approx(fnum(f))})`);
+  return done('system', [`${X} = ${fstr(xv)}${dec(xv)}`, `${Y} = ${fstr(yv)}${dec(yv)}`, `The lines cross at (${fstr(xv)}, ${fstr(yv)}).`],
+    { verified, solution: { [X]: fstr(xv), [Y]: fstr(yv) }, point: [fnum(xv), fnum(yv)] });
+}
+
+/* ---------- for Static Graph ---------- */
+/* plain ASCII its parser reads: 3x + 5, (1/2)x^2 - x + 1/3 (the letter is always x there) */
+function numAscii(f) { return f.d === 1n ? String(f.n) : `${f.n}/${f.d}`; }
+function polyAscii(p) {
+  const q = trim(p);
+  const parts = [];
+  for (let k = q.length - 1; k >= 0; k--) {
+    const c = q[k];
+    if (fz(c)) continue;
+    const mag = fabs(c);
+    const x = k === 0 ? '' : k === 1 ? 'x' : `x^${k}`;
+    const num = feq(mag, ONE) && k ? '' : (mag.d === 1n ? String(mag.n) : k ? `(${mag.n}/${mag.d})` : `${mag.n}/${mag.d}`);
+    parts.push({ neg: c.n < 0n, body: num + x });
+  }
+  if (!parts.length) return '0';
+  return parts.map((t, i) => (i ? (t.neg ? ' - ' : ' + ') : (t.neg ? '-' : '')) + t.body).join('');
+}
+/** What Static Graph can draw for a result: [{ kind, expr, expr2?, tmin?, tmax?, label }] — each side of an equation or inequality, each line of a system. */
+export function graphExprs(res) {
+  if (!res || !res.ok || !Array.isArray(res.graph)) return [];
+  if (res.vars) return res.graph.map((g, i) => ({ ...g, label: `Equation ${i + 1}` }));
+  const [l, r] = res.graph;
+  const out = [];
+  if (l !== '0' || r === '0') out.push({ kind: 'y', expr: l, label: 'Left side' });
+  if (r !== '0' && r !== l) out.push({ kind: 'y', expr: r, label: 'Right side' });
+  return out;
+}
+
+export default { solveEquation, solveSystem, graphExprs, parseEquation, parseRelation, EqError };

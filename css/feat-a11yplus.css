@@ -1,0 +1,60 @@
+/* feat-a11yplus.css — sound captions, the screen flash (js/shell/a11yplus.js)
+   and the on-screen keyboard (js/shell/osk.js). */
+
+/* ---- captions for sounds: a line or two above the dock --------- */
+.a11y-caps{
+  position:absolute;left:50%;bottom:calc(var(--dock-h) + 18px);transform:translateX(-50%);
+  z-index:var(--z-toast);display:flex;flex-direction:column;align-items:center;gap:var(--sp-2);
+  pointer-events:none;max-width:calc(100vw - 32px);
+}
+.a11y-cap{
+  display:flex;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-3) var(--sp-5);border-radius:var(--r-pill);
+  background:var(--glass-3);color:var(--ink-0);border:1px solid var(--line-2);box-shadow:var(--sh-3);
+  font-size:var(--fs-13);font-weight:600;
+  animation:a11y-cap-in var(--t-med) var(--ease-out) both;
+}
+.a11y-cap .icon{width:16px;height:16px;color:var(--accent-soft)}
+@keyframes a11y-cap-in{from{opacity:0;transform:translateY(6px)}}
+body.reduce-motion .a11y-cap{animation:none}
+
+/* ---- the flash: a frame of light round the screen's edge ---------
+   One slow fade, not a pulse. With Reduce motion it just stays for the
+   same time and goes. */
+.a11y-flash{
+  position:fixed;inset:0;z-index:var(--z-overlay);pointer-events:none;opacity:0;
+  box-shadow:inset 0 0 0 10px var(--accent),inset 0 0 120px 20px rgba(var(--accent-rgb)/.45);
+  transition:opacity .25s ease-out;
+}
+.a11y-flash.is-on{opacity:1}
+body.reduce-motion .a11y-flash{transition:none}
+
+/* ---- the on-screen keyboard -------------------------------------- */
+.osk{
+  position:absolute;left:50%;bottom:calc(var(--dock-h) + 14px);transform:translateX(-50%);
+  z-index:var(--z-panel);width:min(720px,calc(100vw - 24px));
+  display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4) var(--sp-4);
+  border-radius:var(--r-xl);background:var(--glass-3);border:1px solid var(--line-2);box-shadow:var(--sh-4);
+  -webkit-backdrop-filter:var(--blur-3);backdrop-filter:var(--blur-3);
+  user-select:none;-webkit-user-select:none;
+}
+.osk__head{display:flex;align-items:center;gap:var(--sp-3);cursor:grab;touch-action:none;color:var(--ink-1)}
+.osk__head>.icon{width:16px;height:16px;color:var(--accent-soft)}
+.osk__title{font-size:var(--fs-12);font-weight:650;color:var(--ink-0)}
+.osk__body{display:flex;flex-direction:column;gap:var(--sp-2)}
+.osk__row{display:flex;justify-content:center;gap:var(--sp-2)}
+.osk__k{
+  flex:1 1 0;min-width:0;height:44px;border-radius:var(--r-sm);
+  background:var(--fill-1);color:var(--ink-0);border:1px solid var(--line-1);
+  font:inherit;font-size:var(--fs-15);font-weight:600;cursor:pointer;
+  display:grid;place-items:center;
+}
+.osk__k:hover{background:var(--fill-2)}
+.osk__k:active{background:var(--fill-3)}
+.osk__k.is-on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.osk__k.is-wide{flex:1.6 1 0}
+.osk__k.is-arrow{flex:.8 1 0}
+.osk__k.is-space{flex:5 1 0}
+.osk__k:disabled{visibility:hidden}
+.osk__k .icon{width:18px;height:18px}
+.osk__k:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

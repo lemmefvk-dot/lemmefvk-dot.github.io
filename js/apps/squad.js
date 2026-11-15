@@ -126,8 +126,9 @@ defineApp({
   category: 'Games',
   keywords: ['multiplayer', 'co-op', 'coop', 'party', 'parties', 'lobby', 'lfg',
     'matchmaking', 'squad', 'friends', 'versus', 'pvp', 'io', 'online', 'hub', 'find players', 'group'],
-  desc: 'Find multiplayer game parties and talk about them',
+  desc: 'This browser only: find multiplayer games and post a party across your own tabs',
   pinned: false, dock: false, singleton: true,
+  hidden: true,       /* started from Static Party's lobby, so there is one list of parties to start from */
   win: { w: 940, h: 640, minW: 540, minH: 420 },
 
   mount(ctx) {
@@ -239,7 +240,7 @@ defineApp({
       type: 'button', 'data-tip': 'Open StaticOS tabs in this browser', 'aria-label': 'Connected tabs',
       onclick: () => notify({
         app: 'Squad', icon: 'wifi', title: 'Live across your tabs',
-        message: 'Parties and messages sync in real time across the StaticOS tabs open in this browser. There is no server, so this does not reach other people — use Static Chat for that.',
+        message: 'This browser only. Parties and messages sync across the StaticOS tabs open in this browser; other devices never see them. Only Static Party reaches other devices.',
       }),
     });
 
@@ -315,7 +316,9 @@ defineApp({
           }, icon('plus'), h('span', { text: 'New party' }))),
         h('p.sq__note',
           icon('info'),
-          h('span', { text: 'No matchmaking server — parties live in this browser and sync across your open StaticOS tabs. For other people, open the ' }),
+          h('span', { text: 'This browser only — parties live here and sync across your open StaticOS tabs; other devices never see them. Only ' }),
+          h('button.sq__link', { type: 'button', onclick: () => api.openApp('party'), text: 'Static Party' }),
+          h('span', { text: ' reaches other devices. Or open the ' }),
           h('button.sq__link', { type: 'button', onclick: () => api.openApp('chat'), text: 'community' }),
           h('span', { text: '.' })));
 

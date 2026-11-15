@@ -26,15 +26,16 @@
 import { pickerView, blobOfSource, bitmapOf, sizeOfBitmap, sourceOfPath, encode, saveBlob, stemOf, clamp, picturesDir } from './pt-common.js';
 import * as HW from '../core/halloween.js';
 import { hasIcon } from '../core/icons.js';
+import { t } from '../core/i18n.js';
 
 const MAX_SIDE = 1400;
 export const STICKER_DIR = () => `${picturesDir()}/Stickers`;
 const MODES = [
-  { id: 'lasso', label: 'Lasso', icon: 'scan', hint: 'Drag around what you want to keep.' },
-  { id: 'polygon', label: 'Polygon', icon: 'star', hint: 'Click each corner. Double-click, press Enter or click the first corner to finish; Esc starts over.' },
-  { id: 'ellipse', label: 'Ellipse', icon: 'circle', hint: 'Drag from one corner of the oval’s box to the other.' },
-  { id: 'rect', label: 'Rectangle', icon: 'square', hint: 'Drag from one corner to the opposite one.' },
-  { id: 'wand', label: 'Magic wand', icon: 'sparkles', hint: 'Click a colour. Touching pixels within the tolerance are picked.' },
+  { id: 'lasso', label: t('Lasso'), icon: 'scan', hint: 'Drag around what you want to keep.' },
+  { id: 'polygon', label: t('Polygon'), icon: 'star', hint: 'Click each corner. Double-click, press Enter or click the first corner to finish; Esc starts over.' },
+  { id: 'ellipse', label: t('Ellipse'), icon: 'circle', hint: 'Drag from one corner of the oval’s box to the other.' },
+  { id: 'rect', label: t('Rectangle'), icon: 'square', hint: 'Drag from one corner to the opposite one.' },
+  { id: 'wand', label: t('Magic wand'), icon: 'sparkles', hint: 'Click a colour. Touching pixels within the tolerance are picked.' },
 ];
 
 /** Blur a byte-per-pixel alpha plane (two box passes ≈ a soft edge about `r` px wide each side). */
@@ -97,9 +98,9 @@ export function mountSticker({ api, root, opts }) {
     alive: true, busy: false, raf: 0, out: null, outInfo: null, savedPath: '', dirty: true, seq: 0,
   };
 
-  const cv = h('canvas.pt-st__canvas', { 'aria-label': 'Picture to cut out. Drag on it to cut a shape.', tabindex: 0 });
+  const cv = h('canvas.pt-st__canvas', { 'aria-label': t('Picture to cut out. Drag on it to cut a shape.'), tabindex: 0 });
   const g = cv.getContext('2d');
-  const empty = h('div.pt__empty', icon('image'), h('b', { text: 'Pick a picture' }), h('small', { text: 'Choose one on the right, then cut a shape out of it.' }));
+  const empty = h('div.pt__empty', icon('image'), h('b', { text: t('Pick a picture') }), h('small', { text: t('Choose one on the right, then cut a shape out of it.') }));
   const paper = h('div.pt-st__paper', { hidden: true }, cv);
   const stage = h('div.pt__stage', empty, paper);
   const foot = h('div.pt__foot', { role: 'status', 'aria-live': 'polite' });
@@ -127,7 +128,7 @@ export function mountSticker({ api, root, opts }) {
       empty.hidden = true; paper.hidden = false;
       changed();
     } catch (err) {
-      api.notify({ app: 'Picture Tools', icon: 'alert', title: 'Can’t use that picture', message: err?.message || String(err) });
+      api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Can’t use that picture'), message: err?.message || String(err) });
     }
   }
 
@@ -257,7 +258,7 @@ export function mountSticker({ api, root, opts }) {
   const redraw = () => { if (!S.raf) S.raf = requestAnimationFrame(paintStage); };
 
   /* the sticker preview, on a checkerboard, a moment after the last change */
-  const pv = h('canvas.pt-st__preview', { 'aria-label': 'Sticker preview' });
+  const pv = h('canvas.pt-st__preview', { 'aria-label': t('Sticker preview') });
   const pvg = pv.getContext('2d');
   const pvWrap = h('div.pt-st__pvwrap', pv);
   let pvT = 0;
@@ -274,7 +275,7 @@ export function mountSticker({ api, root, opts }) {
       pvg.imageSmoothingQuality = 'high';
       pvg.drawImage(r.canvas, (pv.width - dw) / 2, (pv.height - dh) / 2, dw, dh);
     }
-    saveBtn.disabled = deskBtn.disabled = S.busy || !r;
+    saveBtn.disabled = deskBtn.disabled = copyBtn.disabled = S.busy || !r;
     paintFoot();
   }
   pv.width = 280; pv.height = 200;
@@ -353,7 +354,7 @@ export function mountSticker({ api, root, opts }) {
 
   /* ---------- controls ---------- */
   const modeBtns = new Map();
-  const modeRow = h('div.pt__seg.pt-st__modes', { role: 'radiogroup', 'aria-label': 'How to cut it out' }, MODES.map(m => {
+  const modeRow = h('div.pt__seg.pt-st__modes', { role: 'radiogroup', 'aria-label': t('How to cut it out') }, MODES.map(m => {
     const b = h('button.pt__segbtn', {
       type: 'button', role: 'radio', 'aria-checked': 'false', title: m.hint, dataset: { mode: m.id }, onclick: () => setMode(m.id),
     }, icon(hasIcon(m.icon) ? m.icon : 'image'), h('span', { text: m.label }));
@@ -382,19 +383,35 @@ export function mountSticker({ api, root, opts }) {
   const outlineRow = slider('Outline width', 'outlinePx', 2, 40, ' px', changed);
   const outlineBox = h('div.pt__group', check('White outline', 'outline', () => { outlineRow.hidden = !S.outline; changed(); }), outlineRow);
 
-  const saveBtn = h('button.btn', { type: 'button', 'aria-label': 'Save sticker to Pictures', disabled: true, onclick: () => save(false) }, icon('save'), h('span', { text: 'Save PNG' }));
-  const deskBtn = h('button.btn.btn--primary', { type: 'button', 'aria-label': 'Put sticker on the desktop', disabled: true, onclick: () => save(true) }, icon('sparkles'), h('span', { text: 'Put on desktop' }));
+  const saveBtn = h('button.btn', { type: 'button', 'aria-label': t('Save sticker to Pictures'), disabled: true, onclick: () => save(false) }, icon('save'), h('span', { text: t('Save PNG') }));
+  const deskBtn = h('button.btn.btn--primary', { type: 'button', 'aria-label': t('Put sticker on the desktop'), disabled: true, onclick: () => save(true) }, icon('sparkles'), h('span', { text: t('Put on desktop') }));
+
+  /* the sticker, as it is on screen, onto the clipboard as a transparent PNG */
+  const copyBtn = h('button.btn', { type: 'button', 'aria-label': t('Copy the sticker to the clipboard'), disabled: true, onclick: () => copy() }, icon('copy'), h('span', { text: t('Copy') }));
+  async function copy() {
+    if (pvT) { clearTimeout(pvT); paintPreview(); }
+    if (S.busy || !S.out) return;
+    try {
+      if (typeof ClipboardItem !== 'function' || !navigator.clipboard?.write) throw new Error('This browser doesn’t let pages copy pictures.');
+      const blob = await encode(S.out, 'image/png');
+      if (!blob) throw new Error('This browser couldn’t make a PNG.');
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      api.notify({ app: 'Picture Tools', icon: 'copy', title: t('Sticker copied'), message: t('Paste it into a note, a message or a picture.') });
+    } catch (err) {
+      api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Couldn’t copy'), message: err?.message || String(err) });
+    }
+  }
 
   async function save(toDesktop) {
     if (pvT) { clearTimeout(pvT); paintPreview(); }      /* a slider moved a moment ago: save what is on screen */
     if (S.busy || !S.out) return;
-    S.busy = true; saveBtn.disabled = deskBtn.disabled = true;
+    S.busy = true; saveBtn.disabled = deskBtn.disabled = copyBtn.disabled = true;
     try {
       let path = S.savedPath;
       if (!path) {
         const blob = await encode(S.out, 'image/png');
         if (!blob) throw new Error('This browser couldn’t make a PNG.');
-        path = await saveBlob(api, toDesktop ? 'Sticker maker' : 'Picture Tools', STICKER_DIR(), `${stemOf(S.src.name)} sticker.png`, blob, { title: toDesktop ? 'Sticker saved' : 'Sticker saved' });
+        path = await saveBlob(api, toDesktop ? 'Sticker maker' : 'Picture Tools', STICKER_DIR(), `${stemOf(S.src.name)} sticker.png`, blob, { title: toDesktop ? t('Sticker saved') : t('Sticker saved') });
         S.savedPath = path; S.dirty = false;
       }
       if (toDesktop) {
@@ -404,28 +421,28 @@ export function mountSticker({ api, root, opts }) {
         const dw = Math.max(24, Math.round(w * k)), dh = Math.max(24, Math.round(hh * k));
         HW.placeUserSticker(path, { w: dw, h: dh, name: stemOf(S.src.name) },
           { x: Math.round(vw - dw - 80 - Math.random() * 120), y: Math.round(vh * 0.25 + Math.random() * vh * 0.2) });   /* the right edge, clear of the toasts */
-        api.notify({ app: 'Sticker maker', icon: 'sparkles', title: 'On your desktop', message: 'Drag it where you like. Right-click it to remove it.' });
+        api.notify({ app: 'Sticker maker', icon: 'sparkles', title: t('On your desktop'), message: t('Drag it where you like. Right-click it to remove it.') });
       }
     } catch (err) {
-      api.notify({ app: 'Picture Tools', icon: 'alert', title: 'Not saved', message: err?.message || String(err) });
+      api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Not saved'), message: err?.message || String(err) });
     } finally {
       S.busy = false;
-      saveBtn.disabled = deskBtn.disabled = !S.out;
+      saveBtn.disabled = deskBtn.disabled = copyBtn.disabled = !S.out;
     }
   }
 
-  const picker = pickerView(api, { label: 'Pictures to cut out', onChange: (list, src, added) => { if (added) load(src); } });
+  const picker = pickerView(api, { label: t('Pictures to cut out'), onChange: (list, src, added) => { if (added) load(src); } });
   const side = h('div.pt__side',
-    h('div.pt__group', h('b.pt__label', { text: 'Cut out' }), modeRow, hint, wandBox,
+    h('div.pt__group', h('b.pt__label', { text: t('Cut out') }), modeRow, hint, wandBox,
       h('div.pt__rowhead',
-        h('label.pt-st__check', h('input', { type: 'checkbox', 'aria-label': 'Invert the selection', onchange: e => { S.invert = e.target.checked; changed(); } }), h('span', { text: ' Invert' })),
+        h('label.pt-st__check', h('input', { type: 'checkbox', 'aria-label': t('Invert the selection'), onchange: e => { S.invert = e.target.checked; changed(); } }), h('span', { text: t(' Invert') })),
         h('span.pt__spacer'),
-        h('button.btn.btn--sm', { type: 'button', onclick: selectAll }, h('span', { text: 'All' })),
-        h('button.btn.btn--sm', { type: 'button', onclick: clearSel }, icon('x'), h('span', { text: 'Clear' })))),
-    h('div.pt__group', h('b.pt__label', { text: 'Edge' }), slider('Feather', 'feather', 0, 20, ' px', changed), outlineBox),
-    h('div.pt__group', h('b.pt__label', { text: 'Sticker' }), pvWrap),
-    h('div.pt__group', h('b.pt__label', { text: 'Pictures' }), picker.el),
-    h('div.pt__actions', saveBtn, deskBtn));
+        h('button.btn.btn--sm', { type: 'button', onclick: selectAll }, h('span', { text: t('All') })),
+        h('button.btn.btn--sm', { type: 'button', onclick: clearSel }, icon('x'), h('span', { text: t('Clear') })))),
+    h('div.pt__group', h('b.pt__label', { text: t('Edge') }), slider('Feather', 'feather', 0, 20, ' px', changed), outlineBox),
+    h('div.pt__group', h('b.pt__label', { text: t('Sticker') }), pvWrap),
+    h('div.pt__group', h('b.pt__label', { text: t('Pictures') }), picker.el),
+    h('div.pt__actions', saveBtn, copyBtn, deskBtn));
   root.append(h('div.pt__split', h('div.pt__col', stage, foot), side));
   setMode(S.mode);
   pvWrap.dataset.empty = 'true';

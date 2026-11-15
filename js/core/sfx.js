@@ -135,6 +135,7 @@ const PACK_CUES = {
     toggle: (c, t, v) => tone(c, t, { type: 'square', from: 880, to: 1320, dur: 0.05, peak: 0.02 * v, cut: 4000 }),
     notify: (c, t, v) => { [659, 880, 1319].forEach((f, i) => tone(c, t + i * 0.07, { type: 'square', from: f, dur: 0.07, peak: 0.02 * v, cut: 3600 })); tone(c, t, { type: 'triangle', from: 330, dur: 0.22, peak: 0.03 * v }); },
     error:  (c, t, v) => { tone(c, t, { type: 'square', from: 196, dur: 0.08, peak: 0.028 * v, cut: 1400 }); tone(c, t + 0.09, { type: 'square', from: 147, dur: 0.12, peak: 0.028 * v, cut: 1400 }); },
+    key:    (c, t, v) => tone(c, t, { type: 'square', from: 1760 + Math.random() * 400, dur: 0.018, peak: 0.012 * v, cut: 4000 }),
     /* the focus timer's phase end: a four-note chiptune jingle over a triangle bass */
     phase:  (c, t, v) => { [523, 659, 784, 1046].forEach((f, i) => tone(c, t + i * 0.1, { type: 'square', from: f, dur: 0.1, peak: 0.02 * v, cut: 3600 })); tone(c, t, { type: 'triangle', from: 262, dur: 0.22, peak: 0.032 * v }); tone(c, t + 0.2, { type: 'triangle', from: 392, dur: 0.24, peak: 0.032 * v }); },
   },
@@ -153,6 +154,7 @@ const PACK_CUES = {
     toggle: (c, t, v) => { noise(c, t, { dur: 0.012, peak: 0.035 * v, hp: 1400, lp: 7000 }); tone(c, t, { type: 'sine', from: 160, dur: 0.03, peak: 0.02 * v, cut: 400 }); },
     notify: (c, t, v) => { noise(c, t, { dur: 0.012, peak: 0.03 * v, hp: 1500, lp: 7000 }); bell(c, t + 0.03, 1760, { dur: 0.5, peak: 0.02 * v, type: 'triangle' }); },
     error:  (c, t, v) => { noise(c, t, { dur: 0.03, peak: 0.05 * v, hp: 300, lp: 1800 }); tone(c, t, { type: 'sine', from: 110, dur: 0.1, peak: 0.04 * v, cut: 300 }); },
+    key:    (c, t, v) => { noise(c, t, { dur: 0.012, peak: 0.04 * v, hp: 1500 + Math.random() * 500, lp: 7000 }); tone(c, t, { type: 'sine', from: 170, dur: 0.025, peak: 0.018 * v, cut: 400 }); },
   },
   chime: {
     open:   (c, t, v) => bell(c, t, 1046.5, { dur: 0.5, peak: 0.028 * v }),
@@ -161,6 +163,36 @@ const PACK_CUES = {
     toggle: (c, t, v) => bell(c, t, 1318.5, { dur: 0.3, peak: 0.022 * v }),
     notify: (c, t, v) => [1046.5, 1318.5, 1568].forEach((f, i) => bell(c, t + i * 0.08, f, { dur: 0.9, peak: 0.024 * v })),
     error:  (c, t, v) => { bell(c, t, 466.16, { dur: 0.6, peak: 0.03 * v }); bell(c, t + 0.1, 440, { dur: 0.7, peak: 0.03 * v }); },
+  },
+  /* an old typewriter: type bars striking, the carriage bell, the carriage return */
+  typewriter: {
+    open:   (c, t, v) => { noise(c, t, { dur: 0.02, peak: 0.05 * v, hp: 700, lp: 4200 }); tone(c, t, { type: 'sine', from: 150, dur: 0.05, peak: 0.04 * v, cut: 400 }); noise(c, t + 0.07, { dur: 0.018, peak: 0.04 * v, hp: 700, lp: 4200 }); },
+    close:  (c, t, v) => { noise(c, t, { dur: 0.14, peak: 0.03 * v, hp: 500, lp: 2600 }); noise(c, t + 0.15, { dur: 0.02, peak: 0.05 * v, hp: 700, lp: 4200 }); },
+    tap:    (c, t, v) => { noise(c, t, { dur: 0.018, peak: 0.045 * v, hp: 800, lp: 4500 }); tone(c, t, { type: 'sine', from: 140, dur: 0.035, peak: 0.03 * v, cut: 350 }); },
+    toggle: (c, t, v) => { noise(c, t, { dur: 0.014, peak: 0.04 * v, hp: 900, lp: 4800 }); noise(c, t + 0.06, { dur: 0.014, peak: 0.04 * v, hp: 900, lp: 4800 }); },
+    notify: (c, t, v) => { bell(c, t, 2637, { dur: 0.9, peak: 0.028 * v }); noise(c, t + 0.005, { dur: 0.012, peak: 0.03 * v, hp: 1200, lp: 6000 }); },
+    error:  (c, t, v) => { noise(c, t, { dur: 0.05, peak: 0.05 * v, hp: 300, lp: 1400 }); noise(c, t + 0.1, { dur: 0.05, peak: 0.05 * v, hp: 300, lp: 1400 }); },
+    key:    (c, t, v) => { noise(c, t, { dur: 0.016, peak: 0.05 * v, hp: 800, lp: 4500 }); tone(c, t, { type: 'sine', from: 130 + Math.random() * 30, dur: 0.03, peak: 0.03 * v, cut: 380 }); },
+  },
+  /* a quiet outdoors: a little bird, a drop of water, a knock on wood */
+  nature: {
+    open:   (c, t, v) => { tone(c, t, { type: 'sine', from: 2200, to: 3300, dur: 0.07, peak: 0.022 * v }); tone(c, t + 0.09, { type: 'sine', from: 2600, to: 3600, dur: 0.06, peak: 0.02 * v }); },
+    close:  (c, t, v) => tone(c, t, { type: 'sine', from: 950, to: 380, dur: 0.12, peak: 0.04 * v, cut: 1800 }),
+    tap:    (c, t, v) => tone(c, t, { type: 'sine', from: 330, to: 240, dur: 0.05, peak: 0.05 * v, cut: 900 }),
+    toggle: (c, t, v) => { noise(c, t, { dur: 0.02, peak: 0.02 * v, hp: 300, lp: 1400 }); tone(c, t, { type: 'sine', from: 520, to: 420, dur: 0.05, peak: 0.03 * v, cut: 1200 }); },
+    notify: (c, t, v) => [0, 0.11, 0.2].forEach((d, i) => { tone(c, t + d, { type: 'sine', from: 2400 + i * 300, to: 3400 + i * 250, dur: 0.07, peak: 0.022 * v }); tone(c, t + d + 0.03, { type: 'sine', from: 3000, to: 2600, dur: 0.04, peak: 0.012 * v }); }),
+    error:  (c, t, v) => { tone(c, t, { type: 'sine', from: 290, to: 250, dur: 0.22, peak: 0.05 * v, cut: 700 }); tone(c, t + 0.26, { type: 'sine', from: 270, to: 230, dur: 0.26, peak: 0.045 * v, cut: 700 }); },
+    key:    (c, t, v) => tone(c, t, { type: 'sine', from: 760 + Math.random() * 160, to: 520, dur: 0.035, peak: 0.022 * v, cut: 1500 }),
+  },
+  /* a spaceship's console: sweeps and comm bleeps */
+  scifi: {
+    open:   (c, t, v) => { tone(c, t, { type: 'sawtooth', from: 220, to: 1100, dur: 0.14, peak: 0.016 * v, cut: 2800 }); tone(c, t + 0.1, { type: 'sine', from: 1800, dur: 0.06, peak: 0.02 * v }); },
+    close:  (c, t, v) => { tone(c, t, { type: 'sawtooth', from: 1000, to: 200, dur: 0.14, peak: 0.016 * v, cut: 2800 }); },
+    tap:    (c, t, v) => tone(c, t, { type: 'square', from: 1900, to: 2500, dur: 0.03, peak: 0.012 * v, cut: 4200 }),
+    toggle: (c, t, v) => { tone(c, t, { type: 'square', from: 1400, dur: 0.035, peak: 0.012 * v, cut: 4200 }); tone(c, t + 0.045, { type: 'square', from: 2000, dur: 0.04, peak: 0.012 * v, cut: 4200 }); },
+    notify: (c, t, v) => [1200, 1600, 2400].forEach((f, i) => { tone(c, t + i * 0.08, { type: 'sine', from: f, dur: 0.07, peak: 0.028 * v }); tone(c, t + i * 0.08, { type: 'triangle', from: f * 2, dur: 0.05, peak: 0.01 * v }); }),
+    error:  (c, t, v) => { tone(c, t, { type: 'sawtooth', from: 95, dur: 0.18, peak: 0.03 * v, cut: 600 }); tone(c, t, { type: 'sawtooth', from: 120, dur: 0.18, peak: 0.02 * v, cut: 600 }); },
+    key:    (c, t, v) => tone(c, t, { type: 'triangle', from: 2500 + Math.random() * 500, dur: 0.02, peak: 0.016 * v, cut: 5000 }),
   },
 };
 
@@ -171,14 +203,38 @@ export const PACKS = [
   { id: 'soft', name: 'Felt', note: 'Low, muffled and rounded. For late nights.' },
   { id: 'mech', name: 'Switches', note: 'Clicks and clacks, like a mechanical keyboard.' },
   { id: 'chime', name: 'Chimes', note: 'Every action rings a small glass bell.' },
+  { id: 'typewriter', name: 'Typewriter', note: 'Type bars, a carriage bell and a carriage return.' },
+  { id: 'nature', name: 'Nature', note: 'A little bird, a drop of water, a knock on wood.' },
+  { id: 'scifi', name: 'Sci-fi', note: 'Console sweeps and comm bleeps from a ship that never flew.' },
 ];
+
+/* The sounds a pack makes, as Settings › Sound lists them: each has its own
+   level (prefs.soundLevels, 0–100 under the UI sound volume) and a Hear it
+   button. 'key' is the typing sound (prefs.typeSounds, off by default). */
+export const SOUNDS = [
+  { id: 'open', name: 'Window opens' }, { id: 'close', name: 'Window closes' }, { id: 'tap', name: 'Click' },
+  { id: 'toggle', name: 'Switch' }, { id: 'notify', name: 'Notification' }, { id: 'error', name: 'Error' },
+  { id: 'key', name: 'Typing' },
+];
+/** One sound's own level, 0–1 (100% unless Settings says otherwise). */
+export function soundLevel(name) {
+  const m = store.get('prefs.soundLevels', null);
+  const v = m && typeof m === 'object' ? Number(m[name]) : NaN;
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) / 100 : 1;
+}
 /* What a pack voices itself, for tests: the cue names it has its own recipe for,
    and the recipe itself (so a test can run it against an offline context). */
 export const CUE_NAMES = ['open', 'close', 'tap', 'toggle', 'notify', 'error'];
 export const packCueNames = id => (PACK_CUES[id] ? Object.keys(PACK_CUES[id]) : []);
 export const packCue = (id, name) => (PACK_CUES[id] && PACK_CUES[id][name]) || null;
 const packId = () => (PACK_CUES[store.get('prefs.soundPack')] ? store.get('prefs.soundPack') : 'glass');
-const cueFor = (name, pack = packId()) => (PACK_CUES[pack] && PACK_CUES[pack][name]) || CUES[name];
+const cueFor = (name, pack = packId()) => {
+  const own = PACK_CUES[pack] && PACK_CUES[pack][name];
+  if (own) return own;
+  /* a pack without its own typing sound types with its click, a little softer */
+  if (name === 'key') { const tap = cueFor('tap', pack); return (c, t, v) => tap(c, t, v * 0.6); }
+  return CUES[name];
+};
 
 /* ---- play --------------------------------------------------------- */
 /* UI cues a seasonal pack is voicing instead (js/shell/spooky.js adds
@@ -191,7 +247,16 @@ export const claimed = new Set();
    spooky pack: a machine with no audio output still shows the decision. */
 export const decided = [];
 
+/* The sounds that mean something (not every tap and window): announced on
+   bus 'sfx:cue' so js/shell/a11yplus.js can caption them and flash the
+   screen for someone who can't hear them (Settings › Accessibility). They
+   go out whether or not the sound itself plays: muted, sounds off, or a
+   machine with no speakers is exactly when the words and the light matter. */
+export const CAPTIONED = { notify: 'Notification sound', error: 'Error sound', phase: 'Timer sound', alarm: 'Alarm sound' };
+export const announce = key => { if (CAPTIONED[key]) bus.emit('sfx:cue', { name: key, label: CAPTIONED[key] }); };
+
 export function play(name) {
+  announce(name);
   if (!isEnabled()) return false;        // off or muted → nothing
   const key = name === 'click' ? 'tap' : name;
   if (claimed.has(key)) return false;    // a seasonal pack is voicing this one
@@ -200,7 +265,7 @@ export function play(name) {
   const pack = toneId ? `tone:${toneId}` : packId();
   const cue = toneId ? TONES[toneId] : cueFor(key, pack);
   if (!cue) return false;
-  const v = ceiling() * volScale * uiLevel();
+  const v = ceiling() * volScale * uiLevel() * soundLevel(key);
   if (v <= 0) return false;
   decided.push(`${pack}:${key}`);
   if (decided.length > 200) decided.splice(0, 100);
@@ -274,6 +339,44 @@ export function previewTone(id) {
     if (c.state === 'suspended') c.resume();
     TONES[id](c, c.currentTime + 0.02, v);
     played.push(`tone:${id}`);
+    if (played.length > 200) played.splice(0, 100);
+    return true;
+  } catch (e) { return false; }
+}
+
+/* ---- alarm sounds (Clock's alarms and timers, js/core/alarms.js) ----
+   Each alarm and timer rings with one of these, chosen in Clock. Original
+   little figures, synthesised like the rest. They follow Mute and the
+   system volume, not the UI-sounds switch or its level: an alarm you set
+   is not a click. alarm(id) plays one ring; the caller repeats it. */
+export const ALARMS = [
+  { id: 'bells', name: 'Bells' }, { id: 'beep', name: 'Beeping' }, { id: 'rise', name: 'Rising' },
+  { id: 'chime', name: 'Chimes' }, { id: 'pulse', name: 'Soft pulse' },
+];
+const ALARM_CUES = {
+  bells: (c, t, v) => { bell(c, t, 659.25, { dur: 1.2, peak: 0.06 * v }); bell(c, t + 0.24, 880, { dur: 1.3, peak: 0.055 * v }); bell(c, t + 0.48, 1318.5, { dur: 1.4, peak: 0.04 * v }); },
+  beep: (c, t, v) => { for (let i = 0; i < 4; i++) tone(c, t + i * 0.16, { type: 'square', from: 1046.5, dur: 0.09, peak: 0.035 * v, cut: 3200 }); },
+  rise: (c, t, v) => [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(c, t + i * 0.15, { type: 'triangle', from: f, dur: 0.32, peak: 0.07 * v })),
+  chime: (c, t, v) => [1046.5, 1318.5, 1568, 2093].forEach((f, i) => bell(c, t + i * 0.09, f, { dur: 1.0, peak: 0.04 * v })),
+  pulse: (c, t, v) => { for (let i = 0; i < 3; i++) tone(c, t + i * 0.32, { type: 'sine', from: 440, to: 523.25, dur: 0.24, peak: 0.08 * v }); },
+};
+export const alarmId = id => (Object.hasOwn(ALARM_CUES, id || '') ? id : 'bells');
+/** One ring of an alarm sound. Respects Mute and the volume; may unlock audio from a click (Hear it). */
+export function alarm(id) {
+  announce('alarm');
+  const key = alarmId(id);
+  if (muted()) return false;
+  const v = ceiling() * volScale;
+  if (v <= 0) return false;
+  decided.push(`alarm:${key}`);
+  if (decided.length > 200) decided.splice(0, 100);
+  const c = ensureCtx();
+  if (!c) return false;
+  try {
+    if (c.state === 'suspended') c.resume();
+    if (c.state !== 'running') return false;
+    ALARM_CUES[key](c, c.currentTime + 0.02, v);
+    played.push(`alarm:${key}`);
     if (played.length > 200) played.splice(0, 100);
     return true;
   } catch (e) { return false; }
@@ -694,6 +797,25 @@ export function preview(pack) {
   } catch (e) { return false; }
 }
 
+/** Hear one sound of a pack (Settings › Sound › Hear it), at its own level.
+    Like preview(): Mute applies, the UI-sounds switch does not. A sound set to
+    0% is silent, and says so by returning false. */
+export function previewCue(name, pack = packId()) {
+  if (muted() || !PACK_CUES[pack] || !SOUNDS.some(s => s.id === name)) return false;
+  const v = ceiling() * volScale * uiLevel() * soundLevel(name);
+  if (v <= 0) return false;
+  decided.push(`preview:${pack}:${name}`);
+  if (decided.length > 200) decided.splice(0, 100);
+  const c = ensureCtx();
+  if (!c) return false;
+  try {
+    if (c.state === 'suspended') c.resume();
+    cueFor(name, pack)(c, c.currentTime + 0.02, v);
+    played.push(`preview:${pack}:${name}`);
+    return true;
+  } catch (e) { return false; }
+}
+
 export function setVolume(v) {
   volScale = Math.max(0, Math.min(1, Number(v)));
   return volScale;
@@ -719,12 +841,35 @@ export function init() {
   bus.on('boot:ready', () => startup());     /* the desktop is up: the chosen start-up chime */
   bus.on('win:open',  () => play('open'));
   bus.on('win:close', () => play('close'));
-  bus.on('noti:push', n => { if (notiWanted(n)) play('notify'); });
+  bus.on('noti:push', n => {
+    if (!notiWanted(n)) return;
+    /* the notification sound switch is off: nothing to hear, but the caption and flash still go out */
+    if (notiOn()) play('notify'); else announce('notify');
+  });
 
   /* Click sounds (opt-in): one listener for the whole page, in the capture
      phase so an app that stops propagation still gets its tap. A keyboard
      Enter/Space on a button is a click too, so it is heard the same way. */
   window.addEventListener('click', onClick, true);
+  /* Typing sounds (opt-in, off by default): a key in a text field */
+  window.addEventListener('keydown', onType, true);
+}
+
+/* A key pressed in a place where text goes — never a shortcut, never a bare
+   modifier, never a held key more than ~25 times a second, never where
+   something opts out with data-sfx="off" (instruments, games). */
+const TEXTY = 'textarea, input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="password"], input[type="number"], [contenteditable=""], [contenteditable="true"]';
+let lastKey = 0;
+function onType(e) {
+  if (store.get('prefs.typeSounds', false) !== true || !e.isTrusted) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  if (e.key.length > 1 && !['Backspace', 'Enter', 'Delete', 'Tab', ' '].includes(e.key)) return;   /* Shift, arrows, F-keys… */
+  const t = e.target instanceof Element ? e.target : null;
+  if (!t || !t.matches(TEXTY) || t.closest('[data-sfx="off"]') || t.readOnly || t.disabled) return;
+  const now = performance.now();
+  if (now - lastKey < 40) return;
+  lastKey = now;
+  play('key');
 }
 
 /* A notification is heard only when it would be seen: not in Do Not
@@ -733,7 +878,7 @@ export function init() {
 const heardKeys = new Set();
 function notiWanted(n) {
   if (n?.quiet === true) return false;   /* it rings its own cue (the focus timer's 'phase') */
-  if (!notiOn() || store.get('prefs.dnd')) return false;
+  if (store.get('prefs.dnd')) return false;
   const app = String(n?.appId || n?.app || '').toLowerCase();
   if (SUMMARY.holds(n, app)) return false;   /* waits for the summary card, which rings once */
   if (app && (store.get('prefs.notiApps', {}) || {})[app] === false) return false;
@@ -756,4 +901,4 @@ function onClick(e) {
   play(el.getAttribute('role') === 'switch' || el.matches('input[type="checkbox"]') ? 'toggle' : 'tap');
 }
 
-export default { CUE_NAMES, packCueNames, packCue, init, play, boot, startup, previewChime, CHIMES, startupInfo, hum, unlock, played, decided, setEnabled, setVolume, isEnabled, uiLevel, preview, PACKS, spooky, SPOOKY, claimed, TONES, previewTone };
+export default { SOUNDS, soundLevel, previewCue, CUE_NAMES, packCueNames, packCue, init, play, boot, startup, previewChime, CHIMES, startupInfo, hum, unlock, played, decided, setEnabled, setVolume, isEnabled, uiLevel, preview, PACKS, spooky, SPOOKY, claimed, TONES, previewTone, ALARMS, alarm, alarmId };

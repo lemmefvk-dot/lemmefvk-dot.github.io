@@ -3,12 +3,32 @@
    and the reminders they ask for. No DOM here.
 
    Saved in store('portal.homework') as
-     { v: 1,
-       classes:     [{ id, name, color }],
+     { v: 1, termStart,
+       classes:     [{ id, name, color, archived }],
        assignments: [{ id, classId, title, due, time, notes, done,
-                       doneAt, remind, created }] }
+                       doneAt, remind, created,
+                       repeat, series, est, grade, links, taskId }] }
    due is 'YYYY-MM-DD'; time is 'HH:MM' or '' (no time: due by the
    end of that day); remind is minutes before the due time, or null.
+   Everything after `created` came later; an assignment saved before
+   has none of it and loads as it was (no repeat, no estimate…).
+     repeat   'none' | 'daily' | 'weekdays' | 'weekly' | 'biweekly'.
+              Each time is its own assignment (its own tick, grade and
+              reminder), joined by `series`. When the newest one is done,
+              or its day is over, the next one is made — on the first
+              repeat day from today on, so a long absence never piles up
+              made-up overdue work. Rolled on every save and, with the
+              window closed, each new day (init(), from main.js).
+     est      YOUR estimate in minutes (0 = none): Today adds them up
+     grade    what you got, as you typed it: "92", "92%", "18/20", "B+".
+              A class's average counts the ones that are a number
+     links    up to 6 { kind: 'note' | 'card', ref, title }: a Notes note
+              or a Board card it goes with
+     taskId   the Static Tasks task it was sent to ('' when not sent)
+   A class can be archived when it is over: its work leaves Today, This
+   week, By class, the reminders and Calendar's layer, and comes back
+   when it is restored. termStart is the day "this term" counts from
+   for the late hand-ins count ('' = everything).
 
    Reminders are not a second clock. Every write hands the reminders
    the assignments want to js/core/automations.js
@@ -21,6 +41,7 @@
    reminder, and a reminder whose time has already passed is not made.
    ============================================================ */
 import { store } from './store.js';
+import { bus } from './bus.js';
 import * as AM from './automations.js';
 
 export const KEY = 'portal.homework';
@@ -32,6 +53,9 @@ export const REMIND = [
 ];
 export const MAX_CLASSES = 40;
 export const MAX_ASSIGNMENTS = 1000;
+export const REPEATS = [['none', 'Doesn’t repeat'], ['daily', 'Every day'], ['weekdays', 'Every weekday'], ['weekly', 'Every week'], ['biweekly', 'Every 2 weeks']];
+export const MAX_EST = 600;
+export const MAX_LINKS = 6;
 const DEFAULT_TIME = '09:00';
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -52,7 +76,19 @@ const text = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().
 
 export function normClass(c, i = 0) {
   const o = c && typeof c === 'object' ? c : {};
-  return { id: String(o.id || uid('k')).slice(0, 60), name: text(o.name, 40) || 'Class', color: COLORS.includes(o.color) ? o.color : COLORS[i % COLORS.length] };
+  const out = { id: String(o.id || uid('k')).slice(0, 60), name: text(o.name, 40) || 'Class', color: COLORS.includes(o.color) ? o.color : COLORS[i % COLORS.length] };
+  if (o.archived === true) out.archived = true;
+  return out;
+}
+function normLinks(v) {
+  const out = [];
+  for (const l of Array.isArray(v) ? v : []) {
+    if (!l || typeof l !== 'object' || (l.kind !== 'note' && l.kind !== 'card')) continue;
+    const ref = String(l.ref || '').slice(0, 80);
+    if (!ref || out.some(x => x.kind === l.kind && x.ref === ref) || out.length >= MAX_LINKS) continue;
+    out.push({ kind: l.kind, ref, title: text(l.title, 80) });
+  }
+  return out;
 }
 export function normAssignment(a) {
   const o = a && typeof a === 'object' ? a : {};
@@ -66,6 +102,12 @@ export function normAssignment(a) {
     notes: String(o.notes == null ? '' : o.notes).replace(/\r\n?/g, '\n').trim().slice(0, 2000),
     done: !!o.done, doneAt: Number(o.doneAt) || 0,
     remind, created: Number(o.created) || Date.now(),
+    repeat: REPEATS.some(([v]) => v === o.repeat) ? o.repeat : 'none',
+    series: typeof o.series === 'string' ? o.series.slice(0, 60) : '',
+    est: Math.max(0, Math.min(MAX_EST, Math.floor(Number(o.est)) || 0)),
+    grade: text(o.grade, 12),
+    links: normLinks(o.links),
+    taskId: typeof o.taskId === 'string' ? o.taskId.slice(0, 80) : '',
   };
 }
 export function normalize(raw) {
@@ -85,9 +127,83 @@ export function normalize(raw) {
     if (n.classId && !seen.has(n.classId)) n.classId = '';
     ids.add(n.id); assignments.push(n);
   }
-  return { v: 1, classes, assignments };
+  return { v: 1, termStart: parseDay(o.termStart) ? o.termStart : '', classes, assignments };
 }
 export const read = () => normalize(store.get(KEY));
+
+/** The assignments that count: not in an archived class. */
+export function activeList(data) {
+  const off = new Set(data.classes.filter(c => c.archived).map(c => c.id));
+  return off.size ? data.assignments.filter(a => !off.has(a.classId)) : data.assignments;
+}
+
+/* ---------- repeating ---------- */
+/** The day after `day` a repeat lands on. */
+export function stepDay(repeat, day) {
+  if (repeat === 'daily') return addDays(day, 1);
+  if (repeat === 'weekly') return addDays(day, 7);
+  if (repeat === 'biweekly') return addDays(day, 14);
+  if (repeat === 'weekdays') {
+    let n = addDays(day, 1);
+    while ([0, 6].includes(parseDay(n).getDay())) n = addDays(n, 1);
+    return n;
+  }
+  return null;
+}
+/**
+ * Make the next assignment of every repeating series whose newest one is done
+ * or past its day: on the first repeat day from today on. Changes `data` in
+ * place. -> how many were made
+ */
+export function rollRepeats(data, now = Date.now()) {
+  const t = today(now);
+  const newest = new Map();
+  for (const a of data.assignments) {
+    if (!a.series) continue;
+    const cur = newest.get(a.series);
+    if (!cur || a.due > cur.due || (a.due === cur.due && a.created > cur.created)) newest.set(a.series, a);
+  }
+  let made = 0;
+  for (const a of newest.values()) {
+    if (a.repeat === 'none' || (!a.done && a.due >= t) || data.assignments.length >= MAX_ASSIGNMENTS) continue;
+    let day = stepDay(a.repeat, a.due);
+    for (let k = 0; day && day < t && k < 800; k++) day = stepDay(a.repeat, day);
+    if (!day) continue;
+    data.assignments.push({ id: uid('a'), classId: a.classId, title: a.title, due: day, time: a.time, notes: a.notes, done: false, doneAt: 0,
+      remind: a.remind, created: now, repeat: a.repeat, series: a.series, est: a.est, grade: '', links: a.links.map(l => ({ ...l })), taskId: '' });
+    made++;
+  }
+  return made;
+}
+
+/* ---------- grades, late work, time ---------- */
+/** A typed grade as a percentage: "92", "92%", "18/20" -> 92, 90; a letter -> null. */
+export function percentOf(grade) {
+  const g = String(grade || '').trim();
+  let m = /^(\d+(?:\.\d+)?)\s*%?$/.exec(g);
+  if (m) { const n = Number(m[1]); return n <= 200 ? n : null; }
+  m = /^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/.exec(g);
+  if (m && Number(m[2]) > 0) return Math.round(Number(m[1]) / Number(m[2]) * 10000) / 100;
+  return null;
+}
+/** A class's graded work: { avg (mean of the percentages, or null), n, other (grades that aren't numbers) } */
+export function classAverage(data, classId) {
+  const graded = data.assignments.filter(a => a.classId === classId && a.grade);
+  const pcts = graded.map(a => percentOf(a.grade)).filter(x => x !== null);
+  return { avg: pcts.length ? Math.round(pcts.reduce((s, x) => s + x, 0) / pcts.length * 100) / 100 : null, n: pcts.length, other: graded.length - pcts.length };
+}
+/** Late work since `from` ('' = all): { late: ticked off after it was due, open: still not done and past due, from } */
+export function lateCount(data, now = Date.now(), from = data.termStart) {
+  const list = activeList(data).filter(a => !from || a.due >= from);
+  return { late: list.filter(a => a.done && a.doneAt && a.doneAt > dueAt(a)).length, open: list.filter(a => isOverdue(a, now)).length, from: from || '' };
+}
+/** Minutes YOU estimated for what is left today (due today or overdue), and how many of those have no estimate. */
+export function estimateToday(list, now = Date.now()) {
+  const v = viewToday(list, now);
+  const open = [...v.overdue, ...v.today];
+  return { min: open.reduce((s, a) => s + a.est, 0), with: open.filter(a => a.est).length, without: open.filter(a => !a.est).length };
+}
+export const minText = m => (m < 60 ? `${m} min` : m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`);
 
 /* ---------- when things are due ---------- */
 /** The moment it is due: its time, or the end of its day when it has none. */
@@ -128,9 +244,9 @@ export function viewWeek(list, now = Date.now()) {
 }
 /** By class: one group per class (and "No class"), open work first by due date, done last. */
 export function viewByClass(data, now = Date.now()) {
-  const groups = data.classes.map(c => ({ cls: c, items: [] }));
+  const groups = data.classes.filter(c => !c.archived).map(c => ({ cls: c, items: [] }));
   const none = { cls: null, items: [] };
-  for (const a of data.assignments) (groups.find(g => g.cls.id === a.classId) || none).items.push(a);
+  for (const a of activeList(data)) (groups.find(g => g.cls.id === a.classId) || none).items.push(a);
   if (none.items.length) groups.push(none);
   for (const g of groups) g.items.sort((a, b) => (a.done - b.done) || byDue(a, b));
   return groups;
@@ -152,6 +268,7 @@ export function dueText(a) {
 /** The reminder an assignment wants, in the shape automations.js takes, or null. */
 export function reminderFor(a, classes = read().classes) {
   if (a.done) return null;
+  if (classes.some(c => c.id === a.classId && c.archived)) return null;     /* an archived class reminds no one */
   const at = remindAt(a);
   if (!at) return null;
   const cls = classes.find(c => c.id === a.classId);
@@ -167,11 +284,26 @@ export function syncReminders(data = read()) {
   catch (err) { console.error('[homework] reminders', err); return {}; }
 }
 
-/** Save, then bring the reminders in line. -> { data, reminders } */
-export function write(data) {
-  const out = JSON.parse(JSON.stringify(normalize(data)));
+/** Save (making the next of any repeating assignment that is due one), then bring the reminders in line. -> { data, reminders, made } */
+export function write(data, now = Date.now()) {
+  const norm = normalize(data);
+  const made = rollRepeats(norm, now);
+  const out = JSON.parse(JSON.stringify(normalize(norm)));
   store.set(KEY, out);
-  return { data: out, reminders: syncReminders(out) };
+  return { data: out, reminders: syncReminders(out), made };
 }
 
-export default { KEY, COLORS, REMIND, read, write, normalize, viewToday, viewWeek, viewByClass, dueAt, isOverdue, statusOf, reminderFor, syncReminders, today, addDays, ymd };
+/** With the window closed: the next of a repeating assignment appears on its day. Once at start and on each new day. */
+let lastDay = '';
+export function init() {
+  const tick = () => {
+    const t = today();
+    if (t === lastDay) return;
+    lastDay = t;
+    try { const cur = read(); if (rollRepeats(normalize(cur))) write(cur); } catch (err) { console.error('[homework]', err); }
+  };
+  tick();
+  bus.on('tick:5s', tick);
+}
+
+export default { KEY, COLORS, REMIND, REPEATS, read, write, init, normalize, activeList, rollRepeats, stepDay, percentOf, classAverage, lateCount, estimateToday, viewToday, viewWeek, viewByClass, dueAt, isOverdue, statusOf, reminderFor, syncReminders, today, addDays, ymd };

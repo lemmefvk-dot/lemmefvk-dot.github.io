@@ -17,7 +17,8 @@
    Files open it with a picture already chosen. Each tool's code is in
    js/photos/pt-*.js and loads the first time its tab is opened.
 
-   Opened with { tool: 'meme'|'collage'|'convert'|'ascii'|'gif'|'slideshow'|'sticker'|'comic'|'scan', path? }.
+   Opened with { tool: 'meme'|'collage'|'convert'|'ascii'|'gif'|'slideshow'|'sticker'|'comic'|'scan', path?, paths? }
+   (paths: several pictures, used by the GIF tool for Camera's burst).
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 
@@ -48,7 +49,7 @@ defineApp({
   icon: 'sparkles',
   g1: '#7fd8ff', g2: '#6a4bff',
   category: 'Media',
-  keywords: ['meme', 'meme maker', 'caption', 'collage', 'photo collage', 'grid', 'convert', 'converter', 'resize', 'png', 'jpg', 'jpeg', 'webp', 'ascii', 'ascii art', 'text art', 'banner', 'gif', 'animated gif', 'gif maker', 'slideshow', 'photo video', 'ken burns', 'sticker', 'sticker maker', 'cut out', 'cutout', 'lasso', 'magic wand', 'comic', 'comic maker', 'speech bubble', 'panels', 'scan', 'scanner', 'document scanner', 'scan a page', 'pdf', 'photograph a page', 'homework scan'],
+  keywords: ['meme', 'meme maker', 'caption', 'collage', 'photo collage', 'grid', 'convert', 'converter', 'resize', 'png', 'jpg', 'jpeg', 'webp', 'ascii', 'ascii art', 'text art', 'banner', 'gif', 'animated gif', 'gif maker', 'slideshow', 'photo video', 'ken burns', 'sticker', 'sticker maker', 'cut out', 'cutout', 'lasso', 'magic wand', 'comic', 'comic maker', 'speech bubble', 'panels', 'scan', 'scanner', 'document scanner', 'scan a page', 'pdf', 'photograph a page', 'homework scan', 'boomerang', 'exif', 'photo data', 'remove location', 'emoji', 'comic pdf', 'a4', 'letter', 'colour scan'],
   desc: 'Make memes, collages, GIFs, slideshows, stickers and comics, scan pages to PDF, or resize and convert pictures',
   win: { w: 1040, h: 700, minW: 520, minH: 420 },
   shortcuts: [['1', 'Meme'], ['2', 'Collage'], ['3', 'Convert'], ['4', 'ASCII art'], ['5', 'GIF'], ['6', 'Slideshow'], ['7', 'Sticker'], ['8', 'Comic'], ['9', 'Scan']],
@@ -97,7 +98,7 @@ defineApp({
         wait.remove();
         const host = h('div.pt__tool', { dataset: { tool: id } });
         body.appendChild(host);
-        const down = mountTool({ api, root: host, opts: { path: extra.path } });
+        const down = mountTool({ api, root: host, opts: { path: extra.path, paths: extra.paths } });
         S.down = typeof down === 'function' ? down : null;
       }).catch(err => {
         if (!S.alive || seq !== S.seq) return;
@@ -114,7 +115,7 @@ defineApp({
       if (t && e.key.length === 1) { e.preventDefault(); show(t.id); }
     };
     window.addEventListener('keydown', onKey);
-    show(want, { path: opts?.path });
+    show(want, { path: opts?.path, paths: opts?.paths });
 
     return () => {
       S.alive = false;

@@ -24,6 +24,7 @@ import * as WXW from '../core/wpweather.js';
 import * as ACCENT from '../core/wpaccent.js';
 
 /* the shell module (shell/wallplus.js) normally links it already */
+import { t as tr, plural } from '../core/i18n.js';
 function ensureCss() {
   if (document.getElementById('feat-wallplus-css')) return;
   document.head.appendChild(Object.assign(document.createElement('link'), { id: 'feat-wallplus-css', rel: 'stylesheet', href: 'css/feat-wallplus.css' }));
@@ -50,7 +51,7 @@ export function wallpaperRows(kit) {
   /* ---------------- rotation ---------------- */
   const rotSay = h('small.wpx-row-sub', { dataset: { fk: 'wpx-rot-status' }, role: 'status' });
   const rotSkip = h('div.wpx-skip', { dataset: { fk: 'wpx-rot-skipped' } });
-  const nextBtn = btn('skip-forward', 'Next picture', () => { ROTATE.next(); });
+  const nextBtn = btn('skip-forward', tr('Next picture'), () => { ROTATE.next(); });
   nextBtn.dataset.fk = 'wpx-rot-next';
 
   const turnOn = v => {
@@ -63,8 +64,8 @@ export function wallpaperRows(kit) {
     const chosen = new Set(cfg.set);
     source = h('div.set-row',
       h('div.set-row__ico', icon('image')),
-      h('div.set-row__t', h('b', { text: 'Wallpapers to rotate' }), h('small', { text: 'Tick two or more. Pictures that don’t load are skipped.' }),
-        h('div.wpx-set', { role: 'group', 'aria-label': 'Wallpapers to rotate', style: { marginTop: 'var(--sp-2)' } },
+      h('div.set-row__t', h('b', { text: tr('Wallpapers to rotate') }), h('small', { text: tr('Tick two or more. Pictures that don’t load are skipped.') }),
+        h('div.wpx-set', { role: 'group', 'aria-label': tr('Wallpapers to rotate'), style: { marginTop: 'var(--sp-2)' } },
           WP.list(store).map(w => h('button.wpx-set__b', {
             type: 'button', 'aria-pressed': String(chosen.has(w.id)), dataset: { id: w.id },
             onclick: e => {
@@ -73,24 +74,29 @@ export function wallpaperRows(kit) {
               setPref('wpRotateSet', WP.list(store).map(x => x.id).filter(id => chosen.has(id)));
             },
           }, h('i', { style: thumb(w) }), h('span', { text: w.name }))))));
+  } else if (cfg.from === 'favs') {
+    const n = WP.favs(store).length;
+    source = row('heart', tr('My favourites'), n >= 2
+      ? tr('{n} wallpapers are hearted. Heart or un-heart them in the picker above.', { n })
+      : n === 1 ? tr('One wallpaper is hearted. Heart at least two in the picker above.') : tr('None hearted yet. Heart the wallpapers you like in the picker above.'));
   } else {
     const folders = [...new Set([ROTATE.defaultFolder(), cfg.folder, ...ROTATE.pictureFolders()])];
-    source = row('folder-open', 'Folder', 'Every picture in it, and in the folders inside it.',
-      select('Rotation folder', folders.map(p => [p, ROTATE.folderLabel(p)]), cfg.folder, v => setPref('wpRotateFolder', v)));
+    source = row('folder-open', tr('Folder'), tr('Every picture in it, and in the folders inside it.'),
+      select(tr('Rotation folder'), folders.map(p => [p, ROTATE.folderLabel(p)]), cfg.folder, v => setPref('wpRotateFolder', v)));
   }
 
   function rotLive() {
     const s = ROTATE.status();
-    const where = s.from === 'set' ? 'the wallpapers you picked' : ROTATE.folderLabel(s.folder);
+    const where = s.from === 'set' ? tr('the wallpapers you picked') : s.from === 'favs' ? 'your favourites' : ROTATE.folderLabel(s.folder);
     let say;
-    if (!s.on) say = 'Off — your wallpaper stays as you chose it.';
-    else if (!s.count) say = s.from === 'set' ? 'Pick some wallpapers below to rotate through.' : `There are no pictures in ${where}. Add some in Files (or take one with Camera), or pick another folder.`;
-    else if (s.none) say = `Nothing in ${where} opens as a picture, so your own wallpaper stays up.`;
-    else if (s.busy && !s.cur) say = 'Opening the first picture…';
-    else if (SEASON.spooky('wallpaper') && document.documentElement.dataset.spooky === 'on') say = 'The haunted house is up for spooky season — rotation waits until it steps aside (Settings › Spooky Season).';
+    if (!s.on) say = tr('Off — your wallpaper stays as you chose it.');
+    else if (!s.count) say = s.from === 'set' ? tr('Pick some wallpapers below to rotate through.') : s.from === 'favs' ? tr('Heart some wallpapers in the picker to rotate through your favourites.') : tr('There are no pictures in {where}. Add some in Files (or take one with Camera), or pick another folder.', { where });
+    else if (s.none) say = tr('Nothing in {where} opens as a picture, so your own wallpaper stays up.', { where });
+    else if (s.busy && !s.cur) say = tr('Opening the first picture…');
+    else if (SEASON.spooky('wallpaper') && document.documentElement.dataset.spooky === 'on') say = tr('The haunted house is up for spooky season — rotation waits until it steps aside (Settings › Spooky Season).');
     else {
-      const n = `${s.count} picture${s.count === 1 ? '' : 's'} in ${where}`;
-      const when = s.every === 'login' ? 'the next one when StaticOS next starts' : s.due ? `the next at ${time(s.due)}` : '';
+      const n = plural(s.count, '{n} picture in {where}', '{n} pictures in {where}', { where });
+      const when = s.every === 'login' ? tr('the next one when StaticOS next starts') : s.due ? tr('the next at {time}', { time: time(s.due) }) : '';
       say = `Now: ${s.name || '…'} — ${n}${when ? `, ${when}` : ''}.`;
     }
     rotSay.textContent = say;
@@ -100,26 +106,31 @@ export function wallpaperRows(kit) {
     if (rotSkip.dataset.sig !== sig) {
       rotSkip.dataset.sig = sig;
       rotSkip.replaceChildren(...(sk.length ? [
-        h('small', { text: `Skipped ${sk.length} file${sk.length === 1 ? '' : 's'} that wouldn’t open:` }),
+        h('small', { text: plural(sk.length, 'Skipped {n} file that wouldn’t open:', 'Skipped {n} files that wouldn’t open:') }),
         ...sk.slice(0, 5).map(x => h('small', { dataset: { ref: x.ref }, text: `${x.name} — ${x.why}.` })),
-        sk.length > 5 ? h('small', { text: `and ${sk.length - 5} more.` }) : null,
+        sk.length > 5 ? h('small', { text: tr('and {n} more.', { n: sk.length - 5 }) }) : null,
       ].filter(Boolean) : []));
     }
   }
 
   const rotation = [
-    caption('Rotation'),
+    caption(tr('Rotation')),
     group(
       srow('wpRotate', sw(SETLABEL.rotate, () => ROTATE.config().on, turnOn)),
       cfg.on ? [
-        row('layers', 'Pictures from', null, tabs('Pictures from', [['folder', 'A folder'], ['set', 'Wallpapers I pick']], cfg.from, v => { setPref('wpRotateFrom', v); repaint(); })),
+        row('layers', tr('Pictures from'), null, tabs(tr('Pictures from'), [['folder', 'A folder'], ['set', tr('Wallpapers I pick')], ['favs', tr('My favourites')]], cfg.from, v => { setPref('wpRotateFrom', v); repaint(); })),
         source,
-        row('clock', 'How often', null, select('How often', Object.entries(ROTATE.EVERY_LABEL), cfg.every, v => { setPref('wpRotateEvery', v); rotLive(); })),
-        row('shuffle', 'Order', 'Shuffle shows every picture once before any comes round again.', tabs('Order', [['shuffle', 'Shuffle'], ['order', 'In order']], cfg.order, v => setPref('wpRotateOrder', v))),
+        row('clock', tr('How often'), cfg.every === 'mins' ? tr('Anywhere from 1 minute to 24 hours (1440 minutes).') : null,
+          select(tr('How often'), Object.entries(ROTATE.EVERY_LABEL), cfg.every, v => { setPref('wpRotateEvery', v); repaint(); }),
+          cfg.every === 'mins' ? h('div.field', { style: { width: '84px' } }, h('input', {
+            type: 'number', min: String(ROTATE.MINS.min), max: String(ROTATE.MINS.max), value: String(cfg.mins), 'aria-label': tr('Minutes between wallpapers'), dataset: { fk: 'wpx-rot-mins' },
+            onchange: e => { const n = Math.round(Number(e.target.value)); setPref('wpRotateMins', Math.max(ROTATE.MINS.min, Math.min(ROTATE.MINS.max, Number.isFinite(n) ? n : ROTATE.MINS.def))); setTimeout(repaint, 0); },
+          })) : null),
+        row('shuffle', tr('Order'), tr('Shuffle shows every picture once before any comes round again.'), tabs(tr('Order'), [['shuffle', tr('Shuffle')], ['order', tr('In order')]], cfg.order, v => setPref('wpRotateOrder', v))),
       ] : null,
       h('div.set-row',
         h('div.set-row__ico', icon('image')),
-        h('div.set-row__t', h('b', { text: 'Right now' }), rotSay, rotSkip),
+        h('div.set-row__t', h('b', { text: tr('Right now') }), rotSay, rotSkip),
         h('div.set-row__c', cfg.on ? nextBtn : null)),
     ),
   ];
@@ -130,24 +141,24 @@ export function wallpaperRows(kit) {
   function sunLive() {
     const st = DAY.state();
     const src = st.source;
-    const times = `sunrise ${DAY.clock(st.rise)}, sunset ${DAY.clock(st.set)}`;
-    const now = `Now: ${DAY.NAMES[st.phase]}. `;
+    const times = tr('sunrise {rise}, sunset {set}', { rise: DAY.clock(st.rise), set: DAY.clock(st.set) });
+    const now = tr('Now: {phase}. ', { phase: DAY.NAMES[st.phase] });
     sunSay.textContent = src.kind === 'place'
-      ? `${now}Real ${times} for ${src.place} (from Weather), worked out on this computer.`
+      ? tr('{now}Real {times} for {place} (from Weather), worked out on this computer.', { now, times, place: src.place })
       : src.why
-        ? `${now}${src.why}, so fixed times are used: ${times}.`
-        : `${now}Fixed times: ${times}. Give Weather a place (a city, or your location) to follow the real sun there.`;
+        ? tr('{now}{why}, so fixed times are used: {times}.', { now, why: src.why, times })
+        : tr('{now}Fixed times: {times}. Give Weather a place (a city, or your location) to follow the real sun there.', { now, times });
   }
   const daycycle = [
-    caption('Day and Night'),
+    caption(tr('Day and Night')),
     group(
       srow('wp.daycycle', dayOn
-        ? h('span.chip.chip--accent', { text: 'In use' })
-        : btn('image', 'Use it', () => { WP.setActive(store, 'daycycle'); api.bus.emit('wallpaper:changed'); repaint(); })),
+        ? h('span.chip.chip--accent', { text: tr('In use') })
+        : btn('image', tr('Use it'), () => { WP.setActive(store, 'daycycle'); api.bus.emit('wallpaper:changed'); repaint(); })),
       h('div.set-row',
         h('div.set-row__ico', icon('sun')),
-        h('div.set-row__t', h('b', { text: 'Sunrise and sunset' }), sunSay),
-        h('div.set-row__c', btn('cloud-sun', 'Weather', () => api.openApp('weather'), '.btn--ghost'))),
+        h('div.set-row__t', h('b', { text: tr('Sunrise and sunset') }), sunSay),
+        h('div.set-row__c', btn('cloud-sun', tr('Weather'), () => api.openApp('weather'), '.btn--ghost'))),
     ),
   ];
 
@@ -157,29 +168,29 @@ export function wallpaperRows(kit) {
     const s = WXW.status();
     let say;
     if (!s.on) say = 'Off.';
-    else if (!s.place) say = 'Weather doesn’t have a place yet. Search for a city in Weather, or let it use your location — then the wallpaper can match it.';
+    else if (!s.place) say = tr('Weather doesn’t have a place yet. Search for a city in Weather, or let it use your location — then the wallpaper can match it.');
     else if (s.reading) {
-      say = `${s.label} in ${s.place.name}, checked at ${time(s.reading.at)}. `
-        + (s.effect === 'none' ? 'Nothing to draw for that.' : `Drawn as ${WXW.EFFECT_NAME[s.effect].toLowerCase()}.`);
-      if (s.err) say += ` The last check failed (${s.err.short.replace(/\.$/, '')}).`;
-      if (document.documentElement.dataset.gamemode === 'on') say += ' Paused for Game Mode.';
-      else if (reducedMotion()) say += ' Drawn still, because Reduce motion is on.';
-    } else if (s.err) say = `Weather unavailable — ${s.err.short} Nothing is drawn until Open-Meteo answers; it tries again after ${time(s.next)}.`;
-    else if (s.unavailable) say = `Weather unavailable — the last reading for ${s.place.name} is over an hour old.`;
-    else say = `Asking Open-Meteo about ${s.place.name}…`;
+      say = tr('{label} in {place}, checked at {time}. ', { label: s.label, place: s.place.name, time: time(s.reading.at) })
+        + (s.effect === 'none' ? tr('Nothing to draw for that.') : tr('Drawn as {effect}.', { effect: WXW.EFFECT_NAME[s.effect].toLowerCase() }));
+      if (s.err) say += tr(' The last check failed ({reason}).', { reason: s.err.short.replace(/\.$/, '') });
+      if (document.documentElement.dataset.gamemode === 'on') say += tr(' Paused for Game Mode.');
+      else if (reducedMotion()) say += tr(' Drawn still, because Reduce motion is on.');
+    } else if (s.err) say = tr('Weather unavailable — {reason} Nothing is drawn until Open-Meteo answers; it tries again after {time}.', { reason: s.err.short, time: time(s.next) });
+    else if (s.unavailable) say = tr('Weather unavailable — the last reading for {name} is over an hour old.', { name: s.place.name });
+    else say = tr('Asking Open-Meteo about {name}…', { name: s.place.name });
     wxSay.textContent = say;
     wxSay.dataset.state = !s.on ? 'off' : !s.place ? 'noplace' : s.reading ? s.effect : s.err || s.unavailable ? 'unavailable' : 'asking';
   }
   const weather = [
-    caption('Weather'),
+    caption(tr('Weather')),
     group(
       srow('wpWeather', sw(SETLABEL.weather, () => store.get('prefs.wpWeather') === true, v => { setPref('wpWeather', v); repaint(); })),
       h('div.set-row',
         h('div.set-row__ico', icon('cloud-sun')),
-        h('div.set-row__t', h('b', { text: 'Where you are' }), wxSay),
-        h('div.set-row__c', btn('cloud-sun', 'Weather', () => api.openApp('weather'), '.btn--ghost'))),
+        h('div.set-row__t', h('b', { text: tr('Where you are') }), wxSay),
+        h('div.set-row__c', btn('cloud-sun', tr('Weather'), () => api.openApp('weather'), '.btn--ghost'))),
     ),
-    note('Uses only the place Weather already has — a city you searched for, or your location if you allowed it there. It asks Open-Meteo at most every 30 minutes, and never shows weather it didn’t get. It pauses in Game Mode and in a hidden tab, and stays still with Reduce motion.', 'cloud-rain'),
+    note(tr('Uses only the place Weather already has — a city you searched for, or your location if you allowed it there. It asks Open-Meteo at most every 30 minutes, and never shows weather it didn’t get. It pauses in Game Mode and in a hidden tab, and stays still with Reduce motion.'), 'cloud-rain'),
   ];
 
   const live = () => { rotLive(); sunLive(); wxLive(); };
@@ -187,7 +198,7 @@ export function wallpaperRows(kit) {
   return { nodes: [...rotation, ...daycycle, ...weather], live };
 }
 
-export const SETLABEL = { rotate: 'Change the wallpaper by itself', weather: 'Weather on the wallpaper' };
+export const SETLABEL = { rotate: tr('Change the wallpaper by itself'), weather: tr('Weather on the wallpaper') };
 
 /* ---------------- Themes › Auto ---------------- */
 export function autoCard(kit) {
@@ -201,21 +212,21 @@ export function autoCard(kit) {
     const t = THEMES.autoTheme();
     swatch.style.background = `linear-gradient(140deg, ${t.soft} 0%, ${t.accent} 62%)`;
     const from = store.get(ACCENT.FROM, null);
-    if (!on) say.textContent = 'Picks the accent out of your wallpaper and follows it — rotation and Day and Night included. Made lighter or deeper if it needs to be, so text on it stays easy to read.';
-    else if (from?.hex) say.textContent = `From ${from.name}: ${t.accent}${t.accent !== from.hex ? ` (found ${from.hex}, adjusted so text on it reads)` : ''}.`;
-    else if (from?.why) say.textContent = `${from.why} Keeping ${t.accent} until the wallpaper changes.`;
-    else say.textContent = 'Looking at your wallpaper…';
+    if (!on) say.textContent = tr('Picks the accent out of your wallpaper and follows it — rotation and Day and Night included. Made lighter or deeper if it needs to be, so text on it stays easy to read.');
+    else if (from?.hex) say.textContent = tr('From {name}: {accent}', { name: from.name, accent: t.accent }) + (t.accent !== from.hex ? tr(' (found {hex}, adjusted so text on it reads)', { hex: from.hex }) : '') + '.';
+    else if (from?.why) say.textContent = tr('{why} Keeping {accent} until the wallpaper changes.', { why: from.why, accent: t.accent });
+    else say.textContent = tr('Looking at your wallpaper…');
   }
   live();
   const node = h('div.st-auto' + (on ? '.is-on' : ''), { dataset: { fk: 'accent-auto' } },
     swatch,
     h('div.st-auto__b', h('b', { text: 'Auto (from wallpaper)' }), say),
     on
-      ? h('span.chip.chip--accent', icon('check'), h('span', { text: 'In use' }))
+      ? h('span.chip.chip--accent', icon('check'), h('span', { text: tr('In use') }))
       : h('button.btn.btn--sm.btn--primary', {
         type: 'button', dataset: { fk: 'accent-auto-use' },
         onclick: () => { setPref('accent', THEMES.AUTO); THEMES.apply(THEMES.AUTO); repaint(); },
-      }, icon('palette'), h('span', { text: 'Use Auto' })));
+      }, icon('palette'), h('span', { text: tr('Use Auto') })));
   return { node, live };
 }
 

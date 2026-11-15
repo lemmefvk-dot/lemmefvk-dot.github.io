@@ -11,9 +11,21 @@
    cannot work it says so, in your own numbers. A reminder goes through
    the same engine as homework reminders (js/core/exams.js).
    All text typed here is shown as text.
+
+   Rate each topic Weak, OK or Strong: weak ones are planned first and,
+   when there are free days to spare, get a second go. The plan can be
+   shown in Calendar (its Exam study plans layer, always the current
+   plan) or downloaded as an .ics file for another calendar, and
+   printed. "Make flashcards" on a topic puts cards for it in a deck,
+   tagged with the topic: written by you, or drafted by the AI model in
+   Settings › AI model when you press Draft — a list you check and
+   tick before anything is added. A test that is over can take the
+   score you got; the past tests show their scores and the average.
    ============================================================ */
 import * as EX from '../core/exams.js';
 import * as HW from '../core/homework.js';
+import * as FC from '../core/flashcards.js';
+import { printSheet, printedOn } from './print.js';
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const SHOW_DAYS = 14;
@@ -23,7 +35,7 @@ const timeText = t => new Date(2000, 0, 3, ...t.split(':').map(Number)).toLocale
 export function mountExams(host, ctx) {
   const { api } = ctx;
   const { h, icon, clear, confirm } = api;
-  const S = { data: EX.read(), sel: '', form: null, note: '', allDays: {}, dead: false, today: EX.todayOf(), focus: null };
+  const S = { data: EX.read(), sel: '', form: null, note: '', allDays: {}, dead: false, today: EX.todayOf(), focus: null, cards: null };
   const root = h('div.st-ex');
   host.appendChild(root);
 
@@ -106,6 +118,148 @@ export function mountExams(host, ctx) {
     render();
   }
   const dropTopic = (id, tid) => { mutate(d => { const x = d.exams.find(e => e.id === id); x.topics = x.topics.filter(t => t.id !== tid); }); S.note = ''; render(); };
+  const rate = (id, tid, r) => { mutate(d => { const x = d.exams.find(e => e.id === id); const t = x && x.topics.find(y => y.id === tid); if (t) { if (t.rate === r) delete t.rate; else t.rate = r; } }); S.note = ''; render(); };
+  function setScore(id, v) {
+    const sc = String(v || '').replace(/\s+/g, ' ').trim().slice(0, 12);
+    mutate(d => { const x = d.exams.find(e => e.id === id); if (x) x.score = sc; });
+    S.note = sc ? `Saved your score: ${sc}.` : 'Score cleared.';
+    render();
+  }
+
+  /* ---------- the plan, elsewhere ---------- */
+  function showInCalendar(e) {
+    import('../core/callayers.js').then(L => {
+      L.setView({ layers: { studyplan: true } });
+      const first = EX.plan(e).days.find(d => !d.busy && d.topics.length);
+      api.openApp('calendar', first ? { date: first.day } : {});
+      S.note = 'Calendar now shows your study plans (the Exam study plans layer, in its View menu). It always shows the plan as it is now: tick a topic and Calendar follows.';
+      render();
+    });
+  }
+  async function downloadIcs(e) {
+    const p = EX.plan(e);
+    const days = p.days.filter(d => !d.busy && d.topics.length);
+    if (!days.length) { S.note = 'There is nothing planned to put in a calendar yet.'; render(); return; }
+    const ICS = await import('../core/ics.js');
+    if (S.dead) return;
+    const events = days.map(d => ({ id: `${e.id}-${d.day}`, uid: `${e.id}-${d.day}@staticos-study`, title: `Study ${e.subject}: ${d.topics.map(t => t.again ? `${t.text} (again)` : t.text).join(', ')}`.slice(0, 200),
+      allDay: true, date: d.day, time: '', end: '', repeat: 'none', skip: [], days: [], until: '', location: '', notes: `Study plan for ${e.subject} on ${e.date}. Made by Static Study from your topics; it is a copy, so later changes to the plan aren’t in it.` }));
+    events.push({ id: `${e.id}-exam`, uid: `${e.id}-exam@staticos-study`, title: `${e.subject} exam`, allDay: !e.time, date: e.date, time: e.time, end: '', repeat: 'none', skip: [], days: [], until: '', location: '', notes: '' });
+    const text = ICS.build(events, [], { name: `${e.subject} study plan` });
+    const a = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/calendar' })), download: `${e.subject.replace(/[^\w .-]+/g, '_') || 'exam'} study plan.ics` });
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    S.note = `Saved ${days.length} study day${days.length === 1 ? '' : 's'} and the exam as an .ics file. It is a copy: if the plan changes, download it again.`;
+    render();
+  }
+  function printPlan(e) {
+    const p = EX.plan(e);
+    const rateName = r => (EX.RATES.find(([v]) => v === r) || [0, ''])[1];
+    printSheet(h, `${e.subject}: study plan`, `${dayText(e.date, true)}${e.time ? ` at ${timeText(e.time)}` : ''} · ${EX.countdown(e).text}${EX.countdown(e).state === 'past' ? '' : ' to go'}`, [
+      h('h2', { text: `Topics (${e.topics.filter(t => t.done).length} of ${e.topics.length} done)` }),
+      h('ul', e.topics.map(t => h('li', { text: `${t.done ? '☑' : '☐'} ${t.text}${t.rate ? ` — ${rateName(t.rate).toLowerCase()}` : ''}` }))),
+      h('h2', { text: 'Plan' }),
+      p.days.length ? h('table', h('tr', h('th', { text: 'Day' }), h('th', { text: 'Study' })), p.days.map(d => h('tr', h('td', { text: dayText(d.day) }),
+        h('td', { text: d.busy ? 'Busy' : d.topics.length ? d.topics.map(t => (t.again ? `${t.text} (again)` : t.text)).join(', ') + (d.minEach ? ` · about ${d.minEach} min each` : '') : 'Free for revision' }))))
+        : h('p', { text: p.notes[0] || 'Nothing to plan.' }),
+      ...p.notes.filter(n => p.days.length).map(n => h('p.st-print__fine', { text: n })),
+      h('p.st-print__fine', { text: printedOn() }),
+    ]);
+  }
+
+  /* ---------- flashcards for a topic ---------- */
+  const tagOf = t => FC.normTags(t.text.replace(/[^\p{L}\p{N}]+/gu, '-'))[0] || 'topic';
+  function openCards(e, t) {
+    const decks = FC.read().decks;
+    const named = decks.find(d => d.name.toLowerCase() === e.subject.toLowerCase());
+    S.cards = { exam: e.id, topic: t.id, deck: named ? named.id : '', drafts: null, state: '', busy: false, ctl: null };
+    render();
+  }
+  function cardsDeck(e) {
+    const c = S.cards;
+    const data = FC.read();
+    let d = c.deck && data.decks.find(x => x.id === c.deck);
+    if (!d) {
+      if (data.decks.length >= FC.MAX_DECKS) return null;
+      d = FC.normDeck({ name: e.subject });
+      data.decks.push(d);
+      FC.write(data);
+      c.deck = d.id;
+    }
+    return d.id;
+  }
+  function writeCards(e, t) {
+    const id = cardsDeck(e);
+    if (!id) { S.note = `Static Study holds up to ${FC.MAX_DECKS} decks. Delete one in Flashcards first.`; render(); return; }
+    S.cards = null;
+    ctx.go && ctx.go('cards', { deck: id, tags: tagOf(t) });
+  }
+  async function draftCards(e, t) {
+    const c = S.cards;
+    if (!c || c.busy) return;
+    c.ctl?.abort();
+    const ctl = new AbortController();
+    Object.assign(c, { ctl, busy: true, drafts: null, state: 'Asking the model…' });
+    render();
+    try {
+      const LLM = await import('../portal/llm.js');
+      const { describe } = await import('../portal/aimodel.js');
+      c.who = describe();
+      const reply = await LLM.stream([
+        { role: 'system', content: 'You write flashcards for a student revising for a test. Reply with 8 lines and nothing else. Each line is one card: a short question or term, then " :: ", then a short, correct answer. No numbering, no markdown.' },
+        { role: 'user', content: `Subject: ${e.subject}\nTopic: ${t.text}` },
+      ], { signal: ctl.signal, onWait: w => { if (S.cards === c) { c.state = w.reason === 'busy' ? 'The model is busy — trying again in a moment…' : 'Waiting for another request to finish…'; render(); } } });
+      if (S.cards !== c || S.dead) return;
+      const got = FC.parseImport(reply.replace(/^\s*(?:[-*•]|\d+[.)])\s*/gm, ''), 20, '::').cards.slice(0, 12);
+      c.drafts = got.map(x => ({ front: x.front, back: x.back, on: true }));
+      c.state = got.length ? `${got.length} drafts from ${c.who.name || 'the model'}. Check each one: untick or fix anything wrong. Nothing is added until you press Add.` : 'The model’s reply had no cards in it. Try again, or write them yourself.';
+    } catch (err) {
+      if (S.cards !== c || err.name === 'AbortError') return;
+      c.state = String(err && err.message || err);
+    } finally { if (S.cards === c) c.busy = false; }
+    if (!S.dead) render();
+  }
+  function addDrafts(e, t) {
+    const c = S.cards;
+    const pick = (c.drafts || []).filter(x => x.on && x.front.trim() && x.back.trim());
+    if (!pick.length) return;
+    const id = cardsDeck(e);
+    if (!id) { S.note = `Static Study holds up to ${FC.MAX_DECKS} decks. Delete one in Flashcards first.`; render(); return; }
+    let n = 0;
+    const data = FC.read();
+    const d = data.decks.find(x => x.id === id);
+    for (const x of pick) { if (d.cards.length >= FC.MAX_CARDS) break; d.cards.push(...FC.makeCards({ front: x.front, back: x.back, tags: tagOf(t) })); n++; }
+    FC.write(data);
+    S.cards = null;
+    S.note = `Added ${n} card${n === 1 ? '' : 's'} to “${d.name}”, tagged #${tagOf(t)}. They are new cards: they come up in Flashcards from today.`;
+    render();
+  }
+  function cardsPanel(e, t) {
+    const c = S.cards;
+    const decks = FC.read().decks;
+    const sel = h('select.select.st-sel', { 'aria-label': 'Deck', dataset: { fk: 'x-cards-deck' }, onchange: ev => { c.deck = ev.target.value; } },
+      h('option', { value: '', text: `A new deck: ${e.subject}`, selected: !c.deck }), decks.map(d => h('option', { value: d.id, text: d.name, selected: d.id === c.deck })));
+    const rows = c.drafts ? h('div.st-drafts', { role: 'list', dataset: { fk: 'x-drafts' } }, c.drafts.map((x, i) => h('div.st-draft', { role: 'listitem' },
+      h('input', { type: 'checkbox', checked: x.on, 'aria-label': `Keep card ${i + 1}`, dataset: { fk: 'x-draft-on' }, onchange: ev => { x.on = ev.target.checked; paintAdd(); } }),
+      h('input.st-in', { type: 'text', value: x.front, maxlength: '300', 'aria-label': `Card ${i + 1} front`, dataset: { fk: 'x-draft-front' }, oninput: ev => { x.front = ev.target.value; } }),
+      h('input.st-in', { type: 'text', value: x.back, maxlength: '300', 'aria-label': `Card ${i + 1} back`, dataset: { fk: 'x-draft-back' }, oninput: ev => { x.back = ev.target.value; } })))) : null;
+    const add = h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: 'x-drafts-add' }, onclick: () => addDrafts(e, t) }, icon('plus'), h('span'));
+    function paintAdd() { const n = (c.drafts || []).filter(x => x.on).length; add.disabled = !n; add.lastChild.textContent = `Add ${n} card${n === 1 ? '' : 's'}`; }
+    paintAdd();
+    return h('section.st-panel.st-xcards', { 'aria-label': `Flashcards for ${t.text}`, dataset: { fk: 'x-cards' } },
+      h('div.side__label', { text: `Flashcards for “${t.text}”` }),
+      h('div.st-row', h('label.st-inline', h('span', { text: 'Into' }), sel), h('small.dim', { text: `Tagged #${tagOf(t)}, so you can study just this topic.` })),
+      h('div.st-row',
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-cards-write' }, onclick: () => writeCards(e, t) }, icon('edit-3'), h('span', { text: 'Write them myself' })),
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-cards-draft' }, disabled: c.busy, onclick: () => draftCards(e, t) }, icon('sparkles'), h('span', { text: c.drafts ? 'Draft again' : 'Draft with AI' })),
+        h('span.st-spacer'),
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-cards-close' }, onclick: () => { c.ctl?.abort(); S.cards = null; render(); } }, h('span', { text: 'Close' }))),
+      c.drafts === null && !c.busy ? h('small.dim', { text: 'Draft with AI sends only the subject and this topic’s name to the model in Settings › AI model, because you pressed it. It can be wrong: you check every card first.' }) : null,
+      c.state ? h('p.st-hint', { role: 'status', dataset: { fk: 'x-cards-state' }, text: c.state }) : null,
+      rows, c.drafts && c.drafts.length ? h('div.st-row', h('span.st-spacer'), add) : null);
+  }
+
   const toggleBusy = (id, day) => { mutate(d => { const x = d.exams.find(e => e.id === id); x.busy = x.busy.includes(day) ? x.busy.filter(b => b !== day) : [...x.busy, day]; }); S.note = ''; render(); };
 
   /* ---------- pieces ---------- */
@@ -119,7 +273,8 @@ export function mountExams(host, ctx) {
     h('span.st-exc__n', { dataset: { fk: 'x-count' } }, h('b', { text: cd.state === 'today' ? 'Today' : cd.state === 'past' ? '✓' : String(cd.days) }), cd.state === 'later' || cd.state === 'soon' ? h('small', { text: cd.days === 1 ? 'day' : 'days' }) : null),
     h('span.st-exc__m', h('span.st-exc__t', { text: e.subject }),
       h('span.st-exc__s', { text: `${dayText(e.date)}${e.time ? `, ${timeText(e.time)}` : ''}` }),
-      h('span.st-exc__s', { dataset: { fk: 'x-progress' }, text: e.topics.length ? `${done} of ${plural(e.topics.length, 'topic')} done` : 'No topics yet' })),
+      h('span.st-exc__s', { dataset: { fk: 'x-progress' }, text: e.topics.length ? `${done} of ${plural(e.topics.length, 'topic')} done` : 'No topics yet' }),
+      e.score && cd.state === 'past' ? h('span.st-exc__s.st-exc__score', { dataset: { fk: 'x-score-shown' }, text: `Scored ${e.score}` }) : null),
     cd.state === 'past' ? h('span.st-exc__tag', { text: cd.text }) : cd.state === 'soon' || cd.state === 'today' ? h('span.st-exc__tag.is-soon', { text: cd.state === 'today' ? 'Today' : cd.days === 1 ? 'Tomorrow' : 'This week' }) : null);
   }
 
@@ -133,7 +288,10 @@ export function mountExams(host, ctx) {
     const topics = e.topics.length ? h('div.st-aslist', { role: 'list', dataset: { fk: 'x-topics' } }, e.topics.map(t => h('div.st-as', { role: 'listitem', class: t.done ? 'is-done' : '', dataset: { tid: t.id, done: t.done ? '1' : '0' } },
       h('button.st-check', { type: 'button', role: 'checkbox', class: t.done ? 'is-done' : '', 'aria-checked': t.done ? 'true' : 'false', 'aria-label': `${t.done ? 'Mark not done' : 'Mark done'}: ${t.text}`, dataset: { fk: 'x-tick' }, onclick: () => tick(e.id, t.id) }, t.done ? icon('check') : null),
       h('span.st-as__main.st-ex__topic', h('span.st-as__t', { text: t.text }), !t.done && late.has(t.id) ? h('span.st-over', { dataset: { fk: 'x-late' } }, icon('alert'), h('span', { text: 'Carried over from a missed day' })) : null),
+      h('span.tabs.st-rate', { role: 'radiogroup', 'aria-label': `How well you know ${t.text}` }, EX.RATES.map(([r, l]) => h('button', { type: 'button', role: 'radio', 'aria-checked': t.rate === r ? 'true' : 'false', class: t.rate === r ? `is-on is-r${r}` : '', title: `${l} (click again to clear)`, dataset: { fk: 'x-rate', rate: String(r) }, onclick: () => rate(e.id, t.id, r) }, h('span', { text: l })))),
+      h('button.ibtn', { type: 'button', 'aria-label': `Make flashcards for: ${t.text}`, title: 'Make flashcards for this topic', dataset: { fk: 'x-make-cards' }, onclick: () => openCards(e, t) }, icon('layers')),
       h('button.ibtn', { type: 'button', 'aria-label': `Remove topic: ${t.text}`, onclick: () => dropTopic(e.id, t.id) }, icon('trash'))))) : h('p.st-none', { text: 'No topics yet. Add what the test covers and a plan appears.' });
+    const cardsFor = S.cards && S.cards.exam === e.id ? e.topics.find(t => t.id === S.cards.topic) : null;
 
     const days = S.allDays[e.id] ? p.days : p.days.slice(0, SHOW_DAYS);
     const planEl = [];
@@ -145,13 +303,19 @@ export function mountExams(host, ctx) {
         return h('div.st-pd', { role: 'listitem', class: d.busy ? 'is-busy' : '', dataset: { day: d.day, busy: d.busy ? '1' : '0', n: String(d.topics.length), fk: 'x-day' } },
           h('div.st-pd__d', h('b', { text: dayText(d.day) }), isToday ? h('small', { text: 'Today' }) : null),
           h('div.st-pd__t', d.busy ? h('span.dim', { text: 'Busy: no study planned' })
-            : d.topics.length ? [d.topics.map(t => h('span.st-pd__i', { dataset: { fk: 'x-day-topic' }, text: t.text })), d.minEach ? h('small.dim', { text: `about ${d.minEach} min each, from your ${e.perDay} min` }) : null]
+            : d.topics.length ? [d.topics.map(t => (t.again ? h('span.st-pd__i.is-again', { dataset: { fk: 'x-day-again' }, title: 'A second go: you rated it weak', text: `${t.text} (again)` }) : h('span.st-pd__i', { dataset: { fk: 'x-day-topic' }, text: t.text }))), d.minEach ? h('small.dim', { text: `about ${d.minEach} min each, from your ${e.perDay} min` }) : null]
               : h('span.dim', { text: 'Nothing new planned: free for revision' })),
           h('button.btn.btn--sm', { type: 'button', 'aria-pressed': d.busy ? 'true' : 'false', 'aria-label': `${d.busy ? 'Mark free' : 'Mark busy'}: ${dayText(d.day)}`, dataset: { fk: 'x-busy' }, onclick: () => toggleBusy(e.id, d.day) }, h('span', { text: d.busy ? 'Free this day' : 'Busy' })));
       })));
       if (p.days.length > SHOW_DAYS) planEl.push(h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-alldays' }, onclick: () => { S.allDays[e.id] = !S.allDays[e.id]; render(); } }, h('span', { text: S.allDays[e.id] ? 'Show fewer days' : `Show all ${p.days.length} days` })));
       if (p.unplanned.length) planEl.push(h('div.st-ex__un', { dataset: { fk: 'x-unplanned' } }, h('b', { text: 'Not planned (does not fit):' }), h('span', { text: ' ' + p.unplanned.map(t => t.text).join(', ') })));
+      planEl.push(h('div.st-row.st-ex__out',
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-cal' }, disabled: !api.getApp('calendar'), onclick: () => showInCalendar(e) }, icon('calendar'), h('span', { text: 'Show in Calendar' })),
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-ics' }, onclick: () => downloadIcs(e) }, icon('download'), h('span', { text: 'Download .ics' })),
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-print' }, onclick: () => printPlan(e) }, icon('printer'), h('span', { text: 'Print the plan' }))));
     }
+    const scoreIn = cd.state === 'past' ? h('input.st-in', { type: 'text', maxlength: '12', value: e.score, placeholder: '87%, 42/50 or B+', 'aria-label': 'Your score', dataset: { fk: 'x-score' },
+      onkeydown: ev => { if (ev.key === 'Enter') { ev.preventDefault(); setScore(e.id, ev.target.value); } } }) : null;
     return h('section.st-ex__detail', { 'aria-label': `${e.subject} study plan`, dataset: { fk: 'x-detail', id: e.id } },
       h('div.st-row',
         h('div.st-ex__big', { dataset: { fk: 'x-big' } }, h('b', { text: cd.state === 'past' ? cd.text : cd.state === 'today' ? 'Today' : cd.text }), cd.state !== 'past' && cd.state !== 'today' ? h('small', { text: 'to go' }) : null),
@@ -159,7 +323,12 @@ export function mountExams(host, ctx) {
         h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-edit' }, onclick: () => edit(e.id) }, icon('edit-3'), h('span', { text: 'Edit' })),
         h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-delete' }, 'aria-label': `Delete test: ${e.subject}`, onclick: () => remove(e.id) }, icon('trash'), h('span', { text: 'Delete' }))),
       h('p.st-note', { text: `${dayText(e.date, true)}${e.time ? ` at ${timeText(e.time)}` : ''}. ${e.remind ? `Reminder: ${EX.remindLabel(e.remind).toLowerCase()}.` : 'No reminder.'}${e.perDay ? ` You have ${e.perDay} min a day to study.` : ''}${e.perTopic ? ` You think one topic needs ${e.perTopic} min.` : ''}` }),
+      scoreIn ? h('div.st-row.st-ex__score', h('label.st-inline', h('span', { text: 'Your score' }), scoreIn),
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-score-save' }, onclick: () => setScore(e.id, scoreIn.value) }, icon('check'), h('span', { text: 'Save score' })),
+        h('small.dim', { text: 'As you got it back: a percentage, points like 42/50, or a letter.' })) : null,
       h('div.side__label', { text: `Topics (${e.topics.filter(t => t.done).length} of ${e.topics.length} done)` }), topics,
+      cardsFor ? cardsPanel(e, cardsFor) : null,
+      e.topics.length ? h('small.dim', { text: 'Rate each topic: weak ones are planned first and get a second go when there are free days to spare.' }) : null,
       h('div.st-row', topicIn, h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'x-topic-add' }, onclick: () => addTopic(e.id, topicIn) }, icon('plus'), h('span', { text: 'Add topic' }))),
       h('div.side__label', { text: 'Study plan' }),
       h('p.st-note', { text: 'Open topics are spread evenly over the free days from today to the day before the test. Tick a topic, or mark a day busy, and the plan is made again.' }),
@@ -214,6 +383,8 @@ export function mountExams(host, ctx) {
       h('div.side__label', h('span', { text: label }), h('small', { text: String(items.length) })),
       h('div.st-ex__list', { role: 'list' }, items.map(e => h('div', { role: 'listitem', class: 'st-ex__item' }, card(e, now), S.sel === e.id ? detail(e, now) : null)))) : null;
     body.append(...[list('Coming up', upcoming, 'upcoming'), list('Past', past, 'past')].filter(Boolean));
+    const sc = EX.scores(S.data, now);
+    if (sc.list.length) body.append(h('p.st-hint', { dataset: { fk: 'x-scores' }, text: `Scores you recorded: ${sc.list.map(e => `${e.subject} ${e.score}`).join(', ')}.${sc.avg === null ? '' : sc.n === sc.list.length ? ` Average ${sc.avg}%.` : ` Average ${sc.avg}% over the ${sc.n} that ${sc.n === 1 ? 'is a number' : 'are numbers'}; letter grades are left out.`}` }));
     root.append(body);
     const el = S.focusEl;
     if (el) requestAnimationFrame(() => { try { if (/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '')) return; el.focus(); } catch (err) { /* fine */ } });

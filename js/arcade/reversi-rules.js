@@ -2,15 +2,17 @@
    arcade/reversi-rules.js — Reversi's rules and its computer player.
 
    Pure (no DOM), shared by the game (./reversi.js), the thinking
-   worker (./think.js) and the play-tests. The board is 8 × 8,
-   b[row * 8 + col], row 0 at the top: 1 = Black (moves first),
-   -1 = White, 0 = empty. A move puts a disc on an empty square that
+   worker (./think.js) and the play-tests. The board is 8 × 8 (the
+   default, and the only size online) or 6 × 6, b[row * n + col], row 0
+   at the top: 1 = Black (moves first), -1 = White, 0 = empty; a board's
+   size is read from its length (64 or 36). The four middle squares
+   start filled, as on 8 × 8. A move puts a disc on an empty square that
    brackets a straight line of the other colour's discs against one of
    your own; every bracketed disc flips. A player with no legal move
    passes (the game does it by itself); when neither can move, or the
    board is full, the one with more discs wins.
 
-   Moves are listed in g.moves as square numbers (0..63). Passes are
+   Moves are listed in g.moves as square numbers (0..n²−1). Passes are
    not moves: they are implied by the rules, so both screens of an
    online game reach the same position from the same list.
 
@@ -20,44 +22,52 @@
    easier levels' choices, never enough to skip a corner it can take.
    ============================================================ */
 export const N = 8;
+export const SIZES = [8, 6];
 export const LEVELS = {
   1: { name: 'Easy', depth: 1, timeMs: 150, noise: 60, exact: 0 },
   2: { name: 'Medium', depth: 4, timeMs: 500, noise: 8, exact: 8 },
   3: { name: 'Hard', depth: 8, timeMs: 1100, noise: 0, exact: 11 },
 };
 const DIRS = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+/** the side of a board (or a game's board) */
+export const sizeOf = b => ((b && b.b ? b.b : b).length === 36 ? 6 : 8);
+export const squareName = (i, n = N) => `${'abcdefgh'[i % n]}${((i / n) | 0) + 1}`;
 
-export function newGame() {
-  const b = new Int8Array(64);
-  b[3 * 8 + 3] = -1; b[4 * 8 + 4] = -1;
-  b[3 * 8 + 4] = 1; b[4 * 8 + 3] = 1;
+export function newGame(n = N) {
+  const sz = n === 6 ? 6 : 8, m = sz / 2;
+  const b = new Int8Array(sz * sz);
+  b[(m - 1) * sz + (m - 1)] = -1; b[m * sz + m] = -1;
+  b[(m - 1) * sz + m] = 1; b[m * sz + (m - 1)] = 1;
   return { b, turn: 1, moves: [], hist: [] };
 }
+/** rows of 'X' / 'B' (Black), 'O' / 'W' (White), '.': 8 rows of 8, or 6 of 6 */
 export function fromString(rows, turn = 1) {
-  const b = new Int8Array(64);
-  rows.join('').replace(/\s/g, '').split('').forEach((ch, i) => { b[i] = ch === 'X' || ch === 'B' ? 1 : ch === 'O' || ch === 'W' ? -1 : 0; });
+  const cells = rows.join('').replace(/\s/g, '').split('');
+  const b = new Int8Array(cells.length === 36 ? 36 : 64);
+  cells.slice(0, b.length).forEach((ch, i) => { b[i] = ch === 'X' || ch === 'B' ? 1 : ch === 'O' || ch === 'W' ? -1 : 0; });
   return { b, turn, moves: [], hist: [] };
 }
-export const toRows = b => Array.from({ length: 8 }, (_, r) => Array.from({ length: 8 }, (_, c) => (b[r * 8 + c] === 1 ? 'X' : b[r * 8 + c] === -1 ? 'O' : '.')).join(''));
+export const toRows = b => { const n = sizeOf(b); return Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => (b[r * n + c] === 1 ? 'X' : b[r * n + c] === -1 ? 'O' : '.')).join('')); };
 
 /** the squares that would flip if `turn` played at i (empty list: illegal) */
 export function flipsAt(b, i, turn) {
-  if (!Number.isInteger(i) || i < 0 || i > 63 || b[i] !== 0) return [];
-  const r0 = i >> 3, c0 = i & 7, out = [];
+  const n = sizeOf(b);
+  if (!Number.isInteger(i) || i < 0 || i >= n * n || b[i] !== 0) return [];
+  const r0 = (i / n) | 0, c0 = i % n, out = [];
   for (const [dr, dc] of DIRS) {
     let r = r0 + dr, c = c0 + dc;
     const line = [];
-    while (r >= 0 && r < 8 && c >= 0 && c < 8 && b[r * 8 + c] === -turn) { line.push(r * 8 + c); r += dr; c += dc; }
-    if (line.length && r >= 0 && r < 8 && c >= 0 && c < 8 && b[r * 8 + c] === turn) out.push(...line);
+    while (r >= 0 && r < n && c >= 0 && c < n && b[r * n + c] === -turn) { line.push(r * n + c); r += dr; c += dc; }
+    if (line.length && r >= 0 && r < n && c >= 0 && c < n && b[r * n + c] === turn) out.push(...line);
   }
   return out;
 }
 export const legalMoves = (b, turn) => {
   const out = [];
-  for (let i = 0; i < 64; i++) if (b[i] === 0 && flipsAt(b, i, turn).length) out.push(i);
+  for (let i = 0; i < b.length; i++) if (b[i] === 0 && flipsAt(b, i, turn).length) out.push(i);
   return out;
 };
-export const count = b => { let x = 0, o = 0; for (let i = 0; i < 64; i++) { if (b[i] === 1) x++; else if (b[i] === -1) o++; } return { black: x, white: o }; };
+export const count = b => { let x = 0, o = 0; for (let i = 0; i < b.length; i++) { if (b[i] === 1) x++; else if (b[i] === -1) o++; } return { black: x, white: o }; };
 
 /** Play square i for the side to move. Returns { flips, passed } (passed: the side that was skipped, or 0) or null if illegal. */
 export function play(g, i) {
@@ -90,26 +100,44 @@ export function outcome(g) {
 }
 
 /* ------------------------- the computer ------------------------- */
-const W = [
-  100, -20, 10, 5, 5, 10, -20, 100,
-  -20, -50, -2, -2, -2, -2, -50, -20,
-  10, -2, 1, 1, 1, 1, -2, 10,
-  5, -2, 1, 0, 0, 1, -2, 5,
-  5, -2, 1, 0, 0, 1, -2, 5,
-  10, -2, 1, 1, 1, 1, -2, 10,
-  -20, -50, -2, -2, -2, -2, -50, -20,
-  100, -20, 10, 5, 5, 10, -20, 100,
-];
-const CORNERS = [0, 7, 56, 63];
-/* a corner next to an owned corner is no longer a liability */
-const NEAR = { 1: 0, 8: 0, 9: 0, 6: 7, 15: 7, 14: 7, 48: 56, 57: 56, 49: 56, 55: 63, 62: 63, 54: 63 };
-function evaluate(b, me, empties) {
+/* each size's square weights, corners, and the squares next to a corner that stop being a liability once it is owned */
+const TABLES = {
+  8: {
+    W: [
+      100, -20, 10, 5, 5, 10, -20, 100,
+      -20, -50, -2, -2, -2, -2, -50, -20,
+      10, -2, 1, 1, 1, 1, -2, 10,
+      5, -2, 1, 0, 0, 1, -2, 5,
+      5, -2, 1, 0, 0, 1, -2, 5,
+      10, -2, 1, 1, 1, 1, -2, 10,
+      -20, -50, -2, -2, -2, -2, -50, -20,
+      100, -20, 10, 5, 5, 10, -20, 100,
+    ],
+    CORNERS: [0, 7, 56, 63],
+    NEAR: { 1: 0, 8: 0, 9: 0, 6: 7, 15: 7, 14: 7, 48: 56, 57: 56, 49: 56, 55: 63, 62: 63, 54: 63 },
+  },
+  6: {
+    W: [
+      100, -20, 10, 10, -20, 100,
+      -20, -50, -2, -2, -50, -20,
+      10, -2, 1, 1, -2, 10,
+      10, -2, 1, 1, -2, 10,
+      -20, -50, -2, -2, -50, -20,
+      100, -20, 10, 10, -20, 100,
+    ],
+    CORNERS: [0, 5, 30, 35],
+    NEAR: { 1: 0, 6: 0, 7: 0, 4: 5, 11: 5, 10: 5, 24: 30, 31: 30, 25: 30, 29: 35, 34: 35, 28: 35 },
+  },
+};
+for (const t of Object.values(TABLES)) { t.ORDER = t.W.map((_, i) => i); t.ORDER.sort((x, y) => t.W[y] - t.W[x]); }
+
+function evaluate(b, me, empties, T) {
   let pos = 0, mine = 0, theirs = 0;
-  for (let i = 0; i < 64; i++) {
+  for (let i = 0; i < b.length; i++) {
     const v = b[i];
     if (!v) continue;
-    let w = W[i];
-    if (NEAR[i] !== undefined && b[NEAR[i]] === v) w = 4;
+    let w = T.W[i];
+    if (T.NEAR[i] !== undefined && b[T.NEAR[i]] === v) w = 4;
     pos += v * me * w;
     if (v === me) mine++; else theirs++;
   }
@@ -117,16 +145,17 @@ function evaluate(b, me, empties) {
   const mm = legalMoves(b, me).length, tm = legalMoves(b, -me).length;
   const mob = mm + tm ? 100 * (mm - tm) / (mm + tm) : 0;
   let cor = 0;
-  for (const c of CORNERS) cor += b[c] * me * 60;
+  for (const c of T.CORNERS) cor += b[c] * me * 60;
   return pos + mob * 3 + cor;
 }
-const ORDER = (() => { const a = Array.from({ length: 64 }, (_, i) => i); a.sort((x, y) => W[y] - W[x]); return a; })();
 
 /** best move for g.turn: { move, score, depth, nodes, ms } (move -1 if none) */
 export function think(g, opts = {}) {
   const t0 = Date.now();
   const lv = { ...LEVELS[2], ...opts };
   const b = g.b.slice();
+  const T = TABLES[sizeOf(b)];
+  const area = b.length;
   const me = g.turn;
   const first = legalMoves(b, me);
   if (!first.length) return { move: -1, score: 0, depth: 0, nodes: 0, ms: 0 };
@@ -139,12 +168,12 @@ export function think(g, opts = {}) {
     if ((++nodes & 1023) === 0 && Date.now() > deadline) stop = true;
     if (stop) return 0;
     const mv = [];
-    for (const i of ORDER) if (b[i] === 0) { const f = flipsAt(b, i, turn); if (f.length) mv.push([i, f]); }
+    for (const i of T.ORDER) if (b[i] === 0) { const f = flipsAt(b, i, turn); if (f.length) mv.push([i, f]); }
     if (!mv.length) {
-      if (passedOnce) { let s = 0; for (let k = 0; k < 64; k++) s += b[k]; return s * turn * 10000; }
+      if (passedOnce) { let s = 0; for (let k = 0; k < area; k++) s += b[k]; return s * turn * 10000; }
       return -search(-turn, depth, -beta, -alpha, empties, true);
     }
-    if (depth <= 0 && !exact) return evaluate(b, turn, empties);
+    if (depth <= 0 && !exact) return evaluate(b, turn, empties, T);
     let best = -Infinity;
     for (const [i, f] of mv) {
       b[i] = turn; for (const s of f) b[s] = turn;
@@ -159,7 +188,7 @@ export function think(g, opts = {}) {
   }
 
   let best = { move: first[0], score: -Infinity }, done = 0;
-  const maxDepth = exact ? 64 : lv.depth;
+  const maxDepth = exact ? area : lv.depth;
   for (let d = 1; d <= maxDepth; d++) {
     stop = false;
     const scored = [];
@@ -168,7 +197,7 @@ export function think(g, opts = {}) {
     for (const i of order) {
       const f = flipsAt(b, i, me);
       b[i] = me; for (const s of f) b[s] = me;
-      const v = -search(-me, exact ? 64 : d - 1, -Infinity, -alpha, empties0 - 1, false);
+      const v = -search(-me, exact ? area : d - 1, -Infinity, -alpha, empties0 - 1, false);
       b[i] = 0; for (const s of f) b[s] = -me;
       if (stop) break;
       scored.push([i, v]);
@@ -183,7 +212,7 @@ export function think(g, opts = {}) {
   }
   if (lv.noise && best.scored) {
     /* the easier levels wander, but never past a corner */
-    const corner = best.scored.find(([i]) => CORNERS.includes(i));
+    const corner = best.scored.find(([i]) => T.CORNERS.includes(i));
     if (corner && lv.noise < 40) best = { ...best, move: corner[0] };
     else {
       const top = best.scored[0][1];

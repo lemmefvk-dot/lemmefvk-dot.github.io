@@ -264,6 +264,9 @@ function shortLabel(label) {
   if (s.includes('/')) s = s.split('/').pop();
   return s.length > 30 ? `${s.slice(0, 29)}…` : s;
 }
+const BURST_N = 8, BURST_GAP = 120, BURST_SIDE = 1280;     /* frames, ms between them, longest side kept */
+const STRIP_SHOTS = 4, STRIP_WAIT = 2;                    /* shots, seconds before each */
+const RES_PRESETS = [[640, 480], [1280, 720], [1920, 1080], [2560, 1440], [3840, 2160]];
 const stamp = (d = new Date()) =>
   `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}.${pad2(d.getMinutes())}.${pad2(d.getSeconds())}`;
 
@@ -350,6 +353,8 @@ defineApp({
       rec: null,              /* the recording in progress */
       mic: null, micState: 'off', micErr: '', micGen: 0, meter: null,
       permStatus: null,
+      caps: {},               /* track.getCapabilities(), when the browser has it */
+      multi: null,            /* a burst or a photo strip in progress: { kind } */
       dead: false,
     };
 
@@ -436,12 +441,23 @@ defineApp({
     const deck = h('div.cam__deck',
       h('div.cam__deckl', seg),
       shutter,
-      h('div.cam__deckr', timerBtn, booth.button, looksBtn, switchBtn));
+      h('div.cam__deckr', timerBtn, booth.button, booth.framesButton, looksBtn, switchBtn));
+
+    /* burst, photo strip, and the camera's own resolution and zoom (only what getCapabilities reports) */
+    const burstBtn = h('button.cam-tool.cam-ctl__burst', { type: 'button', title: `Burst: ${BURST_N} quick photos you can turn into a GIF`, onclick: () => runBurst() },
+      icon('zap'), h('span', { text: 'Burst' }));
+    const stripBtn = h('button.cam-tool.cam-ctl__strip', { type: 'button', title: 'Photo strip: 4 shots, one after another, in one picture', onclick: () => runStrip() },
+      icon('layers'), h('span', { text: 'Strip' }));
+    const resSel = h('select.cam-sel.cam-ctl__res', { 'aria-label': 'Resolution', title: 'Resolution (from what this camera reports)', onchange: e => setResolution(e.target.value) });
+    const zoomOut = h('output.cam-ctl__zoomval');
+    const zoomIn = h('input.cam-ctl__zoom', { type: 'range', 'aria-label': 'Zoom', title: 'Zoom', oninput: () => setZoom(Number(zoomIn.value)) });
+    const zoomWrap = h('label.cam-ctl__zoomwrap', icon('zoom-in'), zoomIn, zoomOut);
+    const ctlRow = h('div.cam__ctl', { role: 'group', 'aria-label': 'Camera controls' }, burstBtn, stripBtn, h('span.cam__grow'), resSel, zoomWrap);
 
     const live = h('div.sr', { 'aria-live': 'polite' });
     const say = text => { live.textContent = ''; after(30, () => { live.textContent = text; }); };
 
-    root.appendChild(h('div.app.app--col.cam', stage, looksRow, booth.panel, strip, deck, live));
+    root.appendChild(h('div.app.app--col.cam', stage, ctlRow, looksRow, booth.panel, booth.framesPanel, strip, deck, live));
 
     /* title-bar tools: camera picker (when there are several), grid, mirror, folder */
     const mirrorGlyph = () => glyph('M12 3v2M12 9v2M12 13v2M12 19v2', 'M9 6 3 18h6z', 'M15 6l6 12h-6z');
@@ -458,7 +474,7 @@ defineApp({
 
     function paint() {
       if (S.dead) return;
-      paintState(); paintHud(); paintDeck(); paintLooks(); paintTools(); paintView();
+      paintState(); paintHud(); paintDeck(); paintLooks(); paintTools(); paintView(); paintCtl();
       win.setSubtitle(S.phase === 'live' ? shortLabel(S.label) : '');
     }
 
@@ -554,7 +570,7 @@ defineApp({
       shutter.classList.toggle('is-rec', !!S.rec);
       shutter.classList.toggle('is-count', !!S.count);
       const blocked = !isLive || (S.mode === 'video' && !canRecord());
-      shutter.disabled = blocked && !S.rec && !S.count;
+      shutter.disabled = (blocked && !S.rec && !S.count) || !!S.multi;
       const label = S.count ? 'Cancel self-timer'
         : S.rec ? 'Stop recording'
           : S.mode === 'video' ? `Start recording${S.timer ? ` in ${S.timer} seconds` : ''}`
@@ -642,7 +658,7 @@ defineApp({
         t.removeEventListener('unmute', onMute);
       }
       S.stream?.getTracks().forEach(x => x.stop());
-      S.stream = null; S.track = null; S.settings = {}; S.muted = false;
+      S.stream = null; S.track = null; S.settings = {}; S.caps = {}; S.muted = false;
       video.srcObject = null;
       for (const b of lookBtns) b.pv.srcObject = null;
     }
@@ -715,6 +731,7 @@ defineApp({
       const t = stream.getVideoTracks()[0];
       S.track = t;
       S.settings = t?.getSettings?.() || {};
+      try { S.caps = t?.getCapabilities?.() || {}; } catch (err) { S.caps = {}; }
       S.label = t?.label || 'Camera';
       S.muted = !!t?.muted;
       S.perm = 'granted';
@@ -899,6 +916,177 @@ defineApp({
       a.click();
       a.remove();
       after(30000, () => { URL.revokeObjectURL(url); urls.delete(url); });
+    }
+
+    /* one frame as the viewfinder shows it, shrunk so its long side is at most maxSide */
+    async function grabFrame(maxSide) {
+      const vw = video.videoWidth, vh = video.videoHeight;
+      if (S.phase !== 'live' || !vw || !vh) return null;
+      const k = maxSide ? Math.min(1, maxSide / Math.max(vw, vh)) : 1;
+      const w = Math.round(vw * k), hh = Math.round(vh * k);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = hh;
+      const g = c.getContext('2d');
+      if (booth.applies()) await booth.capture(g, w, hh);
+      else paintFrame(g, video, w, hh, lookNow(), S.mirror);
+      return c;
+    }
+    const toJpeg = (c, q = 0.9) => new Promise(res => c.toBlob(res, 'image/jpeg', q));
+    const wait = ms => new Promise(res => after(ms, res));
+    const failShots = (title, err) => api.notify({ app: 'Camera', icon: 'alert', title, message: String(err?.message || err), timeout: 9000 });
+
+    /* Burst: a run of frames saved as a numbered set; the notification offers them to the GIF maker */
+    async function runBurst() {
+      if (S.multi || S.rec || S.count || S.phase !== 'live' || S.mode !== 'photo') return;
+      S.multi = { kind: 'burst' };
+      paint();
+      const blobs = [];
+      try {
+        for (let i = 0; i < BURST_N && !S.dead; i++) {
+          const c = await grabFrame(BURST_SIDE);
+          if (!c) break;
+          if (i === 0) sfx.play('tap');
+          flash();
+          const b = await toJpeg(c, 0.85);
+          c.width = c.height = 0;
+          if (!b) throw new Error('The browser could not encode a frame.');
+          blobs.push(b);
+          if (i < BURST_N - 1) await wait(BURST_GAP);
+        }
+        if (S.dead) return;
+        if (blobs.length < 2) throw new Error('The camera did not give enough frames.');
+        const base = `Burst ${stamp()}`;
+        const paths = [];
+        for (let i = 0; i < blobs.length; i++) {
+          const { path } = await media.save(PHOTOS, `${base} ${i + 1}.jpg`, blobs[i]);
+          paths.push(path);
+        }
+        say(`Burst saved: ${paths.length} photos`);
+        api.notify({
+          app: 'Camera', icon: 'zap', title: `Burst of ${paths.length}`,
+          message: `${base} 1–${paths.length} · ${fmt.fmtBytes(blobs.reduce((n, b) => n + b.size, 0))}`,
+          actions: [
+            { label: 'Make a GIF', onClick: () => api.openApp('picturetools', { tool: 'gif', paths }) },
+            { label: 'Show in Files', onClick: () => api.openApp('files', { path: PHOTOS }) },
+          ],
+          timeout: 10000,
+        });
+      } catch (err) { if (!S.dead) failShots('Burst not saved', err); }
+      finally { if (!S.dead) { S.multi = null; paint(); } }
+    }
+
+    /* Photo strip: four shots, a short countdown before each, stacked in one picture */
+    function countFor(n) {
+      return new Promise(res => {
+        S.count = { n, t: 0, res };
+        paintCount();
+        const tick = () => {
+          if (!S.count) return;
+          S.count.n -= 1;
+          if (S.count.n <= 0) { S.count = null; paintCount(); res(true); return; }
+          paintCount();
+          S.count.t = after(1000, tick);
+        };
+        S.count.t = after(1000, tick);
+      });
+    }
+    async function runStrip() {
+      if (S.multi || S.rec || S.count || S.phase !== 'live' || S.mode !== 'photo') return;
+      S.multi = { kind: 'strip' };
+      paint();
+      const shots = [];
+      try {
+        for (let i = 0; i < STRIP_SHOTS; i++) {
+          say(`Shot ${i + 1} of ${STRIP_SHOTS}`);
+          if (!(await countFor(STRIP_WAIT))) { say('Photo strip cancelled'); return; }
+          if (S.dead) return;
+          const c = await grabFrame(960);
+          if (!c) throw new Error('The camera stopped giving a picture.');
+          flash();
+          sfx.play('tap');
+          shots.push(c);
+        }
+        const W = 640, pad = 28, gap = 20, foot = 90;
+        const hs = shots.map(c => Math.round(W * c.height / c.width));
+        const out = document.createElement('canvas');
+        out.width = W + pad * 2;
+        out.height = pad + hs.reduce((n, x) => n + x, 0) + gap * (hs.length - 1) + foot;
+        const g = out.getContext('2d');
+        g.fillStyle = '#fbfaf6';
+        g.fillRect(0, 0, out.width, out.height);
+        let y = pad;
+        shots.forEach((c, i) => { g.drawImage(c, pad, y, W, hs[i]); y += hs[i] + gap; c.width = c.height = 0; });
+        g.fillStyle = '#6b6560';
+        g.font = '600 26px system-ui, sans-serif';
+        g.textAlign = 'center';
+        g.fillText(new Date().toLocaleDateString(undefined, { dateStyle: 'medium' }), out.width / 2, out.height - foot / 2 + 6);
+        const blob = await toJpeg(out, 0.92);
+        const dims = `${out.width}×${out.height}`;
+        out.width = out.height = 0;
+        if (!blob) throw new Error('The browser could not encode the strip.');
+        const { path } = await media.save(PHOTOS, `Strip ${stamp()}.jpg`, blob);
+        say('Photo strip saved');
+        api.notify({
+          app: 'Camera', icon: 'layers', title: 'Photo strip saved', message: `${vfs.baseName(path)} · ${dims} · ${fmt.fmtBytes(blob.size)}`,
+          actions: [{ label: 'Open', onClick: () => api.openFile(path) }, { label: 'Show in Files', onClick: () => api.openApp('files', { path: PHOTOS }) }],
+        });
+      } catch (err) { if (!S.dead) failShots('Photo strip not saved', err); }
+      finally { for (const c of shots) c.width = c.height = 0; if (!S.dead) { S.multi = null; paint(); } }
+    }
+
+    /* Resolution and zoom: only the ranges the camera itself reports */
+    const rangeOf = r => (r && Number.isFinite(r.max) && Number.isFinite(r.min ?? 0) ? r : null);
+    function resOptions() {
+      const w = rangeOf(S.caps.width), hh = rangeOf(S.caps.height);
+      if (!w || !hh) return [];
+      return RES_PRESETS.filter(([pw, ph]) => pw >= (w.min || 0) && pw <= w.max && ph >= (hh.min || 0) && ph <= hh.max);
+    }
+    function zoomRange() {
+      const z = rangeOf(S.caps.zoom);
+      return z && z.max > (z.min ?? 0) ? z : null;
+    }
+    function paintCtl() {
+      const photo = S.mode === 'photo', live = S.phase === 'live';
+      ctlRow.hidden = !live;
+      burstBtn.hidden = stripBtn.hidden = !photo;
+      burstBtn.disabled = stripBtn.disabled = !!S.multi || !!S.rec || !!S.count;
+      const sizes = resOptions();
+      const cur = S.settings.width && S.settings.height ? `${S.settings.width}x${S.settings.height}` : '';
+      resSel.hidden = sizes.length < 2 || !live;
+      if (!resSel.hidden) {
+        api.clear(resSel);
+        if (cur && !sizes.some(([a, b]) => `${a}x${b}` === cur)) resSel.append(h('option', { value: cur, text: `${S.settings.width} × ${S.settings.height} (now)`, selected: true }));
+        for (const [a, b] of sizes) resSel.append(h('option', { value: `${a}x${b}`, text: `${a} × ${b}`, selected: `${a}x${b}` === cur }));
+        resSel.disabled = !!S.rec || !!S.multi;
+      }
+      const z = zoomRange();
+      zoomWrap.hidden = !z || !live;
+      if (z) {
+        const step = z.step > 0 ? z.step : (z.max - z.min) / 100;
+        zoomIn.min = String(z.min); zoomIn.max = String(z.max); zoomIn.step = String(step);
+        const now = Number.isFinite(S.settings.zoom) ? S.settings.zoom : z.min;
+        zoomIn.value = String(now);
+        zoomOut.textContent = `${(Math.round(now * 10) / 10)}×`;
+        zoomIn.disabled = !!S.multi;
+      }
+    }
+    async function setResolution(v) {
+      const [w, hh] = String(v).split('x').map(Number);
+      if (!S.track || !(w > 0) || S.rec) return;
+      try {
+        await S.track.applyConstraints({ width: { ideal: w }, height: { ideal: hh } });
+        S.settings = S.track.getSettings?.() || S.settings;
+        say(`Resolution ${S.settings.width || w} by ${S.settings.height || hh}`);
+      } catch (err) { api.notify({ app: 'Camera', icon: 'alert', title: 'Resolution not changed', message: String(err?.message || 'The camera refused that size.') }); }
+      if (!S.dead) paint();
+    }
+    async function setZoom(z) {
+      if (!S.track || !Number.isFinite(z)) return;
+      try {
+        await S.track.applyConstraints({ advanced: [{ zoom: z }] });
+        S.settings = S.track.getSettings?.() || { ...S.settings, zoom: z };
+      } catch (err) { api.notify({ app: 'Camera', icon: 'alert', title: 'Zoom not changed', message: String(err?.message || 'The camera refused that zoom.') }); }
+      if (!S.dead) paintCtl();
     }
 
     async function takePhoto() {
@@ -1099,8 +1287,10 @@ defineApp({
       if (!S.count) return;
       clearTimeout(S.count.t);
       timers.delete(S.count.t);
+      const res = S.count.res;
       S.count = null;
       paintCount();
+      res?.(false);
     }
 
     /* ---------- settings ---------- */
@@ -1186,12 +1376,17 @@ defineApp({
         const x = e.clientX || rec.el.getBoundingClientRect().left, y = e.clientY || rec.el.getBoundingClientRect().top;
         api.menu([
           { label: 'Open', icon: 'external-link', onClick: () => api.openFile(path) },
+          !isVid && { label: 'Open in Markup', icon: 'edit-3', disabled: !media.isMedia(node), onClick: () => api.openApp('markup', { path }) },
+          !isVid && { label: 'Picture Tools', icon: 'sparkles', disabled: !media.isMedia(node),
+            items: [['meme', 'Make a meme'], ['collage', 'Add to a collage'], ['convert', 'Resize or convert'], ['ascii', 'Turn into ASCII art'], ['gif', 'Make a GIF'], ['slideshow', 'Add to a slideshow'], ['sticker', 'Cut out a sticker'], ['comic', 'Put in a comic'], ['scan', 'Scan as a page']]
+              .map(([tool, label]) => ({ label, onClick: () => api.openApp('picturetools', { tool, path }) })) },
+          { label: 'Send with Drop', icon: 'send', disabled: !media.isMedia(node), onClick: () => api.openApp('drop', { send: [path] }) },
           { label: 'Show in Files', icon: 'folder-open', onClick: () => api.openApp('files', { path: vfs.parentPath(path) }) },
           { label: 'Download', icon: 'download', disabled: !media.isMedia(node),
             onClick: async () => { const b = await media.blobOf(node); if (b) download(b, node.name); } },
           '-',
           { label: 'Move to Trash', icon: 'trash', danger: true, onClick: () => { vfs.rm(path); } },
-        ], x, y);
+        ].filter(Boolean), x, y);
       };
       const size = node.size ? ` · ${fmt.fmtBytes(node.size)}` : '';
       rec.el = h('button.cam-tile', {

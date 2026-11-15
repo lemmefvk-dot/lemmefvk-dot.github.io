@@ -43,11 +43,22 @@
    goes quiet for a few seconds the host's clock waits for them; the
    Arcade itself ends the round when the room has lost them.
    ============================================================ */
+import { store } from '../core/store.js';
 import { clamp, hsl, FONT, coarse, surface, ownsKey, sounder, looper, rr, prompt, stepper } from './kit.js';
 import * as A from './airhockey-sim.js';
 
 const { W, H, PR, MR } = A;
-const WIN = 7;
+const WIN = 7;                           /* online, and the first mode */
+/* LOCAL OPTIONS. Points to win are the Arcade's modes (ctx.mode, each with
+   its own best): first to 3, 5, 7 or 10. The puck's speed is picked on the
+   start screen (4 5 6, or the pills) and kept for next time: Slow, Normal or
+   Fast (./airhockey-sim.js PUCKS). A slow puck is easier, so a round with it
+   is counted but never sets a best. Online is always first to 7, Normal. */
+const WINS = { seven: 7, three: 3, five: 5, ten: 10 };
+const PUCK_KEYS = ['slow', 'normal', 'fast'];
+const PREF = 'portal.arcadeAirHockey';
+const readPuck = () => { let p = null; try { p = store.get(PREF, null); } catch (err) { p = null; } return A.PUCKS[p?.puck] ? p.puck : 'normal'; };
+const writePuck = puck => { try { store.set(PREF, { puck }); } catch (err) { /* a convenience */ } };
 const HUE_ME = 200, HUE_THEM = 22;
 const KEY_V = 760;                       /* units/s a held key moves a mallet */
 const SERVE_WAIT = 1.0;
@@ -198,10 +209,12 @@ export default {
     const two = ctx.players === 2;
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
+    const TO = WINS[ctx.mode] || WIN;
     const S = {
       state: 'ready',                    /* ready | serve | play | over */
       paused: false,
-      T: A.newTable(),
+      puck: readPuck(),
+      T: null,
       level: 'medium', ai: null,
       serveT: 0, serveSide: 0,
       keys: new Set(),
@@ -209,6 +222,7 @@ export default {
       time: 0, frozen: false, rallies: 0,
       pills: [],
     };
+    S.T = A.newTable(S.puck);
     S.ai = A.makeAI(S.level, (Math.random() * 1e9) | 0);
     const sf = surface(el, two ? 'Air hockey, two players' : 'Air hockey against the computer', () => draw());
     report();
@@ -228,13 +242,20 @@ export default {
       S.level = l;
       S.ai = A.makeAI(l, (Math.random() * 1e9) | 0);
     }
+    function setPuck(id) {
+      if (S.state !== 'ready' || !A.PUCKS[id]) return;
+      const P = A.PUCKS[id];
+      S.puck = id;
+      Object.assign(S.T, { pace: P.id, maxPuck: P.max, drag: P.drag, bounce: P.e });
+      writePuck(id);
+    }
 
     function goal(side) {
       S.flash = reduced ? 0 : 0.4; S.flashSide = side === 0 ? 1 : -1;
       snd.blip(side === 0 ? 880 : 300, 0.2, 'triangle', 1, side === 0 ? 1320 : 180);
       report();
       const T = S.T;
-      if (T.score[0] >= WIN || T.score[1] >= WIN) { finish(); return; }
+      if (T.score[0] >= TO || T.score[1] >= TO) { finish(); return; }
       serve(side === 0 ? 1 : 0);              /* the side that conceded gets the puck */
     }
 
@@ -244,8 +265,10 @@ export default {
       draw();
       snd.blip(520, 0.3, 'triangle', 1, 1040);
       const [a, b] = S.T.score;
-      if (two) ctx.onEnd({ score: Math.max(a, b), won: true, detail: `${a > b ? 'Left' : 'Right'} player wins ${Math.max(a, b)}–${Math.min(a, b)}` });
-      else ctx.onEnd({ score: a, won: a >= WIN, detail: `${a >= WIN ? 'You beat the computer' : 'The computer won'} ${a}–${b} (${A.LEVELS[S.level].label})` });
+      const pace = S.puck === 'normal' ? '' : `, ${A.PUCKS[S.puck].label.toLowerCase()} puck`;
+      if (two) ctx.onEnd({ score: Math.max(a, b), won: true, detail: `${a > b ? 'Left' : 'Right'} player wins ${Math.max(a, b)}–${Math.min(a, b)} (first to ${TO}${pace})` });
+      else ctx.onEnd({ score: a, won: a >= TO, detail: `${a >= TO ? 'You beat the computer' : 'The computer won'} ${a}–${b} (${A.LEVELS[S.level].label}, first to ${TO}${pace})`,
+        ...(S.puck === 'slow' ? { assisted: 'A slow puck doesn’t change your best' } : {}) });
     }
 
     /* the pointer, the keys and the computer all just set mallet targets */
@@ -314,22 +337,28 @@ export default {
         else if (two) how = 'Left: W A S D  ·  Right: ← ↑ ↓ →';
         else how = 'Move the mouse, or use W A S D / arrow keys';
         const cy = v.oy + (v.vert ? W : H) * v.k * 0.3;
-        prompt(g, sf, touch ? 'Tap to serve' : 'Press Space or click to serve', `${how}  ·  first to ${WIN}`, HUE_ME, cy);
-        if (!two) {
-          const pw = clamp(sf.w * 0.17, 66, 100), ph = 30, gap = 8, total = pw * 3 + gap * 2;
-          const y = cy + 58;
-          LEVEL_KEYS.forEach((id, i) => {
-            const x = (sf.w - total) / 2 + i * (pw + gap), on = S.level === id;
+        prompt(g, sf, touch ? 'Tap to serve' : 'Press Space or click to serve', `${how}  ·  first to ${TO}`, HUE_ME, cy);
+        /* a row of pills: the computer's level (one player), then the puck's speed */
+        const pills = (list, y, kind, first, label, isOn, hue) => {
+          const pw = clamp(sf.w * 0.17, 66, 100), ph = 30, gap = 8, total = pw * list.length + gap * (list.length - 1);
+          g.save();
+          g.fillStyle = 'rgba(234,246,255,.6)'; g.font = `600 11px ${FONT}`; g.textAlign = 'right'; g.textBaseline = 'middle';
+          g.fillText(label, (sf.w - total) / 2 - 10, y + ph / 2 + 1);
+          g.restore();
+          list.forEach((id, i) => {
+            const x = (sf.w - total) / 2 + i * (pw + gap), on = isOn(id);
             g.save();
-            g.fillStyle = on ? 'rgba(80,190,255,.3)' : 'rgba(4,6,10,.7)';
-            g.strokeStyle = on ? 'rgba(120,210,255,.95)' : 'rgba(255,255,255,.28)';
+            g.fillStyle = on ? hsl(hue, 90, 60, 0.3) : 'rgba(4,6,10,.7)';
+            g.strokeStyle = on ? hsl(hue, 100, 72, 0.95) : 'rgba(255,255,255,.28)';
             rr(g, x, y, pw, ph, 9); g.fill(); g.stroke();
             g.fillStyle = '#eaf6ff'; g.font = `700 13px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-            g.fillText(`${i + 1}  ${A.LEVELS[id].label}`, x + pw / 2, y + ph / 2 + 1);
+            g.fillText(`${first + i}  ${kind === 'level' ? A.LEVELS[id].label : A.PUCKS[id].label}`, x + pw / 2, y + ph / 2 + 1);
             g.restore();
-            S.pills.push({ id, x, y, w: pw, h: ph });
+            S.pills.push({ id, kind, x, y, w: pw, h: ph });
           });
-        }
+        };
+        if (!two) pills(LEVEL_KEYS, cy + 58, 'level', 1, 'Computer', id => S.level === id, 200);
+        pills(PUCK_KEYS, cy + (two ? 58 : 96), 'puck', 4, 'Puck', id => S.puck === id, 40);
       }
     }
 
@@ -345,6 +374,7 @@ export default {
         e.preventDefault(); snd.wake();
         if (!S.paused) start();
       } else if (S.state === 'ready' && !two && /^Digit[123]$/.test(e.code)) setLevel(LEVEL_KEYS[Number(e.code[5]) - 1]);
+      else if (S.state === 'ready' && /^Digit[456]$/.test(e.code)) setPuck(PUCK_KEYS[Number(e.code[5]) - 4]);
     };
     const onKeyUp = e => { S.keys.delete(e.code); };
     const onBlur = () => S.keys.clear();
@@ -361,7 +391,7 @@ export default {
       if (S.paused) return;
       const r = sf.cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
       const pill = S.state === 'ready' && S.pills.find(q => x >= q.x && x <= q.x + q.w && y >= q.y && y <= q.y + q.h);
-      if (pill) { setLevel(pill.id); return; }
+      if (pill) { if (pill.kind === 'puck') setPuck(pill.id); else setLevel(pill.id); return; }
       aimAt(e);
       start();
     };
@@ -385,11 +415,18 @@ export default {
       },
       pause() { S.paused = true; S.keys.clear(); loop.stop(); draw(); },
       resume() { S.paused = false; if (S.state !== 'over') loop.start(); },
+      /* what a watcher may see (./spectate.js 'hockey'): the puck and mallets in whole arena units, the left mallet first */
+      spectate() {
+        const T = S.T, r = Math.round;
+        return { k: 'hockey', pk: S.state === 'ready' ? null : [r(T.puck.x), r(T.puck.y)], m: T.m.map(q => [r(q.x), r(q.y)]), sc: T.score.slice(),
+          pl: two ? [{ n: 'Left' }, { n: 'Right' }] : [{ n: 'You' }, { n: 'Computer' }], txt: S.state === 'over' ? 'Game over' : `First to ${TO}`, over: S.state === 'over' };
+      },
       /* a read-only snapshot for automated play-tests (arena units) */
       peek() {
         const T = S.T, v = geometry(sf);
         return {
           state: S.state, paused: S.paused, time: S.time, two, reduced, level: S.level, pills: S.pills.map(q => ({ ...q })), score: T.score.slice(), l: T.score[0], r: T.score[1],
+          to: TO, puckSpeed: S.puck, maxPuck: T.maxPuck, drag: T.drag,
           puck: { x: T.puck.x, y: T.puck.y, vx: T.puck.vx, vy: T.puck.vy },
           mallets: T.m.map(m => ({ x: m.x, y: m.y, vx: m.vx, vy: m.vy })),
           simTime: T.t, frozen: S.frozen, serveT: S.serveT,
@@ -725,6 +762,13 @@ function online(el, ctx) {
       if (cmd === 'skip') { S.serveT = 0; return true; }
       return null;
     } : undefined,
+    /* what a watcher may see: this screen's picture (me on the left), in whole arena units */
+    spectate() {
+      const D = frameData(), r = Math.round;
+      const pk = host ? S.drawn : { x: mx(S.drawn.x), y: S.drawn.y };
+      return { k: 'hockey', pk: [r(pk.x), r(pk.y)], m: D.m.map(q => [r(q.x), r(q.y)]), sc: D.score.slice(),
+        pl: [{ n: 'You' }, { n: name }], txt: S.over ? 'Game over' : `First to ${WIN}`, over: !!S.over };
+    },
     /* a read-only snapshot for automated play-tests (arena units, my frame) */
     peek() {
       const T = S.T, v = geometry(sf), D = frameData();

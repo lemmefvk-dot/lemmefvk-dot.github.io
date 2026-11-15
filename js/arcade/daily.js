@@ -1,28 +1,45 @@
 /* ============================================================
    arcade/daily.js — Daily Stars, Static Arcade's puzzle of the day.
 
-   One new puzzle each day, made from the date (./stars.js), so
-   everyone who opens it on the same date gets the same grid. Place
-   one star in every row, every column and every coloured region;
-   stars may not touch, not even at a corner.
+   One new puzzle each day at each level, made from the date
+   (./stars.js), so everyone who opens it on the same date gets the
+   same grid. Place one star in every row, every column and every
+   coloured region; stars may not touch, not even at a corner.
+
+   LEVELS are the Arcade's modes (ctx.mode, index.js): Normal (7×7 to
+   9×9 by the weekday), Easy (6×6) and Hard (10×10). Each keeps its own
+   board, best time and streak; the picker above the board asks the
+   shell for another (ctx.setMode), which starts that level's puzzle.
 
    Click (or tap) a square once for ✕ — "no star here", a note to
    yourself — and again for a star; a third click clears it. Right-
    click puts a star straight in. Dragging from a square you just
    ✕-ed marks the empty squares you pass over. Stars that break a
    rule turn red. Keyboard: arrows move, Space or Enter cycles, S
-   stars, X crosses, Backspace clears, Z or U undoes.
+   stars, X crosses, Backspace clears, Z or U undoes, H hints.
+
+   HINTS. Hint takes away a star that is not in the answer, else
+   clears a ✕ from a square the answer needs, else places one star of
+   the answer, top row first. Each one counts: the board shows how
+   many, a solve with none gets a "No hints" badge, and a solve with
+   hints still keeps the streak but never sets a best time (it is
+   reported to the shell as assisted).
 
    The board, the time spent (counted only while it is on screen and
-   not paused) and whether it is solved are kept per device by
-   ./daily-state.js, so closing the window keeps your place. Solving
-   it moves your streak on; the result card shows the time. The
-   cells are buttons (not a canvas), so Static Replay can't record it.
+   not paused), the hints and whether it is solved are kept per device
+   by ./daily-state.js, so closing the window keeps your place. Solving
+   it moves the level's streak and the daily streak on (Daily Word
+   counts in that too). The 30-day calendar and the result to copy
+   (./dailykit.js) say only solved or not, the time and the hints:
+   nothing about where the stars go. The cells are buttons (not a
+   canvas), so Static Replay can't record it.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
-import { generate, check, dayKey, addDays, parseDay, REGION_HUES as HUES } from './stars.js';
+import { generate, check, dayKey, addDays, parseDay, isLevel, LEVEL_NAME, REGION_HUES as HUES } from './stars.js';
 import * as DS from './daily-state.js';
+import { CAL_CSS, calendarView, lastDays, weekStrip, copyText } from './dailykit.js';
+import { bus } from '../core/bus.js';
 
 const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.6l2.75 5.9 6.45.75-4.78 4.4 1.27 6.38L12 16.85l-5.69 3.18 1.27-6.38-4.78-4.4 6.45-.75z"/></svg>';
 const CROSS = '<svg class="x" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>';
@@ -30,6 +47,7 @@ const SAVE_EVERY = 4000;
 
 const fmt = ms => { const s = Math.max(0, Math.floor(ms / 1000)); const hh = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return hh ? `${hh}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`; };
 const until = (ms) => { const m = Math.max(1, Math.round(ms / 60000)); const hh = Math.floor(m / 60); return hh ? `${hh} h ${m % 60} min` : `${m} min`; };
+const hintWords = n => (n === 1 ? '1 hint' : `${n} hints`);
 
 const CSS = `
 .arx-dsc{position:absolute;inset:0;container-type:size}
@@ -44,6 +62,11 @@ const CSS = `
   font-size:var(--fs-13,13px);font-weight:700;color:var(--ink-0);font-variant-numeric:tabular-nums}
 .arx-ds__read .icon{width:15px;height:15px;color:var(--ink-3)}
 .arx-ds__read--streak .icon{color:#ff9d3c}
+.arx-ds__read--hints .icon{color:#8fc8ff}
+.arx-ds__levels{display:inline-flex;padding:3px;gap:2px;border-radius:var(--r-md,11px);background:var(--fill-1);border:1px solid var(--line-1)}
+.arx-ds__levels button{height:26px;padding:0 10px;border:0;border-radius:8px;background:none;cursor:pointer;font:700 var(--fs-12,12px)/1 var(--font,system-ui);color:var(--ink-2)}
+.arx-ds__levels button[aria-checked="true"]{color:#1b1200;background:var(--ga,#ffd35c)}
+.arx-ds__levels button:focus-visible{outline:2px solid var(--ga);outline-offset:2px}
 .arx-ds__rules{width:min(100%,640px);margin:0;font-size:var(--fs-12,12px);line-height:1.5;color:var(--ink-2)}
 .arx-ds__wrap{position:relative;flex:1 1 auto;min-height:180px;width:100%;container-type:size;display:grid;place-items:center}
 .arx-ds__board{--n:8;position:relative;width:min(100cqw,100cqh,620px);height:min(100cqw,100cqh,620px);display:grid;
@@ -60,6 +83,7 @@ const CSS = `
 .arx-ds__c svg.x{width:38%;height:38%;fill:none;stroke:rgba(255,255,255,.62);stroke-width:2.8;stroke-linecap:round;filter:none}
 .arx-ds__c.is-bad svg{fill:#ff5a6e;stroke:#3a0008}
 .arx-ds__c.is-bad{background-image:repeating-linear-gradient(135deg,rgba(255,60,80,.28) 0 6px,transparent 6px 12px)}
+.arx-ds__c.is-hint{box-shadow:inset 0 0 0 3px #8fc8ff;z-index:1}
 .arx-ds.is-done .arx-ds__c{cursor:default}
 .arx-ds.is-done .arx-ds__c svg:not(.x){animation:arx-ds-glow 1.6s ease-in-out infinite alternate}
 .arx-ds.is-new .arx-ds__c svg:not(.x){animation:arx-ds-pop .5s cubic-bezier(.2,1.6,.4,1) both;animation-delay:calc(var(--i,0) * 60ms)}
@@ -67,6 +91,9 @@ const CSS = `
 @keyframes arx-ds-glow{from{filter:drop-shadow(0 0 2px rgba(255,224,102,.5))}to{filter:drop-shadow(0 0 10px rgba(255,224,102,.95))}}
 @keyframes arx-ds-pop{from{transform:scale(.3);opacity:.2}to{transform:none;opacity:1}}
 .arx-ds__cover{position:absolute;inset:0;display:grid;place-items:center;border-radius:10px;background:#120d14;font-size:clamp(18px,5cqmin,28px);font-weight:800;color:#fff;z-index:3}
+.arx-ds__calwrap{position:absolute;inset:0;z-index:4;display:grid;place-items:center;overflow:auto;padding:8px;background:color-mix(in srgb,#0b0810 88%,transparent)}
+.arx-ds__calwrap[hidden]{display:none}
+.arx-ds__calbox{display:flex;flex-direction:column;align-items:center;gap:10px}
 .arx-ds__foot{width:min(100%,640px);min-height:36px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:var(--sp-3,8px);font-size:var(--fs-12,12px);color:var(--ink-3);text-align:center}
 .arx-ds__hint{flex:1 1 220px}
 .arx-ds__btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;font:600 var(--fs-12,12px)/1 var(--font,system-ui);color:var(--ink-1);background:var(--fill-1);
@@ -75,12 +102,18 @@ const CSS = `
 .arx-ds__btn:disabled{opacity:.45;cursor:default}
 @media (hover:hover){.arx-ds__btn:not(:disabled):hover{background:var(--fill-2);color:var(--ink-0)}}
 .arx-ds__btn:focus-visible{outline:2px solid var(--ga);outline-offset:2px}
+.arx-ds__btn[aria-pressed="true"]{color:var(--ink-0);border-color:var(--ga)}
 .arx-ds__done{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 10px;padding:8px 14px;border-radius:99px;font-size:var(--fs-13,13px);font-weight:600;color:var(--ink-0);
   background:color-mix(in srgb,#3ddc84 16%,transparent);border:1px solid color-mix(in srgb,#3ddc84 50%,transparent)}
 .arx-ds__done .icon{width:16px;height:16px;color:#3ddc84}
 .arx-ds__done small{font-weight:500;color:var(--ink-2)}
+.arx-ds__badge{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 9px;border-radius:99px;font-size:var(--fs-11,11px);font-weight:800;
+  color:#1b1200;background:#ffd35c}
+.arx-ds__badge.is-hinted{color:var(--ink-0);background:var(--fill-2)}
+.arx-ds__copied{width:min(100%,420px);min-height:0;font:500 var(--fs-12,12px)/1.45 ui-monospace,monospace;color:var(--ink-1);background:var(--fill-1);border:1px solid var(--line-1);border-radius:8px;padding:8px;resize:none}
 @container (max-width:460px){.arx-ds{padding:var(--sp-3,8px);gap:6px}.arx-ds__rules{font-size:var(--fs-11,11px)}}
 @container (max-height:500px){.arx-ds__rules,.arx-ds__hint{display:none}}
+${CAL_CSS}
 `;
 
 export default {
@@ -88,15 +121,18 @@ export default {
     const onScore = typeof ctx.onScore === 'function' ? ctx.onScore : () => {};
     const onEnd = typeof ctx.onEnd === 'function' ? ctx.onEnd : () => {};
     const reduced = !!ctx.reduced;
+    const level = isLevel(ctx.mode) ? ctx.mode : 'normal';
+    DS.setLevel(level);
     const day = dayKey();
-    const P = generate(day);
+    const P = generate(day, level);
     const n = P.n, N = n * n;
-    const saved = DS.board(day);
+    const saved = DS.board(day, level);
     let marks = saved.marks.split('').map(Number);
     let solved = saved.solved;
+    let hints = saved.hints || 0;
     let banked = saved.ms, startAt = performance.now(), paused = false, dead = false;
     let focusIdx = Math.max(0, marks.indexOf(0));
-    let paint = null, skipClick = false, endT = 0, saveT = 0, tick = 0, lastShown = -1;
+    let paint = null, skipClick = false, endT = 0, saveT = 0, tick = 0, lastShown = -1, hintT = 0;
     const undoStack = [];
     const offs = [];
     const listen = (t, type, fn, opts) => { t.addEventListener(type, fn, opts); offs.push(() => t.removeEventListener(type, fn, opts)); };
@@ -107,22 +143,47 @@ export default {
     const timeEl = h('span', { text: fmt(elapsed()) });
     const streakEl = h('span');
     const streakBox = h('span.arx-ds__read.arx-ds__read--streak', icon('flame'), streakEl);
+    const hintsEl = h('span');
+    const hintsBox = h('span.arx-ds__read.arx-ds__read--hints', icon('help-circle'), hintsEl);
+    /* the levels: the Arcade's modes. Choosing one asks the shell for that level's puzzle. */
+    const levels = h('div.arx-ds__levels', { role: 'radiogroup', 'aria-label': 'Level' },
+      ['easy', 'normal', 'hard'].map(id => h('button', {
+        type: 'button', role: 'radio', 'aria-checked': String(id === level), tabindex: id === level ? '0' : '-1',
+        dataset: { level: id }, title: `${LEVEL_NAME[id]}: ${generate(day, id).n}×${generate(day, id).n} today`,
+        text: LEVEL_NAME[id],
+        onclick: () => { if (id !== level && typeof ctx.setMode === 'function') { persist(); ctx.setMode(id); } },
+      })));
+    levels.addEventListener('keydown', e => {
+      const ids = ['easy', 'normal', 'hard'];
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      if (!step) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const next = ids[(ids.indexOf(level) + step + 3) % 3];
+      levels.querySelector(`[data-level="${next}"]`)?.click();
+    });
+    const calBtn = h('button.arx-ds__btn', { type: 'button', 'aria-pressed': 'false', title: 'Your last 30 days at this level', onclick: () => toggleCalendar() },
+      icon('calendar'), h('span', { text: '30 days' }));
     const top = h('div.arx-ds__top',
-      h('div.arx-ds__title', h('b', { text: 'Daily Stars' }), h('small', { text: `${date} · ${n}×${n} · the same puzzle for everyone today` })),
+      h('div.arx-ds__title', h('b', { text: `Daily Stars · ${LEVEL_NAME[level]}` }), h('small', { text: `${date} · ${n}×${n} · the same puzzle for everyone on the same date` })),
+      levels,
       h('span.arx-ds__read', { title: 'Time on this puzzle (only while it is on screen)' }, icon('clock'), timeEl),
+      hintsBox,
       streakBox);
-    const rules = h('p.arx-ds__rules', { text: 'Place one star in every row, every column and every colour. Stars can’t touch — not even at a corner.' });
-    const board = h('div.arx-ds__board', { role: 'grid', 'aria-label': `Daily Stars, ${n} by ${n}`, style: { '--n': String(n) } });
-    const wrap = h('div.arx-ds__wrap', board);
+    const rules = h('p.arx-ds__rules', { text: 'Place one star in every row, every column and every colour. Stars can’t touch — not even at a corner. Your streak stays on this device.' });
+    const board = h('div.arx-ds__board', { role: 'grid', 'aria-label': `Daily Stars, ${LEVEL_NAME[level]}, ${n} by ${n}`, style: { '--n': String(n) } });
+    const calWrap = h('div.arx-ds__calwrap', { hidden: true });
+    const wrap = h('div.arx-ds__wrap', board, calWrap);
     const hint = h('span.arx-ds__hint', { text: 'Click a square once for ✕, twice for a star. Right-click places a star.' });
     const undoBtn = h('button.arx-ds__btn', { type: 'button', title: 'Undo (Z)', onclick: () => { undo(); refocus(); } }, icon('corner-up-left'), h('span', { text: 'Undo' }));
     const clearBtn = h('button.arx-ds__btn', { type: 'button', title: 'Clear the board (Undo brings it back)', onclick: () => { clearAll(); refocus(); } }, icon('rotate-ccw'), h('span', { text: 'Clear' }));
+    const hintBtn = h('button.arx-ds__btn.arx-ds__hintbtn', { type: 'button', title: 'Hint (H): fixes a wrong star or shows one right one. It counts.', onclick: () => { giveHint(); refocus(); } }, icon('help-circle'), h('span', { text: 'Hint' }));
     const foot = h('div.arx-ds__foot');
     const live = h('div', { 'aria-live': 'polite', style: { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)' } });
     const root = h('div.arx-ds' + (reduced ? '.is-reduced' : ''), top, rules, wrap, foot);
     const shell = h('div.arx-dsc', { style: { '--ga': ctx.accent || 'var(--accent)' } }, h('style', { text: CSS }), root, live);
     el.appendChild(shell);
-    const refocus = () => cells[focusIdx]?.focus({ preventScroll: true });
+    const refocus = () => { if (calWrap.hidden) cells[focusIdx]?.focus({ preventScroll: true }); };
 
     /* the cells, with thick lines between regions */
     const cells = [];
@@ -155,28 +216,64 @@ export default {
       root.classList.toggle('is-done', solved);
       undoBtn.disabled = solved || !undoStack.length;
       clearBtn.disabled = solved || !marks.some(Boolean);
+      hintBtn.disabled = solved;
       paintStreak();
+      paintHints();
       paintFoot();
       return res;
     }
     function paintStreak() {
       const st = DS.read();
-      const cur = DS.currentStreak(st, dayKey());
+      const t = level === 'normal' ? st : st.levels[level];
+      const cur = DS.currentStreak(t, dayKey());
+      const daily = DS.dailyStreak();
       streakEl.textContent = cur === 1 ? '1 day' : `${cur} days`;
-      streakBox.title = `Streak: ${cur} day${cur === 1 ? '' : 's'} in a row · best ${st.streak.best}`;
+      streakBox.title = `${LEVEL_NAME[level]} streak: ${cur} day${cur === 1 ? '' : 's'} in a row · best ${t.streak.best}. Daily streak (any daily puzzle): ${daily.cur}.`;
       streakBox.setAttribute('aria-label', streakBox.title);
+    }
+    function paintHints() {
+      hintsEl.textContent = hints ? String(hints) : '0';
+      hintsBox.dataset.hints = String(hints);
+      hintsBox.title = hints ? `${hintWords(hints)} used on this puzzle` : 'No hints used on this puzzle';
+      hintsBox.setAttribute('aria-label', hintsBox.title);
+    }
+    /* the result, without the answer: the date, the level, the time, the hints and the streak */
+    function shareText() {
+      const st = DS.read();
+      const t = level === 'normal' ? st : st.levels[level];
+      const secs = Math.round((t.day === day && t.solved ? t.solvedMs : elapsed()) / 1000);
+      const when = parseDay(day).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+      const list = lastDays(t.days, t.hinted, dayKey(), 30);
+      const daily = DS.dailyStreak();
+      return [
+        `StaticOS Daily Stars · ${when}`,
+        `${LEVEL_NAME[level]} ${n}×${n} · solved in ${fmt(secs * 1000)} · ${hints ? hintWords(hints) : 'no hints'}`,
+        `${weekStrip(list)} last 7 days · 🔥 ${daily.cur}-day daily streak`,
+      ].join('\n');
+    }
+    const copyOut = h('textarea.arx-ds__copied', { readonly: '', rows: '3', 'aria-label': 'Your result, to copy', hidden: true });
+    async function copyResult() {
+      const text = shareText();
+      const done = await copyText(text);
+      if (done) { copyOut.hidden = true; say('Result copied. It has no spoilers: just the date, the level, the time and the hints.'); }
+      else { copyOut.hidden = false; copyOut.value = text; copyOut.focus(); copyOut.select(); say('Your browser would not copy it. The result is selected, ready to copy.'); }
+      root.dataset.copied = String(done);
     }
     function paintFoot() {
       if (solved) {
         const st = DS.read();
+        const t = level === 'normal' ? st : st.levels[level];
         const next = parseDay(addDays(day, 1)).getTime() - Date.now();
-        const secs = Math.round((st.day === day ? st.solvedMs : elapsed()) / 1000);
+        const secs = Math.round((t.day === day ? t.solvedMs : elapsed()) / 1000);
         foot.replaceChildren(h('div.arx-ds__done', { role: 'status' }, icon('check-circle'),
           h('b', { text: `Solved in ${fmt(secs * 1000)}` }),
-          h('small', { text: `Streak ${DS.currentStreak(st, dayKey())} · best ${st.streak.best} · a new puzzle in ${until(next)}` })));
+          hints ? h('span.arx-ds__badge.is-hinted', { text: hintWords(hints) }) : h('span.arx-ds__badge', icon('star'), h('span', { text: 'No hints' })),
+          h('small', { text: `Streak ${DS.currentStreak(t, dayKey())} · best ${t.streak.best} · a new puzzle in ${until(next)}` })),
+        h('button.arx-ds__btn.arx-ds__copy', { type: 'button', title: 'Copy your result, with no spoilers', onclick: () => copyResult() }, icon('copy'), h('span', { text: 'Copy result' })),
+        calBtn, copyOut);
         return;
       }
-      foot.replaceChildren(hint, undoBtn, clearBtn);
+      foot.replaceChildren(hint, undoBtn, clearBtn, hintBtn, calBtn);
     }
     function paintTime() {
       const t = elapsed();
@@ -187,10 +284,24 @@ export default {
       onScore(s);
     }
 
+    /* the last 30 days at this level, over the board */
+    function toggleCalendar(on = calWrap.hidden) {
+      calWrap.hidden = !on;
+      calBtn.setAttribute('aria-pressed', String(on));
+      if (!on) { refocus(); return; }
+      const st = DS.read();
+      const t = level === 'normal' ? st : st.levels[level];
+      const close = h('button.arx-ds__btn', { type: 'button', onclick: () => toggleCalendar(false) }, icon('x'), h('span', { text: 'Back to the puzzle' }));
+      calWrap.replaceChildren(h('div.arx-ds__calbox',
+        calendarView(h, lastDays(t.days, t.hinted, dayKey(), 30), { title: `${LEVEL_NAME[level]} · last 30 days`, say: d => `in ${fmt(d.value * 1000)}` }),
+        close));
+      close.focus({ preventScroll: true });
+    }
+
     /* ------------------------------ changes ------------------------------ */
     const snapshot = () => marks.join('');
     function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 300) undoStack.shift(); }
-    function persist() { if (!solved) DS.save(day, snapshot(), elapsed()); }
+    function persist() { if (!solved) DS.save(day, snapshot(), elapsed(), level, hints); }
     function changed() {
       const res = render();
       if (res.solved && !solved) win();
@@ -218,21 +329,53 @@ export default {
     }
     function say(t) { live.textContent = t; }
 
+    /* one hint: a wrong star out, else one star of the answer in (top row first; a ✕ there was wrong) */
+    function giveHint() {
+      if (solved || paused || dead) return;
+      const where = i => `Row ${Math.floor(i / n) + 1}, column ${(i % n) + 1}`;
+      let i = marks.findIndex((m, k) => m === 2 && P.solution[Math.floor(k / n)] !== k % n);
+      let to = 0, text;
+      if (i >= 0) text = `${where(i)} can’t hold a star, so the hint took it away.`;
+      else {
+        i = [...Array(n).keys()].map(r => r * n + P.solution[r]).find(k => marks[k] !== 2) ?? -1;
+        if (i < 0) return;
+        to = 2;
+        text = marks[i] === 1 ? `${where(i)} was crossed out, but its star goes there.` : `${where(i)} holds a star.`;
+      }
+      pushUndo();
+      marks[i] = to;
+      hints++;
+      focusIdx = i;
+      changed();
+      cells.forEach(c => c.classList.remove('is-hint'));
+      cells[i].classList.add('is-hint');
+      clearTimeout(hintT);
+      hintT = setTimeout(() => cells[i]?.classList.remove('is-hint'), 1600);
+      say(`Hint ${hints}: ${text}`);
+    }
+
     function win() {
       const ms = elapsed();
       banked = ms;
       solved = true;
-      const st = DS.solve(day, snapshot(), ms);
+      const st = DS.solve(day, snapshot(), ms, level, hints);
+      bus.emit('daily:solved', { streak: st.streak.cur, best: st.streak.best, level, hints });
       root.classList.add('is-new');
       render();
       const secs = Math.round(ms / 1000);
       onScore(secs);
       timeEl.textContent = fmt(secs * 1000);
-      say(`Solved in ${fmt(secs * 1000)}. Streak ${st.streak.cur}.`);
+      say(`Solved in ${fmt(secs * 1000)}, ${hints ? hintWords(hints) : 'no hints'}. Streak ${st.streak.cur}.`);
       endT = setTimeout(() => {
         if (dead) return;
-        const cur = DS.currentStreak(DS.read(), dayKey());
-        onEnd({ score: secs, won: true, detail: `Daily Stars ${n}×${n} · ${cur}-day streak (best ${st.streak.best})` });
+        const t = level === 'normal' ? DS.read() : DS.read().levels[level];
+        const cur = DS.currentStreak(t, dayKey());
+        onEnd({
+          score: secs, won: true,
+          detail: `Daily Stars ${LEVEL_NAME[level]} ${n}×${n} · ${hints ? hintWords(hints) : 'no hints'} · ${cur}-day streak (best ${st.streak.best})`,
+          /* a hinted solve keeps the streak but never sets a best time */
+          ...(hints ? { assisted: `${hintWords(hints)} used, so it doesn’t change your best` } : {}),
+        });
       }, reduced ? 400 : 1300);
     }
 
@@ -281,11 +424,13 @@ export default {
       if (win && !win.classList.contains('is-active')) return;
       const t = e.target;
       if (t?.closest?.('input,textarea,select,[contenteditable=""],[contenteditable="true"]')) return;
+      if (!calWrap.hidden) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); toggleCalendar(false); } return; }
       const inBoard = board.contains(t);
       const k = e.key;
       if (k === ' ' || k === 'Enter') skipClick = false;     /* this click comes from the keyboard */
       const mv = { ArrowUp: -n, ArrowDown: n, ArrowLeft: -1, ArrowRight: 1 }[k];
       if (mv !== undefined) {
+        if (levels.contains(t)) return;
         e.preventDefault();
         const r = Math.floor(focusIdx / n), c = focusIdx % n;
         if ((k === 'ArrowLeft' && c === 0) || (k === 'ArrowRight' && c === n - 1) || (k === 'ArrowUp' && r === 0) || (k === 'ArrowDown' && r === n - 1)) { refocus(); return; }
@@ -302,6 +447,7 @@ export default {
       if (k === 's' || k === 'S' || k === '*') { e.preventDefault(); setOne(focusIdx, marks[focusIdx] === 2 ? 0 : 2); refocus(); return; }
       if (k === 'x' || k === 'X' || k === '.') { e.preventDefault(); setOne(focusIdx, marks[focusIdx] === 1 ? 0 : 1); refocus(); return; }
       if (k === 'Backspace' || k === 'Delete') { e.preventDefault(); setOne(focusIdx, 0); refocus(); return; }
+      if (k === 'h' || k === 'H') { e.preventDefault(); giveHint(); refocus(); return; }
       if (k === 'z' || k === 'Z' || k === 'u' || k === 'U') { e.preventDefault(); undo(); refocus(); }
     });
 
@@ -324,7 +470,7 @@ export default {
         if (dead) return;
         persist();
         dead = true;
-        clearInterval(tick); clearInterval(saveT); clearTimeout(endT);
+        clearInterval(tick); clearInterval(saveT); clearTimeout(endT); clearTimeout(hintT);
         offs.forEach(f => f());
         shell.remove();
       },
@@ -347,12 +493,15 @@ export default {
       /* a read-only snapshot for automated play-tests */
       peek: () => {
         const st = DS.read();
+        const t = level === 'normal' ? st : st.levels[level];
         return {
-          day, n, regions: Array.from(P.regions).join(','), unique: P.unique, marks: marks.join(''),
-          solved, ms: Math.round(elapsed()), paused, focus: focusIdx,
-          streak: { cur: DS.currentStreak(st, dayKey()), best: st.streak.best, last: st.streak.last },
+          day, level, n, regions: Array.from(P.regions).join(','), unique: P.unique, marks: marks.join(''),
+          solved, ms: Math.round(elapsed()), paused, focus: focusIdx, hints,
+          streak: { cur: DS.currentStreak(t, dayKey()), best: t.streak.best, last: t.streak.last },
+          daily: DS.dailyStreak(),
         };
       },
     };
   },
 };
+

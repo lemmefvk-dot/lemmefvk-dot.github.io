@@ -11,21 +11,23 @@ const now = Date.now();
 const ago = (mins) => new Date(now - mins * 60000).toISOString();
 
 const KINDS = {
-  txt: 'text', md: 'text', log: 'text', conf: 'config', toml: 'config', json: 'config',
+  txt: 'text', md: 'text', log: 'text', pgn: 'text', conf: 'config', toml: 'config', json: 'config',
   yml: 'config', yaml: 'config', ini: 'config', sh: 'code', js: 'code', ts: 'code',
   css: 'code', html: 'code', py: 'code', rs: 'code', c: 'code', h: 'code',
+  sql: 'code', frag: 'code', glsl: 'code', vert: 'code',
   png: 'image', jpg: 'image', jpeg: 'image', webp: 'image', svg: 'image', gif: 'image',
   mp3: 'audio', flac: 'audio', wav: 'audio', ogg: 'audio',
   mp4: 'video', mkv: 'video', mov: 'video', webm: 'video',
   zip: 'archive', tar: 'archive', gz: 'archive', apk: 'archive', pkg: 'archive',
-  pdf: 'doc', aether: 'theme', aethergame: 'game', aetherclip: 'clip', mindmap: 'mindmap', geo: 'geometry',
-  csv: 'sheet', tsv: 'sheet', sheet: 'sheet',
+  pdf: 'doc', aether: 'theme', aethergame: 'game', staticgame: 'game', staticapp: 'appref', aetherclip: 'clip', mindmap: 'mindmap', geo: 'geometry',
+  abc: 'score', stl: 'model3d', obj: 'model3d', blocks: 'blocks', flow: 'flowchart', timeline: 'timeline',
+  csv: 'sheet', tsv: 'sheet', sheet: 'sheet', slides: 'slides',
 };
 
 const ICONS = {
   text: 'file-text', config: 'sliders', code: 'file-code', image: 'image',
   audio: 'music', video: 'film', archive: 'package', doc: 'file-text',
-  theme: 'palette', game: 'gamepad', sheet: 'table', mindmap: 'network', geometry: 'compass', bin: 'file',
+  theme: 'palette', game: 'gamepad', appref: 'grid', sheet: 'table', slides: 'present', mindmap: 'network', geometry: 'compass', score: 'music', model3d: 'box', blocks: 'grid', flowchart: 'git-branch', timeline: 'clock', bin: 'file',
 };
 
 export function extOf(name) {
@@ -110,23 +112,29 @@ const root = d('/', 600, [
   d('home', 12, [
     d('static', 6, [
       d('Desktop', 40, [
+        /* .staticapp files are app shortcuts: the desktop draws each with the
+           app's own tile (js/core/shortcuts.js). A new person starts with a few;
+           only this seed tree has them, so existing desktops stay as they are. */
+        f('Static Games.staticapp', 34, 30, '{ "kind": "app", "id": "aether-games" }'),
+        f('Static Arcade.staticapp', 30, 30, '{ "kind": "app", "id": "arcade" }'),
+        f('Music.staticapp', 30, 30, '{ "kind": "app", "id": "music" }'),
+        f('Notes.staticapp', 30, 30, '{ "kind": "app", "id": "notes" }'),
         /* .aethergame files are launchers: the desktop draws each with the
-           host's own title card and opens it straight into the play stage. */
-        f('Subway Surfers.aethergame', 264, 30, `{
-  "id": "subway-surfers",
-  "title": "Subway Surfers",
-  "art": "https://www.madkidgames.com/games/subway-surfers/thumb_1.jpg",
-  "open": "https://www.madkidgames.com/game/subway-surfers",
-  "studio": "madkidgames.com",
-  "url": "static://games/subway-surfers"
+           game's own title card and opens it straight into the play stage.
+           Two are Arcade originals, so a new desktop plays inside StaticOS. */
+        f('Snake.aethergame', 264, 30, `{
+  "kind": "arcade",
+  "id": "snake",
+  "title": "Snake",
+  "art": null,
+  "url": null
 }`),
-        f('Geometry Dash.aethergame', 259, 30, `{
-  "id": "geometry-dash",
-  "title": "Geometry Dash",
-  "art": "https://www.madkidgames.com/games/geometry-dash/thumb_1.jpg",
-  "open": "https://www.madkidgames.com/game/geometry-dash",
-  "studio": "madkidgames.com",
-  "url": "static://games/geometry-dash"
+        f('Neon Lanes.aethergame', 259, 30, `{
+  "kind": "arcade",
+  "id": "racer",
+  "title": "Neon Lanes",
+  "art": null,
+  "url": null
 }`),
         f('Smash Karts.aethergame', 137, 30, `{
   "id": "smash-karts",
@@ -136,12 +144,12 @@ const root = d('/', 600, [
   "studio": "",
   "url": "static://games/smash-karts"
 }`),
-        f('Poly Track.aethergame', 134, 30, `{
+        f('PolyTrack.aethergame', 134, 30, `{
   "id": "poly-track",
-  "title": "Poly Track",
-  "art": null,
-  "open": null,
-  "studio": "",
+  "title": "PolyTrack",
+  "art": "https://www.kodub.com/apps/polytrack/image",
+  "open": "https://www.kodub.com/apps/polytrack",
+  "studio": "kodub.com",
   "url": "static://games/poly-track"
 }`),
       ]),
@@ -331,6 +339,7 @@ export function rm(p, { permanent = false } = {}) {
     while (trash.children.some(c => c.name === name)) name = `${gone.name} (${++k})`;
     gone.name = name;
     gone.trashedAt = Date.now();      /* Settings > Storage can empty the Trash after 30 days (core/trashexpiry.js) */
+    gone.trashedFrom = path;          /* where it was, for Put Back (kept in the saved snapshot) */
     trash.children.push(gone);
   }
   bus.emit('fs:change', parentPath(path), path);
@@ -349,17 +358,23 @@ export function rename(p, next) {
   return true;
 }
 
-export function mv(from, to) {
+/** Move an item into a folder. { as } gives it a new name on the way (Put Back, Paste
+    and Undo use it to keep both when the name is taken). */
+export function mv(from, to, { as } = {}) {
   const n = node(from);
   const dest = node(to);
   if (!n || !dest || dest.type !== 'dir') return false;
   const par = node(parentPath(from));
+  const wasTrash = (p => p === `${HOME}/Trash` || p.startsWith(`${HOME}/Trash/`))(norm(from));
   par.children.splice(par.children.findIndex(c => c === n), 1);
+  if (as && as !== n.name) { n.name = as; if (n.type === 'file') n.kind = kindOf(as); }
   dest.children.push(n);
   /* the Trash date belongs to a stay in the Trash: moving out ends it, moving in starts one */
   const toTrash = (p => p === `${HOME}/Trash` || p.startsWith(`${HOME}/Trash/`))(norm(to));
   if (toTrash && !n.trashedAt) n.trashedAt = Date.now();
   else if (!toTrash) delete n.trashedAt;
+  if (toTrash && !wasTrash && !n.trashedFrom) n.trashedFrom = norm(from);
+  else if (!toTrash) delete n.trashedFrom;
   bus.emit('fs:change', parentPath(from));
   bus.emit('fs:change', norm(to));
   return true;
@@ -462,14 +477,16 @@ walk(HOME, (n, path) => {
   if (n.type === 'file' && n.seed && String(n.content || '').startsWith('staticos-asset:')) realSeeds.push({ path, n: { ...n }, v: ADDED_IN[n.content] || 2 });
 });
 
-/* file tags (g) and the date an item went into the Trash (ta) ride along in the snapshot */
+/* file tags (g), the date an item went into the Trash (ta) and where it came from (o) ride along in the snapshot */
 const extras = n => ({
   ...(Array.isArray(n.tags) && n.tags.length ? { g: n.tags } : null),
   ...(n.trashedAt ? { ta: n.trashedAt } : null),
+  ...(n.trashedFrom ? { o: n.trashedFrom } : null),
 });
 const unextras = (o, n) => {
   if (Array.isArray(o.g) && o.g.length) n.tags = o.g.filter(t => typeof t === 'string');
   if (Number.isFinite(o.ta)) n.trashedAt = o.ta;
+  if (typeof o.o === 'string' && o.o.startsWith('/')) n.trashedFrom = o.o;
   return n;
 };
 

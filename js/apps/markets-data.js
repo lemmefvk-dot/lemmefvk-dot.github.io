@@ -75,6 +75,8 @@ async function td(path, params, key, { credits = 1, signal } = {}) {
   const code = body?.code ?? (res.ok ? 200 : res.status);
   if (body && body.status === 'error' || !res.ok) {
     const msg = String(body?.message || '').replace(/\*\*/g, '');
+    /* a working key on a plan without this endpoint: say so, in Twelve Data's own words, rather than blame the key */
+    if (code === 403 && /plan|upgrad|exclusive|available/i.test(msg)) throw new MarketError('plan', `Twelve Data answered that this isn’t on your key’s plan: “${msg.replace(/https?:\/\/\S+/g, '').trim().slice(0, 160)}”`);
     if (code === 401 || code === 403) throw new MarketError('badkey', 'Twelve Data did not accept the key. Check it in Settings.');
     if (code === 429) {
       if (/day/i.test(msg)) { dayBlockedUntil = Date.now() + 3600e3; throw new MarketError('limit-day', 'The free plan’s daily limit is used up. Try again later today.'); }
@@ -140,6 +142,32 @@ export async function bars(sym, range, key, { signal, force = false } = {}) {
     } catch (e) { if (e instanceof MarketError || e.name === 'AbortError') throw e; throw new MarketError('down', 'The data provider sent a chart we could not read.'); }
   }, force);
 }
+/* ---- dividends and splits: only what Twelve Data returns ----
+   Its /dividends and /splits cost 20 credits each and, at the time of
+   writing, are on its paid Grow plan and up. A free key's 8-a-minute
+   allowance can never hold 20, so the shared queue spends at most what
+   the minute allows and lets Twelve Data say no; its answer is shown as
+   it is. Asked for only when the person presses the button, then kept
+   for 12 hours. -> { dividends:[{ date, amount }], splits:[{ date, text }], currency } */
+export const EVENT_CREDITS = 20;
+export async function events(sym, key, { signal } = {}) {
+  if (isCrypto(sym)) throw new MarketError('unknown', 'Crypto pairs have no dividends or splits.');
+  const credits = Math.min(EVENT_CREDITS, perMinute());
+  return cached('e:' + sym, 12 * 3600e3, async () => {
+    const [dv, sp] = await Promise.allSettled([
+      td('/dividends', { symbol: sym, range: '5y' }, key, { credits, signal }),
+      td('/splits', { symbol: sym, range: '5y' }, key, { credits, signal }),
+    ]);
+    for (const r of [dv, sp]) if (r.status === 'rejected' && r.reason?.name === 'AbortError') throw r.reason;
+    if (dv.status === 'rejected' && sp.status === 'rejected') throw dv.reason;
+    const okDate = s => (/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? s : null);
+    const D = dv.status === 'fulfilled' ? dv.value : null, S = sp.status === 'fulfilled' ? sp.value : null;
+    const dividends = D ? (Array.isArray(D.dividends) ? D.dividends : []).map(r => ({ date: okDate(r.ex_date), amount: Number(r.amount) })).filter(r => r.date && Number.isFinite(r.amount)) : null;
+    const splits = S ? (Array.isArray(S.splits) ? S.splits : []).map(r => ({ date: okDate(r.date), text: String(r.description || `${r.to_factor} for ${r.from_factor}`).slice(0, 80) })).filter(r => r.date) : null;
+    return { dividends, splits, divErr: D ? '' : dv.reason?.message || 'No answer.', splitErr: S ? '' : sp.reason?.message || 'No answer.', currency: String(D?.meta?.currency || 'USD').slice(0, 5) };
+  });
+}
+
 /** keep the bars of a daily series that fall in the last `days` days of its own latest date */
 export function sliceDays(bs, days) {
   if (!bs.length) return bs;

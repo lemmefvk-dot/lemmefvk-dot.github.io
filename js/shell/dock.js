@@ -10,6 +10,11 @@
    (1 Dec – 1 Jan, js/core/winter.js) a gift opens the advent
    calendar. Neither has data-app, so neither is ever saved into
    the dock order.
+
+   prefs.shellLayout 'taskbar' turns the same bar into a taskbar along the
+   whole bottom edge (css/feat-shell.css): the same apps, the same menus and
+   dragging, with a name beside each open app and no magnification. The Dock
+   stays the default.
    ============================================================ */
 import { bus } from '../core/bus.js';
 import { store } from '../core/store.js';
@@ -22,10 +27,15 @@ import { winter } from '../core/season.js';
 import { roving } from '../core/roving.js';
 import * as F from './dockfolders.js';
 import { appTile } from '../core/appart.js';
+import { addAppToDesktop } from '../core/shortcuts.js';
+import * as TB from './trashbin.js';
+import { mountDockPeek } from './dockpeek.js';
+import * as WNB from '../core/wnbadge.js';
+import { t as tr, plural as tPlural } from '../core/i18n.js';
 
 const { h, icon, vfs, on, raf, clear } = api;
 
-const TRASH = `${vfs.HOME}/Trash`;
+const TRASH = TB.TRASH;
 const MAG = { reach: 2.7, lift: 13, grow: 0.3 };
 
 export function mountDock(host) {
@@ -51,7 +61,7 @@ export function mountDock(host) {
     }
   }
   const S = { mag: !!store.get('prefs.dockMagnify'), offMag: null, dragging: false, paintQueued: false };
-  const dock = h('nav.dock', { 'aria-label': 'Dock' });
+  const dock = h('nav.dock', { 'aria-label': tr('Dock') });
   host.appendChild(dock);
   store.sub('prefs', () => { applyPrefs(); paint(); });
 
@@ -61,24 +71,44 @@ export function mountDock(host) {
   const itemStyle = () => ({ transformOrigin: originFor() });
   const originFor = () => (dock.dataset.pos === 'left' ? '0 50%' : dock.dataset.pos === 'right' ? '100% 50%' : '50% 100%');
   const winTitle = w => w.el.getAttribute('aria-label') || w.app.name;
-  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const plural = TB.plural;
 
   function launcherItem() {
     return h('button.dock__item', {
-      dataset: { app: 'launcher' }, 'aria-label': 'Launcher', style: itemStyle(),
+      dataset: { app: 'launcher' }, 'aria-label': tr('Launcher'), style: itemStyle(),
       onclick: () => bus.emit('launcher:toggle'),
       oncontextmenu: e => e.preventDefault(),
     },
       appTile({ id: 'launcher', icon: 'diamond', g1: 'var(--aether-300)', g2: 'var(--aether-600)' }),
-      h('div.dock__tip', { text: 'Launcher' }),
+      h('div.dock__tip', { text: tr('Launcher') }),
       h('div.dock__dot'));
   }
 
-  function appItem(app) {
+  /* Unread notifications per app, from the notification centre's own log
+     (prefs.notiLog, which shell/notifications.js keeps): the same count it shows. */
+  function unreadByApp() {
+    const by = new Map();
+    const rows = store.get('prefs.notiLog');
+    if (!Array.isArray(rows)) return by;
+    for (const r of rows) {
+      if (!r || r.read !== false) continue;
+      const id = getApp(String(r.app || '').toLowerCase())?.id;
+      if (id) by.set(id, (by.get(id) || 0) + 1);
+    }
+    return by;
+  }
+
+  /* Static Social's badge: friends online now (js/core/friends.js announces it; absent until Friends is in use) */
+  let friendsOnline = 0;
+  function appItem(app, unread = 0) {
     const open = wm.byApp(app.id);
     const active = wm.getActive();
     /* a screen reader hears what the dot and badge show */
-    const state = !open.length ? '' : open.length > 1 ? `, ${open.length} windows open` : ', open';
+    const fresh = app.id === 'whatsnew' && WNB.hasNew();
+    const state = (!open.length ? '' : open.length > 1 ? ', ' + tr('{n} windows open', { n: open.length }) : ', ' + tr('open'))
+      + (unread ? ', ' + tPlural(unread, '{n} unread notification', '{n} unread notifications') : '')
+      + (app.id === 'social' && friendsOnline ? ', ' + tPlural(friendsOnline, '{n} friend online', '{n} friends online') : '')
+      + (fresh ? ', ' + tr('new since you last looked') : '');
     const el = h('button.dock__item', {
       dataset: { app: app.id }, 'aria-label': app.name + state, style: itemStyle(),
       'aria-current': active && active.appId === app.id ? 'true' : null,
@@ -87,6 +117,9 @@ export function mountDock(host) {
     },
       appTile(app),
       open.length > 1 ? h('div.dock__badge', { text: String(open.length) }) : null,
+      unread ? h('div.dock__unread', { text: unread > 99 ? '99+' : String(unread), title: tPlural(unread, '{n} unread notification', '{n} unread notifications'), 'aria-hidden': 'true' }) : null,
+      fresh ? WNB.mark(h) : null,
+      app.id === 'social' && friendsOnline ? h('div.dock__online', { text: String(friendsOnline), title: tPlural(friendsOnline, '{n} friend online', '{n} friends online'), 'aria-hidden': 'true' }) : null,
       h('div.dock__tip', { text: app.name }),
       h('div.dock__dot'));
     if (open.length) el.classList.add('is-running');
@@ -103,22 +136,22 @@ export function mountDock(host) {
   function trashItem() {
     /* hidden:true — emptyTrash() and Spotlight both count dotfiles, so the
        badge and the "Empty Trash" enabled state must count them too */
-    const n = vfs.ls(TRASH, { hidden: true }).length;
+    const n = TB.trashItems().length;
     return h('button.dock__item', {
-      dataset: { app: 'trash' }, 'aria-label': n ? `Trash, ${plural(n, 'item')}` : 'Trash',
+      dataset: { app: 'trash' }, 'aria-label': n ? tPlural(n, 'Trash, {n} item', 'Trash, {n} items') : tr('Trash'),
       style: itemStyle(),
       onclick: () => api.openApp('files', { path: TRASH }),
       oncontextmenu: e => trashMenu(e, n),
     },
       appTile({ id: 'trash', icon: 'trash', g1: 'var(--ink-4)', g2: 'var(--bg-2)' }),
       n ? h('div.dock__badge', { text: String(n) }) : null,
-      h('div.dock__tip', { text: 'Trash' }),
+      h('div.dock__tip', { text: tr('Trash') }),
       h('div.dock__dot'));
   }
 
   function pumpkinItem() {
     const done = HW.doneToday();
-    const label = done ? 'Trick or treat — again tomorrow' : 'Trick or treat';
+    const label = done ? tr('Trick or treat — again tomorrow') : tr('Trick or treat');
     const el = h('button.dock__item.dock__item--pumpkin', {
       dataset: { dock: 'pumpkin' }, 'aria-label': label, style: itemStyle(),
       onclick: () => HW.trickOrTreat(),
@@ -135,7 +168,7 @@ export function mountDock(host) {
   function adventItem() {
     const n = WINTER.todaysDoor();
     const ready = n && !WINTER.isOpen(n);
-    const label = ready ? `Advent calendar — door ${n} is ready` : 'Advent calendar';
+    const label = ready ? tr('Advent calendar — door {n} is ready', { n }) : tr('Advent calendar');
     return h('button.dock__item.dock__item--advent', {
       dataset: { dock: 'advent' }, 'aria-label': label, style: itemStyle(),
       onclick: () => bus.emit('winter:advent'),
@@ -170,7 +203,8 @@ export function mountDock(host) {
       .map(getApp)
       .filter(a => a && !a.hidden);
     dock.append(launcherItem(), h('div.dock__sep'));
-    for (const u of F.units(apps)) dock.appendChild(u.folder ? folders.item(u.folder) : appItem(u.app));
+    const unread = unreadByApp();
+    for (const u of F.units(apps)) dock.appendChild(u.folder ? folders.item(u.folder) : appItem(u.app, unread.get(u.app.id) || 0));
     dock.append(...[h('div.dock__sep'), HW.inSeason() ? pumpkinItem() : null, winter('advent') ? adventItem() : null, trashItem()].filter(Boolean));
     /* a repaint while the pointer is in the dock (an app opened, a window
        closed) used to drop every icon back to rest and grow them again on
@@ -274,7 +308,8 @@ export function mountDock(host) {
     const p = store.get('prefs') || {};
     const size = Math.max(0.7, Math.min(1.4, Number(p.dockSize) || 1));
     const gap = Math.max(0, Math.min(14, Number(p.dockSpacing ?? 6)));
-    const pos = ['bottom', 'left', 'right'].includes(p.dockPosition) ? p.dockPosition : 'bottom';
+    const taskbar = p.shellLayout === 'taskbar';
+    const pos = !taskbar && ['bottom', 'left', 'right'].includes(p.dockPosition) ? p.dockPosition : 'bottom';
 
     dock.style.setProperty('--dock-scale', String(size));
     dock.style.setProperty('--dock-gap', `${gap}px`);
@@ -283,7 +318,7 @@ export function mountDock(host) {
     if (p.dockOpacity != null) {
       dock.style.setProperty('--dock-alpha', String(Math.max(0.2, Math.min(1, Number(p.dockOpacity)))));
     }
-    S.mag = !!p.dockMagnify;
+    S.mag = !!p.dockMagnify && !taskbar;
   }
 
   /* ---------------- menus ---------------- */
@@ -300,44 +335,52 @@ export function mountDock(host) {
       ...open.map(w => ({
         /* a window on another desktop says which; choosing it goes there */
         label: winTitle(w), icon: 'window',
-        hint: w.min ? 'Hidden' : w.tabHidden ? 'Tab' : w.desk && wm.desktops.count() > 1 && w.desk !== wm.desktops.current() ? wm.desktops.label(w.desk) : null,
+        hint: w.min ? tr('Hidden') : w.tabHidden ? tr('Tab') : w.desk && wm.desktops.count() > 1 && w.desk !== wm.desktops.current() ? wm.desktops.label(w.desk) : null,
         onClick: () => (w.min ? wm.restore(w) : wm.focus(w)),
       })),
       open.length ? '-' : null,
-      { label: 'New Window', icon: 'plus', onClick: () => wm.open(app.id) },
-      { label: pinned ? 'Remove from Dock' : 'Keep in Dock', icon: 'pin',
+      { label: tr('New Window'), icon: 'plus', onClick: () => wm.open(app.id) },
+      { label: pinned ? tr('Remove from Dock') : tr('Keep in Dock'), icon: 'pin',
         onClick: () => setPinned(app.id, !pinned) },
       pinned ? folders.intoMenu(app.id) : null,
-      { label: 'Show All Windows', icon: 'grid', disabled: !open.length,
+      { label: tr('Add to Desktop'), icon: 'monitor', onClick: () => addAppToDesktop(app.id) },
+      loginSet ? { label: tr('Open at Login'), icon: 'power', checked: atLogin(app.id),
+        hint: loginSet.startupApps().enabled ? null : tr('Off'), onClick: () => toggleLogin(app) } : null,
+      { label: tr('Show All Windows'), icon: 'grid', disabled: !open.length,
         onClick: () => bus.emit('overview:toggle') },
       '-',
-      { label: 'Quit', icon: 'x', danger: true, disabled: !open.length,
+      { label: tr('Quit'), icon: 'x', danger: true, disabled: !open.length,
         onClick: () => wm.closeApp(app.id) },
     ].filter(Boolean), e.clientX, e.clientY);
+  }
+
+  /* "Open at Login" is the start-up automation's own list (Automations › Startup apps) */
+  let loginSet = null;
+  import('../core/automations.js').then(A => { loginSet = A; }).catch(() => {});
+  const atLogin = id => !!loginSet && loginSet.startupApps().apps.includes(id);
+  function toggleLogin(app) {
+    const set = loginSet.startupApps();
+    if (set.apps.includes(app.id)) {
+      loginSet.saveStartupApps({ apps: set.apps.filter(x => x !== app.id) });
+      api.notify({ app: 'Dock', icon: 'power', title: tr('{name} won’t open at login', { name: app.name }), timeout: 4000 });
+      return;
+    }
+    if (set.apps.length >= loginSet.MAX_STARTUP_APPS) {
+      api.notify({ app: 'Dock', icon: 'alert', title: tr('Start-up list is full'), message: tr('At most {MAX_STARTUP_APPS} apps open at login. Take one off in Automations first.', { MAX_STARTUP_APPS: loginSet.MAX_STARTUP_APPS }) });
+      return;
+    }
+    loginSet.saveStartupApps({ apps: [...set.apps, app.id] });
+    api.notify({ app: 'Dock', icon: 'power', title: tr('{name} will open at login', { name: app.name }), timeout: 4000,
+      message: set.enabled ? '' : tr('Start-up apps are switched off in Automations.') });
   }
 
   function trashMenu(e, n) {
     e.preventDefault();
     api.menu([
-      { label: 'Open Trash', icon: 'folder-open', onClick: () => api.openApp('files', { path: TRASH }) },
+      { label: tr('Open Trash'), icon: 'folder-open', onClick: () => api.openApp('files', { path: TRASH }) },
       '-',
-      { label: 'Empty Trash', icon: 'trash', danger: true, disabled: !n, onClick: emptyTrash },
+      { label: tr('Empty Trash'), icon: 'trash', danger: true, disabled: !n, onClick: () => TB.emptyTrash() },
     ], e.clientX, e.clientY);
-  }
-
-  async function emptyTrash() {
-    const kids = vfs.ls(TRASH, { hidden: true });
-    if (!kids.length) return;
-    const ok = await api.confirm({
-      title: 'Empty the Trash?',
-      message: `${plural(kids.length, 'item')} will be deleted permanently.`,
-      ok: 'Empty Trash',
-    });
-    if (!ok) return;
-    for (const n of kids) vfs.rm(`${TRASH}/${n.name}`);
-    bus.emit('trash:emptied', { count: kids.length });   /* the spooky sound pack cackles (shell/spooky.js) */
-    api.notify({ app: 'Files', icon: 'trash', title: 'Trash emptied',
-      message: `${plural(kids.length, 'item')} deleted.` });
   }
 
   /* ---------------- magnification ----------------
@@ -410,6 +453,7 @@ export function mountDock(host) {
   applyPrefs();
   paint();
   bindMagnify();
+  const peek = mountDockPeek({ dock, host });
 
   /* ---------------- keyboard ----------------
      One Tab stop; arrows move along it (either axis, so a dock on the left
@@ -429,7 +473,7 @@ export function mountDock(host) {
       if (!moved) return;
       paint();
       dock.querySelector(at.dataset.folder ? `.dock__item[data-folder="${CSS.escape(at.dataset.folder)}"]` : `.dock__item[data-app="${CSS.escape(id)}"]`)?.focus();
-      bus.emit('a11y:say', `${at.dataset.folder ? 'Folder' : getApp(id).name} moved to position ${moved.index + 1} of ${moved.count}`);
+      bus.emit('a11y:say', tr('{name} moved to position {pos} of {count}', { name: at.dataset.folder ? tr('Folder') : getApp(id).name, pos: moved.index + 1, count: moved.count }));
       return;
     }
     if (!d || !id || id === 'launcher' || id === 'trash') return;
@@ -447,7 +491,7 @@ export function mountDock(host) {
     store.set('dock', saved);
     paint();                                  /* now, so roving follows the item at once */
     dock.querySelector(`.dock__item[data-app="${id}"]`)?.focus();
-    bus.emit('a11y:say', `${getApp(id).name} moved to position ${j + 1} of ${shown.length}`);
+    bus.emit('a11y:say', tr('{name} moved to position {pos} of {count}', { name: getApp(id).name, pos: j + 1, count: shown.length }));
   }, true);
   const offRove = roving(dock, { items: '.dock__item', orientation: 'both' });
 
@@ -459,10 +503,16 @@ export function mountDock(host) {
       repaint();
       setTimeout(repaint, BOUNCE_MS + 40);      // clear it again once it ends
     }),
+    bus.on('friends:count', c => { const n = c && c.on ? Math.max(0, c.online | 0) : 0; if (n !== friendsOnline) { friendsOnline = n; repaint(); } }),
     bus.on('win:list', repaint),
     bus.on('win:focus', repaint),
     bus.on('fs:change', repaint),
     store.sub('dock', repaint),
+    /* unread badges follow the notification centre's log */
+    store.sub('prefs.notiLog', repaint),
+    /* What's New's "New" mark (js/core/wnbadge.js) */
+    store.sub(WNB.SEEN, repaint),
+    store.sub(WNB.LOOKED, repaint),
     store.sub('session.dockFolders', repaint),
     /* the pumpkin: comes and goes with the season, and dims once used today */
     store.sub('portal.halloween', repaint),
@@ -474,7 +524,7 @@ export function mountDock(host) {
     }),
     store.sub('prefs', p => {
       rest = null;    /* size, spacing or position may have moved the icons */
-      const next = !!(p && p.dockMagnify);
+      const next = !!(p && p.dockMagnify) && p.shellLayout !== 'taskbar';
       if (next === S.mag) return;
       S.mag = next;
       paint();
@@ -487,6 +537,7 @@ export function mountDock(host) {
   return () => {
     offs.forEach(off => off());
     offRove();
+    peek();
     folders.destroy();
     if (S.offMag) { S.offMag(); S.offMag = null; }
     dock.remove();

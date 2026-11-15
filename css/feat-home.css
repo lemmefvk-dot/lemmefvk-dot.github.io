@@ -152,3 +152,8 @@ body.is-mobile .bc-promo{left:12px;right:12px;width:auto;bottom:calc(var(--mobil
   background:var(--fill-0);border:1px solid var(--line-1)}
 .share__linkin:focus{outline:none;border-color:var(--line-accent)}
 .share__act[disabled]{opacity:.55;pointer-events:none}
+.share__qr{display:flex;gap:var(--sp-4);align-items:center;margin:0 var(--sp-4) var(--sp-3)}
+.share__qr[hidden]{display:none}
+.share__qrcv{width:132px;height:132px;flex:none;border-radius:var(--r-sm);background:#fff;image-rendering:pixelated}
+.share__qrtxt{display:flex;flex-direction:column;gap:var(--sp-2);align-items:flex-start;min-width:0}
+.share__qr>.icon{flex:none}

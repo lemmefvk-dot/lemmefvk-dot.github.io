@@ -3,7 +3,8 @@
 
    Settings › Desktop › Hot corners gives each of the four corners
    one of: nothing, the window overview, the launcher, show the
-   desktop, Static Search, lock, or the notification centre. Every
+   desktop, Static Search, lock, the notification centre, Do Not
+   Disturb (on/off) or Reopen Closed Window. Every
    corner starts as nothing: a corner that acts on its own would
    surprise anyone reaching past the page for the browser's tabs.
 
@@ -27,6 +28,8 @@ import { h } from '../core/dom.js';
 import { covered } from '../core/cover.js';
 import * as wm from '../core/wm.js';
 import { GAME_APPS } from '../core/gamemode.js';
+import * as WL from '../core/winlayouts.js';
+import * as REOPEN from '../core/reopen.js';
 
 export const DWELL = 250;     /* ms in the corner before it acts */
 export const EDGE = 4;        /* px from the very corner */
@@ -45,6 +48,8 @@ export const ACTIONS = [
   ['spotlight', 'Static Search'],
   ['lock', 'Lock the screen'],
   ['notifications', 'Notification centre'],
+  ['dnd', 'Do Not Disturb'],
+  ['reopen', 'Reopen Closed Window'],
 ];
 const KNOWN = new Set(ACTIONS.map(a => a[0]));
 
@@ -74,19 +79,20 @@ export function blocked(buttons = 0) {
   return null;
 }
 
-/* "Show the desktop": everything here out of the way; again, and it comes back. */
-let cleared = [];
-function showDesktop() {
-  const here = wm.onDesktop().filter(w => !w.min && !w.tabHidden);
-  if (here.length) {
-    cleared = here.map(w => w.id);
-    here.forEach(w => wm.minimize(w));
-    bus.emit('a11y:say', 'Desktop shown');
-    return;
-  }
-  const back = cleared.map(id => wm.get(id)).filter(w => w && w.min);
-  cleared = [];
-  back.forEach(w => wm.restore(w));
+/* "Show the desktop": everything here out of the way; again, and it comes back
+   (js/core/winlayouts.js, which the Window menu uses too). */
+export const showDesktop = () => WL.showDesktop();
+
+/* Do Not Disturb switches like the notification centre's own button. A toast
+   would be held back by the very thing it reports, so it is spoken, not shown. */
+function toggleDnd() {
+  const on = !store.get('prefs.dnd');
+  store.set('prefs.dnd', on);
+  bus.emit('a11y:say', on ? 'Do Not Disturb on' : 'Do Not Disturb off');
+}
+function reopenClosed() {
+  if (REOPEN.count()) REOPEN.reopen();
+  else bus.emit('a11y:say', 'No closed windows to reopen');
 }
 
 const RUN = {
@@ -96,6 +102,8 @@ const RUN = {
   spotlight: () => bus.emit('spotlight:open', ''),
   lock: () => bus.emit('power:lock'),
   notifications: () => bus.emit('noti:toggle'),
+  dnd: toggleDnd,
+  reopen: reopenClosed,
 };
 
 export function mountHotCorners(host) {

@@ -26,12 +26,18 @@
 
    PROTOCOL — sealed JSON { v:1, t, f, … }, f = a random id for this
    session (never the device id).
-     player → host   join { n, c }  ans { q, k:[choice], at }  hb {}  bye {}
+     player → host   join { n, c }  ans { q, k:[choice], at } (or, for a
+                     short answer, ans { q, s:'typed', at })  hb {}  bye {}
      host → players  wel { to, p }  full { to }
                      lob { title, total, pl:[[p,name,hue]] }
-                     q   { q, i, total, txt, ch:[…], mu, lim, left, img?, got:[p] }
+                     q   { q, i, total, txt, ch:[…], mu, lim, left, img?, got:[p],
+                           ty? ('tf' true or false, 's' short answer: ch is []) }
                      rev { q, i, ok:[…], dist:[…], bd:[[p,name,hue,total,gain,right]] }
+                         (a short answer: ty:'s', ok:[], acc:[accepted answers],
+                          dist:[right, wrong])
                      end { bd }   bye {}
+   A typed answer is checked by the host (core/quiz.js checkShort) as a
+   chosen one is, and the accepted answers go out only in "rev".
    The host repeats its current message every 2 s, so a message the
    public server dropped (it is best-effort) is mended by the next.
 
@@ -56,7 +62,7 @@ import * as live from '../portal/live.js';
 import { me } from './identity.js';
 import { isCode, normalizeCode, randomCode, safeName, hueOf, cleanText } from './roomcode.js';
 import { deriveRoom, seal, unseal, secureOk } from './pair.js';
-import { isRight, pointsFor, LIMITS } from './quiz.js';
+import { isRight, pointsFor, checkShort, kindOf, LIMITS } from './quiz.js';
 
 export const MAX_PLAYERS = 30;
 const WIRE_MAX = 24000;
@@ -165,13 +171,15 @@ export function openQuizHost({ quiz, pictures = async () => null }) {
   function lobMsg() { return { title: cleanText(quiz.title, LIMITS.title), total: quiz.questions.length, pl: [...S.players.values()].map(p => [p.idx, p.name, p.hue]) }; }
   function qMsg() {
     const cur = q();
+    const kind = kindOf(cur);
     const limMs = cur.time * 1000;
     const body = {
-      q: S.qid, i: S.qi, total: quiz.questions.length, txt: cur.text, ch: cur.choices.map(c => c.text),
-      mu: cur.choices.filter(c => c.ok).length > 1, lim: cur.time,
+      q: S.qid, i: S.qi, total: quiz.questions.length, txt: cur.text, ch: kind === 'short' ? [] : cur.choices.map(c => c.text),
+      mu: kind === 'mc' && cur.choices.filter(c => c.ok).length > 1, lim: cur.time,
       left: limMs ? Math.max(0, Math.round(limMs - (clock() - S.openedAt))) : -1,
       got: [...S.players.values()].filter(p => p.ans).map(p => p.idx),
     };
+    if (kind !== 'mc') body.ty = kind === 'short' ? 's' : 'tf';
     if (S.img) body.img = S.img;
     return body;
   }
@@ -224,15 +232,18 @@ export function openQuizHost({ quiz, pictures = async () => null }) {
 
   function onAnswer(p, m) {
     if (S.phase !== 'question' || m.q !== S.qid || p.ans) { C.counts.ignored++; return; }
-    const cur = q(), n = cur.choices.length;
-    if (!Array.isArray(m.k) || m.k.length < 1 || m.k.length > n || !m.k.every(v => int(v, 0, n - 1)) || new Set(m.k).size !== m.k.length
-      || !Number.isFinite(m.at) || m.at < 0 || m.at > 3600000) { C.counts.ignored++; return; }
+    const cur = q(), n = cur.choices.length, short = kindOf(cur) === 'short';
+    if (!Number.isFinite(m.at) || m.at < 0 || m.at > 3600000) { C.counts.ignored++; return; }
+    let typed = '';
+    if (short) {
+      if (m.k !== undefined || typeof m.s !== 'string' || m.s.length > LIMITS.choice * 2 || !(typed = cleanText(m.s, LIMITS.choice))) { C.counts.ignored++; return; }
+    } else if (m.s !== undefined || !Array.isArray(m.k) || m.k.length < 1 || m.k.length > n || !m.k.every(v => int(v, 0, n - 1)) || new Set(m.k).size !== m.k.length) { C.counts.ignored++; return; }
     const hostEl = clock() - S.openedAt;
     const limMs = cur.time * 1000;
     if (limMs && hostEl > limMs + LATE_MS) { C.counts.ignored++; return; }
     const el = Math.min(hostEl, Math.max(hostEl - GRACE, m.at));         /* never faster than the host saw, never later than it saw */
-    const right = isRight(cur, m.k);
-    p.ans = { k: m.k.slice().sort((a, b) => a - b), el, right, pts: pointsFor(right, el, cur.time) };
+    const right = short ? checkShort(cur, typed).ok : isRight(cur, m.k);
+    p.ans = { k: short ? [] : m.k.slice().sort((a, b) => a - b), s: typed, el, right, pts: pointsFor(right, el, cur.time) };
     emit();
     maybeClose();
   }
@@ -261,13 +272,17 @@ export function openQuizHost({ quiz, pictures = async () => null }) {
     if (S.phase !== 'question') return;
     clearTimeout(qT);
     const cur = q();
-    const dist = cur.choices.map(() => 0);
+    const short = kindOf(cur) === 'short';
+    const dist = short ? [0, 0] : cur.choices.map(() => 0);
     for (const p of S.players.values()) {
       p.gain = p.ans ? p.ans.pts : 0;
       p.score += p.gain;
-      if (p.ans) p.ans.k.forEach(k => { dist[k]++; });
+      if (p.ans && short) dist[p.ans.right ? 0 : 1]++;
+      else if (p.ans) p.ans.k.forEach(k => { dist[k]++; });
     }
-    S.rev = { q: S.qid, i: S.qi, ok: cur.choices.map((c, i) => (c.ok ? i : -1)).filter(i => i >= 0), dist, bd: bd() };
+    S.rev = short
+      ? { q: S.qid, i: S.qi, ty: 's', ok: [], acc: cur.answers.map(a => cleanText(a, LIMITS.choice)).filter(Boolean).slice(0, LIMITS.answers), dist, bd: bd() }
+      : { q: S.qid, i: S.qi, ok: cur.choices.map((c, i) => (c.ok ? i : -1)).filter(i => i >= 0), dist, bd: bd() };
     setPhase('reveal');
   }
   function finish() {
@@ -288,7 +303,7 @@ export function openQuizHost({ quiz, pictures = async () => null }) {
       const cur = S.qi >= 0 ? q() : null;
       return {
         phase: S.phase, error: S.error, live: S.liveState, title: quiz.title, total: quiz.questions.length, qi: S.qi, qid: S.qid,
-        question: cur ? { text: cur.text, choices: cur.choices.map(c => ({ text: c.text, ok: c.ok })), time: cur.time, hasImg: !!S.img } : null,
+        question: cur ? { kind: kindOf(cur), text: cur.text, choices: cur.choices.map(c => ({ text: c.text, ok: c.ok })), answers: (cur.answers || []).slice(), time: cur.time, hasImg: !!S.img } : null,
         openedAt: S.openedAt,
         players: [...S.players.values()].map(p => ({ idx: p.idx, name: p.name, hue: p.hue, score: p.score, gain: p.gain, answered: !!p.ans, right: p.ans ? p.ans.right : null, gone: p.gone, late: p.late })),
         answered: [...S.players.values()].filter(p => p.ans).length,
@@ -340,22 +355,31 @@ const msgs = {
     return { title: cleanText(m.title, LIMITS.title), total: m.total, pl };
   },
   q: m => {
-    if (typeof m.q !== 'string' || !QID_RE.test(m.q) || !int(m.i, 0, LIMITS.questions - 1) || !int(m.total, 1, LIMITS.questions)
-      || typeof m.txt !== 'string' || m.txt.length > LIMITS.text * 2 || !Array.isArray(m.ch) || m.ch.length < 2 || m.ch.length > LIMITS.choices
+    const kind = m.ty === undefined ? 'mc' : m.ty === 'tf' ? 'tf' : m.ty === 's' ? 'short' : null;
+    const [lo, hi] = kind === 'short' ? [0, 0] : kind === 'tf' ? [2, 2] : [2, LIMITS.choices];
+    if (!kind || typeof m.q !== 'string' || !QID_RE.test(m.q) || !int(m.i, 0, LIMITS.questions - 1) || !int(m.total, 1, LIMITS.questions)
+      || typeof m.txt !== 'string' || m.txt.length > LIMITS.text * 2 || !Array.isArray(m.ch) || m.ch.length < lo || m.ch.length > hi
       || !int(m.lim, 0, LIMITS.timeMax) || !int(m.left, -1, LIMITS.timeMax * 1000 + 5000) || !Array.isArray(m.got) || m.got.length > MAX_PLAYERS
       || !m.got.every(v => int(v, 0, 999))) return null;
     const ch = m.ch.map(c => (typeof c === 'string' ? cleanText(c, LIMITS.choice) : ''));
     const txt = cleanText(m.txt, LIMITS.text);
     if (!txt || ch.some(c => !c)) return null;
-    const out = { q: m.q, i: m.i, total: m.total, txt, ch, mu: m.mu === true, lim: m.lim, left: m.left, got: m.got, img: null };
+    const out = { q: m.q, i: m.i, total: m.total, txt, ch, mu: kind === 'mc' && m.mu === true, kind, lim: m.lim, left: m.left, got: m.got, img: null };
     if (m.img !== undefined) { if (typeof m.img !== 'string' || m.img.length > IMG_MAX || !IMG_RE.test(m.img)) return null; out.img = m.img; }
     return out;
   },
   rev: m => {
     const b = cleanBoard(m.bd);
+    if (m.ty === 's') {
+      if (typeof m.q !== 'string' || !QID_RE.test(m.q) || !int(m.i, 0, LIMITS.questions - 1) || !b || !Array.isArray(m.ok) || m.ok.length
+        || !Array.isArray(m.acc) || m.acc.length < 1 || m.acc.length > LIMITS.answers || !m.acc.every(a => typeof a === 'string' && a.length <= LIMITS.choice * 2)
+        || !Array.isArray(m.dist) || m.dist.length !== 2 || !m.dist.every(v => int(v, 0, MAX_PLAYERS))) return null;
+      const acc = m.acc.map(a => cleanText(a, LIMITS.choice)).filter(Boolean);
+      return acc.length ? { q: m.q, i: m.i, kind: 'short', ok: [], acc, dist: m.dist, bd: b } : null;
+    }
     if (typeof m.q !== 'string' || !QID_RE.test(m.q) || !int(m.i, 0, LIMITS.questions - 1) || !b || !Array.isArray(m.ok) || m.ok.length < 1 || m.ok.length > LIMITS.choices
       || !m.ok.every(v => int(v, 0, LIMITS.choices - 1)) || !Array.isArray(m.dist) || m.dist.length > LIMITS.choices || !m.dist.every(v => int(v, 0, MAX_PLAYERS))) return null;
-    return { q: m.q, i: m.i, ok: m.ok, dist: m.dist, bd: b };
+    return { q: m.q, i: m.i, kind: 'choice', ok: m.ok, dist: m.dist, bd: b };
   },
   end: m => { const b = cleanBoard(m.bd); return b ? { bd: b } : null; },
   bye: () => ({}),
@@ -417,7 +441,7 @@ export function openQuizPlayer({ code, name = '' }) {
         S.total = c.total;
         S.shownAt = clock();
         S.deadline = c.left >= 0 ? S.shownAt + c.left : 0;
-        S.picks = null; S.sent = false; S.acked = c.got.includes(S.idx); S.rev = null;
+        S.picks = null; S.typed = ''; S.sent = false; S.acked = c.got.includes(S.idx); S.rev = null;
         S.phase = 'question';
         clearInterval(ansT);
         emit();
@@ -425,7 +449,8 @@ export function openQuizPlayer({ code, name = '' }) {
       }
       case 'rev':
         if (!S.q || c.q !== S.q.q || S.phase === 'end') { C.counts.ignored++; return; }
-        if (c.dist.length !== S.q.ch.length || c.ok.some(v => v >= S.q.ch.length)) { C.counts.ignored++; return; }
+        if ((c.kind === 'short') !== (S.q.kind === 'short')) { C.counts.ignored++; return; }
+        if (c.kind !== 'short' && (c.dist.length !== S.q.ch.length || c.ok.some(v => v >= S.q.ch.length))) { C.counts.ignored++; return; }
         clearInterval(ansT);
         if (S.phase !== 'reveal') { S.rev = c; S.board = c.bd; S.phase = 'reveal'; emit(); }
         return;
@@ -460,14 +485,14 @@ export function openQuizPlayer({ code, name = '' }) {
     state() {
       return {
         phase: S.phase, error: S.error, live: S.liveState, idx: S.idx, title: S.title, total: S.total, lobby: S.lobby,
-        question: S.q ? { qid: S.q.q, i: S.q.i, text: S.q.txt, choices: S.q.ch, multi: S.q.mu, limit: S.q.lim, img: S.q.img, deadline: S.deadline, shownAt: S.shownAt, answered: S.sent, acked: S.acked, picks: S.picks, got: S.q.got.length } : null,
-        rev: S.rev ? { ok: S.rev.ok, dist: S.rev.dist } : null,
+        question: S.q ? { qid: S.q.q, i: S.q.i, kind: S.q.kind, text: S.q.txt, choices: S.q.ch, multi: S.q.mu, limit: S.q.lim, img: S.q.img, deadline: S.deadline, shownAt: S.shownAt, answered: S.sent, acked: S.acked, picks: S.picks, typed: S.typed || '', got: S.q.got.length } : null,
+        rev: S.rev ? { ok: S.rev.ok, dist: S.rev.dist, acc: S.rev.acc || null } : null,
         board: S.board,
       };
     },
     /* choose; the host hears only these choices and how long they took on this screen */
     answer(picks) {
-      if (S.phase !== 'question' || S.sent || !S.q) return false;
+      if (S.phase !== 'question' || S.sent || !S.q || S.q.kind === 'short') return false;
       if (S.deadline && clock() > S.deadline + 300) return false;
       const k = [...new Set(picks)].filter(v => int(v, 0, S.q.ch.length - 1)).sort((a, b) => a - b);
       if (!k.length || (!S.q.mu && k.length > 1)) return false;
@@ -476,6 +501,22 @@ export function openQuizPlayer({ code, name = '' }) {
       const qid = S.q.q;
       let tries = 0;
       const send = () => { if (S.phase !== 'question' || S.q.q !== qid || S.acked || ++tries > 8) { clearInterval(ansT); return; } C.wire('ans', { q: qid, k, at }); };
+      send();
+      ansT = setInterval(send, 1500);
+      emit();
+      return true;
+    },
+    /* a short answer: the host hears only the words typed and how long it took on this screen */
+    answerText(text) {
+      if (S.phase !== 'question' || S.sent || !S.q || S.q.kind !== 'short') return false;
+      if (S.deadline && clock() > S.deadline + 300) return false;
+      const s = cleanText(text, LIMITS.choice);
+      if (!s) return false;
+      S.typed = s; S.picks = []; S.sent = true;
+      const at = Math.max(0, Math.round(clock() - S.shownAt));
+      const qid = S.q.q;
+      let tries = 0;
+      const send = () => { if (S.phase !== 'question' || S.q.q !== qid || S.acked || ++tries > 8) { clearInterval(ansT); return; } C.wire('ans', { q: qid, s, at }); };
       send();
       ansT = setInterval(send, 1500);
       emit();

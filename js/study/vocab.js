@@ -15,7 +15,10 @@
      · two ways to answer: flip the card and grade yourself (Again /
        Hard / Good / Easy), or type the answer (right = Good, wrong =
        Again; capitals and punctuation don't count, accents are
-       pointed out; typos are wrong).
+       pointed out; typos are wrong);
+     · a round of the words you miss most: the ones graded Again most
+       often in reviews (the card's own lapse count), most-missed first,
+       up to MISSED_MAX. Like Practise all, it leaves the schedule alone.
 
    A card has one schedule: reviewing it in either direction updates
    the same due date. All the user's text is shown as text.
@@ -27,6 +30,9 @@ import * as V from '../core/vocab.js';
 const GRADE_LABEL = { again: 'Again', hard: 'Hard', good: 'Good', easy: 'Easy' };
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const SLOW = 0.6;
+const MISSED_MAX = 20;
+/** The deck's words you miss most: missed (graded Again) at least once, most first. */
+const missedOf = d => d.cards.filter(c => c.lapses > 0).sort((a, b) => b.lapses - a.lapses || String(a.due || '').localeCompare(String(b.due || ''))).slice(0, MISSED_MAX);
 
 const CSS = `
 .vc__note{margin:0;color:var(--ink-2);font-size:var(--fs-12);line-height:1.5;max-width:75ch}
@@ -44,6 +50,7 @@ const CSS = `
 .vc__res.is-bad{border-color:rgba(255,80,100,.5)}
 .vc__res b{color:var(--ink-0)}
 .vc__dirtag{color:var(--ink-3);font-size:var(--fs-11)}
+.vc__missed{display:flex;flex-wrap:wrap;gap:var(--sp-2);align-items:center}
 `;
 
 export function mountVocab(host, ctx) {
@@ -93,7 +100,7 @@ export function mountVocab(host, ctx) {
   function start(kind) {
     const d = deck();
     if (!d) return;
-    const queue = kind === 'cram' ? FC.shuffled(d.cards) : FC.queue(d.cards);
+    const queue = kind === 'cram' ? FC.shuffled(d.cards) : kind === 'missed' ? missedOf(d).map(c => c.id) : FC.deckQueue(d);
     S.session = { kind, deckId: d.id, queue, total: queue.length, phase: 'ask', dirs: {}, reviews: 0, right: 0, grades: { again: 0, hard: 0, good: 0, easy: 0 }, finished: !queue.length, last: null };
     speech.stop();
     render();
@@ -172,7 +179,7 @@ export function mountVocab(host, ctx) {
   function renderSession(s) {
     if (s.finished) {
       body.append(h('div.empty.st-done', { dataset: { fk: 'vocab-done' } }, icon('check-circle'),
-        h('b', { text: s.total ? (s.kind === 'cram' ? 'Practice round finished' : 'Session finished') : 'Nothing to review right now' }),
+        h('b', { text: s.total ? (s.kind === 'cram' ? 'Practice round finished' : s.kind === 'missed' ? 'Round of missed words finished' : 'Session finished') : 'Nothing to review right now' }),
         h('small', { text: s.total ? `${s.right} of ${plural(s.reviews, 'answer')} right${s.kind === 'review' ? `: ${FC.GRADES.map(g => `${s.grades[g]} ${GRADE_LABEL[g].toLowerCase()}`).join(', ')}.` : '.'}` : 'No words are due and there are no new ones. Come back when one is due, or use Practice all.' }),
         h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: 'vocab-back' }, onclick: end }, h('span', { text: 'Back to the list' }))));
       return;
@@ -217,7 +224,7 @@ export function mountVocab(host, ctx) {
         FC.GRADES.map((g, i) => {
           const nx = FC.schedule(c, g);
           return h('button.btn.st-g', { type: 'button', class: `st-g--${g}`, dataset: { fk: `vocab-grade-${g}` }, onclick: () => grade(g) },
-            h('b', { text: GRADE_LABEL[g] }), h('small', { text: s.kind === 'cram' ? '' : g === 'again' ? 'again today' : FC.intervalText(nx.interval) }), h('kbd', { text: String(i + 1) }));
+            h('b', { text: GRADE_LABEL[g] }), h('small', { text: s.kind !== 'review' ? '' : g === 'again' ? 'again today' : FC.intervalText(nx.interval) }), h('kbd', { text: String(i + 1) }));
         })));
     }
     const left = s.queue.length;
@@ -297,7 +304,8 @@ export function mountVocab(host, ctx) {
 
     /* practice */
     const due = FC.counts(d.cards).due, fresh2 = FC.counts(d.cards).fresh;
-    const queued = FC.queue(d.cards).length;
+    const queued = FC.deckQueue(d).length;
+    const missed = missedOf(d);
     const mk = (fk, key, label, opts) => h('label.st-f', h('span.st-f__l', { text: label }), h('select.select.st-sel', { 'aria-label': label, dataset: { fk }, onchange: e => { S.prefs = { ...S.prefs, [key]: e.target.value }; V.setPrefs({ [key]: e.target.value }); } },
       opts.map(([v, t]) => h('option', { value: v, text: t, selected: S.prefs[key] === v }))));
     body.append(h('div.st-add', h('div.side__label', { text: 'Practise' }),
@@ -305,8 +313,12 @@ export function mountVocab(host, ctx) {
       h('label.st-row', h('input', { type: 'checkbox', checked: S.auto, dataset: { fk: 'vocab-auto' }, onchange: e => { S.auto = e.target.checked; } }), h('span', { text: 'Say each prompt when it appears' })),
       h('div.st-row',
         h('button.btn.btn--primary', { type: 'button', disabled: !d.cards.length, dataset: { fk: 'vocab-start' }, onclick: () => start('review') }, icon('play'), h('span', { text: `Review (${plural(queued, 'word')}: ${due} due, ${fresh2} new)` })),
-        h('button.btn', { type: 'button', disabled: !d.cards.length, dataset: { fk: 'vocab-cram' }, onclick: () => start('cram') }, h('span', { text: 'Practise all' }))),
-      h('small.dim', { text: 'Review follows the spaced-repetition schedule. Practise all goes through every word and leaves the schedule alone.' })));
+        h('button.btn', { type: 'button', disabled: !d.cards.length, dataset: { fk: 'vocab-cram' }, onclick: () => start('cram') }, h('span', { text: 'Practise all' })),
+        h('button.btn', { type: 'button', disabled: !missed.length, dataset: { fk: 'vocab-missed' }, onclick: () => start('missed') }, icon('rotate-ccw'), h('span', { text: `Words I miss most (${missed.length})` }))),
+      h('small.dim', { text: 'Review follows the spaced-repetition schedule. Practise all goes through every word, and Words I miss most through the ones you have graded Again most often in reviews; both leave the schedule alone.' }),
+      missed.length ? h('div.vc__missed', { dataset: { fk: 'vocab-missed-list' } }, h('small.dim', { text: 'Missed most:' }),
+        ...missed.slice(0, 8).map(c => h('span.chip', { dataset: { fk: 'vocab-missed-word' } }, h('span', { text: `${c.front} · missed ${c.lapses === 1 ? 'once' : `${c.lapses} times`}` }))))
+        : h('small.dim', { dataset: { fk: 'vocab-missed-none' }, text: 'Words you get wrong in a review (Again, or a wrong typed answer) are counted, and the ones you miss most can be practised on their own.' })));
 
     /* the words */
     body.append(h('div.side__label', { text: `Words (${d.cards.length})` }),

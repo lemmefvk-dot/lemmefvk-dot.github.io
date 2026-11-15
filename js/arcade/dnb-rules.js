@@ -218,6 +218,29 @@ export function components(g) {
   return out;
 }
 
+/* ---------------------------- the long-chain rule ---------------------------- */
+/**
+ * What the chain hint shows near the end. It looks at the board as it will be
+ * once every box on offer now is taken, and returns
+ *   { safe: lines that give no box away, settled: no safe line is left and the rest
+ *     is plain chains and loops (components() above), long: chains of 3+ boxes,
+ *     loops, short: chains of 1–2 boxes (counted only when settled), dots: (n+1)²,
+ *     firstWants: 'even' | 'odd' }
+ * firstWants is Berlekamp's long-chain rule (The Dots-and-Boxes Game, 2000): the
+ * player who drew first wants dots + long chains to come out even, the other
+ * player odd. Loops do not change it. It is a rule of thumb for who keeps control
+ * at the end, not a promise of the result.
+ */
+export function chainInfo(g) {
+  const t = captureRun(g).state;
+  const safe = safeLines(t).length;
+  const comps = safe ? null : components(t);
+  const dots = (g.n + 1) * (g.n + 1);
+  const out = { safe, settled: !!comps, long: 0, loops: 0, short: 0, dots, firstWants: dots % 2 ? 'odd' : 'even', left: remaining(t) };
+  if (comps) for (const c of comps) { if (c.loop) out.loops++; else if (c.len >= 3) out.long++; else out.short++; }
+  return out;
+}
+
 /* ---------------------------- the computer ---------------------------- */
 const pick = (arr, rng) => arr[Math.floor(rng() * arr.length) % arr.length];
 /** the lines taken, in order, if the side to move grabs every box on offer; `boxes` is how many that claims */
@@ -329,4 +352,4 @@ export function think(g, { level = 2, rng = Math.random } = {}) {
   return { edge: pick(lines.filter((_e, i) => costs[i] === low), rng), score: -low };
 }
 
-export default { SIZES, LEVELS, newGame, copy, canPlay, play, undo, outcome, think, undrawn, remaining, edgeBoxes, boxEdges, edgeDots, hEdge, vEdge, edgeCount, components, loonyValue, solveMoves };
+export default { SIZES, LEVELS, newGame, copy, canPlay, play, undo, outcome, think, undrawn, remaining, edgeBoxes, boxEdges, edgeDots, hEdge, vEdge, edgeCount, components, loonyValue, solveMoves, chainInfo };

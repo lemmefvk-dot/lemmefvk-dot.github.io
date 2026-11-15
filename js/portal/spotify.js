@@ -33,8 +33,10 @@ export function parseLink(raw) {
   return null;
 }
 
-export const embedUrl = ({ kind, id }, { theme = 0 } = {}) =>
-  `https://open.spotify.com/embed/${kind}/${encodeURIComponent(id)}?utm_source=generator&theme=${theme}`;
+/* Spotify's embed has one theme switch: theme=0 is its dark player, and leaving it
+   off gives the default, lighter one. So 'dark' sends theme=0 and 'light' sends none. */
+export const embedUrl = ({ kind, id }, { theme = 'dark' } = {}) =>
+  `https://open.spotify.com/embed/${kind}/${encodeURIComponent(id)}?utm_source=generator${theme === 'light' ? '' : '&theme=0'}`;
 
 export const openUrl = ({ kind, id }) => `https://open.spotify.com/${kind}/${encodeURIComponent(id)}`;
 
@@ -52,23 +54,122 @@ export const STARTERS = [
   { kind: 'playlist', id: '37i9dQZF1DWWQRwui0ExPn', name: 'Lo-Fi Beats' },
 ];
 
+export const SAVED_MAX = 200;
+export const NAME_MAX = 60;
+export const FOLDER_MAX = 24;
+export const STUDY_KEY = 'portal.spotify.study';
+const KINDS_RE = 'track|album|playlist|artist|show|episode';
+
+/** A name or folder from a person or a file: one line, no control or bidi characters, capped. */
+export const tidy = (s, n) => String(s ?? '').replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
+export const same = (a, b) => !!a && !!b && a.kind === b.kind && a.id === b.id;
+/** "playlist:37i9…" — the form a friend's message carries */
+export const wireId = ({ kind, id }) => `${kind}:${id}`;
+
 export const saved = store => {
   const v = store.get(KEY);
-  return Array.isArray(v) ? v.filter(x => x && x.kind && x.id) : [];
+  return Array.isArray(v) ? v.filter(x => x && x.kind && x.id).map(x => {
+    const out = { ...x };
+    const f = tidy(x.folder, FOLDER_MAX);
+    if (f) out.folder = f; else delete out.folder;
+    return out;
+  }) : [];
 };
 
 export function save(store, item) {
   const rows = saved(store);
-  if (rows.some(r => r.kind === item.kind && r.id === item.id)) return rows;
-  rows.unshift({ kind: item.kind, id: item.id, name: item.name || null, at: Date.now() });
-  store.set(KEY, rows.slice(0, 40));
+  if (rows.some(r => same(r, item))) return rows;
+  const row = { kind: item.kind, id: item.id, name: tidy(item.name, NAME_MAX) || null, at: Date.now() };
+  const f = tidy(item.folder, FOLDER_MAX);
+  if (f) row.folder = f;
+  rows.unshift(row);
+  store.set(KEY, rows.slice(0, SAVED_MAX));
   return saved(store);
 }
 
+/** Save a batch (a paste, an imported file): -> { added, had } */
+export function saveMany(store, items) {
+  let added = 0, had = 0;
+  const known = saved(store);
+  const fresh = [];
+  for (const it of items) {
+    if (known.some(r => same(r, it)) || fresh.some(r => same(r, it))) { had++; continue; }
+    const row = { kind: it.kind, id: it.id, name: tidy(it.name, NAME_MAX) || null, at: Date.now() + fresh.length };
+    const f = tidy(it.folder, FOLDER_MAX);
+    if (f) row.folder = f;
+    fresh.push(row);
+    added++;
+  }
+  if (added) store.set(KEY, [...fresh.reverse(), ...known].slice(0, SAVED_MAX));
+  return { added, had };
+}
+
 export function forget(store, item) {
-  const rows = saved(store).filter(r => !(r.kind === item.kind && r.id === item.id));
+  const rows = saved(store).filter(r => !same(r, item));
   store.set(KEY, rows);
+  if (same(study(store), item)) setStudy(store, null);
   return rows;
+}
+
+/** Give a saved link your own name ('' puts back the default). */
+export function rename(store, item, name) {
+  const n = tidy(name, NAME_MAX);
+  store.set(KEY, saved(store).map(r => (same(r, item) ? { ...r, name: n || null } : r)));
+}
+
+/** Sort a saved link into a folder ('' takes it out of any). */
+export function moveTo(store, item, folder) {
+  const f = tidy(folder, FOLDER_MAX);
+  store.set(KEY, saved(store).map(r => {
+    if (!same(r, item)) return r;
+    const out = { ...r };
+    if (f) out.folder = f; else delete out.folder;
+    return out;
+  }));
+}
+
+/** Folder names in use, A to Z. */
+export const folders = rows => [...new Set(rows.map(r => r.folder).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+/* The playlist the Study button opens: one of the saved links, chosen by the person. */
+export function study(store) {
+  const s = store.get(STUDY_KEY, null);
+  return s && s.kind && s.id && saved(store).some(r => same(r, s)) ? { kind: s.kind, id: s.id } : null;
+}
+export function setStudy(store, item) {
+  store.set(STUDY_KEY, item ? { kind: item.kind, id: item.id } : null);
+}
+
+/**
+ * Every Spotify link in some text (a paste, a file), in order, repeats dropped:
+ * [{ kind, id, name?, folder? }]. A line a person exported has the link, then the
+ * name, then the folder, separated by tabs; anything else is just links.
+ */
+export function parseMany(text) {
+  const out = [];
+  const find = new RegExp(`spotify:(?:${KINDS_RE}):[A-Za-z0-9]+|https?://open\\.spotify\\.com/(?:intl-[\\w-]+/)?(?:${KINDS_RE})/[A-Za-z0-9]+`, 'gi');
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const cols = line.split('\t');
+    const links = line.match(find) || [];
+    for (const raw of links) {
+      const it = parseLink(raw);
+      if (!it || out.some(o => same(o, it))) continue;
+      if (links.length === 1 && cols.length > 1 && cols[0].trim() === raw) {
+        const name = tidy(cols[1], NAME_MAX);
+        const folder = tidy(cols[2], FOLDER_MAX);
+        if (name) it.name = name;
+        if (folder) it.folder = folder;
+      }
+      out.push(it);
+    }
+  }
+  return out;
+}
+
+/** The saved links as a text file: link, name, folder, one per line, tab-separated. */
+export function exportText(rows) {
+  return `${['# Spotify links from StaticOS: link, name, folder (separated by tabs). Paste links or import this file back.']
+    .concat(rows.map(r => [openUrl(r), r.name || '', r.folder || ''].join('\t'))).join('\n')}\n`;
 }
 
 
@@ -163,6 +264,7 @@ export const fmtDur = ms => {
 };
 
 export default {
-  parseLink, embedUrl, openUrl, isCollection, STARTERS, saved, save, forget, KEY,
+  parseLink, parseMany, embedUrl, openUrl, isCollection, STARTERS, saved, save, saveMany, forget, rename, moveTo, folders,
+  study, setStudy, exportText, wireId, same, tidy, KEY, STUDY_KEY,
   search, spotifySearch, artAt, fmtDur, KINDS,
 };

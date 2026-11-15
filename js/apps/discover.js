@@ -232,6 +232,8 @@ defineApp({
     /* this device's own Discover settings */
     const saved = () => { const v = store.get(KEY, null); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; };
     const save = patch => store.set(KEY, { ...saved(), ...patch });
+    /* where you were scrolled on the last tab, so coming back lands there */
+    const savedScroll = () => { const v = saved().scroll; return v && typeof v === 'object' && typeof v.tab === 'string' && Number.isFinite(v.y) ? v : null; };
     const hiddenIds = () => arr(saved().hidden).filter(x => typeof x === 'string');
     /* Social keeps friends and mutes as [{ id, name }] on this device; Discover
        only reads them (friends first, muted people never shown) */
@@ -247,6 +249,9 @@ defineApp({
       animeErr: '',
       roblox: robloxData.isLoaded() ? (robloxData.loadError() ? 'failed' : 'ready') : 'idle',
       projects: null,
+      pick: null,           /* the "Pick for me" answer on screen: { item, opts } */
+      skipped: new Set(),   /* picks skipped for now (this visit only) */
+      breakEnd: 0,          /* Study break: when the 10 minutes are up (ms), 0 = no timer */
       heroAt: {},           /* tab -> which pick the hero shows */
       more: {},             /* search group -> how many shown */
     };
@@ -299,10 +304,57 @@ defineApp({
     const top = h('header.dv-top',
       h('div.dv-brand', h('span.dv-brand__mark', icon('compass')), h('b', { text: 'Discover' })),
       tabs, searchBox);
+    /* ---- Pick for me: one pick, with the reason, narrowed by a mood ---- */
+    const MOODS = [
+      ['quick', 'Quick', 'clock', { minutes: 5 }, 'about five minutes'],
+      ['two', '2 players', 'users', { players: 2 }, 'two players on this device'],
+      ['relax', 'Relaxing', 'heart', { mood: 'relax' }, 'something relaxing'],
+      ['puzzle', 'Puzzle', 'grid-9', { mood: 'puzzle' }, 'a puzzle'],
+    ];
+    const pickOut = h('div.dv-pick__out', { 'aria-live': 'polite' });
+    function paintPick() {
+      const P = S.pick;
+      if (!P) { api.render(pickOut); pickOut.hidden = true; return; }
+      pickOut.hidden = false;
+      const it = P.item;
+      const art = h('div.dv-pick__art', { style: { background: it.art ? '' : (it.kind === 'arcade' ? `linear-gradient(140deg,hsl(${it.hue ?? 210} 70% 40%),hsl(${((it.hue ?? 210) + 48) % 360} 60% 16%))` : artBg(it.title)) } },
+        it.art ? h('img', { src: it.art, alt: '', referrerpolicy: 'no-referrer', onerror: e => e.target.remove() }) : null);
+      api.render(pickOut, art,
+        h('div.dv-pick__b',
+          h('div.dv-eyebrow', icon('sparkles'), h('span', { text: P.label ? `Picked for you · ${P.label}` : 'Picked for you' })),
+          h('h2.dv-pick__t', { text: it.title }),
+          h('p.dv-pick__why', icon('info'), h('span', { text: it.reason })),
+          h('div.dv-pick__acts',
+            h('button.dv-btn.dv-btn--primary', { type: 'button', dataset: { act: 'pick-play' }, onclick: () => { QP.launch(it, api); } }, icon('play', { fill: true }), h('span', { text: 'Play' })),
+            h('button.dv-btn', { type: 'button', dataset: { act: 'pick-skip' }, onclick: () => skipPick() }, icon('chevrons-right'), h('span', { text: 'Skip for now' })),
+            h('button.dv-btn', { type: 'button', dataset: { act: 'pick-close' }, 'aria-label': 'Close the pick', onclick: () => { S.pick = null; paintPick(); } }, icon('x')))));
+    }
+    function doPick(opts, label) {
+      const key = x => `${x.kind}:${x.id}`;
+      const item = QP.pick({ ...opts, avoidIds: [...S.skipped] });
+      S.pick = { item, opts, label };
+      paintPick();
+      say.textContent = `${item.title}. ${item.reason}`;
+      return key(item);
+    }
+    function skipPick() {
+      if (!S.pick) return;
+      S.skipped.add(`${S.pick.item.kind}:${S.pick.item.id}`);
+      doPick(S.pick.opts, S.pick.label);
+      pickOut.querySelector('[data-act="pick-play"]')?.focus({ preventScroll: true });
+    }
+    const pickBar = h('section.dv-pick', { 'aria-label': 'Pick for me' },
+      h('div.dv-pick__row',
+        h('button.dv-btn.dv-btn--primary.dv-pick__go', { type: 'button', dataset: { act: 'pick' }, onclick: () => { S.skipped.clear(); doPick({}, ''); } }, icon('shuffle'), h('span', { text: 'Pick for me' })),
+        h('div.dv-pick__moods', { role: 'group', 'aria-label': 'Or pick by mood' }, MOODS.map(([id, label, ic, o, words]) =>
+          h('button.dv-chipbtn', { type: 'button', dataset: { mood: id }, title: `Pick ${words}`, onclick: () => { S.skipped.clear(); doPick(o, label); } }, icon(ic), h('span', { text: label }))))),
+      pickOut);
+    pickOut.hidden = true;
+
     const view = h('div.dv-view');
     const main = h('main.dv-main', { id: 'dv-stage', role: 'tabpanel', tabindex: '-1' }, view);
     const say = h('div.dv-sr', { role: 'status', 'aria-live': 'polite' });
-    el.append(top, main, say);
+    el.append(top, pickBar, main, say);
     root.appendChild(el);
 
     /* ---------------------------------------------------------------- *
@@ -986,7 +1038,8 @@ defineApp({
     const colItem = c => {
       const newest = c.items.reduce((m, it) => Math.max(m, Number(it.at) || 0), 0);
       return { kind: 'collection', id: c.id, title: c.name, c,
-        why: c.items.length ? `You added to it ${QP.ago(newest || c.createdAt)}` : 'Your collection · empty so far', whyIcon: 'bookmark' };
+        why: c.rule ? 'Smart collection · a rule the Library works out when you open it'
+          : c.items.length ? `You added to it ${QP.ago(newest || c.createdAt)}` : 'Your collection · empty so far', whyIcon: 'bookmark' };
     };
     const citem = (it, c) => ({ kind: 'citem', id: `${it.kind}:${it.id}`, title: it.title, it, col: c, art: null, why: `In ${c.name} · added ${QP.ago(it.at)}`, whyIcon: 'bookmark' });
 
@@ -1206,6 +1259,77 @@ defineApp({
       });
     }
 
+    /* ---- Study break: short games, and a 10-minute timer that really counts ---- */
+    const BREAK_MS = 10 * 60_000;
+    const mmss = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+    let breakTick = 0;
+    function tickBreak() {
+      const left = S.breakEnd - Date.now();
+      if (S.breakEnd && left <= 0) {
+        S.breakEnd = 0;
+        api.notify({ app: APP_NAME, icon: 'clock', title: 'Break over', message: 'Ten minutes are up. Back to it!', timeout: 0 });
+        say.textContent = 'Break over. Ten minutes are up.';
+      }
+      for (const n of view.querySelectorAll('[data-break]')) {
+        const on = S.breakEnd > 0;
+        n.querySelector('.dv-break__t').textContent = on ? mmss(S.breakEnd - Date.now()) : '10:00';
+        n.querySelector('[data-act="break-go"]').hidden = on;
+        n.querySelector('[data-act="break-stop"]').hidden = !on;
+        n.classList.toggle('is-running', on);
+      }
+      if (!S.breakEnd) { clearInterval(breakTick); breakTick = 0; }
+    }
+    offs.push(() => clearInterval(breakTick));
+    function startBreak() {
+      S.breakEnd = Date.now() + BREAK_MS;
+      if (!breakTick) breakTick = setInterval(() => { if (alive) tickBreak(); }, 500);
+      tickBreak();
+    }
+    function stopBreak() { S.breakEnd = 0; tickBreak(); }
+    function breakSec() {
+      return section({
+        id: 'break', title: 'Study Break', icon: 'clock', lazy: false,
+        sub: 'Games with rounds of three minutes or less, and a timer so a break stays a break.',
+        render: (body, tools) => {
+          const timer = h('div.dv-break', { dataset: { break: '1' } },
+            h('div.dv-break__t', { 'aria-hidden': 'true', text: S.breakEnd ? mmss(S.breakEnd - Date.now()) : '10:00' }),
+            h('button.dv-btn.dv-btn--primary', { type: 'button', dataset: { act: 'break-go' }, hidden: S.breakEnd > 0, onclick: startBreak }, icon('play', { fill: true }), h('span', { text: 'Start a 10-minute break' })),
+            h('button.dv-btn', { type: 'button', dataset: { act: 'break-stop' }, hidden: !S.breakEnd, onclick: stopBreak }, icon('x'), h('span', { text: 'Stop the timer' })),
+            h('span.dv-break__n', { text: 'It counts while Discover is open and tells you when the time is up.' }));
+          const quick = ARCADE.filter(a => a.minutes <= 3).slice(0, ROW).map(a => arcItem(a, `Rounds take about ${a.minutes} min`, 'clock'));
+          api.render(body, timer, quick.length ? rail(quick, { label: 'Study Break' }) : null);
+          api.render(tools);
+          if (S.breakEnd && !breakTick) breakTick = setInterval(() => { if (alive) tickBreak(); }, 500);
+        },
+      });
+    }
+
+    /* ---- From friends' favourites: only what a friend chose to put on the card they sent ---- */
+    function friendsFavSec() {
+      return section({
+        id: 'friendfavs', title: 'From Friends’ Favorites', icon: 'users',
+        sub: 'Games your friends listed on the profile card they sent you, that this device has. Nothing is read from their devices.',
+        items: async () => {
+          let F = null;
+          try { F = await import('../core/friends.js'); } catch (e) { return []; }
+          if (!F.available()) return [];
+          const out = [];
+          const seen = new Set();
+          for (const c of F.cards()) {
+            for (const t of c.card.games) {
+              const low = String(t).trim().toLowerCase();
+              if (!low) continue;
+              const a = ARCADE.find(x => x.title.toLowerCase() === low);
+              const g = a ? null : catalogue.search(t, { limit: 3 }).hits.map(x => x.row).find(r => r.title.toLowerCase() === low);
+              const it = a ? arcItem(a, `On ${c.display}’s profile card`, 'users') : g ? webItem(g, `On ${c.display}’s profile card`, 'users') : null;
+              if (it && !seen.has(`${it.kind}:${it.id}`)) { seen.add(`${it.kind}:${it.id}`); out.push(it); }
+            }
+          }
+          return out;
+        },
+      });
+    }
+
     function mightSec(M, skip) {
       const names = M.T.top.slice(0, 3).map(catName);
       return section({
@@ -1403,6 +1527,8 @@ defineApp({
         gamesNotice(),
         becauseSec(M, skip),
         mightSec(M, skip),
+        breakSec(),
+        friendsFavSec(),
         peopleSec(),
         picksSec(M, skip),
         addedSec(),
@@ -1825,6 +1951,24 @@ defineApp({
     if (S.tab === 'anime' && S.anime === 'idle') ensureAnime();
     ensureProjects().then(() => { if (alive && S.tab === 'creations') paint(true); });
     paint(false);
+
+    let scrollT = 0;
+    main.addEventListener('scroll', () => {
+      clearTimeout(scrollT);
+      scrollT = setTimeout(() => { if (alive && !S.q) save({ scroll: { tab: S.tab, y: Math.round(main.scrollTop) } }); }, 250);
+    }, { passive: true });
+    offs.push(() => clearTimeout(scrollT));
+    const back = savedScroll();
+    if (back && back.tab === S.tab && back.y > 0 && !opts?.tab && typeof opts?.q !== 'string') {
+      /* rows below the fold are built as they scroll near, so the page grows a little after the first paint: try again until it is tall enough */
+      let tries = 0;
+      const restore = () => {
+        if (!alive || tries++ > 12 || main.scrollTop > 0) return;
+        main.scrollTop = back.y;
+        if (main.scrollTop < back.y - 4) setTimeout(restore, 150);
+      };
+      frame(restore, 'restore');
+    }
 
     return () => {
       alive = false;

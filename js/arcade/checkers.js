@@ -1,46 +1,67 @@
 /* ============================================================
-   arcade/checkers.js — Checkers (American rules) for Static Arcade.
+   arcade/checkers.js — Checkers for Static Arcade: American rules, or
+   flying kings.
 
    Red moves first. A man steps one square diagonally forward; reach the
-   far row and it is crowned a king, which moves and jumps both ways.
-   Capturing is forced: if you can jump, you must, and a piece that lands
-   with another jump open must keep going (a man crowned mid-jump stops).
+   far row and it is crowned a king. Capturing is forced: if you can jump,
+   you must, and a piece that lands with another jump open must keep going.
    You choose which jump to make, not necessarily the longest. A side with
    no move loses; 40 moves each (80 in a row) without a capture is a draw.
-   The rules, with the computer player, are in ./checkers-rules.js.
+   · American (the default, and the only rules online): men jump forward
+     only, kings move one square, and a man crowned mid-jump stops.
+   · Flying kings (Russian rules): kings move and capture any distance
+     along a diagonal, men capture backwards too, and a man crowned
+     mid-capture carries on as a king.
+   The rules, with the computer player, are in ./checkers-rules.js; the
+   rules in play are said in the panel and in the Board card.
 
    · 1P: against the computer (Easy, Medium, Hard, searched in a Web Worker
-     so the page keeps drawing), you or the computer first; remembered in
-     portal.arcadeCheckers. Undo takes back your move and the reply. A win
-     scores the number of moves you made (fewer is better).
+     so the page keeps drawing), you or the computer first, either rules;
+     remembered in portal.arcadeCheckers. Undo takes back your move and the
+     reply. A win scores the number of moves you made (fewer is better).
+     Your won–lost–drawn record is kept per rules and level (records.js);
+     a game counts at the easiest level the computer played in it.
    · 2P: Red and Cream take turns on one screen.
    · Online: a friend on another device through the Arcade's room. The host
      is Red in odd rounds, Cream in even ones; your side is always at the
      bottom. Every arriving move is checked against the rules (whose turn,
      a real legal move, forced captures included) before it reaches the board.
+   · Hint (1P and 2P, never online): the computer's Hard move for the side
+     to move, marked on the board until the next move and said for a screen
+     reader. Hints are counted; a 1P game with one sets no best. The Board
+     card: four themes and coordinates (files a–h, ranks 1–8 from Red's side).
 
    Mouse or touch: click a piece (pieces that may move are lit), then a
    dotted square; a multi-jump is clicked hop by hop. Keyboard: arrows move
-   the cursor, Enter / Space pick a piece or a square, U / Z / Backspace
-   take back (first the piece you are holding). Moves slide hop by hop,
-   instantly with reduced motion. Pause hides the board and stops the
+   the cursor, Enter / Space pick a piece or a square, H hint, U / Z /
+   Backspace take back (first the piece you are holding). Moves slide hop by
+   hop, instantly with reduced motion. Pause hides the board and stops the
    computer.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { store } from '../core/store.js';
 import * as K from './checkers-rules.js';
+import * as records from './records.js';
 import { thinker } from './thinker.js';
-import { KIT_CSS, surface, ownsKey, sounder, looper, rr, playerStrip, segment, button, confirmButton, duelLink } from './boardkit.js';
+import { KIT_CSS, surface, ownsKey, sounder, looper, rr, playerStrip, segment, button, confirmButton, duelLink, boardOptions, recordLine, lookOf } from './boardkit.js';
 
 const PREF = 'portal.arcadeCheckers';
 const MIN_THINK_MS = 420;
 const HOP_MS = 240;
 const RED = '#e0414f', CREAM = '#f1e6cc';
+/* the board in each theme: arcade is the look Checkers always had */
+const THEMES = {
+  arcade: { frame: '#3a2a22', glow: 'rgba(255,170,80,.3)', dark: '#6b4a37', light: '#e4d2ac', ink: '#ead8bc', ring: null },
+  wood: { frame: '#4a2c14', glow: 'rgba(255,170,80,.22)', dark: '#8a5a2e', light: '#ebc893', ink: '#f3dcb2', ring: null },
+  paper: { frame: '#d6cfbf', glow: 'rgba(255,255,255,.08)', dark: '#8c99a5', light: '#f8f5ee', ink: '#2c2c32', ring: 'rgba(0,0,0,.45)' },
+  contrast: { frame: '#ffd400', glow: 'rgba(0,0,0,0)', dark: '#000000', light: '#ffffff', ink: '#000000', ring: '#ffffff' },
+};
+const SAMPLES = { arcade: ['#e4d2ac', '#6b4a37'], wood: ['#ebc893', '#8a5a2e'], paper: ['#f8f5ee', '#8c99a5'], contrast: ['#ffffff', '#000000'] };
 
 const readPrefs = () => {
   let p = null;
   try { p = store.get(PREF, null); } catch (err) { p = null; }
-  return { level: [1, 2, 3].includes(p?.level) ? p.level : 2, first: p?.first === 'cpu' ? 'cpu' : 'me' };
+  return { level: [1, 2, 3].includes(p?.level) ? p.level : 2, first: p?.first === 'cpu' ? 'cpu' : 'me', rules: K.rulesId(p?.rules), ...lookOf(p, { coords: false }) };
 };
 const writePrefs = patch => { try { store.set(PREF, { ...readPrefs(), ...patch }); } catch (err) { /* a convenience */ } };
 const startsWith = (path, prefix) => prefix.length <= path.length && prefix.every((x, i) => path[i] === x);
@@ -51,7 +72,8 @@ export default {
     const mode = NET ? 'online' : ctx.players === 2 ? '2p' : 'cpu';
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
-    const brain = mode === 'cpu' ? thinker() : null;
+    /* 2P makes its thinker on the first hint */
+    let brain = mode === 'cpu' ? thinker() : null;
     const prefs = readPrefs();
     const host = NET?.role === 'host';
     const round = Number.isInteger(NET?.round) ? NET.round : 1;
@@ -60,15 +82,19 @@ export default {
     let me = mode === 'online' ? ((round % 2 === 1) === host ? 1 : -1) : mode === 'cpu' ? (prefs.first === 'cpu' ? -1 : 1) : 0;
     let dead = false;
 
+    /* online is always American */
+    const rules0 = mode === 'online' ? 'am' : prefs.rules;
     const S = {
-      g: K.newGame(), by: [], over: null, anim: null, last: null, hover: -1, cursor: 17, kb: false, legal: [], sel: -1, prefix: [], note: '',
-      thinking: false, thinkId: 0, level: prefs.level, first: prefs.first, rejected: 0, myMoves: 0, paused: false,
-      ended: false, endT: 0, geo: { x: 0, y: 0, cell: 0 }, shake: 0,
+      rules: rules0, g: K.newGame(rules0), by: [], over: null, anim: null, last: null, hover: -1, cursor: 17, kb: false, legal: [], sel: -1, prefix: [], note: '',
+      thinking: false, thinkId: 0, level: prefs.level, vsLevel: prefs.level, first: prefs.first, rejected: 0, myMoves: 0, paused: false,
+      ended: false, endT: 0, geo: { x: 0, y: 0, cell: 0 }, shake: 0, hint: null, hints: 0, hintBusy: false, hintId: 0,
+      look: { theme: prefs.theme, coords: prefs.coords },
     };
     const flipped = () => me === -1;
     const colorOf = v => (v === 1 ? RED : CREAM);
     const sideName = v => (v === 1 ? 'Red' : 'Cream');
     const nameOf = v => (mode === '2p' ? sideName(v) : v === me ? 'You' : mode === 'cpu' ? 'The computer' : peerName);
+    const R0 = () => K.RULES[S.rules];
 
     /* ------------------------------ the page ------------------------------ */
     const boardEl = h('div.arx-bg__board');
@@ -77,15 +103,28 @@ export default {
     const topStrip = playerStrip(CREAM, '', '');
     const botStrip = playerStrip(RED, '', '');
     const levelSeg = mode === 'cpu' ? segment('Level', [1, 2, 3].map(id => ({ id, label: K.LEVELS[id].name })), S.level, setLevel) : null;
+    const recLine = mode === 'cpu' ? recordLine() : null;
     const firstSeg = mode === 'cpu' ? segment('First', [{ id: 'me', label: 'You' }, { id: 'cpu', label: 'Computer' }], S.first, setFirst) : null;
+    const rulesSeg = mode !== 'online' ? segment('Rules', [{ id: 'am', label: 'American', title: K.RULES.am.short }, { id: 'fly', label: 'Flying kings', title: K.RULES.fly.short }], S.rules, setRules) : null;
     const undoBtn = mode !== 'online' ? button('Undo', 'corner-up-left', () => { undo(); refocus(); }, { title: 'Take back the last move (U)' }) : null;
     const resignBtn = mode !== '2p' ? confirmButton('Resign', 'Resign? Click again', 'x', () => { resign(); refocus(); }) : null;
-    const note = h('div.arx-bg__note', {
-      text: mode === 'online' ? 'Click a lit piece, then a dotted square. You must capture when you can. Every move is checked on both screens.'
-        : mode === '2p' ? 'Two players on this screen: Red goes first. You must capture when you can.'
-          : 'Click a lit piece, then a dotted square. You must capture when you can; keep jumping with the same piece.',
+    const hintBtn = mode !== 'online' ? button('Hint', 'sparkles', () => { hint(); refocus(); }, { title: 'Mark the move the computer would play at Hard (H). Hints are counted, and a game with one sets no best.' }) : null;
+    const board = boardOptions(boardEl, {
+      samples: SAMPLES, coords: true,
+      get: () => ({ ...S.look }),
+      set: (k, v) => { S.look[k] = k === 'theme' ? v : !!v; writePrefs({ [k]: S.look[k] }); paint(); },
+      get rules() { return R0().text; },
+      refocus: () => refocus(),
     });
-    const side = h('div.arx-bg__side', topStrip.el, statusEl, levelSeg?.el, firstSeg?.el, h('div.arx-bg__row', undoBtn, resignBtn), note, botStrip.el);
+    const note = h('div.arx-bg__note');
+    const setNote = () => {
+      note.textContent = (mode === 'online' ? 'Click a lit piece, then a dotted square. You must capture when you can. Every move is checked on both screens. '
+        : mode === '2p' ? 'Two players on this screen: Red goes first. You must capture when you can. '
+          : 'Click a lit piece, then a dotted square. You must capture when you can; keep jumping with the same piece. ') + R0().short;
+    };
+    setNote();
+    const side = h('div.arx-bg__side', topStrip.el, statusEl, levelSeg?.el, recLine?.el, firstSeg?.el, rulesSeg?.el,
+      h('div.arx-bg__row', undoBtn, resignBtn), h('div.arx-bg__row', hintBtn, board.button), note, botStrip.el);
     const root = h('div.arx-bgc', h('style', { text: KIT_CSS }), h('div.arx-bg', boardEl, side), sr);
     el.appendChild(root);
     const sf = surface(boardEl, 'Checkers board', () => draw());
@@ -109,6 +148,7 @@ export default {
         if (S.over) return;
         S.over = { over: true, winner: me, reason: 'resign', who: 'them' };
         say(`${peerName} resigned.`);
+        ctx.announce?.(`${peerName} resigned.`);
         paint();
         finishSoon();
       },
@@ -119,16 +159,23 @@ export default {
     const humanTurn = () => mode === '2p' || S.g.turn === me;
     const canAct = () => !dead && !S.paused && !S.over && !S.thinking && humanTurn();
     const moving = () => !!S.anim && performance.now() - S.anim.t0 < S.anim.total;
-    const refreshLegal = () => { S.legal = S.over ? [] : K.legalMoves(S.g.b, S.g.turn); };
+    const refreshLegal = () => { S.legal = S.over ? [] : K.legal(S.g); };
     const forced = () => S.legal.length > 0 && S.legal[0].caps.length > 0;
     const clearSel = () => { S.sel = -1; S.prefix = []; };
+    /* a hint still being worked out is dropped when the board changes */
+    const dropHint = () => {
+      if (S.hintBusy) { brain?.cancel(); S.hintBusy = false; }
+      S.hintId++;
+      S.hint = null;
+    };
 
     function newGame() {
       brain?.cancel();
       clearTimeout(S.endT);
-      Object.assign(S, { g: K.newGame(), by: [], over: null, anim: null, last: null, thinking: false, myMoves: 0, ended: false, note: '', cursor: me === -1 ? 46 : 17 });
+      Object.assign(S, { g: K.newGame(S.rules), by: [], over: null, anim: null, last: null, thinking: false, myMoves: 0, ended: false, note: '', cursor: me === -1 ? 46 : 17,
+        hint: null, hints: 0, hintBusy: false, vsLevel: S.level });
       clearSel();
-      S.thinkId++;
+      S.thinkId++; S.hintId++;
       refreshLegal();
       ctx.onScore(0);
       NET?.peerScore?.(0);
@@ -159,7 +206,11 @@ export default {
       }
       if (S.sel < 0) { if (!v) return false; refuse('That is not your piece.'); return false; }
       const cands = S.legal.filter(m => startsWith(m.path, S.prefix) && m.path[S.prefix.length] === i);
-      if (!cands.length) { refuse(forced() ? 'You must capture. Pick a dotted square.' : 'A piece moves one square diagonally forward.'); return false; }
+      if (!cands.length) {
+        refuse(forced() ? 'You must capture. Pick a dotted square.'
+          : S.rules === 'fly' ? 'A man steps one square diagonally forward; a king slides along a diagonal.' : 'A piece moves one square diagonally forward.');
+        return false;
+      }
       const prefix = [...S.prefix, i];
       const done = cands.find(m => m.path.length === prefix.length);
       if (done) {
@@ -179,6 +230,7 @@ export default {
       const v = g.turn;
       const piece = g.b[m.path[0]];
       const caught = m.caps.map(s => g.b[s]);
+      dropHint();
       K.apply(g, m);
       S.by.push(by);
       if (by === 'me') S.myMoves++;
@@ -192,7 +244,10 @@ export default {
       if (o.over) S.over = o;
       refreshLegal();
       S.note = '';
-      say(`${nameOf(v)} moved ${K.name(m.path[0])} to ${K.name(m.path[hops])}${m.caps.length ? `, capturing ${m.caps.length}` : ''}.${S.over ? ' ' + overText() : ''}`);
+      const told = `${nameOf(v)} moved ${K.name(m.path[0])} to ${K.name(m.path[hops])}${m.caps.length ? `, capturing ${m.caps.length}` : ''}.${S.over ? ' ' + overText() : ''}`;
+      say(told);
+      /* the other side's move, for a screen reader (the shell's live region): yours you just made */
+      if (by !== 'me' || mode === '2p') ctx.announce?.(told);
       paint();
       if (S.over) finishSoon(total);
       else if (mode === 'cpu' && g.turn !== me) computerMove(total);
@@ -205,7 +260,7 @@ export default {
       paint();
       const t0 = performance.now();
       const g = S.g;
-      const res = await brain.ask({ game: 'checkers', b: Array.from(g.b), turn: g.turn, quiet: g.quiet, level: S.level });
+      const res = await brain.ask({ game: 'checkers', b: Array.from(g.b), turn: g.turn, quiet: g.quiet, level: S.level, rules: g.rules });
       if (dead || id !== S.thinkId) return;
       const wait = Math.max(MIN_THINK_MS, wait0 + 80) - (performance.now() - t0);
       if (wait > 0) await new Promise(r => setTimeout(r, wait));
@@ -220,6 +275,29 @@ export default {
       apply(m, 'cpu');
     }
 
+    /* the computer's Hard move for the side to move, marked until the next move */
+    async function hint() {
+      if (mode === 'online' || !canAct() || S.hintBusy || S.prefix.length > 1) return;
+      if (!brain) brain = thinker();
+      const id = ++S.hintId, at = S.g.moves.length, g = S.g;
+      S.hintBusy = true;
+      S.hint = null;
+      say('Looking for a good move…');
+      paint();
+      const res = await brain.ask({ game: 'checkers', b: Array.from(g.b), turn: g.turn, quiet: g.quiet, level: 3, rules: g.rules });
+      if (dead || id !== S.hintId || S.g.moves.length !== at) return;
+      S.hintBusy = false;
+      const m = res && K.findMove(S.g, res.path);
+      if (!m) { say('No hint this time.'); paint(); return; }
+      S.hint = { path: m.path.slice(), caps: m.caps.slice(), t: performance.now() };
+      S.hints++;
+      const told = `Hint: ${m.path.map(K.name).join(' to ')}${m.caps.length ? `, capturing ${m.caps.length}` : ''}.`;
+      say(told);
+      ctx.announce?.(told);
+      loop.kick(reduced ? 0.05 : 1.7);
+      paint();
+    }
+
     function undo() {
       if (mode === 'online' || dead || S.paused) return;
       if (S.sel >= 0) { clearSel(); paint(); return; }
@@ -227,10 +305,12 @@ export default {
       const g = S.g;
       if (mode === '2p') {
         if (!g.moves.length) return;
+        dropHint();
         K.undo(g); S.by.pop();
       } else {
         const mine = S.by.lastIndexOf('me');
         if (mine < 0) return;
+        dropHint();
         if (S.thinking) { brain.cancel(); S.thinkId++; S.thinking = false; }
         while (g.moves.length > mine) { K.undo(g); if (S.by.pop() === 'me') S.myMoves--; }
       }
@@ -244,6 +324,7 @@ export default {
 
     function resign() {
       if (S.over || dead) return;
+      dropHint();
       if (S.thinking) { brain?.cancel(); S.thinkId++; S.thinking = false; }
       S.over = { over: true, winner: -me, reason: 'resign', who: 'me' };
       link?.resign();
@@ -258,6 +339,8 @@ export default {
       clearTimeout(S.endT);
       S.endT = setTimeout(finish, after + (reduced ? 300 : 900));
     }
+    const vsLabel = (rules, lv) => `${K.RULES[rules].name} · ${K.LEVELS[lv].name}`;
+    const refreshRec = () => recLine?.set(records.vsOf('checkers', `${S.rules}-${S.level}`), vsLabel(S.rules, S.level));
     function finish() {
       if (S.ended || dead || !S.over) return;
       S.ended = true;
@@ -275,18 +358,42 @@ export default {
         return;
       }
       const lv = K.LEVELS[S.level].name;
-      if (o.winner === me) ctx.onEnd({ score: n, won: true, detail: `You won in ${n} moves against the computer (${lv}).` });
-      else if (o.winner === 0) ctx.onEnd({ score: null, won: false, detail: `A draw against the computer (${lv}): 40 moves each without a capture.` });
-      else ctx.onEnd({ score: null, won: false, detail: o.reason === 'resign' ? `You resigned against the computer (${lv}).` : `The computer (${lv}) won.` });
+      const where = S.rules === 'fly' ? `${lv}, flying kings` : lv;
+      const vs = { key: `${S.rules}-${S.vsLevel}`, label: vsLabel(S.rules, S.vsLevel), result: o.winner === me ? 'win' : o.winner === 0 ? 'draw' : 'loss' };
+      const helped = S.hints ? { assisted: true } : {};
+      const used = S.hints ? ` ${S.hints} hint${S.hints > 1 ? 's' : ''} used, so it sets no best.` : '';
+      if (o.winner === me) ctx.onEnd({ score: n, won: true, vs, ...helped, detail: `You won in ${n} moves against the computer (${where}).${used}` });
+      else if (o.winner === 0) ctx.onEnd({ score: null, won: false, vs, ...helped, detail: `A draw against the computer (${where}): 40 moves each without a capture.${used}` });
+      else ctx.onEnd({ score: null, won: false, vs, ...helped, detail: (o.reason === 'resign' ? `You resigned against the computer (${where}).` : `The computer (${where}) won.`) + used });
+      /* the shell has written the record by now */
+      refreshRec();
     }
 
-    function setLevel(v) { S.level = v; writePrefs({ level: v }); levelSeg.set(v); paint(); refocus(); }
+    function setLevel(v) {
+      S.level = v;
+      /* a game counts at the easiest level the computer played in it */
+      S.vsLevel = S.g.moves.length ? Math.min(S.vsLevel, v) : v;
+      writePrefs({ level: v }); levelSeg.set(v); refreshRec(); paint(); refocus();
+    }
     function setFirst(v) {
       S.first = v;
       writePrefs({ first: v });
       firstSeg.set(v);
       me = v === 'cpu' ? -1 : 1;
       newGame();
+      refocus();
+    }
+    function setRules(v) {
+      const id = K.rulesId(v);
+      rulesSeg.set(id);
+      if (id !== S.rules) {
+        S.rules = id;
+        writePrefs({ rules: id });
+        setNote();
+        newGame();
+        refreshRec();
+        say(K.RULES[id].short);
+      }
       refocus();
     }
 
@@ -310,6 +417,8 @@ export default {
       else if (mode === 'cpu') text = g.turn === me ? (forced() ? 'Your move: you must capture' : 'Your move') : 'The computer is thinking…';
       else if (mode === '2p') text = `${nameOf(g.turn)} to move${forced() ? ': must capture' : ''}`;
       else text = g.turn === me ? (forced() ? 'Your move: you must capture' : 'Your move') : `${peerName}’s move`;
+      if (!S.over && !S.paused && S.hintBusy) text += ' · looking for a hint…';
+      else if (!S.over && !S.paused && S.hint) text = `Hint: ${S.hint.path.map(K.name).join(' to ')} (marked)`;
       statusEl.textContent = text;
       statusEl.classList.remove('is-alert');
       statusEl.classList.toggle('is-done', !!S.over);
@@ -321,7 +430,11 @@ export default {
       botStrip.set({ name: who(botV), note: `${sideName(botV)} · ${cnt(botV)} left${kings(botV) ? `, ${kings(botV)} king${kings(botV) > 1 ? 's' : ''}` : ''}`, color: colorOf(botV), turn: !S.over && g.turn === botV });
       if (undoBtn) undoBtn.disabled = !!S.over || (mode === '2p' ? !g.moves.length : !S.by.includes('me'));
       if (resignBtn) { resignBtn.disabled = !!S.over; if (S.over) resignBtn.reset(); }
-      sf.cv.setAttribute('aria-label', `Checkers board. Red ${c.red}, Cream ${c.cream}. ${text}`);
+      if (hintBtn) {
+        hintBtn.disabled = !canAct() || S.hintBusy || S.prefix.length > 1;
+        hintBtn.setLabel(S.hintBusy ? 'Thinking…' : S.hints ? `Hint · ${S.hints}` : 'Hint');
+      }
+      sf.cv.setAttribute('aria-label', `Checkers board, ${R0().name} rules. Red ${c.red}, Cream ${c.cream}. ${text}`);
       ctx.onScore(mode === '2p' ? g.moves.length : S.myMoves);
       if (NET) NET.peerScore?.(S.by.filter(b => b === 'peer').length);
       draw();
@@ -329,8 +442,9 @@ export default {
 
     /* ------------------------------ drawing ------------------------------ */
     function layout() {
-      const cell = Math.max(14, Math.floor(Math.min(sf.w, sf.h) / 8.6));
-      return { cell, x: Math.round((sf.w - cell * 8) / 2), y: Math.round((sf.h - cell * 8) / 2) };
+      const m = S.look.coords ? 0.5 : 0.14;
+      const cell = Math.max(14, Math.floor(Math.min(sf.w, sf.h) / (8 + m * 2 + 0.32)));
+      return { cell, m: cell * m, x: Math.round((sf.w - cell * 8) / 2), y: Math.round((sf.h - cell * 8) / 2) };
     }
     /* centre of square i (0..63) on screen */
     const sx = (L, i) => L.x + ((flipped() ? 7 - (i & 7) : (i & 7)) + 0.5) * L.cell;
@@ -340,7 +454,7 @@ export default {
       if (c < 0 || c > 7 || r < 0 || r > 7) return -1;
       return K.sq(flipped() ? r : 7 - r, flipped() ? 7 - c : c);
     };
-    function piece(g, x, y, r, v, lit) {
+    function piece(g, x, y, r, v, lit, ring = null) {
       const red = v > 0, king = v === 2 || v === -2;
       g.save();
       g.translate(x, y);
@@ -352,6 +466,7 @@ export default {
       g.fillStyle = gr;
       g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
       g.shadowColor = 'transparent';
+      if (ring) { g.strokeStyle = ring; g.lineWidth = Math.max(1.5, r * 0.1); g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.stroke(); }
       g.strokeStyle = red ? 'rgba(60,0,10,.45)' : 'rgba(80,60,20,.4)'; g.lineWidth = Math.max(1, r * 0.09);
       g.beginPath(); g.arc(0, 0, r * 0.72, 0, Math.PI * 2); g.stroke();
       if (king) {
@@ -366,10 +481,10 @@ export default {
 
     function draw() {
       if (dead) return;
-      const g = sf.g;
+      const g = sf.g, T = THEMES[S.look.theme] || THEMES.arcade;
       sf.begin();
       const L = S.geo = layout();
-      const now = performance.now(), c = L.cell, R0 = c * 0.38;
+      const now = performance.now(), c = L.cell, R0r = c * 0.38;
       g.fillStyle = '#05060d'; g.fillRect(0, 0, sf.w, sf.h);
       if (S.paused) {
         g.fillStyle = 'rgba(255,255,255,.8)'; g.textAlign = 'center'; g.font = `700 ${Math.round(c * 0.6)}px Inter,system-ui,sans-serif`;
@@ -379,18 +494,44 @@ export default {
       let ox = 0;
       if (S.shake && now - S.shake < 200) ox = Math.sin((now - S.shake) / 18) * 4 * (1 - (now - S.shake) / 200);
       g.save(); g.translate(ox, 0);
-      g.shadowBlur = 24; g.shadowColor = 'rgba(255,170,80,.3)';
-      g.fillStyle = '#3a2a22';
-      rr(g, L.x - c * 0.14, L.y - c * 0.14, c * 8.28, c * 8.28, c * 0.2); g.fill();
+      g.shadowBlur = 24; g.shadowColor = T.glow;
+      g.fillStyle = T.frame;
+      rr(g, L.x - L.m, L.y - L.m, c * 8 + L.m * 2, c * 8 + L.m * 2, c * 0.2); g.fill();
       g.shadowBlur = 0;
       for (let r = 0; r < 8; r++) for (let q = 0; q < 8; q++) {
         const rr0 = flipped() ? r : 7 - r, cc = flipped() ? 7 - q : q;
-        g.fillStyle = K.dark(rr0, cc) ? '#6b4a37' : '#e4d2ac';
+        g.fillStyle = K.dark(rr0, cc) ? T.dark : T.light;
         g.fillRect(L.x + q * c, L.y + r * c, c, c);
+      }
+      /* coordinates in the frame: files along the bottom, ranks up the left, as you see the board */
+      if (S.look.coords) {
+        g.fillStyle = T.ink;
+        g.font = `600 ${Math.max(9, Math.round(c * 0.3))}px Inter,system-ui,sans-serif`;
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        for (let k = 0; k < 8; k++) {
+          const file = flipped() ? 7 - k : k, rank = flipped() ? k + 1 : 8 - k;
+          g.fillText('abcdefgh'[file], L.x + (k + 0.5) * c, L.y + 8 * c + L.m * 0.5);
+          g.fillText(String(rank), L.x - L.m * 0.5, L.y + (k + 0.5) * c);
+        }
       }
       if (S.last) {
         g.strokeStyle = 'rgba(255,224,102,.8)'; g.lineWidth = 2.5;
         for (const i of [S.last.from, S.last.to]) g.strokeRect(sx(L, i) - c / 2 + 2, sy(L, i) - c / 2 + 2, c - 4, c - 4);
+      }
+      /* the hint: its squares outlined, the hops joined by a line */
+      if (S.hint && !S.over) {
+        const p = S.hint.path;
+        const fresh = !reduced && now - S.hint.t < 1600;
+        const a = fresh ? 0.7 + 0.3 * Math.cos((now - S.hint.t) / 130) : 1;
+        g.lineWidth = Math.max(3, c * 0.08);
+        g.strokeStyle = '#000';
+        g.beginPath(); p.forEach((s, k) => (k ? g.lineTo(sx(L, s), sy(L, s)) : g.moveTo(sx(L, s), sy(L, s)))); g.stroke();
+        g.strokeStyle = `rgba(62,230,168,${a})`; g.lineWidth = Math.max(2, c * 0.05);
+        g.beginPath(); p.forEach((s, k) => (k ? g.lineTo(sx(L, s), sy(L, s)) : g.moveTo(sx(L, s), sy(L, s)))); g.stroke();
+        for (const s of p) {
+          g.strokeStyle = '#000'; g.lineWidth = 5; g.strokeRect(sx(L, s) - c / 2 + 4, sy(L, s) - c / 2 + 4, c - 8, c - 8);
+          g.strokeStyle = `rgba(62,230,168,${a})`; g.lineWidth = 3; g.strokeRect(sx(L, s) - c / 2 + 4, sy(L, s) - c / 2 + 4, c - 8, c - 8);
+        }
       }
       /* pieces; a move in flight is drawn by hand */
       const an = S.anim && now - S.anim.t0 < S.anim.total ? S.anim : null;
@@ -401,18 +542,18 @@ export default {
         const v = S.g.b[i];
         if (an && i === an.m.path[an.m.path.length - 1]) continue;
         if (!v) continue;
-        if (mid && mid.caps.slice(0, S.prefix.length - 1).includes(i)) { g.globalAlpha = 0.35; piece(g, sx(L, i), sy(L, i), R0, v, false); g.globalAlpha = 1; continue; }
+        if (mid && mid.caps.slice(0, S.prefix.length - 1).includes(i)) { g.globalAlpha = 0.35; piece(g, sx(L, i), sy(L, i), R0r, v, false, T.ring); g.globalAlpha = 1; continue; }
         if (mid && i === S.prefix[0]) continue;
-        piece(g, sx(L, i), sy(L, i), R0, v, lit.has(i) || (S.sel === i && S.prefix.length < 2));
+        piece(g, sx(L, i), sy(L, i), R0r, v, lit.has(i) || (S.sel === i && S.prefix.length < 2), T.ring);
       }
       if (an) {
-        an.m.caps.forEach((s, k) => { if (hopsDone < k + 1) piece(g, sx(L, s), sy(L, s), R0, an.caught[k], false); });
+        an.m.caps.forEach((s, k) => { if (hopsDone < k + 1) piece(g, sx(L, s), sy(L, s), R0r, an.caught[k], false, T.ring); });
         const k = Math.min(an.m.path.length - 1, Math.floor(hopsDone)), f = Math.min(1, hopsDone - k);
         const a = an.m.path[k], b = an.m.path[Math.min(k + 1, an.m.path.length - 1)];
         const px = sx(L, a) + (sx(L, b) - sx(L, a)) * f, py = sy(L, a) + (sy(L, b) - sy(L, a)) * f - Math.sin(f * Math.PI) * c * 0.12;
-        piece(g, px, py, R0, an.piece, false);
+        piece(g, px, py, R0r, an.piece, false, T.ring);
       }
-      if (mid) piece(g, sx(L, S.prefix[S.prefix.length - 1]), sy(L, S.prefix[S.prefix.length - 1]), R0, S.g.b[S.prefix[0]], true);
+      if (mid) piece(g, sx(L, S.prefix[S.prefix.length - 1]), sy(L, S.prefix[S.prefix.length - 1]), R0r, S.g.b[S.prefix[0]], true, T.ring);
       g.restore();
       /* where the held piece may go */
       if (canAct() && S.sel >= 0) {
@@ -427,7 +568,7 @@ export default {
         }
       }
       if (S.kb && canAct()) {
-        g.strokeStyle = '#fff'; g.lineWidth = 2; g.setLineDash([5, 4]);
+        g.strokeStyle = S.look.theme === 'contrast' ? '#ff00ff' : '#fff'; g.lineWidth = 2; g.setLineDash([5, 4]);
         g.strokeRect(sx(L, S.cursor) - c / 2 + 2, sy(L, S.cursor) - c / 2 + 2, c - 4, c - 4); g.setLineDash([]);
       }
     }
@@ -451,7 +592,7 @@ export default {
     };
     const onLeave = () => { if (S.hover !== -1) { S.hover = -1; draw(); } };
     const onKey = e => {
-      if (!ownsKey(el, e) || dead || S.ended || S.paused) return;
+      if (!ownsKey(el, e) || dead || S.ended || S.paused || board.isOpen()) return;
       const k = e.key;
       const d = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [1, 0], ArrowDown: [-1, 0] }[k];
       if (d) {
@@ -463,6 +604,7 @@ export default {
         return;
       }
       if (k === 'Enter' || k === ' ') { if (S.over) return; e.preventDefault(); snd.wake(); S.kb = true; pick(S.cursor); return; }
+      if ((k === 'h' || k === 'H') && mode !== 'online') { e.preventDefault(); hint(); return; }
       if ((k === 'u' || k === 'U' || k === 'z' || k === 'Z' || k === 'Backspace') && mode !== 'online') { e.preventDefault(); undo(); }
     };
     window.addEventListener('keydown', onKey);
@@ -470,12 +612,14 @@ export default {
     sf.cv.addEventListener('pointermove', onMove);
     sf.cv.addEventListener('pointerleave', onLeave);
 
+    refreshRec();
     newGame();
 
     const api = {
       stop() {
         dead = true;
         clearTimeout(S.endT);
+        board.close();
         brain?.close();
         link?.stop();
         loop.stop();
@@ -499,20 +643,22 @@ export default {
         const id = v => (v === 1 ? 1 : v === -1 ? 2 : 0);
         const c = K.counts(S.g.b);
         return {
-          mode, me: mode === '2p' ? null : id(me), turn: id(S.g.turn), board: K.toRows(S.g.b), counts: c, flipped: flipped(),
+          mode, me: mode === '2p' ? null : id(me), turn: id(S.g.turn), board: K.toRows(S.g.b), counts: c, flipped: flipped(), rules: S.g.rules,
           legal: S.legal.map(m => ({ path: m.path.slice(), caps: m.caps.slice() })), forced: forced(), sel: S.sel, prefix: S.prefix.slice(),
           over: S.over ? { winner: id(S.over.winner), reason: S.over.reason } : null, quiet: S.g.quiet, moves: S.g.moves.map(p => p.map(K.name).join('-')).join(' '),
-          level: S.level, first: S.first, thinking: S.thinking, worker: !!brain?.worker, rejected: S.rejected, moving: moving(), myMoves: S.myMoves, ended: S.ended,
-          paused: S.paused, geo: { ...S.geo }, status: statusEl.textContent, note: S.note,
+          level: S.level, vsLevel: S.vsLevel, first: S.first, thinking: S.thinking, worker: !!brain?.worker, rejected: S.rejected, moving: moving(), myMoves: S.myMoves, ended: S.ended,
+          paused: S.paused, geo: { ...S.geo }, status: statusEl.textContent, note: S.note, rulesNote: note.textContent, look: { ...S.look },
+          hint: S.hint ? { path: S.hint.path.slice(), caps: S.hint.caps.slice() } : null, hints: S.hints, hintBusy: S.hintBusy,
         };
       },
       /* test hook — nothing in the game calls it (and never online): set({ rows, turn: 1|2, quiet }) with rows from the top,
-         'r' Red man, 'R' Red king, 'c' Cream man, 'C' Cream king */
+         'r' Red man, 'R' Red king, 'c' Cream man, 'C' Cream king; the rules in play stay */
       hook(cmd, arg) {
         if (cmd !== 'set' || mode === 'online' || !Array.isArray(arg?.rows)) return false;
         brain?.cancel(); clearTimeout(S.endT);
-        S.thinkId++;
-        Object.assign(S, { g: K.fromRows(arg.rows, arg.turn === 2 ? -1 : 1, arg.quiet | 0), by: [], over: null, anim: null, last: null, thinking: false, myMoves: 0, ended: false, note: '' });
+        S.thinkId++; S.hintId++;
+        Object.assign(S, { g: K.fromRows(arg.rows, arg.turn === 2 ? -1 : 1, arg.quiet | 0, S.rules), by: [], over: null, anim: null, last: null, thinking: false, myMoves: 0, ended: false, note: '',
+          hint: null, hints: 0, hintBusy: false, vsLevel: S.level });
         clearSel();
         refreshLegal();
         const o = K.outcome(S.g);
@@ -525,6 +671,7 @@ export default {
       api.pause = () => {
         if (S.paused) return;
         S.paused = true;
+        if (S.hintBusy) dropHint();
         if (S.thinking) { brain?.cancel(); S.thinkId++; S.thinking = false; }
         paint();
       };

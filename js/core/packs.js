@@ -25,7 +25,7 @@ import * as WP from '../portal/wallpapers.js';
 export const KEY = 'portal.themePack';
 
 export const ICON_STYLES = {
-  glass: 'Glass', round: 'Round', sharp: 'Sharp', flat: 'Flat', outline: 'Outline', tinted: 'Tinted',
+  glass: 'Glass', round: 'Round', sharp: 'Sharp', flat: 'Flat', outline: 'Outline', tinted: 'Tinted', clay: 'Clay',
 };
 
 export const PACKS = [

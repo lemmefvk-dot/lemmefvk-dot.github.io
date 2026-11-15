@@ -28,8 +28,16 @@
    labels are dropped, both in the search query and again on what comes
    back. It is a filter on uploader labels, not a guarantee.
 
-   Positions are kept under portal.watchfilms { pos, saved } and read by
-   watch.js for Continue Watching.
+   Positions are kept under portal.watchfilms and read by watch.js for
+   Continue Watching and the Finished shelf and stats:
+     pos     { id: {t,d,at,title,year} }      where you stopped
+     done    { id: {d,at,title,year} }        films you watched to the end
+     saved   { id: {path,name,at,size} }      copies in ~/Videos
+     later   { id: {title,year,at} }          the "Saved for later" heart
+     hidden  { id: {title,year,at} }          "Hide this film"
+     queue   [ {id,title,year} ]              the double feature
+     usersubs{ id: {name,text,at} }           a subtitle file you added
+   Nothing in it is made up: each entry is something you did.
    ============================================================ */
 
 import * as media from '../core/media.js';
@@ -53,6 +61,21 @@ export const COLLECTIONS = [
 export const GENRES = ['Comedy', 'Drama', 'Horror', 'Sci-Fi', 'Romance', 'Western', 'Crime', 'Mystery', 'Adventure', 'War', 'Musical', 'Fantasy', 'Documentary', 'Animation'];
 const GENRE_Q = { 'Sci-Fi': '("sci-fi" OR "science fiction" OR scifi)' };
 export const DECADES = [1900, 1910, 1920, 1930, 1940, 1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020];
+export const LANGS = [['english', 'English'], ['french', 'French'], ['german', 'German'], ['spanish', 'Spanish'], ['italian', 'Italian'], ['russian', 'Russian'], ['japanese', 'Japanese']];
+const LANG_Q = { english: '(english OR eng OR en)', french: '(french OR fra OR fre OR fr)', german: '(german OR deu OR ger OR de)', spanish: '(spanish OR spa OR es)', italian: '(italian OR ita OR it)', russian: '(russian OR rus OR ru)', japanese: '(japanese OR jpn OR ja)' };
+/* archive.org writes runtimes as free text, so this filter is applied to what came back, not in the query */
+export const RUNTIMES = [['short', 'Under 40 min', s => s < 2400], ['feature', '40 min to 2 h', s => s >= 2400 && s <= 7200], ['long', 'Over 2 h', s => s > 7200]];
+/* shelves: a collection, optionally narrowed to a genre, one press away */
+export const SHELVES = [
+  { id: 'silent', label: 'Silent films', collection: 'silent_films', genre: '' },
+  { id: 'noir', label: 'Film noir', collection: 'Film_Noir', genre: '' },
+  { id: 'scifi', label: 'Sci-fi and horror', collection: 'SciFi_Horror', genre: '' },
+  { id: 'comedy', label: 'Comedy', collection: 'Comedy_Films', genre: '' },
+  { id: 'cartoons', label: 'Cartoons', collection: 'animationandcartoons', genre: '' },
+  { id: 'westerns', label: 'Westerns', collection: 'all', genre: 'Western' },
+  { id: 'docs', label: 'Documentaries', collection: 'all', genre: 'Documentary' },
+];
+export const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 export const SORTS = [
   { id: 'downloads', label: 'Most downloaded', q: 'downloads desc' },
   { id: 'rating', label: 'Top rated', q: 'avg_rating desc' },
@@ -156,6 +179,8 @@ export function buildQuery(f) {
   if (f.genre) parts.push(`subject:${GENRE_Q[f.genre] || `"${lucene(f.genre).toLowerCase()}"`}`);
   const d = Number(f.decade);
   if (d) parts.push(`year:[${d} TO ${d + 9}]`);
+  if (f.lang && LANG_Q[f.lang]) parts.push(`language:${LANG_Q[f.lang]}`);
+  if (f.subs) parts.push('(format:SubRip OR format:"Web Video Text Tracks")');
   if (f.sort === 'rating') parts.push('num_reviews:[3 TO 999999]');
   return parts.join(' AND ');
 }
@@ -227,6 +252,13 @@ export function forgetFilmPos(store, id) {
   store.set(FILMS_KEY, { ...d, pos });
 }
 
+/** Films you watched to the end (for the Finished shelf and the stats). */
+export function filmsFinished(store) {
+  const d = store.get(FILMS_KEY, {});
+  const done = d && typeof d.done === 'object' && d.done ? d.done : {};
+  return Object.entries(done).filter(([, x]) => x && x.at).map(([id, x]) => ({ id, title: String(x.title || id), year: Number(x.year) || 0, d: Number(x.d) || 0, at: Number(x.at) || 0 }));
+}
+
 /* ================================================================
    the view
    ================================================================ */
@@ -236,10 +268,14 @@ export function createFilms({ api, win, note, remember, alive }) {
   const tilde = p => (p === HOME ? '~' : p.startsWith(HOME + '/') ? `~${p.slice(HOME.length)}` : p);
 
   const S = {
-    f: { q: '', collection: 'all', genre: '', decade: '', sort: 'downloads' },
+    f: { q: '', collection: 'all', genre: '', decade: '', sort: 'downloads', lang: '', subs: false },
+    runtime: '',              /* a RUNTIMES id, applied to what has loaded */
+    view: 'browse',           /* browse | later | hidden */
+    select: false, picked: new Set(),
+    note: '',                 /* a line from "Random film" and the like */
     state: 'idle',            /* idle | loading | ready | error */
     err: null, wait: '',
-    items: [], total: 0, page: 0, hidden: { adult: 0, poster: 0 }, noPoster: new Set(),
+    items: [], total: 0, page: 0, hidden: { adult: 0, poster: 0, mine: 0 }, noPoster: new Set(),
     open: null,               /* the film shown in the detail view */
     dead: false,
   };
@@ -250,7 +286,9 @@ export function createFilms({ api, win, note, remember, alive }) {
   /* ---- saved places & saved copies, through the store ---- */
   const data = () => {
     const d = store.get(FILMS_KEY, {});
-    return { pos: d && typeof d.pos === 'object' && d.pos ? d.pos : {}, saved: d && typeof d.saved === 'object' && d.saved ? d.saved : {} };
+    const o = x => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+    return { ...o(d), pos: o(d?.pos), saved: o(d?.saved), later: o(d?.later), hidden: o(d?.hidden), done: o(d?.done), usersubs: o(d?.usersubs),
+      queue: (Array.isArray(d?.queue) ? d.queue : []).filter(q => q && typeof q.id === 'string') };
   };
   const put = next => store.set(FILMS_KEY, next);
   const inProgress = p => !!p && p.d >= MIN_LEN && p.t >= 2 && p.t < p.d - Math.max(3, p.d * 0.04);
@@ -258,12 +296,20 @@ export function createFilms({ api, win, note, remember, alive }) {
     if (!(d > 0) || !Number.isFinite(t)) return;
     const cur = data();
     const pos = { ...cur.pos };
-    if (!inProgress({ t, d }) && t >= d - Math.max(3, d * 0.04)) delete pos[rec.id];
-    else if (d >= MIN_LEN && t >= 2) pos[rec.id] = { t: Math.round(t * 10) / 10, d: Math.round(d * 10) / 10, at: Date.now(), title: rec.title, year: rec.year || 0 };
+    let done = cur.done;
+    if (!inProgress({ t, d }) && t >= d - Math.max(3, d * 0.04)) {
+      delete pos[rec.id];
+      /* a clip too short to resume is not a film you finished */
+      if (d >= MIN_LEN) {
+        done = { ...cur.done, [rec.id]: { d: Math.round(d), at: Date.now(), title: rec.title, year: rec.year || 0 } };
+        const ks = Object.keys(done);
+        if (ks.length > 200) ks.sort((a, b) => done[b].at - done[a].at).slice(200).forEach(k => delete done[k]);
+      }
+    } else if (d >= MIN_LEN && t >= 2) pos[rec.id] = { t: Math.round(t * 10) / 10, d: Math.round(d * 10) / 10, at: Date.now(), title: rec.title, year: rec.year || 0 };
     else return;
     const keys = Object.keys(pos);
     if (keys.length > 40) keys.sort((a, b) => pos[b].at - pos[a].at).slice(40).forEach(k => delete pos[k]);
-    put({ ...cur, pos });
+    put({ ...cur, pos, done });
   }
   const savedCopy = id => {
     const s = data().saved[id];
@@ -290,12 +336,61 @@ export function createFilms({ api, win, note, remember, alive }) {
     };
   }
 
+  /* ---------------- the small lists: saved for later, hidden, double feature ---------------- */
+  const stubRec = (id, title = id, year = 0) => ({ id, title, year, secs: 0, creator: '', desc: '', rights: { stated: false, line: 'Rights not stated by the uploader', url: '' }, downloads: 0, rating: 0, reviews: 0, subjects: [] });
+  const isLater = id => !!data().later[id];
+  const inQueue = id => data().queue.some(q => q.id === id);
+  function toggleLater(rec) {
+    const cur = data();
+    const later = { ...cur.later };
+    const had = !!later[rec.id];
+    if (had) delete later[rec.id]; else later[rec.id] = { title: rec.title, year: rec.year || 0, at: Date.now() };
+    put({ ...cur, later });
+    note({ icon: had ? 'x' : 'heart', title: had ? 'Removed from Saved for later' : 'Saved for later', message: rec.title });
+    refreshChrome();
+  }
+  function toggleQueue(rec) {
+    const cur = data();
+    const had = cur.queue.some(q => q.id === rec.id);
+    put({ ...cur, queue: had ? cur.queue.filter(q => q.id !== rec.id) : [...cur.queue, { id: rec.id, title: rec.title, year: rec.year || 0 }].slice(0, 12) });
+    note({ icon: 'film', title: had ? 'Taken out of the double feature' : 'Added to the double feature', message: rec.title });
+    refreshChrome();
+  }
+  function moveQueue(id, dir) {
+    const cur = data();
+    const q = cur.queue.slice();
+    const i = q.findIndex(x => x.id === id), j = i + dir;
+    if (i < 0 || j < 0 || j >= q.length) return;
+    [q[i], q[j]] = [q[j], q[i]];
+    put({ ...cur, queue: q });
+    renderList();
+  }
+  function hideFilm(rec) {
+    const cur = data();
+    const later = { ...cur.later };
+    delete later[rec.id];
+    put({ ...cur, hidden: { ...cur.hidden, [rec.id]: { title: rec.title, year: rec.year || 0, at: Date.now() } }, later, queue: cur.queue.filter(q => q.id !== rec.id) });
+    S.items = S.items.filter(x => x.id !== rec.id);
+    S.total = Math.max(0, S.total - 1);
+    note({ icon: 'eye-off', title: 'Film hidden', message: `${rec.title} won’t show up in Free films. You can bring it back under Hidden.` });
+    if (detail) closeDetail();
+    renderList();
+  }
+  function unhideFilm(id) {
+    const cur = data();
+    const hidden = { ...cur.hidden };
+    delete hidden[id];
+    put({ ...cur, hidden });
+    renderList();
+  }
+  const recOfStored = (id, x) => stubRec(id, String(x?.title || id), Number(x?.year) || 0);
+
   /* ---------------- search ---------------- */
   async function search(more = false) {
     searchAbort?.abort();
     const ac = new AbortController();
     searchAbort = ac;
-    if (!more) { S.items = []; S.page = 0; S.total = 0; S.hidden = { adult: 0, poster: 0 }; S.noPoster = new Set(); }
+    if (!more) { S.items = []; S.page = 0; S.total = 0; S.hidden = { adult: 0, poster: 0, mine: 0 }; S.noPoster = new Set(); S.note = ''; }
     S.state = 'loading';
     S.err = null; S.wait = '';
     renderList();
@@ -307,9 +402,11 @@ export function createFilms({ api, win, note, remember, alive }) {
       });
       if (S.dead || ac !== searchAbort) return;
       const docs = arrOf(json?.response?.docs);
+      const mine = data().hidden;
       for (const d of docs) {
         if (looksAdult(d)) { S.hidden.adult++; continue; }
         const rec = toRec(d);
+        if (rec && mine[rec.id]) { S.hidden.mine++; continue; }
         if (rec && !S.items.some(x => x.id === rec.id)) S.items.push(rec);
       }
       S.total = Number(json?.response?.numFound) || 0;
@@ -323,10 +420,40 @@ export function createFilms({ api, win, note, remember, alive }) {
     }
     renderList();
   }
+  /** what the grid shows: the loaded films that fit the runtime filter */
+  const shownItems = () => {
+    const rt = RUNTIMES.find(r => r[0] === S.runtime);
+    return rt ? S.items.filter(r => r.secs > 0 && rt[2](r.secs)) : S.items;
+  };
+
+  /** A random film from the collection (and filters) that is open now, not only the page on screen. */
+  async function randomFilm() {
+    S.note = 'Picking a film…';
+    renderStatus();
+    let pool = shownItems();
+    if (S.state === 'ready' && S.total > S.items.length) {
+      try {
+        const pages = Math.max(1, Math.min(Math.ceil(S.total / PAGE), Math.floor(10000 / PAGE)));
+        const json = await getJson(searchUrl(S.f, 1 + Math.floor(Math.random() * pages)), { signal: searchAbort?.signal });
+        const mine = data().hidden;
+        const fresh = arrOf(json?.response?.docs).filter(d => !looksAdult(d)).map(toRec).filter(r => r && !mine[r.id]);
+        if (fresh.length) pool = fresh;
+      } catch (e) { if (e?.name === 'AbortError') return; /* the page on screen is still a fair pool */ }
+    }
+    if (S.dead) return;
+    if (!pool.length) { S.note = 'No film to pick from — nothing matches these filters.'; renderStatus(); return; }
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    S.note = '';
+    openDetail(pick);
+  }
 
   /* ---------------- list view ---------------- */
   const el = h('div.wt-pad.wf');
   const bar = h('div.wf-bar');
+  const shelvesEl = h('div.wf-shelves', { role: 'group', 'aria-label': 'Shelves' });
+  const viewsEl = h('div.wf-views', { role: 'group', 'aria-label': 'Show' });
+  const queueEl = h('div.wf-queue');
+  const dlEl = h('div.wf-dlq', { 'aria-live': 'polite' });
   const status = h('div.wf-status', { role: 'status', 'aria-live': 'polite' });
   const grid = h('div.wf-grid', { role: 'list', 'aria-label': 'Films' });
   const listEl = h('div.wf-list');
@@ -336,6 +463,7 @@ export function createFilms({ api, win, note, remember, alive }) {
   const select = (label, value, options, onchange) => h('label.wf-sel', h('span.sr', { text: label }),
     h('select', { 'aria-label': label, onchange: e => onchange(e.target.value) },
       options.map(([v, t]) => h('option', { value: v, text: t, selected: String(v) === String(value) ? true : null }))));
+  const pill = (label, on, onclick, fk) => h('button.wt-chip', { type: 'button', 'aria-pressed': String(!!on), class: on ? 'is-on' : null, dataset: { fk }, onclick }, h('span', { text: label }));
 
   let qTimer = 0;
   const qIn = h('input', {
@@ -350,15 +478,61 @@ export function createFilms({ api, win, note, remember, alive }) {
       select('Collection', S.f.collection, COLLECTIONS.map(c => [c.id, c.label]), v => { S.f.collection = v; search(); }),
       select('Genre', S.f.genre, [['', 'Any genre'], ...GENRES.map(g => [g, g])], v => { S.f.genre = v; search(); }),
       select('Decade', S.f.decade, [['', 'Any decade'], ...DECADES.map(d => [String(d), `${d}s`])], v => { S.f.decade = v; search(); }),
-      select('Sort', S.f.sort, SORTS.map(s => [s.id, s.label]), v => { S.f.sort = v; search(); }));
+      select('Language', S.f.lang, [['', 'Any language'], ...LANGS], v => { S.f.lang = v; search(); }),
+      select('Runtime', S.runtime, [['', 'Any runtime'], ...RUNTIMES.map(r => [r[0], r[1]])], v => { S.runtime = v; renderList(); }),
+      select('Sort', S.f.sort, SORTS.map(s => [s.id, s.label]), v => { S.f.sort = v; search(); }),
+      h('label.wf-chk', h('input', { type: 'checkbox', checked: S.f.subs ? true : null, dataset: { fk: 'films:subs' }, onchange: e => { S.f.subs = e.target.checked; search(); } }), h('span', { text: 'Has subtitles' })),
+      h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'films:random' }, onclick: randomFilm }, icon('shuffle'), h('span', { text: 'Random film' })),
+      h('button.btn.btn--sm', { type: 'button', 'aria-pressed': String(S.select), class: S.select ? 'is-on' : null, dataset: { fk: 'films:select' }, onclick: () => { S.select = !S.select; if (!S.select) S.picked.clear(); renderBar(); renderList(); } }, icon('check'), h('span', { text: S.select ? 'Done selecting' : 'Select films' })));
+  }
+  function renderShelves() {
+    clear(shelvesEl);
+    shelvesEl.append(h('span.wf-shelves__k', { text: 'Shelves' }),
+      ...SHELVES.map(sh => pill(sh.label, S.f.collection === sh.collection && S.f.genre === sh.genre, () => {
+        const on = S.f.collection === sh.collection && S.f.genre === sh.genre;
+        S.f.collection = on ? 'all' : sh.collection; S.f.genre = on ? '' : sh.genre;
+        renderBar(); search();
+      }, `films:shelf:${sh.id}`)));
+  }
+  function renderViews() {
+    clear(viewsEl);
+    const d = data();
+    const nl = Object.keys(d.later).length, nh = Object.keys(d.hidden).length;
+    viewsEl.hidden = !nl && !nh && S.view === 'browse';
+    viewsEl.append(pill('Browse', S.view === 'browse', () => { S.view = 'browse'; renderList(); }, 'films:view:browse'),
+      nl || S.view === 'later' ? pill(`Saved for later (${nl})`, S.view === 'later', () => { S.view = 'later'; renderList(); }, 'films:view:later') : null,
+      nh || S.view === 'hidden' ? pill(`Hidden (${nh})`, S.view === 'hidden', () => { S.view = 'hidden'; renderList(); }, 'films:view:hidden') : null);
+  }
+  /** the double feature panel */
+  function renderQueue() {
+    clear(queueEl);
+    const q = data().queue;
+    queueEl.hidden = !q.length;
+    if (!q.length) return;
+    queueEl.append(h('div.wf-queue__head', h('b', { text: `Double feature · ${q.length} ${q.length === 1 ? 'film' : 'films'}` }),
+      h('span.grow'),
+      h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: 'films:queue:play' }, onclick: () => openDetail(recOfStored(q[0].id, q[0]), { fresh: true }) }, icon('play', { fill: true }), h('span', { text: 'Play the queue' })),
+      h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { fk: 'films:queue:clear' }, onclick: () => { put({ ...data(), queue: [] }); refreshChrome(); } }, h('span', { text: 'Clear' }))),
+      h('ol.wf-queue__list', q.map((x, i) => h('li', h('span.grow', { text: `${x.title}${x.year ? ` (${x.year})` : ''}` }),
+        h('button.ibtn', { type: 'button', 'aria-label': `Move ${x.title} up`, disabled: i === 0 ? true : null, dataset: { fk: `films:q:up:${x.id}` }, onclick: () => moveQueue(x.id, -1) }, icon('chevron-up')),
+        h('button.ibtn', { type: 'button', 'aria-label': `Move ${x.title} down`, disabled: i === q.length - 1 ? true : null, dataset: { fk: `films:q:down:${x.id}` }, onclick: () => moveQueue(x.id, 1) }, icon('chevron-down')),
+        h('button.ibtn', { type: 'button', 'aria-label': `Take ${x.title} out of the double feature`, dataset: { fk: `films:q:rm:${x.id}` }, onclick: () => toggleQueue(x) }, icon('x'))))),
+      h('p.wf-fine', { text: 'When a film ends, the next one starts after a few seconds. You can stop it there.' }));
+  }
+  function refreshChrome() {
+    if (S.dead) return;
+    if (detail) { renderQueue(); renderViews(); return; }
+    renderList();
   }
 
   function renderStatus() {
     clear(status);
+    if (S.view !== 'browse') return;
     if (S.state === 'loading') {
       status.append(h('div.spinner'), h('span', { text: S.wait || (S.items.length ? 'Loading more…' : 'Asking archive.org…') }));
       return;
     }
+    if (S.note) { status.append(icon('info'), h('span', { text: S.note })); return; }
     if (S.state === 'error') {
       const e = S.err || {};
       const msg = e.kind === 'offline' ? 'You are offline, so archive.org can’t be reached. Films you saved to Videos still play.'
@@ -371,21 +545,34 @@ export function createFilms({ api, win, note, remember, alive }) {
       return;
     }
     if (S.state === 'ready') {
-      const n = S.items.length;
+      const shown = shownItems().length;
       const bits = [];
-      bits.push(n ? `${n.toLocaleString()} shown of ${S.total.toLocaleString()} that archive.org lists with a playable MP4` : 'Nothing matches those filters.');
+      if (S.runtime) bits.push(shown ? `${shown.toLocaleString()} of the ${S.items.length.toLocaleString()} loaded fit that runtime (films with no runtime listed are left out)` : `None of the ${S.items.length.toLocaleString()} loaded films fit that runtime${S.items.length < S.total ? ' — Show more loads more' : ''}`);
+      else bits.push(S.items.length ? `${S.items.length.toLocaleString()} shown of ${S.total.toLocaleString()} that archive.org lists with a playable MP4` : 'Nothing matches those filters.');
       if (S.hidden.adult) bits.push(`${S.hidden.adult.toLocaleString()} hidden by the content filter`);
+      if (S.hidden.mine) bits.push(`${S.hidden.mine.toLocaleString()} hidden by you`);
       if (S.hidden.poster) bits.push(`${S.hidden.poster.toLocaleString()} hidden for having no poster`);
       status.append(h('span', { text: bits.join(' · ') }));
     }
   }
 
-  function card(rec) {
+  function filmMenu(rec) {
+    return [
+      { label: 'Open', icon: 'play', onClick: () => openDetail(rec) },
+      { label: isLater(rec.id) ? 'Remove from Saved for later' : 'Save for later', icon: 'heart', onClick: () => toggleLater(rec) },
+      { label: inQueue(rec.id) ? 'Take out of the double feature' : 'Add to the double feature', icon: 'film', onClick: () => toggleQueue(rec) },
+      { label: 'Add to the download queue', icon: 'download', onClick: () => enqueueDownloads([rec]) },
+      { label: 'On archive.org', icon: 'external-link', onClick: () => window.open(pageUrl(rec.id), '_blank', 'noopener,noreferrer') },
+      '-',
+      { label: 'Hide this film', icon: 'eye-off', danger: true, onClick: () => hideFilm(rec) },
+    ];
+  }
+  function card(rec, { keep = false } = {}) {
     const art = h('div.wt-art.wt-art--poster.wf-art', { style: { '--art': 'linear-gradient(135deg,#2a2438,#15121f)' } },
       h('span.wt-art__mono', { 'aria-hidden': 'true', text: rec.title }));
     const img = h('img.wt-art__img', { alt: '', decoding: 'async', draggable: 'false' });   /* eager: the card stays hidden until it has a real poster */
-    const c = h('div.wf-card', { role: 'listitem', hidden: true });
-    const drop = () => { if (S.dead) return; S.noPoster.add(rec.id); S.hidden.poster = S.noPoster.size; c.remove(); S.items = S.items.filter(x => x !== rec); renderStatus(); };
+    const c = h('div.wf-card', { role: 'listitem', hidden: !keep, dataset: { id: rec.id } });
+    const drop = () => { if (S.dead) return; if (keep) { img.remove(); return; } S.noPoster.add(rec.id); S.hidden.poster = S.noPoster.size; c.remove(); S.items = S.items.filter(x => x !== rec); renderStatus(); };
     img.onerror = drop;
     img.onload = () => {
       /* archive.org answers a missing thumbnail with its own 160x110 "not found" picture */
@@ -398,34 +585,194 @@ export function createFilms({ api, win, note, remember, alive }) {
     if (inProgress(pos)) art.append(h('span.wt-art__prog', { 'aria-hidden': 'true' }, h('i', { style: { width: `${Math.max(3, Math.round(pos.t / pos.d * 100))}%` } })));
     const meta = [rec.year || null, fmtRun(rec.secs) || null].filter(Boolean).join(' · ');
     c.append(
-      h('button.wf-card__main.wt-card__main', { type: 'button', 'aria-label': `${rec.title}${meta ? `, ${meta}` : ''}. ${rec.rights.line}.`, dataset: { fk: `film:${rec.id}` }, onclick: () => openDetail(rec) },
+      h('button.wf-card__main.wt-card__main', { type: 'button', 'aria-label': `${rec.title}${meta ? `, ${meta}` : ''}. ${rec.rights.line}.`, dataset: { fk: `film:${rec.id}` }, onclick: () => openDetail(rec),
+        oncontextmenu: e => { e.preventDefault(); api.menu(filmMenu(rec), e.clientX, e.clientY); } },
         art,
         h('span.wt-card__text', h('span.wt-card__t', { text: rec.title }), meta ? h('span.wt-card__m', { text: meta }) : null,
-          h('span.wf-rights' + (rec.rights.stated ? '' : '.is-none'), { text: rec.rights.line }))));
+          h('span.wf-rights' + (rec.rights.stated ? '' : '.is-none'), { text: rec.rights.line }))),
+      h('button.wf-card__heart', { type: 'button', 'aria-label': `Saved for later: ${rec.title}`, 'aria-pressed': String(isLater(rec.id)), class: isLater(rec.id) ? 'is-on' : null, dataset: { fk: `films:heart:${rec.id}` },
+        onclick: e => { e.stopPropagation(); toggleLater(rec); } }, icon('heart')),
+      h('button.wf-card__more', { type: 'button', 'aria-label': `More for ${rec.title}`, 'aria-haspopup': 'menu', dataset: { fk: `films:more:${rec.id}` },
+        onclick: e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); api.menu(filmMenu(rec), r.left, r.bottom + 4); } }, icon('more-horizontal')));
+    if (S.select && S.view === 'browse') {
+      c.classList.add('is-select');
+      c.append(h('label.wf-card__pick', h('input', { type: 'checkbox', checked: S.picked.has(rec.id) ? true : null, 'aria-label': `Select ${rec.title}`, dataset: { fk: `films:pick:${rec.id}` },
+        onchange: e => { if (e.target.checked) S.picked.add(rec.id); else S.picked.delete(rec.id); renderPickBar(); } })));
+    }
     return c;
+  }
+  const pickBar = h('div.wf-pickbar', { hidden: true });
+  function renderPickBar() {
+    clear(pickBar);
+    pickBar.hidden = !S.select;
+    if (!S.select) return;
+    const n = S.picked.size;
+    pickBar.append(h('span', { text: n ? `${n} selected` : 'Tick the films you want, then save them to Videos one after another.' }),
+      h('button.btn.btn--sm.btn--primary', { type: 'button', disabled: n ? null : true, dataset: { fk: 'films:pick:save' }, onclick: () => {
+        enqueueDownloads(S.items.filter(r => S.picked.has(r.id)));
+        S.picked.clear(); S.select = false; renderBar(); renderList();
+      } }, icon('download'), h('span', { text: n ? `Save ${n} to Videos` : 'Save to Videos' })));
   }
 
   function renderList() {
     if (S.dead) return;
     renderStatus();
+    renderViews();
+    renderQueue();
+    renderPickBar();
     clear(grid);
-    for (const rec of S.items) grid.append(card(rec));
     clear(listEl);
     listEl.append(
       h('p.wt-lede', { text: 'Films from the Internet Archive’s public film collections: public-domain and Creative-Commons classics, silent films, sci-fi, noir, comedy and cartoons. You can stream them here or save a copy to your Videos. Everything shown comes from archive.org and its uploaders; this is not a catalogue StaticOS curated.' }),
-      bar, status);
-    if (S.items.length) listEl.append(grid);
-    if (S.state === 'ready' && S.items.length < S.total && S.page > 0) {
-      listEl.append(h('div.wf-more', h('button.btn', { type: 'button', dataset: { fk: 'films:more' }, onclick: () => search(true) }, icon('download'), h('span', { text: 'Show more' }))));
+      queueEl, dlEl, viewsEl);
+    renderDl();
+    if (S.view === 'later') {
+      const later = Object.entries(data().later).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+      if (later.length) { later.forEach(([id, x]) => grid.append(card(recOfStored(id, x), { keep: true }))); listEl.append(grid); }
+      else listEl.append(h('div.empty.wt-empty', h('b', { text: 'Nothing saved for later' }), h('small', { text: 'Press the heart on a film to keep it here.' })));
+    } else if (S.view === 'hidden') {
+      const hid = Object.entries(data().hidden).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+      listEl.append(h('p.wf-fine', { text: 'Films you hid are left out of every search. Bring one back here.' }),
+        hid.length ? h('div.wf-saved', hid.map(([id, x]) => h('div.wf-saved__row', h('span.grow', { text: `${x.title || id}${x.year ? ` (${x.year})` : ''}` }),
+          h('button.btn.btn--sm', { type: 'button', dataset: { fk: `films:unhide:${id}` }, onclick: () => unhideFilm(id) }, icon('eye'), h('span', { text: 'Show again' })))))
+          : h('div.empty.wt-empty', h('b', { text: 'You haven’t hidden any films' })));
+    } else {
+      renderShelves();
+      listEl.append(shelvesEl, bar, pickBar, status);
+      for (const rec of shownItems()) grid.append(card(rec));
+      if (S.items.length) listEl.append(grid);
+      if (S.state === 'ready' && S.items.length < S.total && S.page > 0) {
+        listEl.append(h('div.wf-more', h('button.btn', { type: 'button', dataset: { fk: 'films:more' }, onclick: () => search(true) }, icon('download'), h('span', { text: 'Show more' }))));
+      }
     }
     const saved = Object.keys(data().saved).map(id => ({ id, s: savedCopy(id) })).filter(x => x.s);
-    if (saved.length && (S.state === 'error' || !S.items.length)) {
+    if (saved.length && S.view === 'browse' && (S.state === 'error' || !S.items.length)) {
       listEl.append(h('h3.wf-h', { text: 'Saved on this device' }),
         h('div.wf-saved', saved.map(({ id, s }) => h('div.wf-saved__row',
           h('span.grow', { text: s.name || s.node.name }),
           h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: `films:saved:${id}` }, onclick: () => playSaved(s) }, icon('play', { fill: true }), h('span', { text: 'Play from Videos' }))))));
     }
-    listEl.append(h('p.wt-foot', { text: 'The content filter hides items whose uploader-chosen collections, subjects or title carry adult labels. It works on those labels, so it is a filter, not a guarantee. Film data and pictures are from archive.org and belong to their uploaders and rights holders.' }));
+    listEl.append(h('p.wt-foot', { text: 'The content filter hides items whose uploader-chosen collections, subjects or title carry adult labels. It works on those labels, so it is a filter, not a guarantee. If one slips through, use “Hide this film” on its card. Film data and pictures are from archive.org and belong to their uploaders and rights holders.' }));
+  }
+
+  /* ---------------- getting a film's bytes and keeping them in ~/Videos ----------------
+     One place for both "Save to Videos" on a film and the download queue. */
+  async function fetchFilm(rec, file, size, signal, onProgress) {
+    const chunks = [];
+    let got = 0, res;
+    const waits = delays();
+    for (let a = 0; ; a++) {
+      try { res = await fetch(fileUrl(rec.id, file.name, 'cors'), { signal }); }
+      catch (e) { if (e?.name === 'AbortError') throw e; const err = new Error('blocked'); err.kind = navigator.onLine === false ? 'offline' : 'blocked'; throw err; }
+      if ((res.status === 503 || res.status === 429) && a < waits.length) { await sleep(waits[a], signal); continue; }
+      break;
+    }
+    if (!res.ok) { const err = new Error(`http ${res.status}`); err.kind = res.status === 503 || res.status === 429 ? 'busy' : 'http'; err.status = res.status; throw err; }
+    const total = Number(res.headers.get('content-length')) || size || 0;
+    onProgress(0, total);
+    const reader = res.body?.getReader?.();
+    if (!reader) { chunks.push(new Uint8Array(await res.arrayBuffer())); got = chunks[0].length; onProgress(got, total); }
+    else for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      got += value.length;
+      onProgress(got, total);
+    }
+    if (got === 0) throw Object.assign(new Error('empty'), { kind: 'http', status: 0 });
+    return new Blob(chunks, { type: 'video/mp4' });
+  }
+  async function storeFilm(rec, blob) {
+    const stem = `${rec.title}${rec.year ? ` (${rec.year})` : ''}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const out = await media.save(`${HOME}/Videos`, `${stem}.mp4`, blob);
+    const cur = data();
+    put({ ...cur, saved: { ...cur.saved, [rec.id]: { path: out.path, name: out.node.name, at: Date.now(), size: blob.size } } });
+    return out;
+  }
+  const dlFail = e => (e.kind === 'offline' ? 'You went offline, so the download stopped and nothing was saved.'
+    : e.kind === 'busy' ? 'archive.org is overloaded (503) and kept refusing the download. Nothing was saved; try again in a minute.'
+      : e.kind === 'http' ? `archive.org answered with an error (HTTP ${e.status}). Nothing was saved.`
+        : e.kind === 'blocked' ? 'archive.org blocked the direct download from this page, so StaticOS can’t put the file in Videos by itself.'
+          : `The file couldn’t be saved: ${String(e?.message || e)}`);
+
+  /* ---------------- the download queue: several films, one after another ---------------- */
+  const DL = { items: [], busy: false, cur: null };
+  function enqueueDownloads(recs) {
+    let added = 0;
+    for (const rec of recs) {
+      const live = DL.items.find(x => x.rec.id === rec.id && (x.state === 'wait' || x.state === 'run'));
+      if (live) continue;
+      DL.items = DL.items.filter(x => x.rec.id !== rec.id);
+      if (savedCopy(rec.id)) { DL.items.push({ rec, state: 'skip', msg: 'Already in Videos' }); continue; }
+      DL.items.push({ rec, state: 'wait', got: 0, total: 0 });
+      added++;
+    }
+    DL.items = DL.items.slice(-40);
+    if (added) note({ icon: 'download', title: added === 1 ? 'Added to the download queue' : `${added} films added to the download queue`, message: 'They save to Videos one after another.' });
+    renderDl();
+    pumpDl();
+  }
+  async function pumpDl() {
+    if (DL.busy || S.dead) return;
+    DL.busy = true;
+    try {
+      for (let it; !S.dead && (it = DL.items.find(x => x.state === 'wait'));) {
+        it.ac = new AbortController();
+        DL.cur = it;
+        it.state = 'meta';
+        renderDl();
+        try {
+          const json = await getJson(`${IA}/metadata/${encodeURIComponent(it.rec.id)}`, { signal: it.ac.signal });
+          const file = pickVideo(json?.files);
+          if (!file) throw Object.assign(new Error('nofile'), { kind: 'nofile' });
+          it.state = 'run';
+          let paint = 0;
+          const blob = await fetchFilm(it.rec, file, Number(file.size) || 0, it.ac.signal, (got, total) => {
+            it.got = got; it.total = total;
+            const n = performance.now();
+            if (n >= paint) { paint = n + 150; renderDl(); }
+          });
+          const out = await storeFilm(it.rec, blob);
+          Object.assign(it, { state: 'done', path: out.path, bytes: blob.size });
+          note({ icon: 'film', title: 'Saved to Videos', message: it.rec.title });
+        } catch (e) {
+          if (e?.name === 'AbortError') it.state = 'cancel';
+          else { it.state = 'fail'; it.msg = e.kind === 'nofile' ? 'archive.org lists no playable MP4 for this film.' : dlFail(e); }
+        }
+        DL.cur = null;
+        renderDl();
+      }
+    } finally { DL.busy = false; }
+    renderDl();
+  }
+  function cancelDl(it) {
+    if (it.state === 'wait') it.state = 'cancel';
+    else if (it.state === 'meta' || it.state === 'run') it.ac?.abort();
+    renderDl();
+  }
+  const DL_WORD = { wait: 'Waiting', meta: 'Getting details', run: 'Saving', done: 'Saved', skip: 'Skipped', fail: 'Failed', cancel: 'Cancelled' };
+  function renderDl() {
+    if (S.dead) return;
+    clear(dlEl);
+    dlEl.hidden = !DL.items.length;
+    if (!DL.items.length) return;
+    const left = DL.items.filter(x => x.state === 'wait' || x.state === 'meta' || x.state === 'run').length;
+    dlEl.append(h('div.wf-queue__head', h('b', { text: left ? `Saving to Videos · ${left} to go` : 'Downloads to Videos' }), h('span.grow'),
+      left ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'films:dl:cancelall' }, onclick: () => DL.items.forEach(cancelDl) }, icon('x'), h('span', { text: 'Cancel all' })) : null,
+      !left ? h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { fk: 'films:dl:clear' }, onclick: () => { DL.items = []; renderDl(); } }, h('span', { text: 'Clear' })) : null),
+      h('ul.wf-dlq__list', DL.items.map(it => {
+        const total = it.total || 0;
+        const pct = total ? Math.min(100, Math.floor(it.got / total * 100)) : 0;
+        const line = it.state === 'run' ? (total ? `${fmt.fmtBytes(it.got)} of ${fmt.fmtBytes(total)} · ${pct}%` : `${fmt.fmtBytes(it.got)} so far`)
+          : it.state === 'done' ? `Saved as ${tilde(it.path)} (${fmt.fmtBytes(it.bytes)})`
+            : it.msg || DL_WORD[it.state];
+        return h('li.wf-dlq__row', { dataset: { state: it.state, id: it.rec.id } },
+          h('span.wf-dlq__t', { text: it.rec.title }),
+          h('span.wf-dlq__s', { text: line }),
+          it.state === 'run' ? h('div.wf-meter', { role: 'progressbar', 'aria-label': `Saving ${it.rec.title}`, 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct) }, h('i', { style: { width: `${pct}%` } })) : null,
+          it.state === 'wait' || it.state === 'meta' || it.state === 'run'
+            ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: `films:dl:cancel:${it.rec.id}` }, onclick: () => cancelDl(it) }, icon('x'), h('span', { text: 'Cancel' })) : null);
+      })));
   }
 
   /* ---------------- playing a saved copy through Videos ---------------- */
@@ -452,7 +799,7 @@ export function createFilms({ api, win, note, remember, alive }) {
     try { (b || el).focus?.({ preventScroll: true }); } catch (e) {}
   }
 
-  function openDetail(rec, { resume = false } = {}) {
+  function openDetail(rec, { resume = false, fresh = false } = {}) {
     closeDetail();
     S.open = rec.id;
     S.lastOpened = rec.id;
@@ -461,9 +808,10 @@ export function createFilms({ api, win, note, remember, alive }) {
     const D = {
       rec, ac, meta: null, file: null, subs: null, video: null, frame: null,
       dl: null,             /* { ac, got, total, state: 'ask'|'run'|'done'|'fail', ... } */
-      timers: [], vurls: [],
+      timers: [], vurls: [], rate: 1,
       stop() {
         ac.abort();
+        window.removeEventListener('keydown', onKey);
         D.dl?.ac?.abort();
         D.stopVideo();
         D.timers.forEach(t => clearTimeout(t));
@@ -487,6 +835,9 @@ export function createFilms({ api, win, note, remember, alive }) {
     const dlBox = h('div.wf-dl', { 'aria-live': 'polite' });
     const subNote = h('div.wf-note', { role: 'status' });
     const metaState = h('div.wf-note', { role: 'status' });
+    const moreRow = h('div.wf-acts.wf-acts--more');
+    const keyNote = h('div.wf-keys', { role: 'status', 'aria-live': 'polite' });
+    const subFile = h('input', { type: 'file', accept: '.srt,.vtt,text/vtt,application/x-subrip', hidden: true, 'aria-hidden': 'true', tabindex: '-1', dataset: { fk: 'films:subfile' } });
 
     const rightsEl = h('span.wf-rightsval');
     const paintRights = () => {
@@ -524,8 +875,11 @@ export function createFilms({ api, win, note, remember, alive }) {
           stats.length ? h('div.wf-stats', { text: stats.join(' · ') }) : null,
           metaState,
           playRow,
+          moreRow,
           dlBox,
           subNote,
+          keyNote,
+          subFile,
           h('p.wf-fine', { text: 'The licence line is whatever the uploader typed on archive.org. StaticOS has not checked it. ' },
             h('a', { href: pageUrl(rec.id), target: '_blank', rel: 'noopener noreferrer', text: 'On archive.org' })))));
     detailEl.append(D.el);
@@ -555,7 +909,27 @@ export function createFilms({ api, win, note, remember, alive }) {
       if (copy) playRow.append(h('button.btn', { type: 'button', dataset: { fk: 'films:saved' }, onclick: () => playSaved(copy) }, icon('folder-open'), h('span', { text: 'Play saved copy' })));
       playRow.append(h('a.btn', { href: pageUrl(rec.id), target: '_blank', rel: 'noopener noreferrer', dataset: { fk: 'films:ia' } }, icon('external-link'), h('span', { text: 'On archive.org' })));
       playRow.append(h('span.wf-licnext', { text: rec.rights.stated ? `Licence: ${rec.rights.line}` : rec.rights.line }));
+      paintMore();
     };
+    /* the rest of what you can do with a film: heart, double feature, subtitles, friend, hide */
+    function paintMore() {
+      clear(moreRow);
+      const copy = savedCopy(rec.id);
+      const mySubs = data().usersubs[rec.id];
+      moreRow.append(
+        h('button.btn.btn--sm', { type: 'button', 'aria-pressed': String(isLater(rec.id)), class: isLater(rec.id) ? 'is-on' : null, dataset: { fk: 'films:later' }, onclick: () => { toggleLater(rec); paintMore(); } },
+          icon('heart', isLater(rec.id) ? { fill: true } : undefined), h('span', { text: isLater(rec.id) ? 'Saved for later' : 'Save for later' })),
+        h('button.btn.btn--sm', { type: 'button', 'aria-pressed': String(inQueue(rec.id)), class: inQueue(rec.id) ? 'is-on' : null, dataset: { fk: 'films:queueadd' }, onclick: () => { toggleQueue(rec); paintMore(); } },
+          icon('film'), h('span', { text: inQueue(rec.id) ? 'In the double feature' : 'Add to double feature' })),
+        D.file ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'films:dlqueue' }, disabled: copy ? true : null, onclick: () => enqueueDownloads([rec]) },
+          icon('download'), h('span', { text: copy ? 'Already in Videos' : 'Add to download queue' })) : null,
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'films:addsubs' }, onclick: () => subFile.click() }, icon('file-text'), h('span', { text: mySubs ? 'Replace my subtitles…' : 'Add subtitles…' })),
+        mySubs ? h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { fk: 'films:rmsubs' }, onclick: removeMySubs }, h('span', { text: 'Remove my subtitles' })) : null,
+        copy ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'films:friend' }, onclick: () => api.openApp('watch-together', { path: copy.path }) }, icon('users'), h('span', { text: 'Watch with a friend' }))
+          : h('button.btn.btn--sm.is-off', { type: 'button', dataset: { fk: 'films:friend' }, title: 'Watch Together shares a file from this device', onclick: () => { subNote.textContent = 'To watch with a friend, save this film to Videos first: Watch Together shares a file from your device, and you each need the film.'; } },
+            icon('users'), h('span', { text: 'Watch with a friend' })),
+        h('button.btn.btn--sm.btn--ghost.wf-hide', { type: 'button', dataset: { fk: 'films:hide' }, onclick: () => hideFilm(rec) }, icon('eye-off'), h('span', { text: 'Hide this film' })));
+    }
     paintActs();
 
     getJson(`${IA}/metadata/${encodeURIComponent(rec.id)}`, {
@@ -581,7 +955,7 @@ export function createFilms({ api, win, note, remember, alive }) {
       D.subs = pickSubs(json.files);
       D.size = D.file ? Number(D.file.size) || 0 : 0;
       paintActs();
-      if (resume && D.file) { const p = data().pos[rec.id]; play(inProgress(p) ? p.t : 0); }
+      if ((resume || fresh) && D.file) { const p = data().pos[rec.id]; play(!fresh && inProgress(p) ? p.t : 0); }
     }).catch(e => {
       if (e?.name === 'AbortError' || S.dead || detail !== D) return;
       D.meta = {};
@@ -608,7 +982,8 @@ export function createFilms({ api, win, note, remember, alive }) {
       const save = () => { if (D.video === v) savePos(rec, v.currentTime, v.duration); };
       v.addEventListener('timeupdate', () => { const n = Date.now(); if (n - lastSave > SAVE_EVERY) { lastSave = n; save(); } });
       v.addEventListener('pause', save);
-      v.addEventListener('ended', save);
+      v.addEventListener('ended', () => { save(); onFilmEnded(); });
+      v.addEventListener('loadedmetadata', () => { v.playbackRate = D.rate; });
       v.addEventListener('error', () => { if (D.video === v && !D.frame) embed(v.error); });
       stage.append(v);
       v.play().catch(() => { /* autoplay refused: the controls are there */ });
@@ -628,9 +1003,25 @@ export function createFilms({ api, win, note, remember, alive }) {
         h('div.wf-banner', { role: 'status' }, icon('info'), h('span', { text: `The video file wouldn’t stream directly${err?.code ? ` (media error ${err.code})` : ''}, so this is archive.org’s own player in a sandboxed frame. Your place isn’t remembered in it.` })),
         D.frame);
     }
+    /** put a WebVTT text on the video as a track, shown */
+    function attachTrack(v, text, label, srclang, mine) {
+      v.querySelectorAll('track[data-mine]').forEach(t => t.remove());
+      const u = URL.createObjectURL(new Blob([text], { type: 'text/vtt' }));
+      D.vurls.push(u);
+      const track = h('track', { kind: 'subtitles', label, srclang, src: u, default: true, dataset: mine ? { mine: '1' } : {} });
+      v.append(track);
+      for (const t of v.textTracks) t.mode = 'hidden';
+      track.track.mode = 'showing';
+    }
     async function loadSubs(v) {
       subNote.textContent = '';
-      if (!D.subs) { subNote.textContent = 'This item has no subtitle file.'; return; }
+      const mine = data().usersubs[rec.id];
+      if (mine) {
+        attachTrack(v, mine.text, 'My subtitles', 'en', true);
+        subNote.textContent = `Subtitles on (your file: ${mine.name}). Press C to turn them off.`;
+        return;
+      }
+      if (!D.subs) { subNote.textContent = 'This item has no subtitle file. You can add your own below.'; return; }
       subNote.textContent = 'Loading subtitles…';
       try {
         const res = await fetch(fileUrl(rec.id, D.subs.name, 'cors'), { signal: ac.signal });
@@ -638,16 +1029,94 @@ export function createFilms({ api, win, note, remember, alive }) {
         let text = await res.text();
         if (!/^﻿?WEBVTT/.test(text)) text = srtToVtt(text);
         if (S.dead || D.video !== v) return;
-        const u = URL.createObjectURL(new Blob([text], { type: 'text/vtt' }));
-        D.vurls.push(u);
-        const track = h('track', { kind: 'subtitles', label: /\.asr\./i.test(D.subs.name) ? 'Auto-generated' : 'Subtitles', srclang: 'en', src: u, default: true });
-        v.append(track);
-        track.track.mode = 'showing';
-        subNote.textContent = `Subtitles on (${/\.asr\./i.test(D.subs.name) ? 'auto-generated by archive.org' : 'uploaded with the film'}: ${D.subs.name}). Use the player’s CC menu to turn them off.`;
+        if (data().usersubs[rec.id]) return;
+        attachTrack(v, text, /\.asr\./i.test(D.subs.name) ? 'Auto-generated' : 'Subtitles', 'en', false);
+        subNote.textContent = `Subtitles on (${/\.asr\./i.test(D.subs.name) ? 'auto-generated by archive.org' : 'uploaded with the film'}: ${D.subs.name}). Press C or use the player’s CC menu to turn them off.`;
       } catch (e) {
         if (e?.name === 'AbortError') return;
         subNote.textContent = 'This item has subtitles, but they didn’t load.';
       }
+    }
+    /* ---- your own subtitle file ---- */
+    subFile.addEventListener('change', async () => {
+      const f = subFile.files?.[0];
+      subFile.value = '';
+      if (!f) return;
+      if (f.size > 1.5e6) { subNote.textContent = 'That file is too big to be a subtitle file (over 1.5 MB).'; return; }
+      let text = '';
+      try { text = await f.text(); } catch (e) { subNote.textContent = 'That file couldn’t be read.'; return; }
+      if (!/-->/.test(text)) { subNote.textContent = `“${f.name}” doesn’t look like a subtitle file. Use an .srt or .vtt file.`; return; }
+      if (!/^﻿?WEBVTT/.test(text)) text = srtToVtt(text);
+      const cur = data();
+      const usersubs = { ...cur.usersubs, [rec.id]: { name: f.name.slice(0, 120), text, at: Date.now() } };
+      const ks = Object.keys(usersubs);
+      if (ks.length > 12) ks.sort((a, b) => usersubs[b].at - usersubs[a].at).slice(12).forEach(k => delete usersubs[k]);
+      put({ ...cur, usersubs });
+      if (S.dead || detail !== D) return;
+      if (D.video) attachTrack(D.video, text, 'My subtitles', 'en', true);
+      subNote.textContent = D.video ? `Subtitles on (your file: ${f.name}). Press C to turn them off.` : `Your subtitles (${f.name}) are saved for this film and will show when it plays.`;
+      paintMore();
+    });
+    function removeMySubs() {
+      const cur = data();
+      const usersubs = { ...cur.usersubs };
+      delete usersubs[rec.id];
+      put({ ...cur, usersubs });
+      D.video?.querySelectorAll('track[data-mine]').forEach(t => t.remove());
+      subNote.textContent = 'Your subtitle file was removed from this film.';
+      paintMore();
+      if (D.video) loadSubs(D.video);
+    }
+
+    /* ---- speed and subtitle keys: [ slower, ] faster, \ normal speed, C subtitles ---- */
+    let keyTimer = 0;
+    const say = t => { keyNote.textContent = t; clearTimeout(keyTimer); keyTimer = setTimeout(() => { keyNote.textContent = ''; }, 2500); D.timers.push(keyTimer); };
+    function onKey(e) {
+      if (S.dead || detail !== D || !D.video || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (win?.el && !win.el.classList.contains('is-active')) return;
+      const t = e.target;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      const v = D.video;
+      if (e.key === '[' || e.key === ']' || e.key === '\\') {
+        e.preventDefault();
+        let i = SPEEDS.indexOf(D.rate);
+        if (i < 0) i = SPEEDS.indexOf(1);
+        i = e.key === '\\' ? SPEEDS.indexOf(1) : Math.max(0, Math.min(SPEEDS.length - 1, i + (e.key === ']' ? 1 : -1)));
+        D.rate = SPEEDS[i];
+        v.playbackRate = D.rate;
+        say(`Speed ${D.rate}×`);
+      } else if (e.key === 'c' || e.key === 'C') {
+        const tracks = [...v.textTracks];
+        e.preventDefault();
+        if (!tracks.length) { say('This film has no subtitles loaded. Add a file with “Add subtitles…”.'); return; }
+        const on = tracks.some(x => x.mode === 'showing');
+        if (on) tracks.forEach(x => { x.mode = 'hidden'; });
+        else (tracks.find(x => x.default) || tracks[0]).mode = 'showing';
+        say(on ? 'Subtitles off' : 'Subtitles on');
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    keyNote.append(h('span', { text: 'Keys while a film plays: [ slower · ] faster · \\ normal speed · C subtitles on or off' }));
+    function onFilmEnded() {
+      const cur = data();
+      const q = cur.queue.filter(x => x.id !== rec.id);
+      if (q.length !== cur.queue.length) put({ ...cur, queue: q });
+      if (S.dead || detail !== D) return;
+      refreshChrome();
+      const nxt = q[0];
+      if (!nxt) return;
+      let left = 5;
+      let iv = 0;
+      const msg = h('span.grow', { text: '' });
+      const cancelBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'films:next:stop' }, onclick: () => { clearInterval(iv); banner.remove(); } }, h('span', { text: 'Stay here' }));
+      const nowBtn = h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: 'films:next:now' }, onclick: () => go() }, icon('play', { fill: true }), h('span', { text: 'Play now' }));
+      const banner = h('div.wf-banner.wf-next', { role: 'status', dataset: { next: nxt.id } }, icon('film'), msg, nowBtn, cancelBtn);
+      const tick = () => { msg.textContent = `Up next in your double feature: ${nxt.title}. Starting in ${left} s.`; };
+      const go = () => { clearInterval(iv); if (!S.dead && detail === D) openDetail(recOfStored(nxt.id, nxt), { fresh: true }); };
+      tick();
+      stage.append(banner);
+      iv = setInterval(() => { left--; if (S.dead || detail !== D) { clearInterval(iv); return; } if (left <= 0) go(); else tick(); }, 1000);
+      D.timers.push(iv);
     }
 
     /* ---- Save to Videos ---- */
@@ -698,49 +1167,20 @@ export function createFilms({ api, win, note, remember, alive }) {
       D.dl = dl;
       paintActs();
       paintDl();
-      const chunks = [];
       let nextPaint = 0;
       try {
-        let res;
-        const waits = delays();
-        for (let a = 0; ; a++) {
-          try { res = await fetch(fileUrl(rec.id, D.file.name, 'cors'), { signal: dl.ac.signal }); }
-          catch (e) { if (e?.name === 'AbortError') throw e; const err = new Error('blocked'); err.kind = navigator.onLine === false ? 'offline' : 'blocked'; throw err; }
-          if ((res.status === 503 || res.status === 429) && a < waits.length) { await sleep(waits[a], dl.ac.signal); continue; }
-          break;
-        }
-        if (!res.ok) { const err = new Error(`http ${res.status}`); err.kind = res.status === 503 || res.status === 429 ? 'busy' : 'http'; err.status = res.status; throw err; }
-        dl.total = Number(res.headers.get('content-length')) || D.size || 0;
-        const reader = res.body?.getReader?.();
-        if (!reader) { chunks.push(new Uint8Array(await res.arrayBuffer())); dl.got = chunks[0].length; }
-        else for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-          dl.got += value.length;
+        const blob = await fetchFilm(rec, D.file, D.size, dl.ac.signal, (got, total) => {
+          dl.got = got; dl.total = total;
           const n = performance.now();
           if (n >= nextPaint && detail === D) { nextPaint = n + 120; paintDl(); }
-        }
-        if (dl.got === 0) throw Object.assign(new Error('empty'), { kind: 'http', status: 0 });
-        const blob = new Blob(chunks, { type: 'video/mp4' });
-        chunks.length = 0;
-        const stem = `${rec.title}${rec.year ? ` (${rec.year})` : ''}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
-        const out = await media.save(`${HOME}/Videos`, `${stem}.mp4`, blob);
-        const cur = data();
-        put({ ...cur, saved: { ...cur.saved, [rec.id]: { path: out.path, name: out.node.name, at: Date.now(), size: blob.size } } });
+        });
+        const out = await storeFilm(rec, blob);
         Object.assign(dl, { state: 'done', path: out.path, bytes: blob.size });
         note({ icon: 'film', title: 'Saved to Videos', message: rec.title });
       } catch (e) {
-        chunks.length = 0;
-        if (e?.name === 'AbortError') dl.state = detail === D || !S.dead ? 'cancel' : 'cancel';
+        if (e?.name === 'AbortError') dl.state = 'cancel';
         else if (e.kind === 'blocked') dl.state = 'blocked';
-        else {
-          dl.state = 'fail';
-          dl.msg = e.kind === 'offline' ? 'You went offline, so the download stopped and nothing was saved.'
-            : e.kind === 'busy' ? 'archive.org is overloaded (503) and kept refusing the download. Nothing was saved; try again in a minute.'
-              : e.kind === 'http' ? `archive.org answered with an error (HTTP ${e.status}). Nothing was saved.`
-                : `The file couldn’t be saved: ${String(e?.message || e)}`;
-        }
+        else { dl.state = 'fail'; dl.msg = dlFail(e); }
       }
       if (S.dead || detail !== D) return;
       paintActs();

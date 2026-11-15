@@ -23,6 +23,24 @@
                   whole prefs object), or on by itself for a game
                   in front (bus 'gamemode:change', gamemode.js)
 
+     time         the clock reaching a time of day (bus 'tick:5s' against
+                  this computer's clock): every day, on weekdays or on
+                  weekends. It only fires while StaticOS is open and
+                  awake; a time that passed while the tab slept (more
+                  than 10 minutes late) is logged as skipped, never run
+                  after the fact.
+     focus        a Clock focus session starting or ending (bus
+                  'focus:change', core/focus.js): running → anything else
+                  is an end, whether it finished, was paused or skipped
+     daylight     it getting dark (sunset) or light (sunrise): the same
+                  sunrise and sunset the Day and Night wallpaper uses
+                  (core/daycycle.js — the real ones when Weather has a
+                  place, 6:30 and 19:30 otherwise)
+     download     a file landing in ~/Downloads through core/fileimport.js
+                  (Files' Import, a drop, Static Drop): bus
+                  'download:done'. A browser's own downloads are not
+                  visible to a web page, so those never count.
+
    Actions change exactly the setting the rest of the OS already
    reads, and each one reports what really happened — "was
    already on" is a result, not a success story:
@@ -34,6 +52,10 @@
                 then watches 'media:track' to see whether sound
                 actually started
      notify     api.notify(…)
+     dnd        prefs.dnd (Do Not Disturb); a focus session or a Do Not
+                Disturb schedule that holds it on is said so
+     volume     prefs.volume (0–100, the OS volume)
+     open-page  api.openApp('browser', { url }): http(s) addresses only
 
    Safety, because one rule's action can set off another rule:
    · a rule fires at most once per COOLDOWN_MS (5 s);
@@ -52,9 +74,15 @@
    not take over the screen. "Run now" leaves the new window up.
 
    Every run — and every rule held back or skipped, with why —
-   goes in an in-memory log (log(), onLog(fn)) that the app
-   shows. It is not saved: rules only run while StaticOS is open
-   in this browser, and the log only covers this session.
+   goes in a log (log(), onLog(fn)) that the app shows. The last
+   LOG_KEEP (50) finished entries are kept in store(LOG_KEY) so a
+   reload doesn't wipe them; they come back marked `old`. Rules only
+   run while StaticOS is open in this browser.
+
+   dryRun(rule | id) says what a rule WOULD do right now without
+   doing any of it (and without logging a run). encodeRule(rule) /
+   decodeRule(code) turn a rule into a SRULE1. code and back: a code
+   is only ever read into a rule for review — nothing runs on paste.
 
    Two simpler things sit beside the rules and use the same log:
 
@@ -93,9 +121,19 @@
                  have their own allowance (MAX_CAL_REMINDERS), so
                  a busy calendar never uses up yours. Other apps'
                  come through syncSourceReminders with a `src`:
-                 'study' (Homework) and 'friends' (Social's game
+                 'study' (Homework), 'friends' (Social's game
                  nights — urgent, so never held back, but they don't
-                 break through Do Not Disturb).
+                 break through Do Not Disturb), 'anime' (Static
+                 Anime's weekly day for a show you are following — a
+                 weekly reminder on a day you chose, never an air date)
+                 'tasks' (Static Tasks' due days), 'contacts' (Static
+                 Contacts' birthdays, once a year) and 'study-timetable'
+                 (Study's "next class", which keeps to Do Not Disturb).
+                 One more repeat exists only for those: 'dates', with
+                 on:['YYYY-MM-DD'] — the coming days it goes off on,
+                 for a repeat this engine has no rule for (Calendar's
+                 monthly, yearly, every-other-week, "until"). The app
+                 re-sends the list each day, so it never runs dry.
 
    The lead calls init() once after boot.
    ============================================================ */
@@ -103,6 +141,8 @@ import { store } from './store.js';
 import { bus } from './bus.js';
 import api from './api.js?v=ps5-cloud-proxy-v11';
 import * as THEMES from './themes.js';
+import * as DC from './daycycle.js';
+import { HOME } from './vfs.js';
 
 export const STORE_KEY = 'portal.automations';
 export const MAX_ACTIONS = 10;
@@ -112,6 +152,8 @@ export const MAX_CHAIN = 4;
 export const NAME_MAX = 60;
 export const TEXT_MAX = 140;
 const MAX_LOG = 120;
+export const LOG_KEY = 'portal.automationsLog';
+export const LOG_KEEP = 50;
 const MUSIC_WAIT_MS = 4000;
 
 export const STARTUP_KEY = 'portal.startupApps';
@@ -123,6 +165,7 @@ export const REMINDER_LATE_MS = 10 * 60 * 1000;   /* how late a reminder may sti
 export const SNOOZE_MIN = 10;
 const REMINDER_TICK_MS = 30 * 1000;               /* the longest the reminder timer ever waits */
 const MAX_SKIP = 200;
+const MAX_ON = 60;                                 /* days one 'dates' reminder lists ahead */
 export const REPEATS = [
   { id: 'once', label: 'Once', phrase: '' },
   { id: 'daily', label: 'Every day', phrase: 'Every day' },
@@ -133,8 +176,21 @@ export const REPEATS = [
 const dated = repeat => repeat === 'once' || repeat === 'weekly';
 
 /* ---------- vocabulary ---------------------------------------------- */
-export const TRIGGER_TYPES = ['app-open', 'game-launch', 'startup', 'gamemode-on'];
-export const ACTION_TYPES = ['open-app', 'gamemode', 'widgets', 'wallpaper', 'accent', 'music', 'notify'];
+export const TRIGGER_TYPES = ['app-open', 'game-launch', 'startup', 'gamemode-on', 'time', 'focus', 'daylight', 'download'];
+export const ACTION_TYPES = ['open-app', 'gamemode', 'widgets', 'wallpaper', 'accent', 'music', 'notify', 'dnd', 'volume', 'open-page'];
+export const DAYS = [
+  { id: 'every', label: 'every day', phrase: '' },
+  { id: 'weekdays', label: 'on weekdays (Mon–Fri)', phrase: ' on weekdays' },
+  { id: 'weekend', label: 'on weekends (Sat–Sun)', phrase: ' on weekends' },
+];
+const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+export const dayOkFor = (days, d = new Date()) => (days === 'weekdays' ? d.getDay() >= 1 && d.getDay() <= 5 : days === 'weekend' ? d.getDay() === 0 || d.getDay() === 6 : true);
+/** the web addresses "open a page" accepts: http(s), with a host */
+export function pageUrl(v) {
+  const t = String(v || '').trim();
+  if (!t || t.length > 300 || /\s/.test(t)) return null;
+  try { const u = new URL(t); return (u.protocol === 'https:' || u.protocol === 'http:') && u.hostname ? u.href : null; } catch (e) { return null; }
+}
 
 /* hour ranges are [from, to) on the local clock; night wraps midnight */
 export const WINDOWS = [
@@ -144,12 +200,18 @@ export const WINDOWS = [
   { id: 'morning', label: 'in the morning', phrase: 'in the morning', from: 5, to: 12 },
 ];
 
-/** The brief's four examples, as rules you can add in one go. */
+/** The brief's four examples, then three for school days, as rules you can add in one go. */
 export const PRESETS = [
   { id: 'games-music', when: { type: 'app-open', app: 'aether-games' }, then: [{ type: 'open-app', app: 'music' }] },
   { id: 'launch-gamemode', when: { type: 'game-launch' }, then: [{ type: 'gamemode', on: true }] },
   { id: 'anime-widgets', when: { type: 'app-open', app: 'aether-anime' }, then: [{ type: 'widgets', visible: false }] },
   { id: 'night-lamplight', when: { type: 'startup', when: 'night' }, then: [{ type: 'wallpaper', id: 'lamplight' }] },
+  { id: 'study-mode', name: 'Study mode', when: { type: 'focus', edge: 'start' },
+    then: [{ type: 'dnd', on: true }, { type: 'music', action: 'pause' }, { type: 'open-app', app: 'tasks' }] },
+  { id: 'study-break', name: 'Study break', when: { type: 'focus', edge: 'end' },
+    then: [{ type: 'dnd', on: false }, { type: 'notify', text: 'Focus time is over — stretch, drink some water.' }] },
+  { id: 'bedtime', name: 'Bedtime', when: { type: 'time', at: '22:00', days: 'every' },
+    then: [{ type: 'dnd', on: true }, { type: 'volume', level: 15 }, { type: 'notify', text: 'Time to wind down for bed.' }] },
 ];
 
 /* The wallpaper module lives with the portal; load it once, off the boot
@@ -184,6 +246,11 @@ export const wallpaperStatus = () => (WP ? 'ready' : wpErr ? 'failed' : 'loading
 export const wallpaperChoices = () => (WP ? WP.list(store) : [])
   .map(w => ({ id: w.id, name: w.name, theme: w.theme && THEMES.isTheme(w.theme) ? THEMES.themeById(w.theme).name : null }));
 
+/** today at 'HH:MM' on this computer's clock */
+export function timeToday(hhmm, from = new Date()) {
+  const m = HHMM.exec(hhmm || '');
+  return new Date(from.getFullYear(), from.getMonth(), from.getDate(), m ? +m[1] : 7, m ? +m[2] : 0, 0, 0);
+}
 /** 9:41 PM, or 21:41 when the clock is set to 24-hour. */
 export function clock(t) {
   const d = t instanceof Date ? t : new Date(t);
@@ -212,6 +279,10 @@ export function normWhen(w) {
     case 'game-launch': return { type: 'game-launch' };
     case 'startup': return { type: 'startup', when: WINDOWS.some(x => x.id === o.when) ? o.when : 'always' };
     case 'gamemode-on': return { type: 'gamemode-on' };
+    case 'time': return { type: 'time', at: HHMM.test(o.at) ? o.at : '07:00', days: DAYS.some(d => d.id === o.days) ? o.days : 'every' };
+    case 'focus': return { type: 'focus', edge: o.edge === 'end' ? 'end' : 'start' };
+    case 'daylight': return { type: 'daylight', to: o.to === 'light' ? 'light' : 'dark' };
+    case 'download': return { type: 'download' };
     default: return null;
   }
 }
@@ -225,6 +296,9 @@ export function normAction(a) {
     case 'accent': return { type: 'accent', id: str(o.id, 40) };
     case 'music': return { type: 'music', action: o.action === 'pause' ? 'pause' : 'play' };
     case 'notify': return { type: 'notify', text: str(o.text, TEXT_MAX) };
+    case 'dnd': return { type: 'dnd', on: o.on !== false };
+    case 'volume': { const n = Math.round(Number(o.level)); return { type: 'volume', level: Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 50 }; }
+    case 'open-page': return { type: 'open-page', url: str(o.url, 300).trim() };
     default: return null;
   }
 }
@@ -306,6 +380,10 @@ export function whenParts(w) {
       return win && win.phrase ? [['When '], ['StaticOS', 1], [' starts '], [win.phrase, 1]] : [['When '], ['StaticOS', 1], [' starts']];
     }
     case 'gamemode-on': return [['When '], ['Game Mode', 1], [' turns on']];
+    case 'time': return [['At '], [clock(timeToday(w.at)), 1], [(DAYS.find(d => d.id === w.days) || DAYS[0]).phrase]];
+    case 'focus': return [['When a '], ['focus session', 1], [w.edge === 'end' ? ' ends' : ' starts']];
+    case 'daylight': return [['When it gets '], [w.to === 'light' ? 'light' : 'dark', 1]];
+    case 'download': return [['When a '], ['download finishes', 1], [' in Downloads']];
     default: return [['When something happens']];
   }
 }
@@ -318,6 +396,9 @@ export function actionParts(a) {
     case 'accent': return [['switch the accent to '], [themeName(a.id) || '…', 1]];
     case 'music': return a.action === 'pause' ? [['pause '], ['the music', 1]] : [['play '], ['music', 1]];
     case 'notify': return [['show the notification '], [`“${String(a.text || '').trim() || '…'}”`, 1]];
+    case 'dnd': return [[`turn ${a.on ? 'on' : 'off'} `], ['Do Not Disturb', 1]];
+    case 'volume': return [['set the volume to '], [`${a.level}%`, 1]];
+    case 'open-page': return [['open the page '], [String(a.url || '').trim() || '…', 1]];
     default: return [['do something this version doesn’t know']];
   }
 }
@@ -348,10 +429,15 @@ export function issues(rule) {
     if (!w.app) out.push({ level: 'error', at: 'when', text: 'Pick the app that starts this rule.' });
     else if (!api.getApp(w.app)) out.push({ level: 'warn', at: 'when', text: `“${pretty(w.app)}” isn’t available in this session, so this rule can’t start.` });
   }
+  if (w.type === 'time' && !HHMM.test(w.at || '')) out.push({ level: 'error', at: 'when', text: 'Pick a time of day.' });
   const acts = Array.isArray(r.then) ? r.then : [];
   if (!acts.length) out.push({ level: 'error', at: 'then', text: 'Add at least one action.' });
   acts.forEach((a, i) => {
     switch (a.type) {
+      case 'open-page':
+        if (!pageUrl(a.url)) out.push({ level: 'error', at: i, text: 'Type a full web address, like https://example.com.' });
+        else if (!api.getApp('browser')) out.push({ level: 'warn', at: i, text: 'The Browser isn’t available in this session.' });
+        break;
       case 'open-app':
         if (!a.app) out.push({ level: 'error', at: i, text: 'Pick an app to open.' });
         else if (!api.getApp(a.app)) out.push({ level: 'warn', at: i, text: `“${pretty(a.app)}” isn’t available in this session.` });
@@ -382,11 +468,46 @@ export function issues(rule) {
 const LOG = [];
 const logSubs = new Set();
 let seq = 0;
+let logLoaded = false;
+let logTimer = 0;
+
+/* The last LOG_KEEP finished runs live in the store, so a reload keeps them. */
+function loadLog() {
+  if (logLoaded) return;
+  logLoaded = true;
+  const raw = store.get(LOG_KEY);
+  const arr = Array.isArray(raw) ? raw : [];
+  const st = new Set(['ok', 'warn', 'failed', 'held', 'skipped']);
+  const ss = new Set(['ok', 'same', 'warn', 'fail']);
+  const old = [];
+  for (const o of arr) {
+    if (!o || typeof o !== 'object' || !st.has(o.status) || !Number(o.at)) continue;
+    old.push({
+      id: -1 - old.length, at: Number(o.at), ruleId: str(o.ruleId, 80), rule: str(o.rule, 160), source: str(o.source, 20),
+      cause: str(o.cause, 200), via: o.via ? str(o.via, 160) : null, chain: [], status: o.status, note: o.note ? str(o.note, 300) : null,
+      old: true,
+      steps: (Array.isArray(o.steps) ? o.steps : []).slice(0, MAX_ACTIONS).map(x => ({ what: str(x && x.what, 160), state: ss.has(x && x.state) ? x.state : 'ok', result: str(x && x.result, 300) })),
+    });
+    if (old.length >= LOG_KEEP) break;
+  }
+  /* what ran before this page loaded sits below anything already logged now */
+  LOG.push(...old);
+}
+function saveLog() {
+  clearTimeout(logTimer);
+  logTimer = 0;
+  const keep = LOG.filter(e => e.status !== 'running').slice(0, LOG_KEEP).map(e => ({
+    at: e.at, ruleId: e.ruleId, rule: e.rule, source: e.source, cause: e.cause, via: e.via, status: e.status, note: e.note,
+    steps: e.steps.map(x => ({ what: x.what, state: x.state === 'wait' ? 'warn' : x.state, result: x.result })),
+  }));
+  store.set(LOG_KEY, keep);
+}
+function saveLogSoon() { if (!logTimer) logTimer = setTimeout(saveLog, 600); }
 
 function copyEntry(e) {
   return {
     id: e.id, at: e.at, ruleId: e.ruleId, rule: e.rule, source: e.source, cause: e.cause,
-    via: e.via, chain: e.chain.slice(), status: e.status, note: e.note,
+    via: e.via, chain: e.chain.slice(), status: e.status, note: e.note, old: !!e.old,
     steps: e.steps.map(s => ({ what: s.what, state: s.state, result: s.result })),
   };
 }
@@ -394,19 +515,21 @@ function copyEntry(e) {
     { id, at, ruleId, rule, source, cause, via, chain, status, note, steps:[{what,state,result}] }
     status: running | ok | warn | failed | held | skipped
     step state: wait | ok | same | warn | fail */
-export const log = () => LOG.map(copyEntry);
+export const log = () => { loadLog(); return LOG.map(copyEntry); };
 /** fn(entryCopy | null) on every change; returns an unsubscribe. */
 export function onLog(fn) {
   if (typeof fn !== 'function') return () => {};
   logSubs.add(fn);
   return () => { logSubs.delete(fn); };
 }
-export function clearLog() { LOG.length = 0; changed(null); }
+export function clearLog() { loadLog(); LOG.length = 0; saveLog(); changed(null); }
 function changed(e) {
+  if (e && e.status !== 'running') saveLogSoon();
   const c = e ? copyEntry(e) : null;
   logSubs.forEach(fn => { try { fn(c); } catch (err) { console.error('[automations] log listener', err); } });
 }
 function record(e) {
+  loadLog();
   LOG.unshift(e);
   if (LOG.length > MAX_LOG) LOG.length = MAX_LOG;
   changed(e);
@@ -450,6 +573,10 @@ function causeText(c) {
     case 'app-open': return `${appName(d.app) || pretty(d.app)} opened`;
     case 'game-launch': return d.title ? `${d.title} launched` : 'A game launched';
     case 'gamemode-on': return d.auto ? 'Game Mode came on for the game in front' : 'Game Mode turned on';
+    case 'time': return `It reached ${clock(timeToday(d.at))}`;
+    case 'focus': return d.edge === 'end' ? 'A focus session ended' : 'A focus session started';
+    case 'daylight': return `It got ${d.to === 'light' ? 'light' : 'dark'}${d.when ? ` (${d.to === 'light' ? 'sunrise' : 'sunset'} ${d.when})` : ''}`;
+    case 'download': return d.name ? `${d.name} finished downloading` : 'A download finished';
     default: return 'Something happened';
   }
 }
@@ -461,6 +588,7 @@ function entryFor(rule, cause) {
     source: cause.source, cause: causeText(cause),
     via: p ? p.rule : null,
     chain: p ? [...p.chain, p.ruleId] : [],
+    old: false,
     status: 'running', note: null, steps: [],
   };
 }
@@ -574,6 +702,36 @@ const ACT = {
     return undefined;
   },
 
+  dnd(a, step) {
+    const was = store.get('prefs.dnd') === true;
+    if (was === a.on) return done(step, 'same', `Do Not Disturb was already ${a.on ? 'on' : 'off'}`);
+    store.set('prefs.dnd', a.on);
+    if (!a.on) {
+      const hold = holdsDnd();
+      if (hold) return done(step, 'ok', `Turned Do Not Disturb off (${hold} keeps it on, so it may come straight back)`);
+    }
+    return done(step, 'ok', `Turned Do Not Disturb ${a.on ? 'on' : 'off'}`);
+  },
+
+  volume(a, step) {
+    const was = Math.round(Number(store.get('prefs.volume', 62)));
+    if (was === a.level) return done(step, 'same', `The volume was already ${a.level}%`);
+    store.set('prefs.volume', a.level);
+    const muted = !!store.get('prefs.muted');
+    return done(step, 'ok', `Set the volume to ${a.level}% (it was ${Number.isFinite(was) ? was : '?'}%)${muted ? ' — sound is muted, so you won’t hear the change' : ''}`);
+  },
+
+  'open-page'(a, step) {
+    const url = pageUrl(a.url);
+    if (!url) return done(step, 'fail', 'That isn’t a web address this can open — it needs to start with https://');
+    const app = api.getApp('browser');
+    if (!app) return done(step, 'fail', 'The Browser isn’t available in this session');
+    const w = api.openApp('browser', { url });
+    if (!w) return done(step, 'fail', 'The Browser didn’t open');
+    step.opened = true;
+    return done(step, 'ok', `Opened ${hostOf(url)} in the Browser`);
+  },
+
   notify(a, step, e, rule) {
     const text = String(a.text || '').trim();
     if (!text) return done(step, 'fail', 'The notification had no text');
@@ -588,6 +746,16 @@ const ACT = {
     return done(step, 'ok', `Showed the notification “${text}”`);
   },
 };
+
+const hostOf = u => { try { return new URL(u).host; } catch (e) { return u; } };
+/** the name of whatever is holding Do Not Disturb on right now (a focus session, a schedule), or '' */
+function holdsDnd() {
+  try {
+    if (FOCUS && FOCUS.wantsDnd()) return 'the focus session';
+    if (DNDS && DNDS.info()) return `the “${DNDS.info().name}” schedule`;
+  } catch (e) { /* nothing is holding it */ }
+  return '';
+}
 
 /** After a rule opened an app, give the screen back to the window the person was in. */
 function keepInFront(win) {
@@ -658,6 +826,9 @@ function run(rule, cause) {
 /* ---------- triggers ------------------------------------------------- */
 function matches(when, detail) {
   if (when.type === 'app-open') return !!when.app && when.app === detail.app;
+  if (when.type === 'time') return when.at === detail.at && dayOkFor(when.days, new Date(detail.on || Date.now()));
+  if (when.type === 'focus') return when.edge === detail.edge;
+  if (when.type === 'daylight') return when.to === detail.to;
   return true;
 }
 
@@ -697,6 +868,65 @@ function checkGameMode() {
   if (on) trigger('gamemode-on', { auto: !store.get('prefs.gameMode') });
 }
 
+/* ---------- the clock, the focus timer, daylight, downloads ---------- */
+let FOCUS = null;              /* core/focus.js, once loaded */
+let DNDS = null;               /* core/dndsched.js */
+let focusOn = null;            /* is a focus session running? null until known */
+let darkNow = null;            /* is it dark? null until known */
+let timeCheckedAt = 0;         /* the last moment the clock rules were looked at */
+const LATE_MS = 10 * 60 * 1000;
+const isFocusing = st => !!st && st.status === 'running' && st.phase === 'focus';
+
+function onFocusChange(st) {
+  const on = isFocusing(st);
+  if (focusOn === null) { focusOn = on; return; }
+  if (on === focusOn) return;
+  focusOn = on;
+  trigger('focus', { edge: on ? 'start' : 'end' });
+}
+
+/** dark from sunset to sunrise, by the Day and Night wallpaper's own sun times */
+export function isDark(date = new Date()) {
+  const st = DC.state(date);
+  const t = date.getHours() * 60 + date.getMinutes();
+  return t < st.rise || t >= st.set;
+}
+function checkDaylight() {
+  const now = new Date();
+  const dark = isDark(now);
+  if (darkNow === null) { darkNow = dark; return; }
+  if (dark === darkNow) return;
+  darkNow = dark;
+  const st = DC.state(now);
+  trigger('daylight', { to: dark ? 'dark' : 'light', when: DC.clock(dark ? st.set : st.rise) });
+}
+
+/** Rules for a time of day: each time that came due since the last look fires once. */
+function checkTimes() {
+  if (!started) return;
+  const nowMs = Date.now();
+  const from = timeCheckedAt || nowMs;
+  timeCheckedAt = nowMs;
+  let list;
+  try { list = rules().filter(r => r.enabled && r.when.type === 'time'); } catch (err) { return; }
+  if (!list.length) return;
+  const today = new Date(nowMs);
+  for (const at of [...new Set(list.map(r => r.when.at))]) {
+    const due = timeToday(at, today).getTime();
+    if (due <= from || due > nowMs) continue;                      /* not reached in this stretch */
+    if (nowMs - due > LATE_MS) {
+      for (const r of list.filter(x => x.when.at === at && dayOkFor(x.when.days, today))) {
+        const e = entryFor(r, { source: 'trigger', type: 'time', detail: { at } });
+        e.status = 'skipped';
+        e.note = `Not run — ${clock(due)} came while this tab or computer was asleep (it’s ${clock(nowMs)} now). A rule only runs while StaticOS is open and awake.`;
+        record(e);
+      }
+      continue;
+    }
+    trigger('time', { at, on: nowMs });
+  }
+}
+
 function runStartup() {
   const now = new Date();
   startup = { at: now.getTime(), ran: 0, skipped: 0 };
@@ -717,6 +947,133 @@ function runStartup() {
       record(e);
     }
   }
+}
+
+
+/* ---------- dry run: what a rule WOULD do, changing nothing ---------- */
+const PLAN = {
+  'open-app'(a, step) {
+    const app = a.app ? api.getApp(a.app) : null;
+    if (!app) return done(step, 'fail', a.app ? `Couldn’t open “${pretty(a.app)}” — that app isn’t available in this session` : 'No app was picked');
+    const before = api.wm ? api.wm.byApp(app.id) : [];
+    if (app.singleton && before.length && !before.some(x => x.min)) return done(step, 'same', `${app.name} is already open, so it would stay where it is`);
+    if (app.singleton && before.length) return done(step, 'ok', `Would bring ${app.name} back from the Dock`);
+    return done(step, 'ok', `Would open ${app.name}`);
+  },
+  gamemode(a, step) {
+    const was = !!store.get('prefs.gameMode');
+    return was === a.on ? done(step, 'same', `Game Mode is already ${a.on ? 'on' : 'off'}, so nothing would change`) : done(step, 'ok', `Would turn Game Mode ${a.on ? 'on' : 'off'}`);
+  },
+  widgets(a, step) {
+    const was = store.get('prefs.widgetsVisible') !== false;
+    return was === a.visible ? done(step, 'same', `The widgets are already ${a.visible ? 'showing' : 'hidden'}, so nothing would change`) : done(step, 'ok', a.visible ? 'Would show the widgets' : 'Would hide the widgets');
+  },
+  wallpaper(a, step) {
+    if (!WP) return done(step, 'warn', wpErr ? `The wallpaper list couldn’t load (${errMsg(wpErr)})` : 'The wallpaper list is still loading — try again in a moment');
+    const w = a.id ? WP.byId(store, a.id) : null;
+    if (!w) return done(step, 'fail', a.id ? `The “${pretty(a.id)}” wallpaper isn’t available any more` : 'No wallpaper was picked');
+    if (!WP.isUnlocked(store, w)) return done(step, 'fail', `${w.name} is still locked`);
+    const cur = WP.active(store);
+    if (cur && cur.id === w.id) return done(step, 'same', `${w.name} is already the wallpaper, so nothing would change`);
+    const t = w.theme ? themeName(w.theme) : null;
+    return done(step, 'ok', t ? `Would switch the wallpaper to ${w.name} (its ${t} accent would come with it)` : `Would switch the wallpaper to ${w.name}`);
+  },
+  accent(a, step) {
+    if (!THEMES.isTheme(a.id)) return done(step, 'fail', a.id ? `“${a.id}” isn’t one of the StaticOS accents` : 'No accent colour was picked');
+    const t = THEMES.themeById(a.id);
+    return THEMES.canonId(store.get('prefs.accent')) === t.id ? done(step, 'same', `The accent is already ${t.name}, so nothing would change`) : done(step, 'ok', `Would switch the accent to ${t.name}`);
+  },
+  music(a, step) {
+    if (!api.getApp('music')) return done(step, 'fail', 'Music isn’t available in this session');
+    const playing = !!(lastTrack && lastTrack.playing);
+    if (a.action === 'pause') return playing ? done(step, 'ok', 'Would pause the music') : done(step, 'same', 'Nothing is playing, so nothing would change');
+    return playing ? done(step, 'same', 'Music is already playing, so nothing would change') : done(step, 'ok', 'Would ask Music to play (it says nothing started if it has nothing to play)');
+  },
+  notify(a, step) {
+    const text = String(a.text || '').trim();
+    if (!text) return done(step, 'fail', 'The notification would have no text');
+    if (store.get('prefs.dnd')) return done(step, 'ok', `Would send “${text}” to the notification centre (Do Not Disturb is on, so it wouldn’t pop up)`);
+    return done(step, 'ok', `Would show the notification “${text}”`);
+  },
+  dnd(a, step) {
+    const was = store.get('prefs.dnd') === true;
+    if (was === a.on) return done(step, 'same', `Do Not Disturb is already ${a.on ? 'on' : 'off'}, so nothing would change`);
+    const hold = !a.on ? holdsDnd() : '';
+    return done(step, 'ok', `Would turn Do Not Disturb ${a.on ? 'on' : 'off'}${hold ? ` (${hold} keeps it on, so it might come straight back)` : ''}`);
+  },
+  volume(a, step) {
+    const was = Math.round(Number(store.get('prefs.volume', 62)));
+    return was === a.level ? done(step, 'same', `The volume is already ${a.level}%, so nothing would change`) : done(step, 'ok', `Would set the volume to ${a.level}% (it is ${Number.isFinite(was) ? was : '?'}% now)`);
+  },
+  'open-page'(a, step) {
+    const url = pageUrl(a.url);
+    if (!url) return done(step, 'fail', 'That isn’t a web address this can open — it needs to start with https://');
+    if (!api.getApp('browser')) return done(step, 'fail', 'The Browser isn’t available in this session');
+    return done(step, 'ok', `Would open ${hostOf(url)} in the Browser`);
+  },
+};
+
+/**
+ * What a rule would do if it ran this second — without doing any of it, and
+ * without a run in the log. Takes a saved rule's id or a rule object.
+ * -> { rule, enabled, steps:[{ what, state, result }], notes:[string] } | null
+ */
+export function dryRun(ruleOrId) {
+  const rule = typeof ruleOrId === 'string' ? rules().find(r => r.id === ruleOrId) : normRule(ruleOrId);
+  if (!rule) return null;
+  const steps = rule.then.slice(0, MAX_ACTIONS).map(a => {
+    const step = { what: describeAction(a), state: 'ok', result: '' };
+    try { (PLAN[a.type] || ((x, st) => done(st, 'fail', 'This kind of action isn’t supported')))(a, step); } catch (err) { done(step, 'fail', `Something went wrong: ${errMsg(err)}`); }
+    return step;
+  });
+  const notes = [];
+  if (!rule.enabled) notes.push('This rule is switched off, so it wouldn’t run by itself — only with Run now.');
+  if (!started) notes.push('Automations aren’t running in this session, so nothing would start this rule.');
+  if (!rule.then.length) notes.push('This rule has no actions yet, so there would be nothing to do.');
+  const last = lastRun.get(rule.id);
+  if (last && Date.now() - last < COOLDOWN_MS) notes.push(`It ran a moment ago; a rule runs at most once every ${COOLDOWN_MS / 1000} seconds.`);
+  notes.push('Nothing was changed, and this isn’t in the run log.');
+  return { rule: label(rule), enabled: rule.enabled, steps, notes };
+}
+
+/* ---------- share a rule as a code ----------------------------------- */
+export const RULE_PREFIX = 'SRULE1.';
+const b64u = t => btoa(unescape(encodeURIComponent(t))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = t => decodeURIComponent(escape(atob(t.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((t.length + 3) % 4))));
+
+/** A rule as a code a friend can paste: SRULE1.… — the trigger, the actions and the name, nothing else. */
+export function encodeRule(rule) {
+  const r = normRule(rule);
+  if (!r) return '';
+  return RULE_PREFIX + b64u(JSON.stringify({ n: r.name, w: r.when, t: r.then }));
+}
+
+/**
+ * Read a code into a rule — for REVIEW. Nothing is saved and nothing runs.
+ * -> { rule (new id, switched off), dropped: [why…] }   throws an Error with a plain reason.
+ * Every field is checked against what this build knows; an action it doesn't
+ * know, or an address that isn't http(s), is left out and said so.
+ */
+export function decodeRule(code) {
+  const raw = String(code || '').trim();
+  if (!raw.startsWith(RULE_PREFIX)) throw new Error('That isn’t a StaticOS rule code (they start with SRULE1.).');
+  if (raw.length > 6000) throw new Error('That code is too long to be a rule.');
+  let o;
+  try { o = JSON.parse(unb64u(raw.slice(RULE_PREFIX.length))); } catch (e) { throw new Error('That code is damaged — it may have been cut off when it was copied.'); }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('That code is empty.');
+  const when = normWhen(o.w);
+  if (!when) throw new Error('That code starts a rule in a way this version of StaticOS doesn’t know.');
+  const dropped = [];
+  const then = [];
+  for (const a of (Array.isArray(o.t) ? o.t : []).slice(0, MAX_ACTIONS)) {
+    const n = normAction(a);
+    if (!n) { dropped.push('An action this version doesn’t know was left out.'); continue; }
+    if (n.type === 'open-page' && !pageUrl(n.url)) { dropped.push('A “open a page” action with an address that isn’t http or https was left out.'); continue; }
+    then.push(n.type === 'open-page' ? { ...n, url: pageUrl(n.url) } : n);
+  }
+  if (!then.length) throw new Error('That code doesn’t contain anything this version of StaticOS can do.');
+  const name = str(o.n, NAME_MAX).replace(/[\u0000-\u001f\u007f<>]/g, ' ').trim();
+  return { rule: { id: uid(), name, enabled: false, when, then }, dropped };
 }
 
 /* ---------- startup apps --------------------------------------------- */
@@ -836,8 +1193,13 @@ export function normReminder(r, i = 0) {
   const text = str(o.text, TEXT_MAX).trim();
   const time = TIME_RE.test(o.time) ? o.time : null;
   if (!text || !time) return null;
-  const repeat = REPEATS.some(x => x.id === o.repeat) ? o.repeat : 'once';
-  const date = dated(repeat) && validDate(o.date) ? o.date : '';
+  /* 'dates' is only ever another app's (Calendar's monthly, yearly, "until"…
+     repeats): it goes off at `time` on each day listed in `on`, which that app
+     keeps topped up (js/core/calendar.js re-sends it every day) */
+  const owned = !!(str(o.cal, 80).trim() || (str(o.src, 30).trim() && str(o.ref, 80).trim()));
+  const on = owned && o.repeat === 'dates' && Array.isArray(o.on) ? [...new Set(o.on.filter(validDate))].sort().slice(0, MAX_ON) : [];
+  const repeat = REPEATS.some(x => x.id === o.repeat) ? o.repeat : on.length ? 'dates' : 'once';
+  const date = repeat === 'dates' ? on[0] : dated(repeat) && validDate(o.date) ? o.date : '';
   if (dated(repeat) && !date) return null;
   const skip = repeat === 'weekly' && Array.isArray(o.skip)
     ? [...new Set(o.skip.filter(validDate))].sort().slice(-MAX_SKIP) : [];
@@ -849,6 +1211,9 @@ export function normReminder(r, i = 0) {
     last: posInt(o.last), missed: posInt(o.missed), snooze: posInt(o.snooze),
   };
   if (skip.length) out.skip = skip;
+  if (repeat === 'dates') out.on = on;
+  /* made from Spotlight ("timer 10m", "remind me in 1h to …"): it goes off at an exact second, not at a minute */
+  if (o.exact === true) { out.exact = true; if (posInt(o.timer)) out.timer = posInt(o.timer); }
   /* a reminder Calendar keeps for one of its events */
   const cal = str(o.cal, 80).trim();
   if (cal) { out.cal = cal; out.sub = str(o.sub, 120).trim(); }
@@ -911,10 +1276,14 @@ function atOn(day, time) {
   return new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m, 0, 0).getTime();
 }
 
+/* a 'dates' reminder: each listed day at its time, in order */
+const datesAt = r => (r.on || []).map(s => onceAt({ date: s, time: r.time })).filter(t => t !== null);
+
 /** The latest time the reminder was due at or before `now`, or null. */
 export function lastDue(r, now = Date.now()) {
   if (!r) return null;
   if (r.repeat === 'once') { const t = onceAt(r); return t !== null && t <= now ? t : null; }
+  if (r.repeat === 'dates') { const past = datesAt(r).filter(t => t <= now); return past.length ? past[past.length - 1] : null; }
   const d = new Date(now);
   for (let k = 0, n = span(r); k < n; k++) {
     const day = new Date(d.getFullYear(), d.getMonth(), d.getDate() - k);
@@ -928,6 +1297,7 @@ export function lastDue(r, now = Date.now()) {
 export function nextDue(r, now = Date.now()) {
   if (!r) return null;
   if (r.repeat === 'once') { const t = onceAt(r); return t !== null && t > now ? t : null; }
+  if (r.repeat === 'dates') return datesAt(r).find(t => t > now) ?? null;
   let d = new Date(now);
   /* a weekly run that starts later begins counting from its first day */
   const a = r.repeat === 'weekly' ? anchorDay(r) : null;
@@ -976,6 +1346,7 @@ export function untilText(t, now = Date.now()) {
 export function scheduleText(r, now = Date.now()) {
   if (!r) return '';
   if (r.repeat === 'once') { const t = onceAt(r); return t === null ? 'No date' : whenText(t, now); }
+  if (r.repeat === 'dates') { const n = nextDue(r, now); return n === null ? 'Repeats · none coming up' : `Repeats · next ${whenPhrase(n, now)}`; }
   const rep = REPEATS.find(x => x.id === r.repeat);
   const [h, m] = r.time.split(':').map(Number);
   const at = clock(new Date(2000, 0, 3, h, m));
@@ -1001,6 +1372,8 @@ export function reminderState(r, now = Date.now()) {
   if (r.snooze && r.snooze > now) return { state: 'snoozed', next: r.snooze, text: `Snoozed until ${clock(r.snooze)}` };
   if (r.repeat === 'once') {
     const t = onceAt(r);
+    /* an exact timer's own minute is marked fired from the start: it goes off at its snooze time */
+    if (r.exact && t !== null && r.last >= t) return { state: 'done', next: null, text: r.timer ? 'Timer finished' : 'Reminded you' };
     if (t !== null && t > now) return { state: 'scheduled', next: t, text: `Goes off ${untilText(t, now)}` };
     if (r.missed && r.missed >= (t || 0)) return { state: 'missed', next: null, text: `Missed — it was due ${whenPhrase(t, now)}, while StaticOS was closed or asleep` };
     if (r.last && t !== null && r.last >= t) return { state: 'done', next: null, text: `Reminded you ${whenPhrase(r.last, now)}` };
@@ -1082,6 +1455,29 @@ export function removeReminder(id) {
   return true;
 }
 
+/**
+ * A timer, or a "remind me in …", that goes off `seconds` from now to the
+ * second. It rides the reminder engine: a one-off reminder for the minute it
+ * falls in, whose exact moment is the `snooze` time checkReminders already
+ * honours (and whose own minute is marked as fired, so it never rings twice).
+ * -> { ok, reminder?, at?, issues? }
+ */
+export function addTimer({ seconds, text, timer = false } = {}) {
+  const now = Date.now();
+  const secs = Math.round(Number(seconds));
+  if (!(secs >= 1 && secs <= 86400)) return { ok: false, issues: [{ at: 'time', text: 'A timer can run from 1 second to 24 hours.' }] };
+  const at = now + secs * 1000;
+  const slot = new Date(Math.ceil(at / MIN_MS) * MIN_MS);
+  const res = addReminder({
+    text: String(text || (timer ? 'Timer' : 'Reminder')).slice(0, TEXT_MAX),
+    time: `${String(slot.getHours()).padStart(2, '0')}:${String(slot.getMinutes()).padStart(2, '0')}`,
+    repeat: 'once', date: ymd(slot),
+  });
+  if (!res.ok) return res;
+  const up = updateReminder(res.reminder.id, { snooze: at, last: slot.getTime(), exact: true, timer: timer ? secs : 0 });
+  return up.ok ? { ok: true, reminder: up.reminder, at } : up;
+}
+
 const sameList = (a, b) => JSON.stringify(a || []) === JSON.stringify(b || []);
 
 /**
@@ -1102,20 +1498,28 @@ export function syncCalendarReminders(want, now = Date.now()) {
   for (const w of Array.isArray(want) ? want : []) {
     const cal = str(w && w.cal, 80).trim();
     if (!cal || result[cal]) continue;
+    /* 'dates': the days an event with a repeat the engine has no word for
+       (monthly, yearly, every other week, "until") reminds on, coming up */
+    const on = w.repeat === 'dates' && Array.isArray(w.on) ? [...new Set(w.on.filter(validDate))].sort().slice(0, MAX_ON) : [];
     const draft = { text: str(w.text, TEXT_MAX).trim() || 'Event', sub: str(w.sub, 120), time: w.time,
-      repeat: w.repeat === 'weekly' ? 'weekly' : 'once', date: w.date, skip: w.repeat === 'weekly' && Array.isArray(w.skip) ? w.skip : [] };
+      repeat: on.length ? 'dates' : w.repeat === 'weekly' ? 'weekly' : 'once', date: on.length ? on[0] : w.date, skip: w.repeat === 'weekly' && Array.isArray(w.skip) ? w.skip : [] };
+    if (on.length) draft.on = on;
     if (!TIME_RE.test(draft.time || '') || !validDate(draft.date)) continue;
     const cur = mine.get(cal);
     const same = !!cur && cur.time === draft.time && cur.date === draft.date && cur.repeat === draft.repeat
-      && sameList(cur.skip, draft.skip.filter(validDate).sort());
+      && sameList(cur.skip, draft.skip.filter(validDate).sort()) && sameList(cur.on, draft.on);
     if (!same && draft.repeat === 'once') {
       const t = onceAt(draft);
       if (t === null || t <= floorMin(now)) { result[cal] = 'passed'; continue; }
     }
     if (out.length >= MAX_CAL_REMINDERS) { result[cal] = 'full'; continue; }
+    /* a 'dates' list that only moved on a day (yesterday dropped, a new day
+       added) is the same reminder: it keeps on/off, snooze and what went off */
+    const rolled = !same && !!cur && cur.repeat === 'dates' && draft.repeat === 'dates' && cur.time === draft.time;
     out.push(same
       ? { ...cur, text: draft.text, sub: draft.sub }
-      : { ...draft, cal, id: cur ? cur.id : remId(), enabled: cur ? cur.enabled : true,
+      : rolled ? { ...cur, text: draft.text, sub: draft.sub, date: draft.date, on: draft.on }
+        : { ...draft, cal, id: cur ? cur.id : remId(), enabled: cur ? cur.enabled : true,
           created: cur ? cur.created : now, updated: now, last: 0, missed: 0, snooze: 0 });
     result[cal] = 'set';
   }
@@ -1143,11 +1547,15 @@ export function syncSourceReminders(src, want, now = Date.now()) {
   for (const w of Array.isArray(want) ? want : []) {
     const ref = str(w && w.ref, 80).trim();
     if (!ref || result[ref]) continue;
-    const draft = { text: str(w.text, TEXT_MAX).trim() || 'Reminder', sub: str(w.sub, 120), time: w.time, repeat: 'once', date: w.date };
+    /* a source may ask for a weekly one (Static Anime's day for a show): it repeats on its date's weekday */
+    /* or a list of days ('dates', as Calendar's repeats use), kept topped up by the app */
+    const on = w && w.repeat === 'dates' && Array.isArray(w.on) ? [...new Set(w.on.filter(validDate))].sort().slice(0, MAX_ON) : [];
+    const draft = { text: str(w.text, TEXT_MAX).trim() || 'Reminder', sub: str(w.sub, 120), time: w.time, repeat: on.length ? 'dates' : w && w.repeat === 'weekly' ? 'weekly' : 'once', date: on.length ? on[0] : w.date };
+    if (on.length) draft.on = on;
     if (!TIME_RE.test(draft.time || '') || !validDate(draft.date)) continue;
     const cur = mine.get(ref);
-    const same = !!cur && cur.time === draft.time && cur.date === draft.date;
-    if (!same) {
+    const same = !!cur && cur.time === draft.time && cur.date === draft.date && cur.repeat === draft.repeat && sameList(cur.on, draft.on);
+    if (!same && draft.repeat === 'once') {
       const t = onceAt(draft);
       if (t === null || t <= floorMin(now)) { result[ref] = 'passed'; continue; }
     }
@@ -1212,15 +1620,19 @@ function lastDueUnfired(r, now) {
 }
 
 function notifyReminder(r, step, title, message, actions) {
-  const study = r.src === 'study' || r.src === 'study-exams';
+  const study = r.src === 'study' || r.src === 'study-exams';     /* homework and exams: what is due */
+  const timetable = r.src === 'study-timetable';                   /* "next class" keeps to Do Not Disturb */
   const friends = r.src === 'friends';
-  const from = r.cal ? 'Calendar' : study ? 'Study' : friends ? 'Social' : 'Automations';
+  const anime = r.src === 'anime';
+  const tasks = r.src === 'tasks';
+  const contacts = r.src === 'contacts';
+  const from = r.cal ? 'Calendar' : study || timetable ? 'Study' : friends ? 'Social' : anime ? 'Static Anime' : tasks ? 'Static Tasks' : contacts ? 'Static Contacts' : 'Automations';
   /* urgent: a reminder is never held back for the notification summary, and
      that includes a game night (core/friends.js). A homework reminder also
      gets through Do Not Disturb (throughDnd): a school-hours schedule shouldn't
      hide what is due; a game night does not. Its pop-up is silent there, as
      sfx.js keeps every chime out of Do Not Disturb. */
-  api.notify({ app: from, icon: r.cal ? 'calendar' : study ? 'clipboard' : friends ? 'users' : 'bell', timeout: 0, title, message, actions, urgent: true, throughDnd: study });
+  api.notify({ app: from, icon: r.cal ? 'calendar' : timetable ? 'calendar' : study ? 'clipboard' : friends ? 'users' : anime ? 'star' : tasks ? 'check-circle' : contacts ? 'gift' : 'bell', timeout: 0, title, message, actions, urgent: true, throughDnd: study });
   if (store.get('prefs.dnd') && !study) return done(step, 'ok', `Sent “${r.text}” to the notification centre (Do Not Disturb is on, so it didn’t pop up)`);
   const muted = (store.get('prefs.notiApps', {}) || {})[from.toLowerCase()] === false;
   if (muted) return done(step, 'ok', `Sent “${r.text}” to the notification centre (pop-ups from ${from} are turned off in Settings)`);
@@ -1239,16 +1651,24 @@ function fireReminder(r, due, now, snoozed) {
   const step = { what: 'Show the reminder', state: 'wait', result: '' };
   e.steps.push(step);
   record(e);
-  const sched = snoozed ? `Snoozed · it was due ${clock(due)}` : (r.repeat === 'once' ? `Reminder · ${clock(due)}` : `${scheduleText(r)}`);
+  const secs = r.timer || 0;
+  if (secs) bus.emit('timer:done', { text: r.text, secs });     /* the desktop pet looks up (shell/pet.js) */
+  const len = secs >= 3600 ? `${+(secs / 3600).toFixed(2)} h` : secs >= 60 ? `${+(secs / 60).toFixed(2)} min` : `${secs} s`;
+  const sched = r.exact ? (secs ? `Timer · ${len}` : `Reminder · ${clock(due)}`) : snoozed ? `Snoozed · it was due ${clock(due)}` : (r.repeat === 'once' ? `Reminder · ${clock(due)}` : `${scheduleText(r)}`);
   /* Calendar's: the event's own line ("Starts at 9:00 AM"), and a way back to it */
-  const fallback = r.cal ? 'Calendar event' : r.src === 'friends' ? 'Game night' : r.src === 'study-exams' ? 'Exam' : 'Homework';
+  const fallback = r.cal ? 'Calendar event' : r.src === 'friends' ? 'Game night' : r.src === 'anime' ? 'Your weekly anime day' : r.src === 'study-exams' ? 'Exam' : r.src === 'study-timetable' ? 'Class' : r.src === 'tasks' ? 'Task' : r.src === 'contacts' ? 'Birthday' : 'Homework';
   const message = r.cal || r.src ? (snoozed ? `${r.sub || fallback} · snoozed` : (r.sub || fallback)) : sched;
   notifyReminder(r, step, r.text, message, [
     { label: `Snooze ${SNOOZE_MIN} min`, onClick: () => snoozeReminder(r.id, SNOOZE_MIN) },
     r.cal ? { label: 'Open', onClick: () => api.openApp('calendar', { event: r.cal, at: due }) }
       : r.src === 'study' ? { label: 'Open', onClick: () => api.openApp('study', { tab: 'homework', assignment: r.ref }) }
         : r.src === 'study-exams' ? { label: 'Open', onClick: () => api.openApp('study', { tab: 'exams', exam: String(r.ref).split(':')[0] }) }
-        : r.src === 'friends' ? nightAction(r) : { label: 'Done' },
+        : r.src === 'study-timetable' ? { label: 'Open', onClick: () => api.openApp('study', { tab: 'timetable' }) }
+        : r.src === 'friends' ? nightAction(r)
+          : r.src === 'anime' ? { label: 'Open', onClick: () => api.openApp('aether-anime', { url: `static://anime/${String(r.ref).split('~')[0]}` }) }
+            : r.src === 'tasks' ? { label: 'Open', onClick: () => api.openApp('tasks', { task: r.ref }) }
+              : r.src === 'contacts' ? { label: 'Open', onClick: () => api.openApp('contacts', { contact: r.ref }) }
+                : { label: 'Done' },
   ]);
   e.status = summarize(e);
   changed(e);
@@ -1276,7 +1696,7 @@ function checkReminders() {
       const at = r.snooze;
       r.snooze = 0;
       dirty = true;
-      if (now - at <= REMINDER_LATE_MS) fire.push({ r, due: at, snoozed: true });
+      if (now - at <= REMINDER_LATE_MS) fire.push({ r, due: at, snoozed: !r.exact });
       else logMissed(r, at, `Missed the snoozed reminder — it was due ${whenPhrase(at, now)}, but this tab or computer was asleep then.`);
     }
     const due = lastDue(r, now);
@@ -1335,6 +1755,85 @@ function onVisible() {
 }
 
 /* ---------- lifecycle ------------------------------------------------ */
+/* ============================================================
+   Day look and night look (Static Store > In use).
+
+   Two of your saved looks (core/lookcode.js slots) that switch by
+   themselves: the day look when the day starts, the night look when the
+   night does. The day starts at the real sunrise of the place Weather has
+   (or 6:30 without one) and ends at sunset, or at times you choose.
+   It is a look and nothing more: the same code Store shares, undone the
+   same way, and it never runs while it is off. A look you pick by hand is
+   left alone until the next switch, and each switch happens once per day
+   and night, so a reload does not undo what you chose.
+
+     prefs.lookTimer = { on, day: slotId, night: slotId,
+                         at: 'sun' | 'fixed', from: 'HH:MM', to: 'HH:MM' }
+     prefs.lookTimerLast  'day:2026-11-06' — the switch already made
+   ============================================================ */
+export const LOOK_TIMER_KEY = 'prefs.lookTimer';
+export const LOOK_TIMER_DEFAULT = { on: false, day: null, night: null, at: 'sun', from: '07:00', to: '19:30' };
+const HM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const hmMin = t => { const m = HM.exec(String(t)); return m ? +m[1] * 60 + +m[2] : null; };
+export function lookTimer() {
+  const v = store.get(LOOK_TIMER_KEY, null);
+  const o = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  return {
+    on: o.on === true,
+    day: typeof o.day === 'string' ? o.day : null,
+    night: typeof o.night === 'string' ? o.night : null,
+    at: o.at === 'fixed' ? 'fixed' : 'sun',
+    from: HM.test(o.from) ? o.from : LOOK_TIMER_DEFAULT.from,
+    to: HM.test(o.to) ? o.to : LOOK_TIMER_DEFAULT.to,
+  };
+}
+export function saveLookTimer(patch) {
+  /* changing what switches, or when, or turning it on, applies the look that belongs to right now */
+  if (['on', 'day', 'night', 'at', 'from', 'to'].some(k => k in patch)) store.set('prefs.lookTimerLast', null);
+  store.set(LOOK_TIMER_KEY, { ...lookTimer(), ...patch });
+}
+
+/** 'day' or 'night' by the clock, and the date that stretch began on. */
+export async function lookPeriod(d = new Date(), t = lookTimer()) {
+  let rise, set;
+  if (t.at === 'fixed') { rise = hmMin(t.from); set = hmMin(t.to); }
+  else {
+    const DAY = await import('./daycycle.js');
+    const src = DAY.source(d);
+    rise = src.rise; set = src.set;
+  }
+  const m = d.getHours() * 60 + d.getMinutes();
+  const day = rise < set ? (m >= rise && m < set) : (m >= rise || m < set);
+  /* the night after midnight began yesterday */
+  const began = new Date(d);
+  if (!day && m < rise) began.setDate(began.getDate() - 1);
+  return { period: day ? 'day' : 'night', began: ymd(began) };
+}
+
+let lookBusy = false;
+/** Switch looks if the day or night has changed since the last switch. */
+export async function checkLookTimer(d = new Date()) {
+  const t = lookTimer();
+  if (!t.on || lookBusy) return null;
+  lookBusy = true;
+  try {
+    const { period, began } = await lookPeriod(d, t);
+    const mark = `${period}:${began}`;
+    if (store.get('prefs.lookTimerLast') === mark) return null;
+    const id = period === 'day' ? t.day : t.night;
+    if (!id) return null;
+    store.set('prefs.lookTimerLast', mark);
+    const LC = await import('./lookcode.js');
+    const used = LC.useSlot(id, store);
+    if (!used) return null;
+    bus.emit('looktimer:switch', { period, slot: used.slot.name });
+    api.notify({ app: 'Static Store', icon: period === 'day' ? 'sun' : 'moon', timeout: 7000,
+      title: `${period === 'day' ? 'Day' : 'Night'} look on`, message: `${used.slot.name}. Undo to put back what you had.`,
+      actions: [{ label: 'Undo', onClick: used.undo }] });
+    return { period, slot: used.slot.name };
+  } catch (e) { return null; } finally { lookBusy = false; }
+}
+
 /**
  * Start listening. Call once after boot; later calls do nothing.
  * opts.startup === false starts the listeners without checking the
@@ -1353,10 +1852,26 @@ export function init(opts = {}) {
     store.sub('prefs', checkGameMode),
     bus.on('gamemode:change', checkGameMode),
     store.sub(REMINDERS_KEY, armReminders),
+    bus.on('focus:change', onFocusChange),
+    bus.on('download:done', d => {
+      const p = d && typeof d.path === 'string' ? d.path : '';
+      if (p.startsWith(`${HOME}/Downloads/`)) trigger('download', { name: str(d.name || p.split('/').pop(), 80), path: p });
+    }),
+    bus.on('tick:5s', () => { checkTimes(); checkDaylight(); checkLookTimer(); }),
+    store.sub(LOOK_TIMER_KEY, () => { checkLookTimer(); }),
   ];
+  timeCheckedAt = Date.now();
+  darkNow = null;
+  focusOn = null;
+  try { checkDaylight(); } catch (err) { darkNow = null; }
+  import('./focus.js').then(F => { FOCUS = F; if (started && focusOn === null) focusOn = isFocusing(F.state()); }).catch(() => {});
+  import('./dndsched.js').then(D => { DNDS = D; }).catch(() => {});
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', onVisible);
     offs.push(() => document.removeEventListener('visibilitychange', onVisible));
+    const onSee = () => { if (document.visibilityState === 'visible') { checkTimes(); checkDaylight(); } };
+    document.addEventListener('visibilitychange', onSee);
+    offs.push(() => document.removeEventListener('visibilitychange', onSee));
   }
   if (opts && opts.startup === false) startup = null;
   else {
@@ -1365,6 +1880,7 @@ export function init(opts = {}) {
     offs.push(whenBooted(startupAppsAtBoot));
   }
   checkReminders();
+  checkLookTimer();
   bus.emit('automations:status', status());
   return status();
 }
@@ -1397,10 +1913,10 @@ export function runNow(ruleOrId, opts = {}) {
 export const stats = () => ({ running: started, listeners: logSubs.size, log: LOG.length, pending: pending.size, busy: busy.size, reminderTimer: !!remTimer });
 
 export default {
-  init, stop, status, stats, rules, save, log, onLog, clearLog, runNow, ready,
+  init, stop, status, stats, lookTimer, saveLookTimer, checkLookTimer, lookPeriod, rules, save, log, onLog, clearLog, runNow, ready, dryRun, encodeRule, decodeRule, isDark, pageUrl,
   describe, sentence, label, issues, blankRule, normRule, accentChoices, wallpaperChoices,
   startupApps, saveStartupApps, runStartupAppsNow, startupAppsStatus,
-  reminders, ownReminders, addReminder, updateReminder, removeReminder, snoozeReminder, clearFinishedReminders, syncCalendarReminders,
+  reminders, ownReminders, addReminder, addTimer, updateReminder, removeReminder, snoozeReminder, clearFinishedReminders, syncCalendarReminders,
   reminderState, reminderIssues, blankReminder, scheduleText, whenText, whenPhrase, untilText, nextDue, lastDue, ymd,
-  STORE_KEY, STARTUP_KEY, REMINDERS_KEY, MAX_ACTIONS, MAX_RULES, MAX_STARTUP_APPS, MAX_REMINDERS, MAX_CAL_REMINDERS, COOLDOWN_MS, PRESETS, WINDOWS, REPEATS,
+  LOG_KEY, LOG_KEEP, DAYS, RULE_PREFIX, STORE_KEY, STARTUP_KEY, REMINDERS_KEY, MAX_ACTIONS, MAX_RULES, MAX_STARTUP_APPS, MAX_REMINDERS, MAX_CAL_REMINDERS, COOLDOWN_MS, PRESETS, WINDOWS, REPEATS,
 };

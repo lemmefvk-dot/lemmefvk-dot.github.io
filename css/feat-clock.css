@@ -15,7 +15,7 @@
 }
 .clk__tabs::-webkit-scrollbar{display:none}
 .clk__tab{
-  display:flex;align-items:center;gap:6px;padding:7px 11px;flex:none;cursor:pointer;
+  display:flex;align-items:center;gap:6px;padding:7px 10px;flex:none;cursor:pointer;
   border:0;background:transparent;color:var(--ink-3);font-size:var(--fs-11);
   border-bottom:2px solid transparent;
   transition:color var(--t-fast),border-color var(--t-fast);
@@ -275,6 +275,106 @@
 .clk__fday small{font-size:var(--fs-11);font-weight:600;color:var(--ink-1);font-variant-numeric:tabular-nums}
 .clk__fday span{font-size:var(--fs-10);color:var(--ink-3)}
 .clk__fday.is-today span{color:var(--ink-0);font-weight:600}
+
+/* ---- world: sunrise/sunset, the big clock button ------------------- */
+.clk__local-top{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3)}
+.clk__bigclock{padding:5px 10px;font-size:var(--fs-11)}
+.clk__sun{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;font-size:var(--fs-10);color:var(--ink-2)}
+.clk__sun[hidden]{display:none}
+.clk__sun .icon{color:#f4b860}
+.clk__sunbtn.is-on{color:#f4b860;background:rgba(244,184,96,.12)}
+.clk__sunnote[hidden]{display:none}
+
+/* ---- the big full-screen clock ------------------------------------- */
+.clk__cc{
+  position:fixed;inset:0;z-index:calc(var(--z-toast) - 10);display:flex;align-items:center;justify-content:center;
+  background:#07080b;color:#f4f5f7;outline:none;
+}
+.clk__cc-main{display:flex;flex-direction:column;align-items:center;gap:2vh;text-align:center;padding:4vh 4vw}
+.clk__cc-row{display:flex;align-items:baseline;gap:1.5vw;font-variant-numeric:tabular-nums}
+.clk__cc-time{font-size:min(26vw,48vh);font-weight:700;line-height:.9;letter-spacing:-.02em}
+.clk__cc-sec{font-size:min(5vw,9vh);font-weight:500;color:rgba(244,245,247,.55)}
+.clk__cc-date{font-size:min(4.2vw,7vh);font-weight:500;color:rgba(244,245,247,.8)}
+.clk__cc-sub{font-size:min(2.6vw,4.5vh);color:#f4b860;font-variant-numeric:tabular-nums;min-height:1em}
+.clk__cc-x{
+  position:absolute;top:16px;right:16px;display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:var(--r-md);
+  background:rgba(255,255,255,.08);color:rgba(244,245,247,.8);font-size:var(--fs-12);border:1px solid rgba(255,255,255,.12);
+}
+.clk__cc-x:hover{background:rgba(255,255,255,.16);color:#fff}
+
+/* ---- stopwatch: copy the laps -------------------------------------- */
+.clk__lapcopy{display:flex;gap:var(--sp-2);justify-content:flex-end;margin-top:var(--sp-3)}
+.clk__lapcopy[hidden]{display:none}
+.clk__lapcopy .clk__btn{padding:6px 10px;font-size:var(--fs-11)}
+
+/* ---- named timers --------------------------------------------------- */
+.clk__timers,.clk__countdown{display:flex;flex-direction:column;gap:var(--sp-4)}
+.clk__tform,.clk__aform{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4);border-radius:var(--r-lg);background:var(--fill-0);border:1px solid var(--line-1)}
+.clk__setter--row{justify-content:flex-start;align-items:flex-end;flex-wrap:wrap;margin:0}
+.clk__tsound{display:flex;align-items:center;gap:var(--sp-2);margin-left:auto}
+.clk__sound,.clk__snooze{flex:0 1 auto;padding:6px 8px}
+.clk__presets{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.clk__chip{
+  display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--r-pill);cursor:pointer;
+  background:var(--fill-1);border:1px solid var(--line-1);color:var(--ink-1);font-size:var(--fs-11);font-weight:600;
+}
+.clk__chip:hover{background:var(--fill-2);color:var(--ink-0)}
+.clk__chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.clk__row--tight{margin-top:0}
+.clk__tlist{display:flex;flex-direction:column;gap:var(--sp-2)}
+.clk__tcard{display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0)}
+.clk__tcard.is-running{border-color:var(--line-accent)}
+.clk__tcard.is-done{opacity:.8}
+.clk__tcard.is-ringing{border-color:#f4b860;box-shadow:0 0 0 1px #f4b860 inset}
+.clk__thead{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-3)}
+.clk__tname2{font-size:var(--fs-13);font-weight:600;color:var(--ink-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.clk__tread{font-size:var(--fs-24);font-weight:700;color:var(--ink-0);letter-spacing:-.5px}
+.clk__tbar{height:4px;border-radius:2px;background:var(--fill-2);overflow:hidden}
+.clk__tbar i{display:block;height:100%;background:var(--accent);border-radius:2px}
+.clk__tfoot{display:flex;align-items:center;gap:var(--sp-2)}
+.clk__tstate{flex:1;min-width:0;font-size:var(--fs-10);color:var(--ink-3)}
+.clk__tfoot .clk__btn{padding:5px 10px;font-size:var(--fs-11)}
+.clk__ringing{display:flex;flex-direction:column;gap:var(--sp-2)}
+.clk__ring-row{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);
+  background:rgba(244,184,96,.12);border:1px solid rgba(244,184,96,.45);color:#f4b860}
+.clk__ring-row b{flex:1;min-width:0;color:var(--ink-0);font-size:var(--fs-12)}
+.clk__ring-row .clk__btn{padding:5px 11px}
+
+/* ---- alarm: repeat days, snooze, sound ----------------------------- */
+.clk__days{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+.clk__day{width:30px;height:30px;border-radius:50%;cursor:pointer;background:var(--fill-1);border:1px solid var(--line-1);color:var(--ink-2);font-size:var(--fs-11);font-weight:650}
+.clk__day.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--accent-soft)}
+.clk__day:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.clk__daysay{margin-left:var(--sp-2);font-size:var(--fs-11);color:var(--ink-2)}
+.clk__aopts{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-2)}
+.clk__alarm-meta{font-size:var(--fs-10);color:var(--ink-3)}
+.clk__aedit{display:flex;flex-direction:column;gap:var(--sp-3);margin:-2px 0 var(--sp-2);padding:var(--sp-3) var(--sp-4);border-radius:0 0 var(--r-md) var(--r-md);background:var(--fill-0);border:1px solid var(--line-0);border-top:0}
+
+/* ---- countdown ----------------------------------------------------- */
+.clk__cdhead{display:flex;flex-direction:column;gap:var(--sp-2)}
+.clk__cdlist{display:flex;flex-direction:column;gap:var(--sp-2)}
+.clk__cd{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0)}
+.clk__cd.is-past{opacity:.6}
+.clk__cdinfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.clk__cdinfo b{font-size:var(--fs-13);font-weight:600;color:var(--ink-0)}
+.clk__cdinfo small{font-size:var(--fs-10);color:var(--ink-3)}
+.clk__cdleft{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+.clk__cdmain{font-size:var(--fs-18);font-weight:700;color:var(--ink-0)}
+.clk__cdlive{font-size:var(--fs-11);color:var(--accent-soft)}
+.clk__cdlive[hidden]{display:none}
+.clk__check{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-11);color:var(--ink-2);white-space:nowrap}
+
+/* ---- focus: what for, minutes by day and subject ------------------- */
+.clk__fwhat{margin:var(--sp-3) auto 0;width:100%;max-width:340px;text-align:center}
+.clk__fwhat[hidden]{display:none}
+.clk__fday em{font-style:normal;font-size:var(--fs-10);color:var(--ink-2);min-height:12px;font-variant-numeric:tabular-nums}
+.clk__fsubj{display:flex;flex-direction:column;gap:var(--sp-2)}
+.clk__fsrow{display:grid;grid-template-columns:minmax(80px,1fr) 2fr auto;align-items:center;gap:var(--sp-3)}
+.clk__fsname{font-size:var(--fs-12);color:var(--ink-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clk__fsbar{height:6px;border-radius:3px;background:var(--fill-1);overflow:hidden}
+.clk__fsbar i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.clk__fsrow small{font-size:var(--fs-10);color:var(--ink-2);white-space:nowrap}
+.clk__fsnone{font-size:var(--fs-11);color:var(--ink-3);line-height:1.5}
 
 @media (prefers-reduced-motion:reduce){
   .clk__tab,.clk__btn,.clk__big,.clk__city,.clk__x,.clk__ring-fg,.clk__switch,.clk__switch-knob{

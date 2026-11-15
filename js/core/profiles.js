@@ -10,12 +10,16 @@
      existed, and every name it uses stays exactly as it was:
          localStorage  staticos.state.v3 · staticos.vfs.v1 ·
                        staticos.screentime.v1 · staticos.focus.v1
-         IndexedDB     staticos · staticos-classics (Old Games' saves)
+         IndexedDB     staticos · staticos-classics (Old Games' saves) ·
+                       staticos-classics-own (the game files someone keeps)
+         Cache Storage staticos-pics (the game and anime pictures they
+                       have seen, which sw.js keeps: core/piccache.js)
      Every other profile adds ::<id> to the same names:
          localStorage  staticos.state.v3::p1a2b3c4d, …
          IndexedDB     staticos::p1a2b3c4d, staticos-classics::p1a2b3c4d
      A guest keeps …::guest in sessionStorage and IndexedDB in memory,
-     so nothing of theirs is left once they sign out or close the tab.
+     and no pictures, so nothing of theirs is left once they sign out or
+     close the tab.
 
    Nothing moves on upgrade. With one profile there is no list of
    people and no login screen; the data is read from where it was.
@@ -47,6 +51,7 @@
      list() · current() · displayName() · keysOf(id) · foreign(key)
      create · rename · setPicture · setSecret · verify · remove
      switchTo · signOut · startGuest · backupKeys · importKey
+     markUsed · hintOf · fromGuest · createFrom · idbNameOf
    ============================================================ */
 
 export const REGISTRY = 'staticos.profiles.v1';   /* localStorage, shared */
@@ -56,8 +61,9 @@ export const GUEST = 'guest';
 /* every localStorage key that holds one person's data */
 export const BASES = ['staticos.state.v3', 'staticos.vfs.v1', 'staticos.screentime.v1', 'staticos.focus.v1'];
 export const DB_BASE = 'staticos';
-/* every IndexedDB database that holds one person's data (idbName names them) */
-export const DB_BASES = [DB_BASE, 'staticos-classics'];
+/* every IndexedDB database that holds one person's data (idbName names them): the OS's,
+   Old Games' saves, and the game files a person keeps for "play your own old copy" */
+export const DB_BASES = [DB_BASE, 'staticos-classics', 'staticos-classics-own'];
 /* localStorage keys nobody owns: never in a backup, and every person may see the name */
 const CACHE_KEYS = ['staticos.bc.cache', 'staticos.pixicons.v1'];
 export const MAX = 8;
@@ -68,6 +74,7 @@ const ID_RE = /^p[a-z0-9]{8}$/;
    own, and "foo::bar" is a perfectly good name for it to pick. */
 const OWNED = /::(p[a-z0-9]{8}|guest|login)$/;
 const NAME_MAX = 24;
+const HINT_MAX = 60;
 const ITER = 200000;
 const RESTART = 'aether.restarting';               /* js/shell/boot.js: the short splash */
 
@@ -91,6 +98,7 @@ const keysIn = S => { const out = []; try { for (let i = 0; i < S.length; i++) {
 
 /* ---------- the list of people ---------------------------------------- */
 export const tidy = s => String(s ?? '').replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
+const tidyHint = s => String(s ?? '').replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, HINT_MAX);
 function normPic(v) {
   if (!v || typeof v !== 'object') return null;
   if (v.kind === 'builtin' && /^[a-z0-9-]{1,24}$/.test(v.id)) return { kind: 'builtin', id: v.id };
@@ -107,7 +115,13 @@ function normEntry(e) {
   if (!e || typeof e !== 'object') return null;
   const id = e.id === DEFAULT || ID_RE.test(e.id) ? e.id : null;
   if (!id) return null;
-  return { id, name: tidy(e.name) || 'User', pic: normPic(e.pic), lock: normLock(e.lock), created: typeof e.created === 'string' ? e.created.slice(0, 40) : '' };
+  return {
+    id, name: tidy(e.name) || 'User', pic: normPic(e.pic), lock: normLock(e.lock), created: typeof e.created === 'string' ? e.created.slice(0, 40) : '',
+    /* when this person last opened their desktop (the picker lists the latest first) and the hint
+       shown after a wrong PIN. The hint is plain text anyone can read: it is never the PIN itself. */
+    ...(Number.isFinite(e.used) && e.used > 0 ? { used: Math.floor(e.used) } : null),
+    ...(typeof e.hint === 'string' && tidyHint(e.hint) ? { hint: tidyHint(e.hint) } : null),
+  };
 }
 /* An unreadable list (edited by hand) must not orphan anyone: rebuild it
    from the data that is there. It is not written back until something changes. */
@@ -168,6 +182,8 @@ export const key = base => base + SUFFIX;
 /** This profile's IndexedDB name; null means keep it in memory (guest, login screen). */
 export const idbName = (base = DB_BASE) => (MODE === 'guest' || MODE === 'login' ? null : base + SUFFIX);
 const idbsOf = id => DB_BASES.map(b => b + suffixOf(id));
+/** The IndexedDB name person `id` keeps `base` under (for writing a backup into a new profile). */
+export const idbNameOf = (id, base = DB_BASE) => base + suffixOf(id);
 
 /* Writes stop once this profile is deleted (in another tab), a guest signs
    out, or the recovery screen in index.html resets it, so a save on the way
@@ -184,11 +200,22 @@ export const local = {
 export function freeze() { dead = true; }
 
 /* ---------- reading ---------------------------------------------------- */
-const pub = p => ({ id: p.id, name: p.name, pic: p.pic, locked: !!p.lock, created: p.created, current: p.id === ID });
+const pub = p => ({ id: p.id, name: p.name, pic: p.pic, locked: !!p.lock, created: p.created, used: p.used || 0, hasHint: !!p.hint, current: p.id === ID });
 /** Everyone on this computer (empty for a guest, who may not see them). */
 export const list = () => (MODE === 'guest' ? [] : (reg()?.profiles || []).map(pub));
 /** Everyone, for the login screen — names and pictures only. */
-export const people = () => (reg()?.profiles || []).map(pub);
+export const people = () => (reg()?.profiles || []).map(pub)
+  /* the person who used it last comes first; sort() is stable, so people never used keep their order */
+  .sort((a, b) => b.used - a.used);
+/** The hint this person left for a wrong PIN ('' when there is none). */
+export const hintOf = id => reg()?.profiles.find(p => p.id === id)?.hint || '';
+/** This tab's person opened their desktop just now (at most once a minute: it is one write to the list). */
+export function markUsed(id = ID, now = Date.now()) {
+  if ((MODE !== 'profile' && MODE !== 'single') || !reg()) return;
+  const p = readRegistry()?.profiles.find(x => x.id === id);
+  if (!p || now - (p.used || 0) < 60000) return;
+  try { edit(id, q => ({ ...q, used: now })); } catch (e) { /* the list changed under us */ }
+}
 export function current() {
   if (MODE === 'guest') return { id: GUEST, name: 'Guest', pic: null, locked: false, guest: true, current: true };
   const p = reg()?.profiles.find(x => x.id === ID);
@@ -255,7 +282,7 @@ const signedIn = () => { if (MODE === 'guest' || MODE === 'login') throw new Err
 function base(first = {}) {
   const r = readRegistry();
   if (r && r.profiles.length) return r.profiles;
-  return [{ id: DEFAULT, name: tidy(first.name) || 'Me', pic: normPic(first.pic), lock: null, created: new Date().toISOString() }];
+  return [{ id: DEFAULT, name: tidy(first.name) || 'Me', pic: normPic(first.pic), lock: null, created: new Date().toISOString(), used: Date.now() }];
 }
 const nameTaken = (list, name, except) => list.some(p => p.id !== except && p.name.toLowerCase() === name.toLowerCase());
 
@@ -296,11 +323,13 @@ export function setPicture(id, pic) {
   return edit(id, q => ({ ...q, pic: want }));
 }
 /** Set, change (secret) or remove (null) a lock. `old` must open the current one. */
-export async function setSecret(id, secret, old = '') {
+export async function setSecret(id, secret, old = '', hint = '') {
   signedIn();
   if (!(await verify(id, old))) throw new Error('The current PIN or password is not right.');
   const lock = secret ? await makeLock(secret) : null;
-  return edit(id, p => ({ ...p, lock }));
+  const h = lock ? tidyHint(hint) : '';
+  if (h && secret && h.toLowerCase().includes(String(secret).toLowerCase())) throw new Error('The hint has the PIN in it. Anyone can read a hint: write a reminder, not the PIN.');
+  return edit(id, p => { const { hint: drop, ...rest } = p; return { ...rest, lock, ...(h ? { hint: h } : null) }; });
 }
 
 function deleteDb(name) {
@@ -327,6 +356,8 @@ export async function remove(id, secret = '') {
   const sweep = () => { for (const k of keysOf(id)) { try { LS.removeItem(k); } catch (e) { /* keep going */ } } };
   sweep();
   await Promise.all(idbsOf(id).map(deleteDb));
+  /* the game and anime pictures they had seen (js/core/piccache.js, kept by sw.js) */
+  try { if (typeof caches !== 'undefined') await caches.delete(idbNameOf(id, 'staticos-pics')); } catch (e) { /* no Cache Storage here */ }
   /* a save that was already on its way from that tab */
   await new Promise(r => setTimeout(r, 400));
   sweep();
@@ -345,6 +376,7 @@ export async function switchTo(id, secret = '') {
   if (!reg()?.profiles.some(p => p.id === id)) throw new Error('That person is not on this computer any more.');
   if (!(await verify(id, secret))) throw new Error('That PIN or password is not right.');
   leave();
+  try { edit(id, p => ({ ...p, used: Date.now() })); } catch (e) { /* the list changed under us */ }
   SS.setItem(SESSION, JSON.stringify({ id }));
   try { SS.setItem(RESTART, '1'); } catch (e) { /* the full splash, then */ }
   location.reload();
@@ -355,6 +387,8 @@ export function signOut() {
   SS.removeItem(SESSION);
   location.reload();
 }
+/** Has this guest made anything worth keeping (a file saved to their session)? */
+export const guestHasData = () => MODE === 'guest' && SS.getItem(BASES[1] + SEP + GUEST) !== null;
 /** A guest session in this tab: sessionStorage only, gone when it ends. */
 export function startGuest() {
   wipeGuest();
@@ -362,6 +396,52 @@ export function startGuest() {
   SS.setItem(BASES[0] + SEP + GUEST, JSON.stringify({ session: { onboarded: true }, prefs: { bootSkip: true } }));
   SS.setItem(SESSION, JSON.stringify({ guest: true }));
   try { SS.setItem(RESTART, '1'); } catch (e) { /* full splash */ }
+  location.reload();
+}
+
+/** A free name: `name`, or `name (2)`, `name (3)`… when someone already has it. */
+function freeName(list0, name) {
+  const n = tidy(name) || 'User';
+  if (!nameTaken(list0, n)) return n;
+  for (let i = 2; i < 99; i++) {
+    const tail = ` (${i})`;
+    const c = n.slice(0, NAME_MAX - tail.length) + tail;
+    if (!nameTaken(list0, c)) return c;
+  }
+  return n;
+}
+/** Add a person who starts with data of their own: `files` is a backup's localStorage (plain names).
+    Only this module's per-person keys are written, and only under the new person's name. */
+export async function createFrom({ name, files = {}, first } = {}) {
+  signedIn();
+  const list0 = base(first);
+  const made = await create({ name: freeName(list0, name), first });
+  for (const [k, v] of Object.entries(files)) if (BASES.includes(k) && typeof v === 'string') LS.setItem(k + SEP + made.id, v);
+  return made;
+}
+/** Keep a guest session: the guest's settings and files (what sessionStorage holds) become a new
+    profile, and this tab signs in as them. What a guest keeps in memory only — projects, pictures,
+    clips in the database — is not carried over; the sheet says so. */
+export async function fromGuest({ name, secret = '', hint = '', first } = {}) {
+  if (MODE !== 'guest') throw new Error('Only a guest session can be kept.');
+  const n = tidy(name);
+  if (!n) throw new Error('Give the new profile a name.');
+  const lock = secret ? await makeLock(secret) : null;
+  const h = lock ? tidyHint(hint) : '';
+  if (h && h.toLowerCase().includes(String(secret).toLowerCase())) throw new Error('The hint has the PIN in it. Anyone can read a hint: write a reminder, not the PIN.');
+  const list0 = base(first || { name: 'Me' });
+  if (nameTaken(list0, n)) throw new Error('Someone on this computer already has that name.');
+  if (list0.length >= MAX) throw new Error(`There is room for ${MAX} people on this computer.`);
+  let id;
+  do { id = 'p' + rand(8); } while (list0.some(p => p.id === id) || keysOf(id).length);
+  for (const b of BASES) {
+    const v = SS.getItem(b + SEP + GUEST);
+    if (v !== null) LS.setItem(b + SEP + id, v);
+  }
+  writeRegistry([...list0, { id, name: n, pic: null, lock, created: new Date().toISOString(), used: Date.now(), ...(h ? { hint: h } : null) }]);
+  leave();
+  SS.setItem(SESSION, JSON.stringify({ id }));
+  try { SS.setItem(RESTART, '1'); } catch (e) { /* the full splash, then */ }
   location.reload();
 }
 
@@ -405,5 +485,5 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 export default {
   MODE, ID, REGISTRY, SESSION, DEFAULT, GUEST, BASES, MAX, key, idbName, local, stopped, freeze, list, people, current, displayName,
   asksAtStart, keysOf, foreign, checkSecret, verify, create, rename, setPicture, setSecret, remove, switchTo, signOut,
-  startGuest, backupKeys, importKey, tidy,
+  startGuest, backupKeys, importKey, tidy, markUsed, hintOf, fromGuest, createFrom, idbNameOf, guestHasData,
 };

@@ -2,7 +2,7 @@
    anime.js — the Static anime + manga library.
 
    ONE implementation serves both routes: ctx.mediaKind is
-   'anime' (7,963 MyAnimeList titles) or 'manga' (1,200
+   'anime' (the MyAnimeList titles) or 'manga' (the
    MangaDex titles). All data comes from providers.bigCatalogue,
    which fetches its JSON once and then answers from memory — so
    the first paint is a skeleton and every filter, page or view
@@ -27,11 +27,15 @@
    ============================================================ */
 
 import { BRAND } from './brand.js';
+import { COUNTS } from './counts.js';
+import { useArtButton } from './useart.js';
+import { bookFiles, matchBooks } from '../core/mangafind.js';
 
 const PER_PAGE = 36;      /* grid page                                   */
 const GENRE_CHIPS = 14;   /* chips in the filter bar                     */
 const GENRE_RAILS = 10;   /* per-genre rows on the home page             */
 const RAIL_LEN = 20;      /* cards per row — the rest is behind "See all"*/
+const EAGER_ROWS = 2;     /* home rows drawn at once, before any scroll    */
 const HERO_LEN = 5;       /* slides in the hero deck                     */
 const HERO_MS = 7000;
 const EP_PAGE = 60;       /* episodes per page; One Piece has 1,100+     */
@@ -56,6 +60,18 @@ const ADDED_BURST = 240;
                             (src 'player'). Static Watch reads both.
      portal.anime.seen      {kind:"<short ids>"} baseline for "new"
      portal.anime.added     {kind:[{id,at}]} what that baseline found
+     portal.anime.status    {"anime:id":{s,at}} your own status for a title:
+                            watching | plan | completed | dropped
+     portal.anime.mine      {"anime:id":{score,note,at}} YOUR 1-10 score and
+                            note, never mixed into the catalogue's MAL score
+     portal.anime.airday    {"anime:id":{day,time}} the weekday (0 = Sunday)
+                            and time YOU chose for a show that is still
+                            airing; the weekly reminders for them go through
+                            js/core/automations.js (src 'anime'). The
+                            catalogue has no air dates, so none is invented.
+
+   An episode ticked on its own is kept in `seen` ("1-12,15") next to `ep`
+   (the highest one) in portal.anime.progress; without `seen`, it is 1..ep.
 
    `portal` is in store.js's PERSIST list; `Static` was not, so a saved
    title was silently lost on the next reload.                        */
@@ -67,13 +83,33 @@ const RESUME_MAX = 120;   /* titles whose place is remembered            */
 const RESUME_EVERY = 5000;/* ms between position writes while one plays  */
 const SEEN_KEY = 'portal.anime.seen';
 const ADDED_KEY = 'portal.anime.added';
+const STATUS_KEY = 'portal.anime.status';
+const MINE_KEY = 'portal.anime.mine';
+const AIR_KEY = 'portal.anime.airday';
+const NOTE_MAX = 500;
+
+/** Your own status for a title (not the catalogue's airing status). */
+const STATUSES = [
+  ['watching', 'Watching', 'play'],
+  ['plan', 'Plan to watch', 'bookmark'],
+  ['completed', 'Completed', 'check-circle'],
+  ['dropped', 'Dropped', 'x'],
+];
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];       /* a week that starts on Monday */
+const AIR_TIME = '18:00';
+/** Every filter cleared (module level: the view's functions are hoisted above its const). */
+const NO_FILTER = { q: '', genre: '', year: '', status: '', season: '', type: '', rating: '', band: '' };
+
+/** Shown where a title has no player. */
+const NOT_HERE = 'Static keeps the catalogue, not the video. Watch it on an official streaming service.';
 
 /* Per-kind wording — the only place this file branches on kind. */
 const KINDS = {
   anime: {
     kind: 'anime', label: 'Anime', icon: 'star',
     other: 'manga', otherLabel: 'Manga', otherIcon: 'file-text',
-    expect: 7963, weight: '7.9 MB',
+    expect: COUNTS.anime, weight: '7.9 MB',
     unit: 'eps', unitLong: 'Episodes', unitOne: 'Episode', countKey: 'episodes',
     live: 'Currently Airing', kick: 'AIRING NOW',
     play: 'Watch', watched: 'Watched', cardIcon: 'play', playIcon: 'play', cardFill: true,
@@ -83,7 +119,7 @@ const KINDS = {
   manga: {
     kind: 'manga', label: 'Manga', icon: 'file-text',
     other: 'anime', otherLabel: 'Anime', otherIcon: 'star',
-    expect: 1200, weight: '1.4 MB',
+    expect: COUNTS.manga, weight: '1.4 MB',
     unit: 'ch', unitLong: 'Chapters', unitOne: 'Chapter', countKey: 'chapters',
     live: 'Ongoing', kick: 'ONGOING NOW',
     play: 'Read', watched: 'Read', cardIcon: 'info', playIcon: 'file-text', cardFill: false,
@@ -97,8 +133,29 @@ const VIEWS = [
   ['', 'Home', 'home'],
   ['browse', 'Browse', 'grid'],
   ['watchlist', 'Watchlist', 'bookmark'],
+  ['airing', 'Airing', 'calendar'],
   ['history', 'History', 'clock'],
 ];
+/** The Airing tracker follows episodes coming out, so only anime has it. */
+const viewsOf = K => VIEWS.filter(v => v[0] !== 'airing' || K.kind === 'anime');
+
+/** The official services' own search pages. StaticOS can't know which one carries a
+    title, so each link only searches; nothing is fetched and nothing is scraped. */
+const SERVICES = [
+  ['Crunchyroll', t => `https://www.crunchyroll.com/search?q=${t}`],
+  ['Netflix', t => `https://www.netflix.com/search?q=${t}`],
+  ['Hulu', t => `https://www.hulu.com/search?q=${t}`],
+  ['HIDIVE', t => `https://www.hidive.com/search?q=${t}`],
+  ['Prime Video', t => `https://www.amazon.com/s?k=${t}&i=instant-video`],
+];
+/** [{service, label, url}] for one title: its search on each service, then its MyAnimeList page. */
+export function watchLinks(rec) {
+  if (!rec || !rec.title) return [];
+  const q = encodeURIComponent(rec.title);
+  const out = SERVICES.map(([name, url]) => ({ service: name, label: `Search on ${name}`, url: url(q) }));
+  if (rec.malId) out.push({ service: 'MyAnimeList', label: 'MyAnimeList page', url: `https://myanimelist.net/anime/${encodeURIComponent(rec.malId)}` });
+  return out;
+}
 
 /** The external ids providers.resolve() hands back, in table order. */
 const ID_FIELDS = [
@@ -146,7 +203,7 @@ function paramsOf(url) {
   const out = {};
   try {
     const sp = new URLSearchParams(raw.slice(i + 1));
-    for (const k of ['q', 'genre', 'year', 'status', 'sort', 'page', 'view']) {
+    for (const k of ['q', 'genre', 'year', 'status', 'season', 'type', 'rating', 'band', 'sort', 'page', 'view']) {
       const v = sp.get(k);
       if (v) out[k] = v;
     }
@@ -277,7 +334,7 @@ function watchStuck(bar, sentinel, offset) {
 /**
  * Build a row's cards only once it is near the viewport. Nineteen rails of
  * twenty posters is 380 cards; mounting them all up front is what makes a
- * 7,963-title library feel slow, and the user is only ever looking at two.
+ * full library feel slow, and the user is only ever looking at two.
  */
 function lazyMount(el, life, fn) {
   let done = false;
@@ -401,6 +458,148 @@ function setProgress(api, kind, id, ep, of) {
     return;
   }
   api.store.set(PROG_KEY, { ...all, [key]: { ep, of: of || 0, at: Date.now() } });
+}
+
+/** Episodes ticked, as [[from, to], ...]. Without a `seen` list (older saves, and
+    Static Watch's own marks) it is 1..ep. A `seen` that no longer ends at `ep`
+    was overwritten by someone else, so it is ignored. */
+function seenRanges(p) {
+  const top = p ? Math.floor(Number(p.ep)) : 0;
+  if (!(top > 0)) return [];
+  if (typeof p.seen === 'string') {
+    const out = [];
+    for (const part of p.seen.split(',')) {
+      const m = /^(\d+)(?:-(\d+))?$/.exec(part);
+      if (!m) continue;
+      const a = Number(m[1]), b = m[2] ? Number(m[2]) : a;
+      if (a >= 1 && b >= a && b <= 100000) out.push([a, b]);
+    }
+    if (out.length && Math.max(...out.map(r => r[1])) === top) return out;
+  }
+  return [[1, top]];
+}
+const seenCount = p => seenRanges(p).reduce((n, r) => n + (r[1] - r[0] + 1), 0);
+const seenHas = (p, i) => seenRanges(p).some(r => i >= r[0] && i <= r[1]);
+
+/** Tick (on) or untick every episode from `a` to `b`. */
+function tickEps(api, kind, id, of, a, b, on) {
+  const set = new Set();
+  for (const [x, y] of seenRanges(progressOf(api.store, kind, id))) for (let i = x; i <= y; i++) set.add(i);
+  for (let i = Math.min(a, b); i <= Math.max(a, b); i++) { if (on) set.add(i); else set.delete(i); }
+  const list = [...set].sort((x, y) => x - y);
+  if (!list.length) { setProgress(api, kind, id, 0); return; }
+  const rs = [];
+  for (const i of list) {
+    const last = rs[rs.length - 1];
+    if (last && i === last[1] + 1) last[1] = i; else rs.push([i, i]);
+  }
+  const top = list[list.length - 1];
+  const rec = { ep: top, of: of || 0, at: Date.now() };
+  if (!(rs.length === 1 && rs[0][0] === 1)) rec.seen = rs.map(r => (r[0] === r[1] ? String(r[0]) : `${r[0]}-${r[1]}`)).join(',');
+  api.store.set(PROG_KEY, { ...progressAll(api.store), [watchToken(kind, id)]: rec });
+}
+
+/* ---- your status, score and note ---------------------------------- */
+const objOf = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+const statusAll = store => objOf(store.get(STATUS_KEY, {}));
+function statusOf(store, kind, id) {
+  const r = statusAll(store)[watchToken(kind, id)];
+  return r && STATUSES.some(x => x[0] === r.s) ? r.s : '';
+}
+const statusLabel = s => (STATUSES.find(x => x[0] === s) || [])[1] || '';
+/** Titles that carry a status, newest first. */
+function statusIds(store, kind, only) {
+  const pre = `${kind}:`;
+  return Object.entries(statusAll(store))
+    .filter(([k, v]) => k.startsWith(pre) && v && STATUSES.some(x => x[0] === v.s) && (!only || v.s === only))
+    .sort((a, b) => (b[1].at || 0) - (a[1].at || 0))
+    .map(([k]) => k.slice(pre.length));
+}
+function setStatus(api, kind, id, s) {
+  const all = statusAll(api.store);
+  const key = watchToken(kind, id);
+  const next = { ...all };
+  if (s && STATUSES.some(x => x[0] === s)) next[key] = { s, at: Date.now() }; else delete next[key];
+  api.store.set(STATUS_KEY, next);
+}
+/** Everything in the library view: saved titles plus titles with a status, newest first. */
+function libraryIds(store, kind) {
+  const ids = watchIds(store, kind);
+  for (const id of statusIds(store, kind)) if (!ids.includes(id)) ids.push(id);
+  return ids;
+}
+
+const mineAll = store => objOf(store.get(MINE_KEY, {}));
+const mineOf = (store, kind, id) => mineAll(store)[watchToken(kind, id)] || null;
+/** score 1-10 or 0 to clear; note a string. Neither left and the entry goes. */
+function setMine(api, kind, id, patch) {
+  const all = mineAll(api.store);
+  const key = watchToken(kind, id);
+  const cur = all[key] || {};
+  const score = 'score' in patch ? Math.max(0, Math.min(10, Math.round(Number(patch.score) || 0))) : (cur.score || 0);
+  const note = 'note' in patch ? String(patch.note || '').slice(0, NOTE_MAX) : (cur.note || '');
+  const next = { ...all };
+  if (!score && !note.trim()) delete next[key];
+  else next[key] = { ...(score ? { score } : {}), ...(note.trim() ? { note } : {}), at: Date.now() };
+  api.store.set(MINE_KEY, next);
+}
+
+/* ---- airing day --------------------------------------------------- */
+const airAll = store => objOf(store.get(AIR_KEY, {}));
+function airOf(store, kind, id) {
+  const r = airAll(store)[watchToken(kind, id)];
+  return r && Number.isInteger(r.day) && r.day >= 0 && r.day <= 6
+    ? { day: r.day, time: /^\d\d:\d\d$/.test(r.time || '') ? r.time : AIR_TIME } : null;
+}
+function setAir(api, kind, id, patch) {
+  const all = airAll(api.store);
+  const key = watchToken(kind, id);
+  const next = { ...all };
+  if (patch === null || patch.day === '' || patch.day === null) delete next[key];
+  else {
+    const cur = airOf(api.store, kind, id) || { day: 0, time: AIR_TIME };
+    const day = 'day' in patch ? Number(patch.day) : cur.day;
+    const time = 'time' in patch && /^\d\d:\d\d$/.test(patch.time) ? patch.time : cur.time;
+    if (!(day >= 0 && day <= 6)) return;
+    next[key] = { day, time };
+  }
+  api.store.set(AIR_KEY, next);
+}
+/** The next moment that falls on `day` at `time`, on this computer's clock. */
+function nextDay(day, time, now = new Date()) {
+  const [hh, mm] = time.split(':').map(Number);
+  for (let add = 0; add < 8; add++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + add, hh, mm);
+    if (d.getDay() === day && d.getTime() > now.getTime()) return d;
+  }
+  return now;
+}
+
+/** Make the weekly reminders match the Airing tracker: one for each title that is
+    on your Watchlist, listed by the catalogue as still airing, and has a day you set.
+    The reminder engine (core/automations.js) owns the clock; this only says what is wanted. */
+async function syncAiring(api, BC, K) {
+  if (K.kind !== 'anime' || !BC.isLoaded(K.kind)) return;
+  try {
+    const AM = await import('../core/automations.js');
+    const have = new Map(AM.reminders().filter(r => r.src === 'anime').map(r => [r.ref, r]));
+    const want = [];
+    for (const id of watchIds(api.store, K.kind)) {
+      const air = airOf(api.store, K.kind, id);
+      const rec = air ? BC.byId(id, K.kind) : null;
+      if (!rec || rec.status !== K.live) continue;
+      const cur = have.get(id);
+      const keep = cur && cur.repeat === 'weekly' && cur.time === air.time && cur.date
+        && new Date(`${cur.date}T00:00:00`).getDay() === air.day;
+      want.push({
+        ref: id, repeat: 'weekly', time: air.time,
+        date: keep ? cur.date : AM.ymd(nextDay(air.day, air.time)),
+        text: `${rec.title}: your weekly watch day`,
+        sub: 'Static Anime · a day you chose, not an air date',
+      });
+    }
+    AM.syncSourceReminders('anime', want);
+  } catch (e) { console.warn('[anime] reminders', e); }
 }
 
 /* ---- resume -------------------------------------------------------
@@ -542,7 +741,7 @@ function continueList(store, kind) {
 /* ---- "Recently added" ---------------------------------------------
    The catalogue has no added-at date, so the only honest source for this
    rail is a diff against what this browser saw last time. The baseline is
-   a comma-joined list of short ids (~32 KB for 7,963 anime); it is only
+   a comma-joined list of short ids (~32 KB for the whole catalogue); it is only
    rewritten when it actually changes. With no baseline — a first visit —
    there is no rail at all, rather than a row of "new" titles that are not. */
 function recentlyAdded(api, BC, kind, rows) {
@@ -776,13 +975,15 @@ function posterCard(ctx, rec, K, opts) {
   art.appendChild(h('div.cx-card__play', h('i', icon(K.cardIcon, { fill: K.cardFill }))));
 
   /* progress is only ever what the user marked, and only when it is real */
+  const prog = o.progress || (K.kind === 'anime' ? progressOf(api.store, K.kind, rec.id) : null);
   let progLine = '';
-  if (o.progress && o.progress.ep > 0) {
-    const of = o.progress.of || n || 0;
-    progLine = of ? `${K.unitOne} ${nf(o.progress.ep)} of ${nf(of)}`
-      : `${K.unitOne} ${nf(o.progress.ep)}`;
+  if (prog && prog.ep > 0) {
+    const of = prog.of || n || 0;
+    const done = K.kind === 'anime' ? seenCount(prog) : prog.ep;
+    progLine = K.kind !== 'anime' ? (of ? `${K.unitOne} ${nf(done)} of ${nf(of)}` : `${K.unitOne} ${nf(done)}`)
+      : of ? `${nf(done)} of ${nf(of)} ${K.watched.toLowerCase()}` : `${nf(done)} ${K.watched.toLowerCase()}`;
     if (of) {
-      const pct = Math.max(2, Math.min(100, Math.round((o.progress.ep / of) * 100)));
+      const pct = Math.max(2, Math.min(100, Math.round((done / of) * 100)));
       art.appendChild(h('div.cxa-card__prog', { 'aria-hidden': 'true' },
         h('u', { style: { width: `${pct}%` } })));
     }
@@ -791,8 +992,9 @@ function posterCard(ctx, rec, K, opts) {
   /* "1 eps" under a film is technically the count and still reads as a
      mistake — a one-part title says what it is instead */
   const count = n ? (n === 1 ? (rec.mediaType || `1 ${K.unit}`) : `${nf(n)} ${K.unit}`) : null;
-  const meta = o.meta || progLine
-    || [rec.year || null, count].filter(Boolean).join(' · ');
+  const mine = K.kind === 'anime' ? statusLabel(statusOf(api.store, K.kind, rec.id)) : '';
+  const meta = [mine || null, o.meta || progLine
+    || [rec.year || null, count].filter(Boolean).join(' · ')].filter(Boolean).join(' · ');
 
   return h('button.cx-card.cx-card--poster', {
     type: 'button', title: rec.title,
@@ -816,6 +1018,15 @@ function cardMenu(ctx, rec, K, e) {
     { label: inWatch(api.store, K.kind, rec.id) ? 'Remove from Watchlist' : 'Add to Watchlist',
       icon: 'bookmark', onClick: () => toggleWatch(api, rec, K.kind) },
   ];
+  if (K.kind === 'anime') {
+    const cur = statusOf(api.store, K.kind, rec.id);
+    items.push('-');
+    for (const [v, label, ic] of STATUSES) {
+      items.push({ label: cur === v ? `${label} (clear)` : `Mark ${label}`, icon: cur === v ? 'check' : ic,
+        onClick: () => setStatus(api, K.kind, rec.id, cur === v ? '' : v) });
+    }
+    items.push('-');
+  }
   if (prog && prog.ep) {
     items.push({
       label: `Forget progress (${K.unitOne.toLowerCase()} ${nf(prog.ep)})`, icon: 'rotate-ccw',
@@ -846,9 +1057,14 @@ export function buildAnime(ctx) {
     genre: p.genre || '',
     year: p.year || '',
     status: p.status || '',
+    season: p.season || '',
+    type: p.type || '',
+    rating: p.rating || '',
+    band: p.band || '',
     sort: p.sort || 'score',
     page: Math.max(1, parseInt(p.page, 10) || 1),
-    view: VIEWS.some(v => v[0] === wanted) ? wanted : '',
+    view: viewsOf(K).some(v => v[0] === wanted) ? wanted : '',
+    lib: '',                           /* Watchlist view: which of your statuses to show */
     total: 0,
   };
   let bar = null;
@@ -899,6 +1115,7 @@ export function buildAnime(ctx) {
       paintBar();
       paintBody();
       watchStore();
+      syncAiring(api, BC, K);
       claimSubtitle(ctx, life, `${nf(S.total)} ${K.label.toLowerCase()} titles`);
     } catch (err) {
       if (life.dead) return;
@@ -921,6 +1138,7 @@ export function buildAnime(ctx) {
       continueList(api.store, K.kind).length,
       watchIds(api.store, K.kind).length,
       historyFor(api.store, K.kind).length,
+      finishedRecs().length,
     ].map(n => (n > 0 ? '1' : '0')).join('');
   }
 
@@ -933,7 +1151,8 @@ export function buildAnime(ctx) {
     subscribed = true;
     const bump = fmt.debounce(() => {
       if (life.dead) return;
-      if (S.view === 'watchlist' || S.view === 'history') { paintBody(); return; }
+      syncAiring(api, BC, K);
+      if (S.view === 'watchlist' || S.view === 'history' || S.view === 'airing') { paintBody(); return; }
       if (inBrowse() || S.view !== '') { syncViews(); return; }
       if (homeShape() !== shape) { paintBody(); syncViews(); return; }
       for (const refresh of dynamic.values()) refresh();
@@ -942,12 +1161,28 @@ export function buildAnime(ctx) {
     life.add(api.store.sub(WATCH_KEY, bump));
     life.add(api.store.sub(PROG_KEY, bump));
     life.add(api.store.sub(HIST_KEY, bump));
+    life.add(api.store.sub(STATUS_KEY, bump));
+    life.add(api.store.sub(AIR_KEY, bump));
   }
 
   /* declared as a function, not a const: everything below `return root` is
      only reachable by hoisting, and a const there would stay in its TDZ. */
-  function isFiltered() { return !!(S.q || S.genre || S.year || S.status); }
+  function isFiltered() { return !!(S.q || S.genre || S.year || S.status || S.season || S.type || S.rating || S.band); }
   function inBrowse() { return S.view === 'browse' || (S.view === '' && isFiltered()); }
+
+  /** Titles you finished: marked Completed, or every episode ticked. */
+  function finishedRecs() {
+    if (K.kind !== 'anime') return [];
+    const ids = new Set(statusIds(api.store, K.kind, 'completed'));
+    for (const [k, v] of Object.entries(progressAll(api.store))) {
+      if (k.startsWith('anime:') && v && v.of && seenCount(v) >= v.of) ids.add(k.slice(6));
+    }
+    return BC.byIds([...ids], K.kind);
+  }
+  /** Watchlist titles the catalogue lists as still airing, newest saved first. */
+  function airingTitles() {
+    return BC.byIds(watchIds(api.store, K.kind), K.kind).filter(r => r.status === K.live);
+  }
 
   /* ---------------- hero deck ---------------- */
   function paintHero() {
@@ -1072,7 +1307,7 @@ export function buildAnime(ctx) {
   function paintBar() {
     const views = h('div.cx__nav.cxa-views', { role: 'group', 'aria-label': `${K.label} library` });
     const viewBtns = new Map();
-    for (const [id, label, ic] of VIEWS) {
+    for (const [id, label, ic] of viewsOf(K)) {
       const b = h('button', { type: 'button', onclick: () => setView(id) },
         icon(ic), h('span', { text: label }));
       const tally = h('span.cxa-views__n');
@@ -1128,9 +1363,26 @@ export function buildAnime(ctx) {
     }, K.statuses.map(([v, label]) => h('option', { value: v, text: label }))) : null;
     if (statusSel) statusSel.value = S.status;
 
+    /* season, type, age rating and score band: more ways to cut the same catalogue */
+    const extras = [];
+    const extra = (key, label, opts) => {
+      const el = h('select.select', {
+        'aria-label': label, dataset: { filter: key }, onchange: e => setFilter({ [key]: e.target.value }),
+      }, opts.map(([v, t]) => h('option', { value: v, text: t })));
+      el.value = S[key];
+      extras.push(el);
+      return el;
+    };
+    if (K.seasons) {
+      extra('season', 'Filter by season', [['', 'Any season'], ...BC.SEASONS.map(x => [x, cap(x)])]);
+      extra('type', 'Filter by type', [['', 'Any type'], ...BC.TYPES.map(x => [x, x])]);
+      extra('rating', 'Filter by age rating', [['', 'Any age rating'], ...BC.RATINGS]);
+    }
+    extra('band', 'Filter by score band', [['', 'Any score'], ...[9, 8, 7, 6, 5].map(b => [String(b), `${b}.0 – ${b}.9`])]);
+
     const reset = h('button.btn.btn--ghost.btn--sm', {
       type: 'button',
-      onclick: () => setFilter({ q: '', genre: '', year: '', status: '', sort: 'score' }),
+      onclick: () => setFilter({ ...NO_FILTER, sort: 'score' }),
     }, icon('x', { size: 12 }), h('span', { text: 'Reset' }));
 
     const toggle = h('div.cx__nav', { role: 'group', 'aria-label': 'Catalogue' },
@@ -1143,7 +1395,7 @@ export function buildAnime(ctx) {
       }, icon(K.otherIcon), h('span', { text: K.otherLabel })));
 
     const el = h('div.cx__bar.cxa-bar',
-      views, cats, find, yearSel, sortSel, statusSel, reset, toggle);
+      views, cats, find, yearSel, sortSel, statusSel, ...extras, reset, toggle);
     barSlot.appendChild(el);
     /* the strip and the bar are both sticky at top:0 — park the bar under it,
        and give it a backdrop once it gets there */
@@ -1154,7 +1406,7 @@ export function buildAnime(ctx) {
     stopStuck = watchStuck(el, sentinel, strut);
     life.add(stopStuck);
 
-    bar = { catBtns, viewBtns, input, yearSel, sortSel, statusSel, reset };
+    bar = { catBtns, viewBtns, input, yearSel, sortSel, statusSel, extras, reset };
     syncBar();
   }
 
@@ -1169,6 +1421,7 @@ export function buildAnime(ctx) {
     bar.yearSel.value = S.year;
     bar.sortSel.value = S.sort;
     if (bar.statusSel) bar.statusSel.value = S.status;
+    for (const el of bar.extras) el.value = S[el.dataset.filter];
     bar.reset.classList.toggle('hidden', !isFiltered());
     syncViews();
   }
@@ -1176,7 +1429,8 @@ export function buildAnime(ctx) {
   function syncViews() {
     if (!bar) return;
     const counts = {
-      watchlist: watchIds(api.store, K.kind).length,
+      watchlist: libraryIds(api.store, K.kind).length,
+      airing: K.kind === 'anime' ? airingTitles().length : 0,
       history: historyFor(api.store, K.kind).length,
     };
     const current = inBrowse() ? 'browse' : S.view;
@@ -1190,14 +1444,15 @@ export function buildAnime(ctx) {
 
   function setView(view) {
     if (life.dead) return;
-    const next = VIEWS.some(v => v[0] === view) ? view : '';
+    const next = viewsOf(K).some(v => v[0] === view) ? view : '';
     if (next === (inBrowse() ? 'browse' : S.view)) { syncViews(); return; }
     S.view = next;
     S.page = 1;
     /* every view but Browse is a list of its own — a filter left over from
        Browse would silently hide half the watchlist, and would keep the home
        page showing a grid when the user just asked for the rails back */
-    if (next !== 'browse') { S.q = ''; S.genre = ''; S.year = ''; S.status = ''; }
+    if (next !== 'browse') Object.assign(S, NO_FILTER);
+    S.lib = '';
     syncBar();
     paintHero();
     paintBody();
@@ -1221,7 +1476,7 @@ export function buildAnime(ctx) {
   /** The single entry point for filter changes, so state and chrome never drift. */
   function setFilter(patch, keepFocus) {
     /* the search box is debounced, so its last keystroke can land after the
-       page is gone — do not re-query 7,963 rows into a detached tree */
+       page is gone — do not re-query every row into a detached tree */
     if (life.dead) return;
     /* read before the patch lands: the hero only has to be repainted when
        this change is what moves the page between the rails and the grid */
@@ -1246,6 +1501,7 @@ export function buildAnime(ctx) {
     api.clear(body);
     dynamic.clear();
     if (S.view === 'watchlist') paintWatchlist();
+    else if (S.view === 'airing') paintAiring();
     else if (S.view === 'history') paintHistory();
     else if (inBrowse()) paintGrid();
     else paintHome();
@@ -1271,7 +1527,7 @@ export function buildAnime(ctx) {
       return;
     }
 
-    for (const r of homeRails(rows)) {
+    homeRails(rows).forEach((r, i) => {
       const sec = section(api, {
         icon: r.icon, title: r.title, count: r.count, note: r.note,
         tools: r.seeAll ? seeAllBtn(api, r.seeAllLabel, r.seeAll) : null,
@@ -1292,9 +1548,13 @@ export function buildAnime(ctx) {
           if (tally && r.countOf) tally.textContent = r.countOf();
         });
       }
-      /* the first rows are on screen already; everything below waits */
-      if (r.eager) fill(); else lazyMount(slot, life, fill);
-    }
+      /* the first rows are on screen already; everything below waits. Which
+         rows come first depends on what is saved (no Continue or Watchlist
+         row puts "More like what you finished" at the top), so the top two
+         are drawn at once whatever they are, not left as skeletons until
+         the observer's first frame */
+      if (r.eager || i < EAGER_ROWS) fill(); else lazyMount(slot, life, fill);
+    });
     body.appendChild(footer());
   }
 
@@ -1344,6 +1604,21 @@ export function buildAnime(ctx) {
         cards: cardsOf(wlItems),
         seeAll: () => setView('watchlist'),
       });
+    }
+
+    /* -- more like what you finished: counted off your own Completed titles -- */
+    const fin = finishedRecs();
+    if (fin.length) {
+      const skip = [...libraryIds(api.store, K.kind), ...statusIds(api.store, K.kind, 'dropped')];
+      const like = BC.likeFinished(fin, K.kind, { skip, limit: RAIL_LEN });
+      if (like.items.length) {
+        push({
+          id: 'likefinished', icon: 'sparkles', title: 'More like what you finished',
+          note: `from the genres of ${plural(like.from, 'title')} you completed (mostly ${like.genres.join(', ')}) — a genre match, not a prediction`,
+          count: plural(like.items.length, 'title'),
+          items: () => like.items, cards: cardsOf(() => like.items),
+        });
+      }
     }
 
     /* -- jump back in -- */
@@ -1489,6 +1764,10 @@ export function buildAnime(ctx) {
     if (S.genre) bits.push(S.genre);
     if (S.year) bits.push(S.year);
     if (S.status) bits.push(S.status);
+    if (S.season) bits.push(cap(S.season));
+    if (S.type) bits.push(S.type);
+    if (S.rating) bits.push(S.rating);
+    if (S.band !== '' && Number.isFinite(Number(S.band))) bits.push(`${S.band}.0 – ${S.band}.9`);
     if (!bits.length) bits.push(`All ${K.label.toLowerCase()}`);
     const sort = BC.SORT_OPTIONS.find(o => o.id === S.sort);
     return { title: bits.join(' · '), sort: sort ? sortLabel(sort) : 'Top rated' };
@@ -1497,6 +1776,7 @@ export function buildAnime(ctx) {
   function paintGrid() {
     const res = BC.query({
       kind: K.kind, q: S.q, genre: S.genre, year: S.year, status: S.status,
+      season: S.season, type: S.type, rating: S.rating, band: S.band,
       sort: S.sort, page: S.page, perPage: PER_PAGE,
     });
     S.page = res.page;
@@ -1515,7 +1795,7 @@ export function buildAnime(ctx) {
         icon: 'search', title: 'Nothing matched those filters',
         note: `No ${K.label.toLowerCase()} title in the catalogue matches ${d.title}.`,
         action: 'Clear filters',
-        onAction: () => setFilter({ q: '', genre: '', year: '', status: '' }),
+        onAction: () => setFilter(NO_FILTER),
       }));
       body.appendChild(sec);
       return;
@@ -1535,8 +1815,15 @@ export function buildAnime(ctx) {
 
   /* ---------------- watchlist ---------------- */
   function paintWatchlist() {
-    const ids = watchIds(api.store, K.kind);
-    const items = BC.byIds(ids, K.kind);
+    const ids = K.kind === 'anime' ? libraryIds(api.store, K.kind) : watchIds(api.store, K.kind);
+    const all = BC.byIds(ids, K.kind);
+    /* your own status narrows the list; "No status" is a saved title you have not sorted */
+    const have = new Map(STATUSES.map(([v]) => [v, 0]));
+    let none = 0;
+    for (const r of all) { const st = statusOf(api.store, K.kind, r.id); if (st) have.set(st, have.get(st) + 1); else none++; }
+    if (S.lib && S.lib !== 'none' && !have.get(S.lib)) S.lib = '';
+    const items = K.kind === 'anime' && S.lib
+      ? all.filter(r => (statusOf(api.store, K.kind, r.id) || 'none') === S.lib) : all;
     const missing = ids.length - items.length;
     const other = watchOther(api.store, K.kind);
     const sec = section(api, {
@@ -1558,9 +1845,157 @@ export function buildAnime(ctx) {
       body.appendChild(sec);
       return;
     }
+    if (K.kind === 'anime') {
+      const chip = (v, label, n) => h('button.cx-cat', {
+        type: 'button', 'aria-pressed': S.lib === v ? 'true' : 'false', class: S.lib === v ? 'is-on' : null,
+        dataset: { lib: v },
+        onclick: () => { S.lib = S.lib === v ? '' : v; paintBody(); },
+      }, h('span', { text: label }), h('span', { text: nf(n), style: { opacity: '.6' } }));
+      sec.appendChild(h('div.cx__cats.cxa-libchips', { role: 'group', 'aria-label': 'Your status' },
+        chip('', 'All', all.length),
+        STATUSES.map(([v, label]) => chip(v, label, have.get(v))),
+        none && none !== all.length ? chip('none', 'No status', none) : null));
+    }
+    if (K.kind === 'anime' && items.length) sec.appendChild(randomPick(items));
+    if (!items.length) {
+      sec.appendChild(h('div.cxa-rail-note', { text: 'Nothing in your list has that status yet.' }));
+      body.appendChild(sec);
+      return;
+    }
     sec.appendChild(h('div.cx__grid.cx__grid--poster', items.map(rec =>
       posterCard(ctx, rec, K, { progress: progressOf(api.store, K.kind, rec.id) }))));
     body.appendChild(sec);
+    if (K.kind === 'anime') body.appendChild(exportBar(all));
+  }
+
+  /** One title from the list in front of you at random. Completed and Dropped ones are
+      left out while anything else is left, so it is something you could actually watch. */
+  function randomPick(items) {
+    const open = items.filter(r => !['completed', 'dropped'].includes(statusOf(api.store, K.kind, r.id)));
+    const pool = open.length ? open : items;
+    const slot = h('div.cxa-pick', { role: 'status' });
+    let last = '';
+    const pick = () => {
+      let rec = pool[Math.floor(Math.random() * pool.length)];
+      if (pool.length > 1) while (rec.id === last) rec = pool[Math.floor(Math.random() * pool.length)];
+      last = rec.id;
+      api.render(slot,
+        h('span.dim', { text: 'Tonight, how about' }),
+        h('b', { dataset: { pick: rec.id }, text: rec.title }),
+        h('button.btn.btn--sm.btn--primary', { type: 'button', onclick: () => navigate(itemUrl(K.kind, rec.id)) },
+          icon('info', { size: 12 }), h('span', { text: 'Open' })),
+        pool.length > 1 ? h('button.btn.btn--sm', { type: 'button', dataset: { act: 'pick-again' }, onclick: pick },
+          icon('rotate-ccw', { size: 12 }), h('span', { text: 'Pick again' })) : null);
+    };
+    return h('div.cxa-pickbar',
+      h('button.btn.btn--sm', { type: 'button', dataset: { act: 'random-pick' }, onclick: pick },
+        icon('shuffle', { size: 12 }), h('span', { text: 'Pick one at random' })),
+      slot);
+  }
+
+  /** Your list as text or CSV: your own status, score, note and progress, with the
+      MAL score in its own column. Copied, or saved as a file; it never leaves the device. */
+  function exportBar(all) {
+    const rows = () => all.map(r => {
+      const st = statusOf(api.store, K.kind, r.id);
+      const me = mineOf(api.store, K.kind, r.id) || {};
+      const pr = progressOf(api.store, K.kind, r.id);
+      return {
+        title: r.title, year: r.year || '', type: r.mediaType || '', status: statusLabel(st),
+        watched: pr ? seenCount(pr) : 0, episodes: r.episodes || '', myScore: me.score || '', note: me.note || '',
+        malScore: hasScore(r) ? r.score.toFixed(2) : '', malId: r.malId || '',
+      };
+    });
+    const csvCell = v => {
+      let t = String(v ?? '');
+      if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;          /* a spreadsheet must not run a note as a formula */
+      return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const csv = () => {
+      const head = ['Title', 'Year', 'Type', 'My status', 'Episodes watched', 'Episodes', 'My score', 'My note', 'MAL score', 'MAL id'];
+      return [head, ...rows().map(x => [x.title, x.year, x.type, x.status, x.watched, x.episodes, x.myScore, x.note, x.malScore, x.malId])]
+        .map(l => l.map(csvCell).join(',')).join('\n');
+    };
+    const text = () => rows().map(x => `${x.title}${x.year ? ` (${x.year})` : ''}`
+      + `${x.status ? ` — ${x.status}` : ''}`
+      + `${x.watched ? ` — ${x.watched}${x.episodes ? ` of ${x.episodes}` : ''} episodes watched` : ''}`
+      + `${x.myScore ? ` — my score ${x.myScore}/10` : ''}`
+      + `${x.malScore ? ` — MAL ${x.malScore}` : ''}`).join('\n');
+    const save = (name, mime, data) => {
+      const url = URL.createObjectURL(new Blob([data], { type: mime }));
+      const a = h('a', { href: url, download: name });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
+    return h('div.cxa-export',
+      h('span.dim', { text: 'Export your list' }),
+      h('button.btn.btn--sm', { type: 'button', dataset: { act: 'copy-text' }, onclick: () => copyText(api, text(), 'List') },
+        icon('copy', { size: 12 }), h('span', { text: 'Copy as text' })),
+      h('button.btn.btn--sm', { type: 'button', dataset: { act: 'save-csv' }, onclick: () => save('static-anime-list.csv', 'text/csv', csv()) },
+        icon('download', { size: 12 }), h('span', { text: 'Save CSV' })));
+  }
+
+  /* ---------------- airing tracker ----------------
+     Watchlist titles the catalogue lists as "Currently Airing", grouped by the
+     weekday YOU picked. The catalogue has no air dates, so nothing here says
+     when an episode comes out; a day is the person's own, and a reminder for it
+     goes through the reminder engine (see syncAiring). */
+  function paintAiring() {
+    const list = airingTitles();
+    const sec = section(api, {
+      icon: 'calendar', title: 'Airing this week',
+      count: list.length ? plural(list.length, 'show') : 'none',
+      note: 'Shows on your Watchlist that the catalogue lists as still airing. Pick the day you watch each one and Static reminds you weekly '
+        + 'while StaticOS is open. The catalogue holds no air dates, so the day is yours, not the broadcast schedule.',
+      tools: list.length ? seeAllBtn(api, 'Airing now', () => setFilter({ status: K.live, sort: 'score' })) : null,
+    });
+    if (!list.length) {
+      sec.appendChild(emptyBlock(api, {
+        icon: 'calendar', title: 'No airing shows saved',
+        note: `Add a show that is still airing to your Watchlist and it appears here, so you can give it a day. ${nf(BC.query({ kind: K.kind, status: K.live, perPage: 1 }).total)} titles are airing in the catalogue.`,
+        action: 'See what is airing', onAction: () => setFilter({ status: K.live, sort: 'score' }),
+      }));
+      body.appendChild(sec);
+      return;
+    }
+    const today = new Date().getDay();
+    const groups = new Map([...DAY_ORDER, 'none'].map(d => [d, []]));
+    for (const r of list) {
+      const a = airOf(api.store, K.kind, r.id);
+      groups.get(a ? a.day : 'none').push([r, a]);
+    }
+    const row = ([r, a]) => {
+      const pr = progressOf(api.store, K.kind, r.id);
+      const daySel = h('select.select', {
+        'aria-label': `Day you watch ${r.title}`, dataset: { airDay: r.id },
+        onchange: e => { S.airFocus = r.id; setAir(api, K.kind, r.id, e.target.value === '' ? null : { day: e.target.value }); },
+      }, h('option', { value: '', text: 'No day' }), DAY_ORDER.map(d => h('option', { value: String(d), text: DAYS[d] })));
+      daySel.value = a ? String(a.day) : '';
+      const timeIn = a ? h('input.cxa-air__time', {
+        type: 'time', value: a.time, 'aria-label': `Time for ${r.title}`, dataset: { airTime: r.id },
+        onchange: e => { if (e.target.value) setAir(api, K.kind, r.id, { time: e.target.value }); },
+      }) : null;
+      return h('div.cxa-air__row', { dataset: { id: r.id } },
+        h('button.cxa-air__t', { type: 'button', onclick: () => navigate(itemUrl(K.kind, r.id)) }, h('b', { text: r.title }),
+          h('small', { text: [statusLabel(statusOf(api.store, K.kind, r.id)) || null,
+            pr ? `${nf(seenCount(pr))}${r.episodes ? ` of ${nf(r.episodes)}` : ''} watched` : 'nothing ticked yet'].filter(Boolean).join(' · ') })),
+        daySel, timeIn);
+    };
+    const grid = h('div.cxa-air');
+    for (const [d, rows] of groups) {
+      if (!rows.length) continue;
+      grid.appendChild(h('div.cxa-air__day', { class: d === today ? 'is-today' : null, dataset: { day: String(d) } },
+        h('div.cxa-air__h', { text: d === 'none' ? 'No day chosen' : DAYS[d] + (d === today ? ' · today' : '') }),
+        rows.map(row)));
+    }
+    sec.appendChild(grid);
+    body.appendChild(sec);
+    if (S.airFocus) {
+      body.querySelector(`[data-air-day="${S.airFocus}"]`)?.focus({ preventScroll: true });
+      S.airFocus = null;
+    }
   }
 
   /* ---------------- history ---------------- */
@@ -1725,6 +2160,21 @@ export function buildAnimeDetail(ctx) {
         icon('shield'), h('span', { text: cap(shortRating(rec.rating)) })));
     }
     if (rec.mediaType) meta.appendChild(h('span.chip', icon('film'), h('span', { text: rec.mediaType })));
+    /* two more ways into the catalogue: everything from the same year, and everything
+       whose MAL score falls in the same whole-number band */
+    if (rec.year) {
+      meta.appendChild(h('button.chip', {
+        type: 'button', title: `Everything from ${rec.year}`, dataset: { chip: 'year' },
+        onclick: () => navigate(listUrl(K.kind, { year: rec.year, sort: 'score' })),
+      }, icon('calendar'), h('span', { text: `Same year · ${rec.year}` })));
+    }
+    if (hasScore(rec)) {
+      const band = Math.floor(rec.score);
+      meta.appendChild(h('button.chip', {
+        type: 'button', title: `Everything scored ${band}.0 to ${band}.9 on MyAnimeList`, dataset: { chip: 'band' },
+        onclick: () => navigate(listUrl(K.kind, { band, sort: 'score' })),
+      }, icon('star'), h('span', { text: `Same score band · ${band}.0–${band}.9` })));
+    }
     for (const g of rec.genres || []) {
       meta.appendChild(h('button.chip.chip--accent', {
         type: 'button', title: `Browse ${g}`,
@@ -1746,13 +2196,14 @@ export function buildAnimeDetail(ctx) {
         h('span', { text: on ? 'In Watchlist' : 'Add to Watchlist' }));
       watchBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
     };
-    watchBtn.addEventListener('click', () => { toggleWatch(api, rec, K.kind); paintWatch(); });
+    let yours = null;
+    watchBtn.addEventListener('click', () => { toggleWatch(api, rec, K.kind); paintWatch(); if (yours) yours.redraw(); });
     paintWatch();
 
     const toStage = () => {
       stage.box.scrollIntoView({ block: 'center', behavior: 'smooth' });
       if (stage.reason) {
-        api.notify({ app: BRAND.name, icon: 'cast', title: 'No player connected', message: stage.reason });
+        api.notify({ app: BRAND.name, icon: 'cast', title: 'Not playable here', message: stage.reason });
       }
     };
 
@@ -1775,11 +2226,35 @@ export function buildAnimeDetail(ctx) {
     });
     paintPlay();
 
+    /* "Is it in my files?": looks at the names of the books in this person's own files (a CBZ or EPUB in
+       Files, ~/Manga or ~/Comics), never at anything online, and opens a match in Static Manga */
+    const foundBox = h('div.cx-detail__found', { role: 'status', 'aria-live': 'polite', dataset: { found: '' }, hidden: true });
+    const findInFiles = () => {
+      let hits = [];
+      try { hits = matchBooks(rec.title, bookFiles()); } catch (e) { hits = []; }
+      foundBox.hidden = false;
+      if (!hits.length) {
+        api.render(foundBox, h('span', { text: `No book that looks like “${rec.title}” is in your files. Add a CBZ or EPUB with Static Manga’s Add books and it will show up here.` }),
+          api.getApp('manga') ? h('button.btn.btn--sm', { type: 'button', onclick: () => api.openApp('manga') }, h('span', { text: 'Open Static Manga' })) : null);
+        return;
+      }
+      api.render(foundBox, h('span', { text: hits.length === 1 ? 'Yes, one book in your files looks like this:' : `Yes, ${hits.length} books in your files look like this:` }),
+        ...hits.slice(0, 6).map(b => h('button.btn.btn--sm', { type: 'button', dataset: { path: b.path }, title: b.path, onclick: () => api.openApp('manga', { path: b.path }) },
+          icon('external-link'), h('span', { text: `Read ${b.name}` }))));
+    };
     const acts = h('div.cx-detail__acts',
       playBtn,
+      K.kind === 'manga' ? h('button.btn', { type: 'button', dataset: { act: 'manga-find' }, title: 'Look through your own files for a CBZ or EPUB of this title', onclick: findInFiles },
+        icon('search'), h('span', { text: 'Is it in my files?' })) : null,
       watchBtn,
       h('button.btn', { type: 'button', onclick: () => copyText(api, url, 'Link') },
         icon('copy'), h('span', { text: 'Copy link' })),
+      useArtButton(api, { title: rec.title, url: rec.backdrop || rec.image }),
+      K.kind === 'anime' ? h('button.btn', {
+        type: 'button', dataset: { act: 'anime-night' },
+        title: 'Plan a night with friends from Static Social: a day, a time and a reminder. Everyone watches on their own service.',
+        onclick: () => { try { api.openApp('social', { friends: true, animeNight: { id: String(rec.id), title: rec.title } }); } catch (e) { /* no shell */ } },
+      }, icon('users'), h('span', { text: 'Anime night with friends' })) : null,
       (rec.genres || [])[0] ? h('button.btn', {
         type: 'button', onclick: () => navigate(listUrl(K.kind, { genre: rec.genres[0] })),
       }, icon('grid'), h('span', { text: `More ${rec.genres[0]}` })) : null);
@@ -1824,8 +2299,17 @@ export function buildAnimeDetail(ctx) {
             .filter(Boolean).join(' · ') }),
           h('h1.cx-detail__t', { text: rec.title }),
           rec.titleJa ? h('div.cxa-det__ja', { text: rec.titleJa }) : null,
-          meta, synBox, acts, facts))));
+          meta, synBox, acts, foundBox, facts))));
 
+    if (K.kind === 'anime') {
+      yours = yoursSection(rec);
+      body.appendChild(yours);
+      body.appendChild(whereSection(rec));
+      /* a day set here (or a save, or a status) changes which weekly reminders are wanted */
+      const resync = () => syncAiring(api, BC, K);
+      life.add(api.store.sub(AIR_KEY, resync));
+      life.add(api.store.sub(WATCH_KEY, resync));
+    }
     eps = episodes(rec, n, stage, toStage);
     if (eps) body.appendChild(eps.sec);
     body.appendChild(stage.el);
@@ -1834,7 +2318,7 @@ export function buildAnimeDetail(ctx) {
     const onStore = () => {
       paintPlay();                 /* cheap; the label carries the minute */
       const pr = progressOf(api.store, K.kind, rec.id);
-      const key = JSON.stringify([pr && pr.ep, whereLeftOff(api.store, K.kind, rec.id)?.ep, stage.cur]);
+      const key = JSON.stringify([pr && pr.ep, pr && pr.seen, whereLeftOff(api.store, K.kind, rec.id)?.ep, stage.cur]);
       if (key === seenKey) return;
       seenKey = key;
       if (eps) eps.draw();
@@ -1849,6 +2333,8 @@ export function buildAnimeDetail(ctx) {
       stage.open(want, { t: w && w.how === 'player' && w.ep === want ? w.t : null });
       nextFrame(() => { if (!life.dead) stage.el.scrollIntoView({ block: 'start' }); });
     }
+    const ord = orderSection(rec);
+    if (ord) body.appendChild(ord);
     const rel = relatedSection(rec);
     if (rel) body.appendChild(rel);
     const sim = similarSection(rec);
@@ -1866,6 +2352,17 @@ export function buildAnimeDetail(ctx) {
     const slot = h('div');
     const headNote = h('div.cxa-sec__note');
     const unit = K.unitOne.toLowerCase();
+    let tick = false;                  /* tick mode: a click ticks the episode instead of opening it */
+    let lastTick = 0;
+    const tickBtn = h('button.btn.btn--ghost.btn--sm', {
+      type: 'button', 'aria-pressed': 'false', dataset: { act: 'tick-mode' },
+      title: 'Click episodes to tick them off as you watch them. Shift-click ticks a run.',
+      onclick: () => { tick = !tick; draw(); },
+    });
+    const tickAll = h('button.btn.btn--ghost.btn--sm', {
+      type: 'button', dataset: { act: 'tick-all' }, title: `Tick every ${unit}`,
+      onclick: () => { tickEps(api, K.kind, rec.id, n, 1, n, true); draw(); },
+    }, icon('check-circle', { size: 12 }), h('span', { text: 'Tick all' }));
     const forget = h('button.btn.btn--ghost.btn--sm.hidden', {
       type: 'button',
       onclick: () => {
@@ -1877,7 +2374,7 @@ export function buildAnimeDetail(ctx) {
     const sec = section(api, {
       icon: 'list', title: K.unitLong,
       count: `${nf(n)} listed`,
-      tools: forget,
+      tools: h('div.row', { style: { gap: 'var(--sp-2)' } }, tickBtn, tickAll, forget),
     });
     sec.appendChild(headNote);
     sec.appendChild(slot);
@@ -1885,14 +2382,20 @@ export function buildAnimeDetail(ctx) {
 
     const draw = () => {
       const prog = progressOf(api.store, K.kind, rec.id);
-      const done = prog && prog.ep ? prog.ep : 0;
+      const done = prog && prog.ep ? seenCount(prog) : 0;
       const now = stage.shown ? stage.cur : 0;
       const had = slot.contains(document.activeElement) ? document.activeElement.dataset.ep : null;
       forget.classList.toggle('hidden', !done && !resumeOf(api.store, K.kind, rec.id));
+      tickBtn.setAttribute('aria-pressed', tick ? 'true' : 'false');
+      tickBtn.classList.toggle('is-on', tick);
+      api.render(tickBtn, icon(tick ? 'check-circle' : 'check', { size: 12 }), h('span', { text: tick ? 'Done ticking' : 'Tick off episodes' }));
+      const tally = sec.querySelector('.cx__sec-n');
+      if (tally) tally.textContent = done ? `${nf(done)} of ${nf(n)} ${K.watched.toLowerCase()}` : `${nf(n)} listed`;
       headNote.textContent = (done
-        ? `${done === 1 ? `${K.unitOne} 1 is` : `${K.unitLong} 1–${nf(done)} are`} marked ${K.watched.toLowerCase()}. `
+        ? `${nf(done)} of ${nf(n)} ${K.unitLong.toLowerCase()} ticked ${K.watched.toLowerCase()}. `
         : `${nf(n)} ${K.unitLong.toLowerCase()} in the catalogue. `)
-        + 'Pick one to open it in the player below — StaticOS remembers it as where you left off. '
+        + (tick ? 'Click an episode to tick it, or click it again to untick. Shift-click ticks a whole run. '
+          : 'Pick one to open it in the player below — StaticOS remembers it as where you left off. Use “Tick off episodes” to mark them as you watch. ')
         + `The catalogue lists no ${unit} titles or air dates, so these are numbers only.`;
       /* follow the player onto its page whenever it moves to another episode */
       if (pages > 1 && now && now !== followed) { followed = now; epPage = Math.ceil(now / EP_PAGE); }
@@ -1901,15 +2404,24 @@ export function buildAnimeDetail(ctx) {
       const last = Math.min(n, epPage * EP_PAGE);
       const grid = h('div.cxa-eps');
       for (let i = first; i <= last; i++) {
-        const seen = i <= done;
+        const seen = seenHas(prog, i);
         const here = i === now;
         grid.appendChild(h('button.cxa-ep', {
           type: 'button',
           class: [seen ? 'is-done' : '', here ? 'is-now' : ''].filter(Boolean).join(' ') || null,
           'aria-current': here ? 'true' : null,
+          'aria-pressed': tick ? String(seen) : null,
           dataset: { ep: String(i) },
           'aria-label': `${K.unitOne} ${i} of ${nf(n)}${seen ? `, marked ${K.watched.toLowerCase()}` : ''}${here ? ', in the player' : ''}`,
-          onclick: () => {
+          onclick: e => {
+            if (tick) {
+              const on = !seenHas(progressOf(api.store, K.kind, rec.id), i);
+              if (e.shiftKey && lastTick && lastTick !== i) tickEps(api, K.kind, rec.id, n, lastTick, i, on);
+              else tickEps(api, K.kind, rec.id, n, i, i, on);
+              lastTick = i;
+              draw();
+              return;
+            }
             const w = whereLeftOff(api.store, K.kind, rec.id);
             stage.open(i, { t: w && w.how === 'player' && w.ep === i ? w.t : null });
             toStage();
@@ -1998,8 +2510,9 @@ export function buildAnimeDetail(ctx) {
     }
     function toggleMark() {
       const p = progressOf(api.store, K.kind, rec.id);
-      const marked = !!p && Number(p.ep) >= out.cur;
-      setProgress(api, K.kind, rec.id, marked ? out.cur - 1 : out.cur, n);
+      const marked = seenHas(p, out.cur);
+      if (marked || (p && p.seen)) tickEps(api, K.kind, rec.id, n, out.cur, out.cur, !marked);
+      else setProgress(api, K.kind, rec.id, out.cur, n);
       paintCtl();
       if (onChange) onChange();
     }
@@ -2009,7 +2522,7 @@ export function buildAnimeDetail(ctx) {
       prevBtn.disabled = out.cur <= 1;
       nextBtn.disabled = !!n && out.cur >= n;
       const p = progressOf(api.store, K.kind, rec.id);
-      const marked = !!p && Number(p.ep) >= out.cur;
+      const marked = seenHas(p, out.cur);
       markBtn.setAttribute('aria-pressed', marked ? 'true' : 'false');
       api.render(markBtn, icon(marked ? 'check-circle' : 'check', { size: 12 }),
         h('span', { text: marked ? K.watched : `Mark ${K.watched.toLowerCase()}` }));
@@ -2107,7 +2620,7 @@ export function buildAnimeDetail(ctx) {
         });
         api.render(box, frame);
       } else {
-        out.reason = (r && r.reason) || 'No source is connected for this title.';
+        out.reason = (r && r.reason) || NOT_HERE;
         api.render(box, stageNote(rec, r, out.reason));
       }
       paintStatus();
@@ -2143,16 +2656,127 @@ export function buildAnimeDetail(ctx) {
 
     return h('div.cx-stage__note',
       icon('cast'),
-      h('b', { text: 'No player connected' }),
+      h('b', { text: 'Not playable on Static' }),
       h('small', { text: reason }),
+      (K.kind === 'anime' && ids.mal) ? h('a.btn.btn--sm', {
+        href: `https://myanimelist.net/anime/${encodeURIComponent(ids.mal)}`, target: '_blank', rel: 'noopener noreferrer',
+      }, icon('external-link', { size: 13 }), 'See where to watch it officially') : null,
       rows.length ? h('div', { style: { width: '100%', textAlign: 'left' } },
         h('div.label', { text: 'External ids', style: { marginBottom: 'var(--sp-2)' } }),
         table) : null,
-      h('div.mono', {
-        style: { fontSize: 'var(--fs-10)', color: 'var(--ink-3)', lineHeight: '1.6' },
-        text: `providers.resolve('${K.kind}:${rec.id}') is the one seam to implement — `
-            + 'return {kind:"embed", url} from it and this box becomes the player.',
-      }));
+      null);
+  }
+
+  /* ---------------- yours: status, score, note, airing day ----------------
+     Your own, kept apart from the catalogue: the MAL score at the top of the
+     page is MyAnimeList's, the 1-10 here is yours, and neither feeds the other. */
+  function yoursSection(rec) {
+    const live = rec.status === K.live;
+    const sec = section(api, {
+      icon: 'user', title: 'Your list',
+      note: 'Only on this device. The score at the top of the page is the MyAnimeList community score; the one here is yours, and the two are never mixed.',
+    });
+    const body2 = h('div.cxa-mine');
+    sec.appendChild(body2);
+
+    const draw = () => {
+      const st = statusOf(api.store, K.kind, rec.id);
+      const me = mineOf(api.store, K.kind, rec.id) || {};
+      const statusRow = h('div.cxa-mine__row',
+        h('span.label', { text: 'Status' }),
+        h('div.seg', { role: 'group', 'aria-label': 'Your status' }, STATUSES.map(([v, label, ic]) => h('button', {
+          type: 'button', class: st === v ? 'is-on' : null, 'aria-pressed': String(st === v), dataset: { status: v },
+          onclick: () => { setStatus(api, K.kind, rec.id, st === v ? '' : v); draw(); },
+        }, icon(ic, { size: 12 }), h('span', { text: label })))));
+
+      const scoreRow = h('div.cxa-mine__row',
+        h('span.label', { text: 'Your score' }),
+        h('div.seg.cxa-mine__score', { role: 'group', 'aria-label': 'Your score, 1 to 10' },
+          Array.from({ length: 10 }, (_, i) => i + 1).map(v => h('button', {
+            type: 'button', class: me.score === v ? 'is-on' : null, 'aria-pressed': String(me.score === v),
+            dataset: { score: String(v) }, 'aria-label': `${v} out of 10`,
+            onclick: () => { setMine(api, K.kind, rec.id, { score: me.score === v ? 0 : v }); draw(); },
+          }, h('span', { text: String(v) })))),
+        me.score ? h('span.cxa-mine__yours', { dataset: { yours: String(me.score) }, text: `Yours: ${me.score} / 10` }) : null);
+
+      const note = h('textarea.cxa-mine__note', {
+        rows: 3, maxlength: String(NOTE_MAX), value: me.note || '', placeholder: 'A note for yourself',
+        'aria-label': 'Your note', dataset: { fk: 'mine-note' },
+      });
+      let t = 0;
+      const saveNote = () => { clearTimeout(t); t = 0; if (note.value !== (mineOf(api.store, K.kind, rec.id) || {}).note) setMine(api, K.kind, rec.id, { note: note.value }); };
+      note.addEventListener('input', () => { clearTimeout(t); t = setTimeout(saveNote, 400); });
+      note.addEventListener('blur', saveNote);
+      life.add(() => { if (t) saveNote(); });
+      const noteRow = h('div.cxa-mine__row', h('span.label', { text: 'Your note' }), note);
+
+      const kids = [statusRow, scoreRow, noteRow];
+
+      if (live) {
+        const a = airOf(api.store, K.kind, rec.id);
+        const saved = inWatch(api.store, K.kind, rec.id);
+        const day = h('select.select', {
+          'aria-label': 'The day you watch it', dataset: { fk: 'air-day' },
+          onchange: e => { setAir(api, K.kind, rec.id, e.target.value === '' ? null : { day: e.target.value }); draw(); },
+        }, h('option', { value: '', text: 'No day' }), DAY_ORDER.map(d => h('option', { value: String(d), text: DAYS[d] })));
+        day.value = a ? String(a.day) : '';
+        const time = a ? h('input.cxa-air__time', {
+          type: 'time', value: a.time, 'aria-label': 'The time you watch it', dataset: { fk: 'air-time' },
+          onchange: e => { if (e.target.value) setAir(api, K.kind, rec.id, { time: e.target.value }); },
+        }) : null;
+        kids.push(h('div.cxa-mine__row',
+          h('span.label', { text: 'Weekly day' }),
+          h('div.cxa-mine__air', day, time),
+          h('small.dim', { text: a
+            ? (saved ? 'Static reminds you weekly on this day, while StaticOS is open. The day is yours, not an air date.'
+              : 'Add it to your Watchlist and Static will remind you weekly. The day is yours, not an air date.')
+            : 'The catalogue lists it as still airing. Pick the day you watch it, for a weekly reminder.' })));
+      }
+      api.render(body2, ...kids);
+    };
+    draw();
+    sec.redraw = draw;
+    return sec;
+  }
+
+  /* ---------------- where to watch ---------------- */
+  function whereSection(rec) {
+    const sec = section(api, {
+      icon: 'external-link', title: 'Where to watch',
+      note: `${BRAND.name} plays no anime, and the catalogue doesn’t say which service carries a title or in which country. `
+        + 'Each link opens that service’s own search page for this title, in a new tab.',
+    });
+    sec.appendChild(h('div.cxa-where', watchLinks(rec).map(l => h('a.btn.btn--sm', {
+      href: l.url, target: '_blank', rel: 'noopener noreferrer', dataset: { service: l.service },
+    }, icon('external-link', { size: 12 }), h('span', { text: l.label })))));
+    return sec;
+  }
+
+  /* ---------------- watch order ---------------- */
+  function orderSection(rec) {
+    const order = BC.watchOrder(rec, K.kind);
+    if (order.length < 2) return null;
+    const sec = section(api, {
+      icon: 'list', title: 'Watch order',
+      count: `${nf(order.length)} entries`,
+      note: 'In release order, from the first main entry. The catalogue has no prequel or sequel links, so this is matched on the title and the release year: '
+        + 'check a title’s own page for specials and recaps.',
+    });
+    sec.appendChild(h('ol.cxa-order', order.map(({ rec: r, start, main }) => {
+      const here = r.id === rec.id;
+      const st = statusLabel(statusOf(api.store, K.kind, r.id));
+      const pr = progressOf(api.store, K.kind, r.id);
+      const n = countOf(r, K);
+      return h('li.cxa-order__row', { class: here ? 'is-here' : null, dataset: { id: r.id, start: start ? '1' : '0' } },
+        h('button.cxa-order__t', { type: 'button', disabled: here, onclick: () => navigate(itemUrl(K.kind, r.id)) },
+          h('b', { text: r.title }),
+          h('small', { text: [r.year || null, r.mediaType || null, n ? `${nf(n)} ${K.unit}` : null,
+            main ? null : 'side story', st || null, pr ? `${nf(seenCount(pr))}${n ? ` of ${nf(n)}` : ''} watched` : null]
+            .filter(Boolean).join(' · ') })),
+        start ? h('span.badge.badge--accent', { text: 'Start here' }) : null,
+        here ? h('span.badge', { text: 'You are here' }) : null);
+    })));
+    return sec;
   }
 
   /* ---------------- related + similar ---------------- */

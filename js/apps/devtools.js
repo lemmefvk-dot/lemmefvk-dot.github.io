@@ -19,9 +19,12 @@
      App State    the store tree, read-only, with JSON sizes, live
                   change flashes and per-root "Copy JSON".
      Storage      localStorage, sessionStorage, the quota estimate,
-                  IndexedDB (db.js), Cache Storage, service workers.
+                  the largest saved keys, IndexedDB (db.js), Cache Storage,
+                  service workers.
      Files        the virtual filesystem as a tree, sizes and mtimes.
      Windows      the window manager's list in z-order, live.
+     Apps         every registered app, how many windows it has open and
+                  how many console errors were logged from its file.
      Performance  measured frame rate, long tasks, JS heap (Chromium
                   only), DOM size, open windows.
      Status       real checks, run when the pane opens or on demand.
@@ -42,6 +45,12 @@
      pane is rebuilt from the data when it shows again. Closing the
      window tears everything down; devlog's ring buffers are all that
      keep running (plus the bus tap, only if recording was pinned).
+   · Events, Storage and Apps are read and drawn by js/core/devviews.js,
+     the same code the Developer Room uses, so their numbers agree; this
+     app supplies its own look (the dt-* classes).
+   · App State can take snapshots and compare two (or one against now).
+     Snapshots live in memory until the page closes; secret-looking values
+     are masked and only compared by a hash, never kept or shown.
    · Long lists render the newest few hundred rows, with "Show more".
    · All DOM is built with h() and textContent. A hostile string in a
      log line, a store key or a file name is shown as text, never
@@ -50,6 +59,8 @@
 import { defineApp } from '../core/registry.js';
 import * as DL from '../core/devlog.js';
 import * as profiles from '../core/profiles.js';
+import * as DV from '../core/devviews.js';
+import * as SI from '../core/sysinfo.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-devtools-css')) {
   const l = document.createElement('link');
@@ -67,6 +78,7 @@ const TABS = [
   { id: 'storage', label: 'Storage', icon: 'database', group: 'Data' },
   { id: 'files', label: 'Files', icon: 'folder', group: 'Data' },
   { id: 'windows', label: 'Windows', icon: 'window', group: 'System' },
+  { id: 'apps', label: 'Apps', icon: 'grid-9', group: 'System' },
   { id: 'performance', label: 'Performance', icon: 'gauge', group: 'System' },
   { id: 'status', label: 'Status', icon: 'check-circle', group: 'System' },
   { id: 'labs', label: 'Labs', icon: 'zap', group: 'System' },
@@ -74,7 +86,7 @@ const TABS = [
 const TAB = Object.fromEntries(TABS.map(t => [t.id, t]));
 const ALIAS = {
   logs: 'console', log: 'console', bus: 'events', net: 'network', appstate: 'state', 'app-state': 'state', store: 'state',
-  vfs: 'files', fs: 'files', wm: 'windows', perf: 'performance', api: 'status', experimental: 'labs', experiments: 'labs',
+  vfs: 'files', fs: 'files', wm: 'windows', registry: 'apps', perf: 'performance', api: 'status', experimental: 'labs', experiments: 'labs',
 };
 const canonTab = t => (TAB[t] ? t : ALIAS[String(t || '').toLowerCase()] || null);
 
@@ -89,15 +101,16 @@ const AI_URL = 'https://text.pollinations.ai/';
 
 /* Survives the window closing, for the rest of this page's life: the
    last pane, the recording switches and each pane's filters. */
-const MEM = { tab: 'console', recording: true, pinned: false, st: {} };
+const MEM = { tab: 'console', recording: true, pinned: false, st: {}, snaps: [], snapSeq: 0 };
 const DEFAULTS = {
   console: () => ({ q: '', levels: { error: true, warn: true, info: true, log: true, debug: true }, limit: 250 }),
   events: () => ({ q: '', beat: false }),
   network: () => ({ q: '', type: 'all', sort: 'start', dir: 1, limit: 300, open: new Set() }),
-  state: () => ({ q: '', open: new Set(), limits: new Map() }),
+  state: () => ({ q: '', open: new Set(), limits: new Map(), cmpOpen: false, from: null, to: 'now' }),
   storage: () => ({}),
   files: () => ({ q: '', open: new Set(['/', '/home', '/home/static']), limits: new Map() }),
   windows: () => ({}),
+  apps: () => ({ q: '', errOnly: false }),
   performance: () => ({ fps: [], frame: [], heap: [], dom: [], lt: [], ltKeys: new Set() }),
   status: () => ({ results: {}, ranAt: 0 }),
   labs: () => ({}),
@@ -105,31 +118,16 @@ const DEFAULTS = {
 const stOf = id => MEM.st[id] || (MEM.st[id] = DEFAULTS[id]());
 
 /* ---------------- formatting ---------------- */
-const pad = (n, w = 2) => String(n).padStart(w, '0');
-function clock(t, ms = true) {
-  const d = new Date(t);
-  const s = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  return ms ? `${s}.${pad(d.getMilliseconds(), 3)}` : s;
-}
-function bytes(n) {
-  if (!Number.isFinite(n) || n < 0) return '—';
-  if (n < 1024) return `${Math.round(n)} B`;
-  const u = ['KB', 'MB', 'GB', 'TB'];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
-  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
-}
+const { clock, bytes, num, count, lsBytes } = DV;   /* one set of formatters for both developer apps */
 function msf(v) {
   if (!Number.isFinite(v)) return '—';
   if (v < 10) return `${v.toFixed(1)} ms`;
   if (v < 1000) return `${Math.round(v)} ms`;
   return `${(v / 1000).toFixed(2)} s`;
 }
-const num = n => Number(n).toLocaleString();
-const count = (n, one, many) => `${num(n)} ${n === 1 ? one : (many || `${one}s`)}`;
 const jsonLen = v => { try { const s = JSON.stringify(v); return s === undefined ? 0 : s.length; } catch (e) { return NaN; } };
-const lsBytes = (k, v) => ((k || '').length + (v || '').length) * 2;
+
+const stampName = () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
 
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall back below */ }
@@ -403,7 +401,7 @@ defineApp({
        minimised or hidden window records nothing — unless it was pinned,
        which is the one way to ask for recording to outlive the pane. */
     function syncTap() {
-      DL.setBusTap(MEM.pinned || (!S.dead && !S.paused && S.tab === 'events' && MEM.recording));
+      DV.holdTap('devtools', MEM.pinned || (!S.dead && !S.paused && S.tab === 'events' && MEM.recording));
     }
     function go(id) {
       const t = canonTab(id) || 'console';
@@ -477,7 +475,14 @@ defineApp({
         const ok = await copyText(list.map(entryCopyText).join('\n'));
         note(ok ? 'Messages copied' : 'Copy failed', ok ? `${count(list.length, 'message')} on the clipboard.` : 'The browser refused clipboard access.');
       });
-      bar.append(tbtn('trash', 'Clear console', () => DL.clear()), tsep(), filterField(P, 'Filter messages', () => renderAll(true)), levels, grow(), copyBtn);
+      const exportBtn = tbtn('download', 'Export the whole console log as a text file', () => {
+        const all = DL.entries();
+        const text = `StaticOS console log · ${new Date().toLocaleString()} · ${count(all.length, 'message')}\n`
+          + `${all.map(entryCopyText).join('\n')}\n`;
+        SI.downloadText(`staticos-console-${stampName()}.log`, text);
+        note('Console log exported', `${count(all.length, 'message')} saved as a text file. Secret-looking values were masked when they were logged.`, 'download');
+      });
+      bar.append(tbtn('trash', 'Clear console', () => DL.clear()), tsep(), filterField(P, 'Filter messages', () => renderAll(true)), levels, grow(), exportBtn, copyBtn);
 
       const logEl = h('div.dt-log', { role: 'log', 'aria-live': 'off', 'aria-label': 'Console messages', tabindex: '0' });
       const jumpN = h('span');
@@ -622,45 +627,29 @@ defineApp({
         pin.title = MEM.pinned ? 'Pinned: recording continues when this pane or the window is closed' : 'Keep recording when this pane is closed';
         paintFoot();
       }
-      const pass = e => (st.beat || !e.beat) && (!st.q || `${e.evt} ${e.text}`.toLowerCase().includes(st.q.toLowerCase()));
+      const pass = e => DV.passEvent(e, st);            /* the same filter the Developer Room uses */
       const NAMES = { 'state:change': ['path', 'value'], 'fs:change': ['dir', 'path'] };
+      const EV_SKIN = { row: 'div.dt-ev', head: 'button.dt-ev__head', kids: 'div.dt-kids.dt-evkids',
+        time: 'time.dt-row__time', name: 'span.dt-ev__name', args: 'span.dt-ev__args', empty: '—' };
 
-      function evRow(e) {
-        const kids = h('div.dt-kids.dt-evkids', { hidden: true });
-        let built = false;
-        const headBtn = h('button.dt-ev__head', {
-          type: 'button', 'aria-expanded': 'false',
-          onclick: () => {
-            const open = headBtn.getAttribute('aria-expanded') !== 'true';
-            headBtn.setAttribute('aria-expanded', String(open));
-            if (open && !built) {
-              built = true;
-              const names = NAMES[e.evt] || [];
-              if (!e.args.length) kids.append(h('div.dt-note', { text: 'No payload.' }));
-              e.args.forEach((n, i) => {
-                const k = names[i] || (e.args.length === 1 ? 'payload' : `arg ${i}`);
-                kids.append(canExpand(n)
-                  ? h('div.dt-kid', treeEl(n, k))
-                  : h('div.dt-kid.dt-leaf', h('span.dt-k', { text: k }), h('span.dt-p', { text: ': ' }), vEl(n, false, 4000)));
-              });
-            }
-            kids.hidden = !open;
-          },
-        },
-        h('time.dt-row__time', { text: clock(e.t), datetime: new Date(e.t).toISOString() }),
-        h('span.dt-ev__name', { text: e.evt }),
-        h('span.dt-ev__args', { text: e.text || '—' }));
-        return h('div.dt-ev', { class: e.beat ? 'is-beat' : '', dataset: { id: String(e.id) } }, headBtn, kids);
-      }
+      /* the row is the shared one (devviews.js); what it opens to is this app's tree of the payload */
+      const evRow = e => DV.eventRow(h, e, EV_SKIN, (ev, kids) => {
+        const names = NAMES[ev.evt] || [];
+        if (!ev.args.length) kids.append(h('div.dt-note', { text: 'No payload.' }));
+        ev.args.forEach((n, i) => {
+          const k = names[i] || (ev.args.length === 1 ? 'payload' : `arg ${i}`);
+          kids.append(canExpand(n)
+            ? h('div.dt-kid', treeEl(n, k))
+            : h('div.dt-kid.dt-leaf', h('span.dt-k', { text: k }), h('span.dt-p', { text: ': ' }), vEl(n, false, 4000)));
+        });
+      });
 
       function paintFoot() {
-        const s = DL.stats();
-        const all = DL.busLog();
-        const names = new Set(all.map(e => e.evt));
+        const es = DV.eventStats();
         footEl.textContent = [
-          `${count(all.length, 'event')} kept (${num(s.bus.max)} + ${num(s.bus.beatMax)} heartbeat max)`,
-          `${count(names.size, 'distinct name')}`,
-          s.bus.tap ? `recording since ${clock(s.bus.since, false)}` : 'not recording',
+          `${count(es.kept, 'event')} kept (${num(es.max)} + ${num(es.beatMax)} heartbeat max)`,
+          `${count(es.names, 'distinct name')}`,
+          es.tap ? `recording since ${clock(es.since, false)}` : 'not recording',
           'subscriber counts aren’t shown: bus.js keeps its listeners private',
         ].join('  ·  ');
       }
@@ -675,7 +664,7 @@ defineApp({
       const atBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 28;
       function renderAll(stick) {
         clear(list);
-        const shown = DL.busLog().filter(pass);
+        const shown = DV.eventLog(st);
         const frag = document.createDocumentFragment();
         for (const e of shown) frag.append(evRow(e));
         list.append(frag);
@@ -896,14 +885,20 @@ defineApp({
       const sizes = new Map();
       const flashes = new Map();
 
-      bar.append(filterField(P, 'Filter by path or value', () => render()), grow(),
+      const snapBtn = h('button.btn.btn--sm.dt-snap', { type: 'button', title: 'Remember the state as it is now, to compare later',
+        onclick: () => takeSnap() }, icon('camera'), h('span', { text: 'Snapshot' }));
+      const cmpBtn = h('button.btn.btn--sm.dt-cmpbtn', { type: 'button', 'aria-pressed': String(!!st.cmpOpen), title: 'Compare two snapshots, or one with now',
+        onclick: () => { st.cmpOpen = !st.cmpOpen; cmpBtn.setAttribute('aria-pressed', String(st.cmpOpen)); paintCmp(); } },
+      icon('layers'), h('span', { text: 'Compare' }));
+      bar.append(filterField(P, 'Filter by path or value', () => render()), grow(), snapBtn, cmpBtn,
         tbtn('minimize-2', 'Collapse all', () => { st.open.clear(); render(); }));
       const tbody = h('tbody');
       const table = h('table.dt-table.dt-table--tree',
         h('thead', h('tr', th('Key', 'dt-c-name'), th('Value'), th('Type', 'dt-c-type'), th('JSON', 'num dt-c-size'), h('th.dt-c-act', { scope: 'col' }, h('span.sr', { text: 'Actions' })))),
         tbody);
       const scroller = h('div.dt-scroll', table);
-      body.append(scroller);
+      const cmpEl = h('section.dt-cmp', { hidden: true, 'aria-label': 'Compare state snapshots' });
+      body.append(cmpEl, scroller);
       const footEl = h('span.dt-foot__t');
       foot.append(footEl);
 
@@ -1000,6 +995,58 @@ defineApp({
         return hits.length;
       }
 
+      /* ---- snapshots: memory only, compared path by path ---- */
+      const FLAT = { skip: ['live'] };       /* the live gauges change every second; they would drown real changes */
+      function takeSnap() {
+        const flat = DV.flattenState(store.get() || {}, FLAT);
+        MEM.snaps.push({ id: ++MEM.snapSeq, at: Date.now(), flat });
+        while (MEM.snaps.length > 6) MEM.snaps.shift();
+        st.cmpOpen = true;
+        st.from = MEM.snaps[MEM.snaps.length - 1].id;
+        st.to = 'now';
+        cmpBtn.setAttribute('aria-pressed', 'true');
+        paintCmp();
+      }
+      const snapOf = id => MEM.snaps.find(x => x.id === id) || null;
+      function paintCmp() {
+        cmpEl.hidden = !st.cmpOpen;
+        clear(cmpEl);
+        if (!st.cmpOpen) return;
+        if (!MEM.snaps.length) {
+          cmpEl.append(h('div.dt-cmp__empty', { text: 'Press Snapshot to remember the state, change something, then compare. Snapshots stay in memory until this page closes.' }));
+          return;
+        }
+        if (!snapOf(st.from)) st.from = MEM.snaps[MEM.snaps.length - 1].id;
+        if (st.to !== 'now' && !snapOf(st.to)) st.to = 'now';
+        const label = x => `#${x.id} · ${clock(x.at, false)}`;
+        const fromSel = h('select', { 'aria-label': 'Compare from', onchange: () => { st.from = Number(fromSel.value); paintCmp(); } },
+          MEM.snaps.map(x => h('option', { value: String(x.id), text: label(x), selected: x.id === st.from })));
+        const toSel = h('select', { 'aria-label': 'Compare to', onchange: () => { st.to = toSel.value === 'now' ? 'now' : Number(toSel.value); paintCmp(); } },
+          h('option', { value: 'now', text: 'now', selected: st.to === 'now' }),
+          MEM.snaps.map(x => h('option', { value: String(x.id), text: label(x), selected: x.id === st.to })));
+        const a = snapOf(st.from);
+        const b = st.to === 'now' ? { flat: DV.flattenState(store.get() || {}, FLAT) } : snapOf(st.to);
+        const d = DV.diffFlat(a.flat, b.flat);
+        const total = d.added.length + d.removed.length + d.changed.length;
+        const rows = [
+          ...d.changed.map(x => ['changed', x.path, x.secret ? 'changed (masked)' : `${x.from}  →  ${x.to}`]),
+          ...d.added.map(x => ['added', x.path, x.to]),
+          ...d.removed.map(x => ['removed', x.path, x.from]),
+        ];
+        cmpEl.append(
+          h('div.dt-cmp__bar', h('span', { text: 'From' }), fromSel, h('span', { text: 'to' }), toSel, h('span.grow'),
+            st.to === 'now' ? h('button.btn.btn--sm.btn--ghost', { type: 'button', title: 'Read the state again', onclick: () => paintCmp() }, 'Refresh') : null,
+            h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => { MEM.snaps.length = 0; paintCmp(); } }, 'Clear snapshots')),
+          h('div.dt-cmp__sum', { role: 'status', text: total
+            ? `${count(d.changed.length, 'value')} changed · ${num(d.added.length)} added · ${num(d.removed.length)} removed` : 'No difference.' }),
+          h('div.dt-note', { text: 'The live gauges (updated every second) are left out. Secret-looking values compare by a hash and are never shown.' }),
+          rows.length ? h('div.dt-cmp__list', rows.slice(0, 300).map(([kind, path, val]) => h(`div.dt-cmp__row.dt-cmp__row--${kind}`,
+            h('span.dt-cmp__kind', { text: kind }),
+            h('span.dt-mono.dt-cmp__path', { text: safePath(path.split('.').join(SEP)), title: safePath(path.split('.').join(SEP)) }),
+            h('span.dt-cmp__val', { text: val })))) : null,
+          rows.length > 300 ? h('div.dt-note', { text: `… ${num(rows.length - 300)} more not shown` }) : null);
+      }
+
       async function copyRoot(k) {
         const text = DL.jsonMasked(store.get(k), 2) ?? 'undefined';
         const ok = await copyText(text);
@@ -1044,6 +1091,7 @@ defineApp({
       }));
       last = performance.now();
       render();
+      paintCmp();
     };
 
     /* -------------------------------- Storage -------------------------------- */
@@ -1081,40 +1129,20 @@ defineApp({
         quota.lastChild.replaceWith(content);
       })();
 
-      /* local + session storage */
-      function kvStore(title, sub, S0) {
-        let rows = [];
-        let others = 0;
-        try {
-          for (let i = 0; i < S0.length; i++) {
-            const k = S0.key(i);
-            let v = '';
-            try { v = S0.getItem(k) || ''; } catch (e) { /* unreadable */ }
-            /* another person's data on this computer: counted, never named */
-            if (S0 === window.localStorage && profiles.foreign(k)) { others += lsBytes(k, v); continue; }
-            rows.push({ k, n: lsBytes(k, v) });
-          }
-          if (others) rows.push({ k: '(other people on this computer)', n: others });
-        } catch (e) { return sec(title, sub, h('div.dt-dim.dt-pad', { text: `Not readable here: ${e.message}` })); }
-        rows = rows.sort((a, b) => b.n - a.n);
-        const total = rows.reduce((a, r) => a + r.n, 0);
-        if (!rows.length) return sec(title, sub, h('div.dt-dim.dt-pad', { text: 'Empty.' }));
-        return sec(title, `${sub} · ${count(rows.length, 'key')} · ${bytes(total)}`,
-          h('table.dt-table.dt-table--flat',
-            h('thead', h('tr', th('Key'), th('Size', 'num'), th('Share', 'dt-c-share'))),
-            h('tbody', rows.map(r => h('tr',
-              /* keys only — values are never read into the DOM here — and even
-                 a key that is itself token-shaped is masked */
-              h('td.dt-mono', { text: DL.looksSecret(r.k) ? `•••• (${num(r.k.length)} chars)` : r.k }),
-              h('td.num', { text: bytes(r.n) }),
-              h('td.dt-c-share', h('span.dt-share', h('i', { style: { width: `${Math.max(0.5, (r.n / (total || 1)) * 100)}%` } }))))))));
+      /* local + session storage — read and drawn by devviews.js, the same rows the Developer Room shows */
+      const KEYS_SKIN = { layout: 'table', table: 'table.dt-table.dt-table--flat', mono: '.dt-mono', shareCol: 'dt-c-share', share: 'span.dt-share' };
+      function kvStore(title, sub, data) {
+        if (!data) return sec(title, '', h('div.dt-dim.dt-pad', { text: 'Blocked in this browser.' }));
+        if (!data.rows.length) return sec(title, sub, h('div.dt-dim.dt-pad', { text: 'Empty.' }));
+        /* keys only — values are never read into the DOM here — and even
+           a key that is itself token-shaped is masked (devviews.js) */
+        return sec(title, `${sub} · ${count(data.rows.length, 'key')} · ${bytes(data.total)}`, DV.keyRows(h, data.rows, KEYS_SKIN));
       }
-      let ls = null;
-      let ss = null;
-      try { ls = window.localStorage; } catch (e) { /* blocked */ }
-      try { ss = window.sessionStorage; } catch (e) { /* blocked */ }
-      wrap.append(ls ? kvStore('localStorage', '(key + value) × 2 bytes, as UTF-16 — the limit is about 5 MB and differs by browser', ls) : sec('localStorage', '', h('div.dt-dim.dt-pad', { text: 'Blocked in this browser.' })));
-      wrap.append(ss ? kvStore('sessionStorage', 'this tab only', ss) : sec('sessionStorage', '', h('div.dt-dim.dt-pad', { text: 'Blocked in this browser.' })));
+      const big = DV.largestKeys(10);
+      wrap.append(sec('Largest saved keys', 'what StaticOS saved for this person (staticos.state.v3), the biggest first',
+        big.length ? DV.keyRows(h, big, KEYS_SKIN) : h('div.dt-dim.dt-pad', { text: 'Nothing saved yet.' })));
+      wrap.append(kvStore('localStorage', '(key + value) × 2 bytes, as UTF-16 — the limit is about 5 MB and differs by browser', DV.localKeys()));
+      wrap.append(kvStore('sessionStorage', 'this tab only', DV.sessionKeys()));
 
       /* IndexedDB */
       const idb = sec('IndexedDB', 'staticos · via js/core/db.js', reading());
@@ -1378,6 +1406,46 @@ defineApp({
       render();
     };
 
+    /* -------------------------------- Apps -------------------------------- */
+    /* Every registered app, read and drawn by devviews.js (the Developer Room
+       lists the same rows in its own look). The Errors column counts console
+       errors and uncaught exceptions logged from that app's own file
+       (js/apps/<module>.js); one raised in shared code is counted as "elsewhere"
+       in the footer, not guessed onto an app. */
+    PANES.apps = P => {
+      const { st, sc } = P;
+      const errBtn = chip('Only with errors', st.errOnly, () => { st.errOnly = !st.errOnly; errBtn.classList.toggle('is-on', st.errOnly); errBtn.setAttribute('aria-pressed', String(st.errOnly)); render(); },
+        'Show only apps that have logged an error from their own file');
+      bar.append(filterField(P, 'Filter by app name or id', () => render()), errBtn, grow(), tbtn('refresh', 'Read the app list again', () => render()));
+      const wrap = h('div.dt-scroll');
+      body.append(wrap);
+      const footEl = h('span.dt-foot__t');
+      foot.append(footEl);
+      const SKIN = { layout: 'table', table: 'table.dt-table.dt-table--flat.dt-table--apps', mono: '.dt-mono', tag: 'span.dt-tag' };
+
+      function render() {
+        const keep = wrap.scrollTop;
+        const all = DV.appRows({ listApps: api.listApps, wm });
+        const q = st.q.toLowerCase();
+        const rows = all.filter(r => (!q || `${r.name} ${r.id}`.toLowerCase().includes(q)) && (!st.errOnly || r.errors));
+        clear(wrap);
+        if (rows.length) wrap.append(DV.appsView(h, rows, SKIN, { open: id => api.openApp(id) }));
+        else wrap.append(emptyState('filter', 'No apps match', st.errOnly && !q ? 'No app has logged an error from its own file.' : 'Nothing matches the filter.'));
+        const sum = DV.appsSummary(all);
+        footEl.textContent = [
+          rows.length !== all.length ? `${num(rows.length)} of ${count(sum.apps, 'app')}` : count(sum.apps, 'app'),
+          `${num(sum.hidden)} hidden`, `${count(sum.windows, 'window')} open`,
+          `${count(sum.errors, 'error')} from app files`,
+          sum.elsewhere ? `${count(sum.elsewhere, 'error')} from shared code` : '',
+          'counted from where each was logged',
+        ].filter(Boolean).join('  ·  ');
+        wrap.scrollTop = keep;
+      }
+      sc.on(DL.onEntry(() => P.frame('render', render)));
+      sc.on(bus.on('win:list', () => P.frame('render', render)));
+      render();
+    };
+
     /* -------------------------------- Performance -------------------------------- */
     PANES.performance = P => {
       const { st, sc } = P;
@@ -1573,12 +1641,33 @@ defineApp({
       paint();
     };
 
+    /* -------------------------------- diagnostics -------------------------------- */
+    /* What Copy diagnostics puts on the clipboard: the same facts About This
+       Static copies, then the apps with errors and the latest few errors (each
+       first line with token-shaped text masked). Never a name, file, or setting. */
+    async function diagnosticsReport() {
+      const lines = [`${await SI.versionLine()} · diagnostics · ${new Date().toLocaleString()}`, '', await SI.infoText(), ''];
+      lines.push(`Open apps: ${SI.openApps().join(', ') || 'none'}`);
+      const { by, elsewhere } = DV.errorsByModule();
+      const per = [...by.entries()].sort((x, y) => y[1] - x[1]);
+      lines.push(`Console errors: ${per.reduce((n, x) => n + x[1], elsewhere)} (${per.length ? per.map(([m, n]) => `${m} ${n}`).join(', ') : 'none from an app file'}${elsewhere ? `${per.length ? ', ' : ''}elsewhere ${elsewhere}` : ''})`);
+      const errs = DL.entries().filter(e => e.level === 'error').slice(-8);
+      for (const e of errs) lines.push(`  ${clock(e.t)} ${String(DL.redact(String(e.text || '')) || '').split('\n')[0].slice(0, 200)}${e.site ? ` (${e.site})` : ''}`);
+      return lines.join('\n');
+    }
+
     /* -------------------------------- Status -------------------------------- */
     PANES.status = P => {
       const { st, sc } = P;
       const when = h('span.dt-dim.dt-when');
       const again = h('button.btn.btn--sm', { type: 'button', onclick: () => runAll() }, icon('refresh'), h('span', { text: 'Check again' }));
-      bar.append(again, when, grow(), tbtn('copy', 'Copy the report', async () => {
+      const diagBtn = h('button.btn.btn--sm.dt-diag', { type: 'button', title: 'Copy the system facts, errors by app and the latest errors — no name, files or settings',
+        onclick: async () => {
+          const text = await diagnosticsReport();
+          const ok = await copyText(text);
+          note(ok ? 'Diagnostics copied' : 'Copy failed', ok ? 'Paste it into a message. It holds no name, files or settings.' : 'The browser refused clipboard access.', ok ? 'copy' : 'alert');
+        } }, icon('copy'), h('span', { text: 'Copy diagnostics' }));
+      bar.append(again, when, grow(), diagBtn, tbtn('copy', 'Copy the report', async () => {
         const text = CHECKS.map(c => { const r = st.results[c.id] || {}; return `${c.label}: ${r.value || '—'}${r.detail ? ` — ${r.detail}` : ''}`; }).join('\n');
         const ok = await copyText(`StaticOS status · ${new Date(st.ranAt || Date.now()).toLocaleString()}\n${text}`);
         note(ok ? 'Report copied' : 'Copy failed', ok ? 'The status report is on the clipboard.' : 'The browser refused clipboard access.');
@@ -1895,7 +1984,7 @@ defineApp({
       S.dead = true;
       pane.dispose();
       app.dispose();
-      DL.setBusTap(MEM.pinned);
+      DV.holdTap('devtools', MEM.pinned);
     };
   },
 });

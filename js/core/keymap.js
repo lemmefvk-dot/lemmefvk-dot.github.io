@@ -19,6 +19,8 @@
    ============================================================ */
 import { isMac } from './util.js';
 import { store } from './store.js';
+import { bus } from './bus.js';
+import { t as tr } from './i18n.js';
 
 /* group, keys, what it does, where it is bound
    (+ mac: listed on a Mac only — elsewhere the keys never arrive or are
@@ -26,48 +28,48 @@ import { store } from './store.js';
    these keys on purpose, and takes over when this row has nothing to do —
    off a Mac, ⌃Tab means the next tab, or the next window with no tabs) */
 export const GLOBAL = [
-  { group: 'Find and open', keys: 'Mod+K', label: 'Static Search', where: 'shell/spotlight.js', hint: 'search' },
-  { group: 'Find and open', keys: 'Mod+Space', label: 'Static Search (when not typing)', where: 'shell/spotlight.js' },
-  { group: 'Find and open', keys: 'Ctrl+Alt+A', label: 'Open the launcher', where: 'shell/a11y.js' },
-  { group: 'Find and open', keys: 'Mod+.', label: 'Emoji and symbols, while typing', where: 'shell/emoji.js' },
-  { group: 'Find and open', keys: 'Ctrl+Alt+S', label: 'Read the selected text aloud (with nothing selected: stop)', where: 'shell/readaloud.js' },
-  { group: 'Find and open', keys: 'Mod', hold: true, label: 'Hold it on its own for a second: every shortcut', where: 'shell/cheatsheet.js' },
+  { group: tr('Find and open'), keys: 'Mod+K', label: tr('Static Search'), where: 'shell/spotlight.js', hint: 'search' },
+  { group: tr('Find and open'), keys: 'Mod+Space', label: tr('Static Search (when not typing)'), where: 'shell/spotlight.js' },
+  { group: tr('Find and open'), keys: 'Ctrl+Alt+A', label: tr('Open the launcher'), where: 'shell/a11y.js' },
+  { group: tr('Find and open'), keys: 'Mod+.', label: tr('Emoji and symbols, while typing'), where: 'shell/emoji.js' },
+  { group: tr('Find and open'), keys: 'Ctrl+Alt+S', label: tr('Read the selected text aloud (with nothing selected: stop)'), where: 'shell/readaloud.js' },
+  { group: tr('Find and open'), keys: 'Mod', hold: true, label: tr('Hold it on its own for a second: every shortcut'), where: 'shell/cheatsheet.js' },
 
-  { group: 'Windows', keys: 'Mod+Tab', label: 'Next window (with Shift, the one before)', where: 'main.js' },
-  { group: 'Windows', keys: 'Ctrl+Alt+. / Ctrl+Alt+,', label: 'Next / previous window', where: 'shell/a11y.js' },
-  { group: 'Windows', keys: 'Mod+W', label: 'Close the front window', where: 'core/wm.js', hint: 'close' },
-  { group: 'Windows', keys: 'Mod+Shift+T / Ctrl+Alt+Shift+T', label: 'Reopen the last closed window, where it was (again: the one before); the second one is for browsers that keep the first for their own tabs', where: 'core/reopen.js' },
-  { group: 'Windows', keys: 'Ctrl+Alt+W', label: 'Close the front window (when not typing)', where: 'main.js' },
-  { group: 'Windows', keys: 'Mod+M / Ctrl+Alt+M', label: 'Minimise the front window (when not typing)', where: 'core/wm.js · main.js' },
-  { group: 'Windows', keys: 'Mod+Alt+Left / Mod+Alt+Right', label: 'Snap the front window left / right', where: 'core/wm.js', hint: 'snap', mac: true },
-  { group: 'Windows', keys: 'Mod+Alt+Up', label: 'Maximise the front window', where: 'core/wm.js', mac: true },
-  { group: 'Windows', keys: 'Ctrl+Alt+Left / Ctrl+Alt+Right', label: 'Snap left / right half', where: 'main.js', hint: 'snap' },
-  { group: 'Windows', keys: 'Ctrl+Alt+Up / Ctrl+Alt+Down', label: 'Snap to the top / bottom half', where: 'main.js' },
-  { group: 'Windows', keys: 'Ctrl+Alt+1 / Ctrl+Alt+2 / Ctrl+Alt+3 / Ctrl+Alt+4', label: 'Snap to a quarter (when not typing)', where: 'main.js' },
-  { group: 'Windows', keys: 'Ctrl+Alt+Enter', label: 'Maximise or restore', where: 'main.js' },
-  { group: 'Windows', keys: 'Ctrl+Alt+F', label: 'Full screen (when not typing)', where: 'main.js' },
-  { group: 'Windows', keys: 'Ctrl+Alt+Z', label: 'Snap layouts for the front window', where: 'shell/snaplayouts.js' },
-  { group: 'Windows', keys: 'Ctrl+Alt+Space', label: 'Window menu: move, size, snap, keep on top, close', where: 'shell/a11y.js' },
-  { group: 'Windows', keys: 'Ctrl+Alt+P', label: 'Keep the front window on top of the others (again: stop)', where: 'shell/a11y.js' },
-  { group: 'Windows', keys: 'Ctrl+Tab / Ctrl+Shift+Tab', label: 'Next / previous tab, in a window with tabs (drop a window onto another one\'s title bar to make them)', where: 'core/wintabs.js', yields: 'win.cycle' },
+  { group: tr('Windows'), keys: 'Mod+Tab', label: tr('Next window (with Shift, the one before)'), where: 'main.js' },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+. / Ctrl+Alt+,', label: tr('Next / previous window'), where: 'shell/a11y.js' },
+  { group: tr('Windows'), keys: 'Mod+W', label: tr('Close the front window'), where: 'core/wm.js', hint: 'close' },
+  { group: tr('Windows'), keys: 'Mod+Shift+T / Ctrl+Alt+Shift+T', label: tr('Reopen the last closed window, where it was (again: the one before); the second one is for browsers that keep the first for their own tabs'), where: 'core/reopen.js' },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+W', label: tr('Close the front window (when not typing)'), where: 'main.js' },
+  { group: tr('Windows'), keys: 'Mod+M / Ctrl+Alt+M', label: tr('Minimise the front window (when not typing)'), where: 'core/wm.js · main.js' },
+  { group: tr('Windows'), keys: 'Mod+Alt+Left / Mod+Alt+Right', label: tr('Snap the front window left / right'), where: 'core/wm.js', hint: 'snap', mac: true },
+  { group: tr('Windows'), keys: 'Mod+Alt+Up', label: tr('Maximise the front window'), where: 'core/wm.js', mac: true },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+Left / Ctrl+Alt+Right', label: tr('Snap left / right half'), where: 'main.js', hint: 'snap' },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+Up / Ctrl+Alt+Down', label: tr('Snap to the top / bottom half'), where: 'main.js' },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+1 / Ctrl+Alt+2 / Ctrl+Alt+3 / Ctrl+Alt+4', label: tr('Snap to a quarter (when not typing)'), where: 'main.js' },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+Enter', label: tr('Maximise or restore'), where: 'main.js' },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+F', label: tr('Full screen (when not typing)'), where: 'main.js' },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+Z', label: tr('Snap layouts for the front window'), where: 'shell/snaplayouts.js' },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+Space', label: tr('Window menu: move, size, snap, keep on top, close'), where: 'shell/a11y.js' },
+  { group: tr('Windows'), keys: 'Ctrl+Alt+P', label: tr('Keep the front window on top of the others (again: stop)'), where: 'shell/a11y.js' },
+  { group: tr('Windows'), keys: 'Ctrl+Tab / Ctrl+Shift+Tab', label: tr('Next / previous tab, in a window with tabs (drop a window onto another one\'s title bar to make them)'), where: 'core/wintabs.js', yields: 'win.cycle' },
 
-  { group: 'Desktops', keys: 'Mod+`', label: 'Window overview', where: 'shell/overview.js', hint: 'overview' },
-  { group: 'Desktops', keys: 'Ctrl+Alt+O', label: 'Window overview', where: 'shell/a11y.js' },
-  { group: 'Desktops', keys: 'Ctrl+Up', label: 'Overview with the desktops (when not typing)', where: 'shell/desktops.js' },
-  { group: 'Desktops', keys: 'Ctrl+Left / Ctrl+Right', label: 'Previous / next desktop (when not typing)', where: 'shell/desktops.js' },
-  { group: 'Desktops', keys: 'Ctrl+Mod+Left / Ctrl+Mod+Right', label: 'Previous / next desktop', where: 'shell/desktops.js', mac: true },
-  { group: 'Desktops', keys: 'Ctrl+Alt+Shift+Left / Ctrl+Alt+Shift+Right', label: 'Take the front window to the desktop beside', where: 'shell/desktops.js' },
+  { group: tr('Desktops'), keys: 'Mod+`', label: tr('Window overview'), where: 'shell/overview.js', hint: 'overview' },
+  { group: tr('Desktops'), keys: 'Ctrl+Alt+O', label: tr('Window overview'), where: 'shell/a11y.js' },
+  { group: tr('Desktops'), keys: 'Ctrl+Up', label: tr('Overview with the desktops (when not typing)'), where: 'shell/desktops.js' },
+  { group: tr('Desktops'), keys: 'Ctrl+Left / Ctrl+Right', label: tr('Previous / next desktop (when not typing)'), where: 'shell/desktops.js' },
+  { group: tr('Desktops'), keys: 'Ctrl+Mod+Left / Ctrl+Mod+Right', label: tr('Previous / next desktop'), where: 'shell/desktops.js', mac: true },
+  { group: tr('Desktops'), keys: 'Ctrl+Alt+Shift+Left / Ctrl+Alt+Shift+Right', label: tr('Take the front window to the desktop beside'), where: 'shell/desktops.js' },
 
-  { group: 'Keyboard and access', keys: 'Ctrl+Q', label: 'Lock the screen', where: 'main.js' },
-  { group: 'Keyboard and access', keys: 'Esc', label: 'Close the menu, panel or sheet on top', where: 'core/layers.js' },
-  { group: 'Keyboard and access', keys: 'Tab', label: 'First stops: skip to the front window, dock, top bar or desktop', where: 'shell/a11y.js' },
-  { group: 'Keyboard and access', keys: 'Left / Right / Up / Down', label: 'Move inside the dock, launcher, menus and lists', where: 'core/roving.js' },
-  { group: 'Keyboard and access', keys: 'Shift+Left / Shift+Right', label: 'Move the focused app along the dock', where: 'shell/dock.js' },
-  { group: 'Keyboard and access', keys: 'Enter', label: 'Open the focused desktop icon', where: 'shell/a11y.js' },
-  { group: 'Keyboard and access', keys: 'Shift+F10', label: 'Context menu of what has focus', where: 'shell/a11y.js' },
-  { group: 'Keyboard and access', keys: 'Shift+?', label: 'Flash the shortcut hint (when not typing)', where: 'main.js' },
-  { group: 'Keyboard and access', keys: 'Ctrl+Alt+L', label: 'Magnifier on / off', where: 'shell/magnifier.js' },
-  { group: 'Keyboard and access', keys: 'Ctrl+Alt+= / Ctrl+Alt+-', label: 'Magnifier: zoom in / out (while it is on)', where: 'shell/magnifier.js' },
+  { group: tr('Keyboard and access'), keys: 'Ctrl+Q', label: tr('Lock the screen'), where: 'main.js' },
+  { group: tr('Keyboard and access'), keys: 'Esc', label: tr('Close the menu, panel or sheet on top'), where: 'core/layers.js' },
+  { group: tr('Keyboard and access'), keys: 'Tab', label: tr('First stops: skip to the front window, dock, top bar or desktop'), where: 'shell/a11y.js' },
+  { group: tr('Keyboard and access'), keys: 'Left / Right / Up / Down', label: tr('Move inside the dock, launcher, menus and lists'), where: 'core/roving.js' },
+  { group: tr('Keyboard and access'), keys: 'Shift+Left / Shift+Right', label: tr('Move the focused app along the dock'), where: 'shell/dock.js' },
+  { group: tr('Keyboard and access'), keys: 'Enter', label: tr('Open the focused desktop icon'), where: 'shell/a11y.js' },
+  { group: tr('Keyboard and access'), keys: 'Shift+F10', label: tr('Context menu of what has focus'), where: 'shell/a11y.js' },
+  { group: tr('Keyboard and access'), keys: 'Shift+?', label: tr('Flash the shortcut hint (when not typing)'), where: 'main.js' },
+  { group: tr('Keyboard and access'), keys: 'Ctrl+Alt+L', label: tr('Magnifier on / off'), where: 'shell/magnifier.js' },
+  { group: tr('Keyboard and access'), keys: 'Ctrl+Alt+= / Ctrl+Alt+-', label: tr('Magnifier: zoom in / out (while it is on)'), where: 'shell/magnifier.js' },
 ];
 
 export const GROUPS = [...new Set(GLOBAL.map(r => r.group))];
@@ -266,6 +268,11 @@ const NONE = new Map();
 let capturing = false;
 function resolve(e) {
   if (!e || capturing || e.isComposing) return NONE;
+  return compute(e);
+}
+/* the same, whether or not Settings is recording (practice mode asks too) */
+function compute(e) {
+  if (!e || e.isComposing) return NONE;
   let hit = seen.get(e);
   if (hit) return hit;
   hit = new Map();
@@ -330,6 +337,7 @@ export function setBinding(id, combo) {
   const next = { ...overrides() };
   if (a.defaults.join(' / ') === combo) delete next[id]; else next[id] = combo;
   store.set(PREF, next);
+  bus.emit('keymap:change', { id, combo });          /* Shortcut Shaper (core/achievements.js) */
   return true;
 }
 export function resetBinding(id) {
@@ -338,6 +346,69 @@ export function resetBinding(id) {
   store.set(PREF, next);
 }
 export function resetAll() { store.set(PREF, {}); }
+
+/** What a key press would do, for practice mode (Settings › Shortcuts):
+    every action this computer binds to it, and the standard keys it is.
+    Works while shortcuts are paused for recording. */
+export function identify(e, mac = isMac) {
+  const t = table(mac);
+  const acts = [];
+  const hit = e && !e.getModifierState?.('AltGraph') ? compute(e) : NONE;
+  for (const id of hit.keys()) { const a = t.byId[id]; if (a && a.listed) acts.push({ id: a.id, label: a.label, group: a.group, keys: a.keys.slice(), fixed: false }); }
+  const combo = fromEvent(e, mac);
+  if (combo) {
+    const mine = sigs(combo, mac)[0];
+    for (const r of t.fixed) {
+      if (r.keys.split(' / ').some(k => sigs(k, mac)[0] === mine)) acts.push({ id: null, label: r.label, group: r.group, keys: r.keys.split(' / '), fixed: true });
+    }
+  }
+  return acts;
+}
+
+/* ---- keys as a file (Settings › Shortcuts › Export / Import) ---------
+   Only the keys you changed are written, by action id, so the file is
+   short and keeps working when a default changes. Importing replaces
+   your own keys with the file's: each one is checked as if you had typed
+   it (a key the computer keeps, a bare letter, an id this version doesn't
+   have) and anything refused is listed, not silently dropped. */
+export const FILE_KIND = 'staticos-shortcuts';
+export function exportBindings() {
+  const own = overrides();
+  const bindings = {};
+  for (const id of Object.keys(own)) if (action(id) && typeof own[id] === 'string') bindings[id] = own[id];
+  return { kind: FILE_KIND, version: 1, saved: new Date().toISOString(), bindings };
+}
+
+/** Read a file's text: { ok, bindings, skipped: [{ id, why }] } — nothing is applied. */
+export function readBindings(text, mac = isMac) {
+  let data;
+  try { data = typeof text === 'string' ? JSON.parse(text) : text; } catch (e) { return { ok: false, error: 'That file is not a StaticOS shortcuts file (it is not JSON).' }; }
+  if (!data || typeof data !== 'object' || data.kind !== FILE_KIND || !data.bindings || typeof data.bindings !== 'object' || Array.isArray(data.bindings)) {
+    return { ok: false, error: 'That file is not a StaticOS shortcuts file.' };
+  }
+  const bindings = {}, skipped = [];
+  for (const [id, keys] of Object.entries(data.bindings)) {
+    const a = action(id, mac);
+    if (!a) { skipped.push({ id, why: 'this version of StaticOS has no such shortcut' }); continue; }
+    if (typeof keys !== 'string' || !keys.trim()) { skipped.push({ id, why: 'no keys' }); continue; }
+    const combos = keys.split(' / ').map(c => c.trim()).filter(Boolean);
+    const bad = combos.map(c => { const r = check('\0none', c, mac); return r.error && !r.conflicts ? `${keysText(c, mac)}: ${r.error}` : ''; }).find(Boolean);
+    if (bad) { skipped.push({ id, label: a.label, why: bad }); continue; }
+    bindings[id] = combos.join(' / ');
+  }
+  return { ok: true, bindings, skipped };
+}
+
+/** Replace your own keys with these (from readBindings). Returns how many were applied and how many now clash. */
+export function applyBindings(bindings) {
+  const next = {};
+  for (const [id, keys] of Object.entries(bindings || {})) {
+    const a = action(id);
+    if (a && a.defaults.join(' / ') !== keys) next[id] = keys;
+  }
+  store.set(PREF, next);
+  return { applied: Object.keys(next).length, clashes: conflicts().size };
+}
 
 /** The combination a key press makes, written the way this list writes
     keys ('Mod+Alt+J'), or '' while only modifiers are down. */
@@ -458,5 +529,5 @@ export function conflicts(mac = isMac) {
 export default {
   GLOBAL, GROUPS, keyLabel, combos, keysText, globalRows, appRows,
   matches, match, typesChar, capture, isCapturing, actionRows, action, bindings, hint, changedCount,
-  setBinding, resetBinding, resetAll, fromEvent, warnFor, check, conflictsFor, conflicts, parse,
+  setBinding, resetBinding, resetAll, identify, exportBindings, readBindings, applyBindings, fromEvent, warnFor, check, conflictsFor, conflicts, parse,
 };

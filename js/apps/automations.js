@@ -21,6 +21,16 @@
    themes. Up to ten actions, reorderable, each checked as you
    go, and Run now tries the draft without saving it.
 
+   More: triggers for a time of day, a focus session starting or
+   ending, it getting dark or light (the Day and Night wallpaper's
+   own sunrise and sunset) and a download finishing; actions for
+   Do Not Disturb, the volume and opening a web page. Rules can be
+   dragged (or moved with the arrow keys) to change the order they
+   run in, tried with Dry run (what they WOULD do, changing nothing),
+   and shared as a SRULE1. code: pasting one only shows it for review
+   and adds it switched off — nothing runs on paste. The last 50 runs
+   in the log are kept across a reload.
+
    Honesty: rules only run while StaticOS is open in this
    browser — the sidebar says so, and says whether the engine is
    running at all. Nothing on screen is invented: the "last ran"
@@ -40,6 +50,7 @@
 import { defineApp } from '../core/registry.js';
 import * as AM from '../core/automations.js';
 import { appTile } from '../core/appart.js';
+import * as DC from '../core/daycycle.js';
 
 /* self-injected stylesheet, guarded so re-opening never double-adds it */
 if (typeof document !== 'undefined' && !document.getElementById('feat-automations-css')) {
@@ -65,6 +76,10 @@ const TRIGGER_OPTS = [
   { value: 'game-launch', label: 'I launch a game' },
   { value: 'startup', label: 'StaticOS starts' },
   { value: 'gamemode-on', label: 'Game Mode turns on' },
+  { value: 'time', label: 'the time is' },
+  { value: 'focus', label: 'a focus session' },
+  { value: 'daylight', label: 'it gets' },
+  { value: 'download', label: 'a download finishes' },
 ];
 const ACTION_OPTS = [
   { value: 'open-app', label: 'open' },
@@ -74,6 +89,9 @@ const ACTION_OPTS = [
   { value: 'accent', label: 'switch the accent to' },
   { value: 'music', label: 'tell Music to' },
   { value: 'notify', label: 'show a notification' },
+  { value: 'dnd', label: 'turn Do Not Disturb' },
+  { value: 'volume', label: 'set the volume to' },
+  { value: 'open-page', label: 'open the page' },
 ];
 const ACTION_DEFAULT = {
   'open-app': () => ({ type: 'open-app', app: '' }),
@@ -83,11 +101,16 @@ const ACTION_DEFAULT = {
   accent: () => ({ type: 'accent', id: '' }),
   music: () => ({ type: 'music', action: 'play' }),
   notify: () => ({ type: 'notify', text: '' }),
+  dnd: () => ({ type: 'dnd', on: true }),
+  volume: () => ({ type: 'volume', level: 30 }),
+  'open-page': () => ({ type: 'open-page', url: '' }),
 };
 const ICON = {
   'app-open': 'grid-9', 'game-launch': 'gamepad', 'gamemode-on': 'gauge',
   'open-app': 'grid-9', gamemode: 'gauge', widgets: 'sidebar', wallpaper: 'image',
   accent: 'palette', music: 'music', notify: 'bell',
+  time: 'clock', focus: 'flame', daylight: 'sun', download: 'download',
+  dnd: 'bell-off', volume: 'volume-2', 'open-page': 'globe',
 };
 const STARTUP_ICON = { always: 'power', night: 'moon', day: 'sun', morning: 'sun' };
 /* how the repeat reads inside "Remind me to … at 9:00 AM [once, on] [date]" */
@@ -143,6 +166,11 @@ defineApp({
       /* Reminders: the form's draft survives every repaint; `editing` is the id being changed */
       rem: { draft: AM.blankReminder(), editing: null, tried: false },
       startupPick: '',      /* the app chosen in "Add" on Startup apps, until it's added */
+      dry: null,            /* a rule's dry run shown under its row: { id, plan } */
+      dryDraft: null,       /* the editor's dry run */
+      codeText: '',         /* what was typed or pasted in "Add a rule from a code" */
+      codeReview: null,     /* a decoded code waiting to be added: { rule, dropped } */
+      codeErr: '',
     };
     let rafId = 0;
     let remTick = 0;
@@ -165,7 +193,7 @@ defineApp({
       return mine.find(e => e.status !== 'held' && e.status !== 'skipped') || mine[0] || null;
     };
     const dirty = () => !!S.draft && JSON.stringify(S.draft) !== S.orig;
-    const presetRule = p => AM.normRule({ id: AM.newId(), name: '', enabled: true, when: clone(p.when), then: clone(p.then) });
+    const presetRule = p => AM.normRule({ id: AM.newId(), name: p.name || '', enabled: true, when: clone(p.when), then: clone(p.then) });
 
     /* ---------------- pieces ---------------- */
     /** The sentence, with the chosen words set apart. */
@@ -179,7 +207,7 @@ defineApp({
       if (app) {
         return appTile(app, { sel: 'span.glyph.am-tile', gs: `${size}px`, attrs: { 'aria-hidden': 'true' }, icon: kind === 'music' ? 'music' : app.icon });
       }
-      const ic = kind === 'startup' ? (STARTUP_ICON[o.when] || 'power') : (ICON[kind] || 'zap');
+      const ic = kind === 'startup' ? (STARTUP_ICON[o.when] || 'power') : kind === 'daylight' ? (o.to === 'light' ? 'sun' : 'moon') : (ICON[kind] || 'zap');
       return h('span.am-tile.am-tile--sys', { 'aria-hidden': 'true', style: { '--gs': `${size}px` } }, icon(ic));
     }
     function flow(rule, compact) {
@@ -282,6 +310,122 @@ defineApp({
       flash('Rule deleted');
       render();
     }
+    /* ---- order: the rules run top to bottom ---- */
+    function moveRule(id, to) {
+      const list = rules();
+      const i = list.findIndex(x => x.id === id);
+      if (i < 0) return false;
+      const j = Math.max(0, Math.min(list.length - 1, to));
+      if (j === i) return false;
+      const [m] = list.splice(i, 1);
+      list.splice(j, 0, m);
+      saveAll(list);
+      return true;
+    }
+    function nudge(id, dir, fk) {
+      const i = rules().findIndex(x => x.id === id);
+      if (i < 0 || !moveRule(id, i + dir)) return;
+      S.highlight = id;
+      announce(`Moved to position ${i + dir + 1} of ${rules().length}. Rules run top to bottom.`);
+      render();
+      requestAnimationFrame(() => { if (!S.dead) root.querySelector(`[data-fk="${CSS.escape(fk || `grip-${id}`)}"]`)?.focus({ preventScroll: true }); });
+    }
+    function startDrag(e, id) {
+      if (e.button !== undefined && e.button !== 0) return;
+      const group = mainEl.querySelector('.am-rules');
+      if (!group) return;
+      const rows = [...group.querySelectorAll('.am-rule')];
+      const from = rows.findIndex(r => r.dataset.id === id);
+      if (from < 0 || rows.length < 2) return;
+      e.preventDefault();
+      const grip = e.currentTarget;
+      try { grip.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointers can't be captured */ }
+      const others = rows.filter((_, k) => k !== from);
+      let to = from;
+      rows[from].classList.add('is-dragging');
+      const mark = () => {
+        others.forEach(r => r.classList.remove('is-drop-above', 'is-drop-below'));
+        if (to < others.length) others[to].classList.add('is-drop-above'); else others[others.length - 1].classList.add('is-drop-below');
+      };
+      const move = ev => {
+        const rs = others.map(r => r.getBoundingClientRect());
+        to = rs.filter(r => ev.clientY > r.top + r.height / 2).length;
+        mark();
+      };
+      const end = commit => {
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        grip.removeEventListener('pointercancel', cancel);
+        window.removeEventListener('keydown', esc, true);
+        rows[from].classList.remove('is-dragging');
+        others.forEach(r => r.classList.remove('is-drop-above', 'is-drop-below'));
+        if (commit && to !== from && moveRule(id, to)) {
+          S.highlight = id;
+          flash('Moved — rules run top to bottom');
+          render();
+        }
+      };
+      const up = () => end(true);
+      const cancel = () => end(false);
+      const esc = ev => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); end(false); } };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up);
+      grip.addEventListener('pointercancel', cancel);
+      window.addEventListener('keydown', esc, true);
+      move(e);
+    }
+
+    /* ---- dry run: what it would do, changing nothing ---- */
+    function dryRow(id) {
+      const plan = AM.dryRun(id);
+      if (!plan) return;
+      S.dry = { id, plan };
+      announce(`Dry run: ${plan.steps.map(x => x.result).join('. ')}`);
+      render();
+      requestAnimationFrame(() => { if (!S.dead) root.querySelector('[data-fk="dry-close"]')?.focus({ preventScroll: true }); });
+    }
+    function dryPanel(plan, closeFk, onClose) {
+      return h('div.am-dry', { role: 'group', 'aria-label': 'Dry run' },
+        h('div.am-dry__head', icon('eye'), h('b', { text: 'Dry run — nothing was changed' }), h('span.am-spacer'),
+          h('button.am-link', { type: 'button', text: 'Close', dataset: { fk: closeFk }, onclick: onClose })),
+        plan.steps.length ? stepList(plan.steps) : null,
+        plan.notes.map(t => h('div.am-entry__note', { text: t })));
+    }
+
+    /* ---- share as a code ---- */
+    async function copyCode(rule) {
+      const clean = AM.normRule(rule);
+      if (!clean) return;
+      if (AM.issues(clean).some(x => x.level === 'error')) { flash('Finish the rule first — a code needs a complete rule'); return; }
+      const code = AM.encodeRule(clean);
+      try {
+        await navigator.clipboard.writeText(code);
+        flash('Rule code copied — send it to a friend');
+      } catch (err) {
+        flash('Your browser blocked copying from here. Try again.');
+      }
+    }
+    function reviewCode() {
+      S.codeErr = '';
+      S.codeReview = null;
+      try { S.codeReview = AM.decodeRule(S.codeText); } catch (err) { S.codeErr = err.message; }
+      render();
+      requestAnimationFrame(() => { if (!S.dead) root.querySelector(S.codeReview ? '[data-fk="code-add"]' : '[data-fk="code-in"]')?.focus({ preventScroll: true }); });
+    }
+    function addCodeRule() {
+      const rv = S.codeReview;
+      if (!rv) return;
+      const list = rules();
+      if (list.length >= AM.MAX_RULES) { flash(`You can have up to ${AM.MAX_RULES} rules`); return; }
+      const r = AM.normRule(rv.rule);
+      saveAll([...list, r]);
+      S.codeReview = null; S.codeText = ''; S.codeErr = '';
+      S.view = 'rules';
+      S.highlight = r.id;
+      flash('Added — it’s switched off until you turn it on', { say: `Added, switched off: ${AM.describe(r)}` });
+      render();
+    }
+
     function addPreset(p) {
       const list = rules();
       if (list.length >= AM.MAX_RULES) { flash(`You can have up to ${AM.MAX_RULES} rules`); return; }
@@ -347,11 +491,14 @@ defineApp({
     }
 
     /* ---------------- editor ops ---------------- */
-    function repaintEditor() { render(); }
+    function repaintEditor() { S.dryDraft = null; render(); }
     function setWhenType(type) {
       const d = S.draft;
       if (type === 'app-open') d.when = { type, app: d.when.type === 'app-open' ? d.when.app : '' };
       else if (type === 'startup') d.when = { type, when: d.when.type === 'startup' ? d.when.when : 'always' };
+      else if (type === 'time') d.when = { type, at: d.when.type === 'time' ? d.when.at : '07:00', days: d.when.type === 'time' ? d.when.days : 'every' };
+      else if (type === 'focus') d.when = { type, edge: d.when.type === 'focus' ? d.when.edge : 'start' };
+      else if (type === 'daylight') d.when = { type, to: d.when.type === 'daylight' ? d.when.to : 'dark' };
       else d.when = { type };
       repaintEditor();
     }
@@ -420,6 +567,15 @@ defineApp({
       requestAnimationFrame(() => {
         if (!S.dead) root.querySelector(`[data-fk="edit-${CSS.escape(clean.id)}"]`)?.focus({ preventScroll: true });
       });
+    }
+    function dryDraft() {
+      const d = S.draft;
+      if (!d) return;
+      const plan = AM.dryRun(clone(d));
+      if (!plan) return;
+      S.dryDraft = plan;
+      render();
+      announce(`Dry run: ${plan.steps.map(x => x.result).join('. ')}`);
     }
     function testDraft() {
       const d = S.draft;
@@ -518,6 +674,7 @@ defineApp({
         !S.narrow && list.length ? h('span.am-count', { text: `${list.length} rule${list.length === 1 ? '' : 's'} · ${on} on` }) : null,
         h('span.am-spacer'),
         flashSlot(),
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'paste-code' }, title: 'Add a rule a friend sent you as a code', onclick: () => { go('examples').then(() => requestAnimationFrame(() => root.querySelector('[data-fk="code-in"]')?.focus())); } }, icon('share'), h('span', { text: 'Paste a code' })),
         h('button.btn.btn--sm.btn--primary', {
           type: 'button', dataset: { fk: 'new' }, disabled: full ? true : null,
           title: full ? `You can have up to ${AM.MAX_RULES} rules` : null, onclick: newRule,
@@ -545,9 +702,12 @@ defineApp({
       } else {
         const group = h('div.set-group.am-rules', { role: 'list', 'aria-label': 'Rules' });
         const entries = AM.log();
-        for (const r of list) group.append(ruleRow(r, entries));
+        for (const r of list) {
+          group.append(ruleRow(r, entries, list));
+          if (S.dry && S.dry.id === r.id) group.append(dryPanel(S.dry.plan, 'dry-close', () => { S.dry = null; render(); }));
+        }
         content.append(group);
-        content.append(h('p.am-foot', { text: `When one event starts several rules, they run top to bottom. Each rule runs at most once every ${AM.COOLDOWN_MS / 1000} seconds, and a rule never sets itself off.` }));
+        content.append(h('p.am-foot', { text: `When one event starts several rules, they run top to bottom — drag the handle on the left to change the order. Each rule runs at most once every ${AM.COOLDOWN_MS / 1000} seconds, and a rule never sets itself off.` }));
       }
       mainEl.append(content);
     }
@@ -567,7 +727,7 @@ defineApp({
       }
     }
 
-    function ruleRow(r, entries) {
+    function ruleRow(r, entries, list) {
       const probs = AM.issues(r);
       const prob = probs.find(p => p.level === 'error') || probs.find(p => p.level === 'warn');
       const named = !!r.name.trim();
@@ -586,10 +746,18 @@ defineApp({
       named ? h('span.am-rule__s', sentenceNodes(r)) : null,
       meta.length ? h('span.am-rule__meta', meta) : null);
 
+      const grip = list.length > 1 ? h('button.ibtn.am-grip', {
+        type: 'button', 'aria-label': `Move “${lbl}” — drag, or press the up and down arrow keys`, title: 'Drag to reorder', dataset: { fk: `grip-${r.id}` },
+        onpointerdown: e => startDrag(e, r.id),
+        onkeydown: e => {
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); nudge(r.id, e.key === 'ArrowUp' ? -1 : 1); }
+        },
+      }, icon('grip-vertical')) : null;
       const row = h('div.am-rule', {
         role: 'listitem', dataset: { id: r.id },
         class: [r.enabled ? '' : 'is-off', S.highlight === r.id ? 'is-new' : ''].filter(Boolean).join(' ') || null,
       },
+      grip,
       flow(r, S.narrow),
       main,
       h('div.am-rule__ctl',
@@ -600,8 +768,12 @@ defineApp({
           menu([
             { label: 'Edit…', icon: 'edit-3', onClick: () => edit(r.id) },
             { label: 'Run now', icon: 'play', onClick: () => runNow(r.id) },
+            { label: 'Dry run — what would it do?', icon: 'eye', onClick: () => dryRow(r.id) },
             { label: r.enabled ? 'Switch off' : 'Switch on', icon: 'power', onClick: () => setEnabled(r.id, !r.enabled) },
             { label: 'Duplicate', icon: 'copy', onClick: () => duplicate(r.id) },
+            { label: 'Copy rule code', icon: 'share', onClick: () => copyCode(r) },
+            { label: 'Move up', icon: 'arrow-up', disabled: list.indexOf(r) === 0, onClick: () => nudge(r.id, -1, `more-${r.id}`) },
+            { label: 'Move down', icon: 'arrow-down', disabled: list.indexOf(r) === list.length - 1, onClick: () => nudge(r.id, 1, `more-${r.id}`) },
             '-',
             { label: 'Delete…', icon: 'trash', danger: true, onClick: () => deleteRule(r.id) },
           ], Math.round(b.right - 180), Math.round(b.bottom + 4));
@@ -620,6 +792,7 @@ defineApp({
         group.append(h('div.am-preset', { role: 'listitem' },
           flow(r, S.narrow),
           h('div.am-preset__t',
+            p.name ? h('b.am-preset__n', { text: p.name }) : null,
             h('span.am-preset__s', sentenceNodes(r)),
             missing ? h('small.am-last.is-warn', icon('alert'), h('span', { text: missing.text })) : null),
           mine
@@ -635,7 +808,47 @@ defineApp({
       mainEl.append(bar(S.narrow ? tabs() : title('Examples'), h('span.am-spacer'), flashSlot()));
       mainEl.append(h('div.app__content.am-scroll',
         h('p.am-intro', { text: 'Starter rules. Adding one makes an ordinary rule — switched on — that you can change, test or switch off like any other.' }),
-        presetGroup()));
+        presetGroup(),
+        codeSection()));
+    }
+
+    /** "Add a rule from a code": shown for review first; nothing runs, and it is added switched off */
+    function codeSection() {
+      const rv = S.codeReview;
+      const input = h('input', {
+        type: 'text', value: S.codeText, placeholder: 'Paste a rule code (SRULE1.…)', spellcheck: 'false', autocomplete: 'off',
+        'aria-label': 'A rule code from a friend', dataset: { fk: 'code-in' },
+        oninput: e => {
+          S.codeText = e.target.value;
+          const b = root.querySelector('[data-fk="code-review"]');
+          if (b) b.disabled = !S.codeText.trim();
+          if (S.codeReview || S.codeErr) { S.codeReview = null; S.codeErr = ''; render(); }
+        },
+        onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); reviewCode(); } },
+      });
+      const kids = [
+        h('div.label.am-cap', { text: 'Rule codes' }),
+        h('p.am-intro', { text: 'A friend can send you one of their rules as a code. Pasting it only shows you what it does — it isn’t added or run until you say so, and it’s added switched off.' }),
+        h('div.am-codein', h('div.field.am-codefield', input),
+          h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'code-review' }, disabled: S.codeText.trim() ? null : true, onclick: reviewCode }, icon('eye'), h('span', { text: 'Review' }))),
+      ];
+      if (S.codeErr) kids.push(h('div.am-issue.am-err', { role: 'alert' }, icon('alert'), h('span', { text: S.codeErr })));
+      if (rv) {
+        const probs = AM.issues(rv.rule).filter(x => x.level === 'warn');
+        const full = rules().length >= AM.MAX_RULES;
+        kids.push(h('div.am-review', { role: 'region', 'aria-label': 'Review this rule' },
+          h('div.am-review__h', icon('eye'), h('b', { text: 'Review before adding' })),
+          flow(rv.rule, false),
+          rv.rule.name ? h('div.am-review__n', { text: `Called “${rv.rule.name}”` }) : null,
+          h('p.am-preset__s', sentenceNodes(rv.rule)),
+          rv.rule.then.some(a => a.type === 'open-page') ? h('div.am-note', icon('info'), h('span', { text: 'This rule opens a web page in the Browser when it runs. Check the address above is one you trust.' })) : null,
+          rv.dropped.map(t => h('div.am-issue', icon('alert'), h('span', { text: t }))),
+          probs.map(x => h('div.am-issue', icon('alert'), h('span', { text: x.text }))),
+          h('div.am-review__b',
+            h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: 'code-add' }, disabled: full ? true : null, title: full ? `You can have up to ${AM.MAX_RULES} rules` : null, onclick: addCodeRule }, icon('plus'), h('span', { text: 'Add this rule' })),
+            h('button.btn.btn--sm', { type: 'button', onclick: () => { S.codeReview = null; render(); } }, h('span', { text: 'Cancel' })))));
+      }
+      return h('section.am-codesec', { 'aria-label': 'Rule codes' }, kids);
     }
 
     /* ---------- Run log ---------- */
@@ -653,6 +866,7 @@ defineApp({
           h('span', { text: s.result || s.what }));
       }));
     }
+    const sameDay = d => { const n = new Date(); return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate(); };
     function entryRow(e) {
       const st = ENTRY[e.status] || ENTRY.ok;
       const d = new Date(e.at);
@@ -662,7 +876,8 @@ defineApp({
         h('div.am-entry__b',
           h('div.am-entry__head',
             h('b.am-entry__t', { text: e.rule }),
-            h('time.am-entry__time', { datetime: d.toISOString(), text: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: !store.get('prefs.h24') }) })),
+            e.old ? h('span.chip.am-chip', { text: 'Before reload' }) : null,
+            h('time.am-entry__time', { datetime: d.toISOString(), text: (sameDay(d) ? '' : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, `) + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: !store.get('prefs.h24') }) })),
           h('div.am-entry__cause', h('span.sr', { text: `${st.label}. ` }), h('span', { text: causeLine(e) })),
           e.note ? h('div.am-entry__note', { text: e.note }) : null,
           e.steps.length ? stepList(e.steps) : null));
@@ -671,7 +886,7 @@ defineApp({
       const entries = AM.log();
       mainEl.append(bar(
         S.narrow ? tabs() : title('Run log'),
-        !S.narrow && entries.length ? h('span.am-count', { text: `${entries.length} this session` }) : null,
+        !S.narrow && entries.length ? h('span.am-count', { text: `${entries.length} run${entries.length === 1 ? '' : 's'}` }) : null,
         h('span.am-spacer'),
         flashSlot(),
         entries.length ? h('button.btn.btn--sm', {
@@ -683,9 +898,9 @@ defineApp({
         content.append(h('div.empty',
           icon('list'),
           h('b', { text: 'Nothing has run yet' }),
-          h('small', { text: 'When a rule runs — or you press Run now — it’s listed here with exactly what it did. The log is kept in memory, so reloading StaticOS clears it.' })));
+          h('small', { text: `When a rule runs — or you press Run now — it’s listed here with exactly what it did. The last ${AM.LOG_KEEP} runs are kept on this device, so a reload doesn’t wipe them.` })));
       } else {
-        content.append(h('p.am-intro', { text: 'This session only — kept in memory, cleared when StaticOS reloads. Newest first.' }));
+        content.append(h('p.am-intro', { text: `Newest first. The last ${AM.LOG_KEEP} runs are kept on this device after a reload; the ones marked “Before reload” are from an earlier visit.` }));
         content.append(h('ol.set-group.am-log', { 'aria-label': 'Runs, newest first' }, entries.map(entryRow)));
       }
       mainEl.append(content);
@@ -834,7 +1049,11 @@ defineApp({
       if (r.cal) { api.openApp('calendar', { event: r.cal }); return; }
       if (r.src === 'study') { api.openApp('study', { tab: 'homework', assignment: r.ref }); return; }
       if (r.src === 'friends') { api.openApp('social', { night: String(r.ref).split('~')[0] }); return; }
+      if (r.src === 'anime') { api.openApp('aether-anime', { url: 'static://anime?view=airing' }); return; }
       if (r.src === 'study-exams') { api.openApp('study', { tab: 'exams', exam: String(r.ref).split(':')[0] }); return; }
+      if (r.src === 'study-timetable') { api.openApp('study', { tab: 'timetable' }); return; }
+      if (r.src === 'tasks') { api.openApp('tasks', { task: r.ref }); return; }
+      if (r.src === 'contacts') { api.openApp('contacts', { contact: r.ref }); return; }
       S.rem = { draft: { text: r.text, time: r.time, repeat: r.repeat, date: r.date || AM.ymd(new Date()) }, editing: id, tried: false };
       if (S.view !== 'reminders') S.view = 'reminders';
       render();
@@ -919,7 +1138,11 @@ defineApp({
       if (r.cal) meta.push(h('span.chip.am-chip', { dataset: { fk: `rem-cal-${r.id}` } }, icon('calendar'), h('span', { text: 'From Calendar' })));
       if (r.src === 'study') meta.push(h('span.chip.am-chip', { dataset: { fk: `rem-study-${r.id}` } }, icon('clipboard'), h('span', { text: 'From Homework' })));
       if (r.src === 'friends') meta.push(h('span.chip.am-chip', { dataset: { fk: `rem-night-${r.id}` } }, icon('users'), h('span', { text: 'Game night' })));
+      if (r.src === 'anime') meta.push(h('span.chip.am-chip', { dataset: { fk: `rem-anime-${r.id}` } }, icon('star'), h('span', { text: 'Static Anime' })));
       if (r.src === 'study-exams') meta.push(h('span.chip.am-chip', { dataset: { fk: `rem-exam-${r.id}` } }, icon('clipboard'), h('span', { text: 'From Exams' })));
+      if (r.src === 'study-timetable') meta.push(h('span.chip.am-chip', { dataset: { fk: `rem-class-${r.id}` } }, icon('calendar'), h('span', { text: 'From Timetable' })));
+      if (r.src === 'tasks') meta.push(h('span.chip.am-chip', { dataset: { fk: `rem-tasks-${r.id}` } }, icon('check-circle'), h('span', { text: 'From Static Tasks' })));
+      if (r.src === 'contacts') meta.push(h('span.chip.am-chip', { dataset: { fk: `rem-contacts-${r.id}` } }, icon('gift'), h('span', { text: 'From Static Contacts' })));
       if (!r.enabled) meta.push(h('span.chip.am-chip', { text: 'Off' }));
       else if (st.state === 'done') meta.push(h('span.am-last.is-ok', icon('check'), h('span', { text: st.text })));
       else if (st.state === 'missed') meta.push(h('span.am-last.is-warn', icon('alert'), h('span', { text: st.text })));
@@ -932,7 +1155,7 @@ defineApp({
       },
       h('span.am-tile.am-tile--sys', { 'aria-hidden': 'true', style: { '--gs': '28px' } }, icon(st.state === 'missed' ? 'bell-off' : 'bell')),
       h('button.am-rule__main', { type: 'button', dataset: { fk: `rem-edit-${r.id}` }, onclick: () => editReminder(r.id) },
-        h('span.sr', { text: r.cal ? 'Open in Calendar: ' : r.src === 'friends' ? 'Open in Social: ' : r.src === 'study-exams' ? 'Open in Exams: ' : r.src ? 'Open in Homework: ' : 'Change reminder: ' }),
+        h('span.sr', { text: r.cal ? 'Open in Calendar: ' : r.src === 'friends' ? 'Open in Social: ' : r.src === 'study-exams' ? 'Open in Exams: ' : r.src === 'study-timetable' ? 'Open in Timetable: ' : r.src === 'anime' ? 'Open in Static Anime: ' : r.src === 'tasks' ? 'Open in Static Tasks: ' : r.src === 'contacts' ? 'Open in Static Contacts: ' : r.src ? 'Open in Homework: ' : 'Change reminder: ' }),
         h('span.am-rule__t.is-named', { text: r.text }),
         h('span.am-rule__s', { text: (r.cal || r.src) && r.sub ? `${AM.scheduleText(r, now)} · ${r.sub}` : AM.scheduleText(r, now) }),
         meta.length ? h('span.am-rule__meta', meta) : null),
@@ -942,7 +1165,7 @@ defineApp({
           const b = e.currentTarget.getBoundingClientRect();
           /* Calendar's reminders change with their event, in Calendar */
           menu(r.cal || r.src ? [
-            { label: r.cal ? 'Change in Calendar…' : r.src === 'friends' ? 'Open the game night…' : r.src === 'study-exams' ? 'Change in Exams…' : 'Change in Homework…', icon: r.cal ? 'calendar' : r.src === 'friends' ? 'users' : 'clipboard', onClick: () => editReminder(r.id) },
+            { label: r.cal ? 'Change in Calendar…' : r.src === 'friends' ? 'Open the game night…' : r.src === 'study-exams' ? 'Change in Exams…' : r.src === 'study-timetable' ? 'Change in Timetable…' : r.src === 'anime' ? 'Change in Static Anime…' : r.src === 'tasks' ? 'Change in Static Tasks…' : r.src === 'contacts' ? 'Change in Static Contacts…' : 'Change in Homework…', icon: r.cal ? 'calendar' : r.src === 'friends' ? 'users' : r.src === 'anime' ? 'star' : r.src === 'tasks' ? 'check-circle' : r.src === 'contacts' ? 'gift' : 'clipboard', onClick: () => editReminder(r.id) },
             { label: r.enabled ? 'Switch off' : 'Switch on', icon: 'power', onClick: () => toggleReminder(r) },
           ] : [
             { label: 'Change…', icon: 'edit-3', onClick: () => editReminder(r.id) },
@@ -1008,6 +1231,13 @@ defineApp({
           ? 'Checked once, each time StaticOS starts in this browser.'
           : `Checked once, each time StaticOS starts in this browser, against this computer’s clock (${AM.windowHours(d.when.when)}; it’s ${now} now).`;
       }
+      if (d.when.type === 'time') return 'Runs when this computer’s clock reaches that time, while StaticOS is open and awake. If the tab was asleep at that time, it is logged as skipped and not run afterwards.';
+      if (d.when.type === 'focus') return 'Starts and ends follow the Focus timer in Clock: a session beginning, or running → finished, paused, skipped or reset.';
+      if (d.when.type === 'daylight') {
+        const st = DC.state(new Date());
+        return `Uses the sunrise and sunset of the Day and Night wallpaper: ${DC.clock(st.rise)} and ${DC.clock(st.set)} today${st.source.kind === 'place' ? ` for ${st.source.place}` : ' (fixed times — Weather doesn’t have a place yet)'}.`;
+      }
+      if (d.when.type === 'download') return 'Runs when a file lands in your Downloads folder through Files’ Import, a drop on Files or Static Drop. Downloads made by a website in the Browser aren’t visible to StaticOS.';
       return 'Runs while StaticOS is open in this browser.';
     }
     function paintPreview() {
@@ -1064,6 +1294,26 @@ defineApp({
         case 'music':
           return select({ fk, label: `Play or pause (action ${i + 1})`, value: a.action,
             options: [{ value: 'play', label: 'play' }, { value: 'pause', label: 'pause' }], onchange: v => set({ action: v }) });
+        case 'dnd':
+          return select({ fk, label: `Do Not Disturb on or off (action ${i + 1})`, value: a.on ? 'on' : 'off',
+            options: [{ value: 'on', label: 'on' }, { value: 'off', label: 'off' }], onchange: v => set({ on: v === 'on' }) });
+        case 'volume': {
+          const out = h('output.am-vol__n', { text: `${a.level}%` });
+          const range = h('input.am-vol__r', {
+            type: 'range', min: '0', max: '100', step: '1', value: String(a.level), 'aria-label': `Volume percent (action ${i + 1})`, dataset: { fk },
+            oninput: e => { S.draft.then[i].level = Number(e.target.value); out.textContent = `${e.target.value}%`; paintPreview(); },
+          });
+          return h('span.am-vol', range, out);
+        }
+        case 'open-page': {
+          const input = h('input', {
+            type: 'url', value: a.url, maxlength: '300', placeholder: 'https://…', spellcheck: 'false', autocomplete: 'off',
+            'aria-label': `Web address to open (action ${i + 1})`, dataset: { fk },
+            oninput: e => { S.draft.then[i].url = e.target.value.slice(0, 300); paintPreview(); },
+            onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); saveDraft(); } },
+          });
+          return h('div.field.am-textfield', input);
+        }
         case 'notify': {
           const input = h('input', {
             type: 'text', value: a.text, maxlength: String(AM.TEXT_MAX), placeholder: 'What should it say?',
@@ -1110,6 +1360,15 @@ defineApp({
         const w = AM.wallpaperChoices().find(x => x.id === acts[wi].id);
         if (w && w.theme && wi > ai) out.push(`${w.name} brings its own ${w.theme} accent and comes after your accent action, so it wins. Move the accent below the wallpaper to keep your colour.`);
       }
+      if (d.when.type === 'focus' && acts.some(a => a.type === 'dnd')) {
+        out.push('A focus session already turns Do Not Disturb on when it starts (and back off when it ends) if that is on in Clock › Focus. This action works on top of that, and says “already on” when there is nothing to do.');
+      }
+      if (acts.some(a => a.type === 'open-page')) {
+        out.push('“Open the page” opens the address in StaticOS’s Browser, the same as typing it there.');
+      }
+      if (acts.some(a => a.type === 'volume')) {
+        out.push('The volume is the StaticOS volume (Settings › Sound), not your computer’s.');
+      }
       if (acts.some(a => a.type === 'music' && a.action === 'play')) {
         out.push('“Play music” resumes what Music last played, or starts your Music library from the top (shuffled, if Shuffle is on). If Music has nothing to play, the log says so.');
       }
@@ -1144,6 +1403,21 @@ defineApp({
             ? select({ fk: 'when-time', label: 'What time of day', value: d.when.when,
               options: AM.WINDOWS.map(w => ({ value: w.id, label: w.id === 'always' ? 'at any time' : `${w.label} (${AM.windowHours(w.id)})` })),
               onchange: v => { S.draft.when.when = v; repaintEditor(); } })
+            : null,
+          d.when.type === 'time'
+            ? [h('input.input.am-time', {
+              type: 'time', value: d.when.at, 'aria-label': 'Time of day', dataset: { fk: 'when-at' },
+              onchange: e => { S.draft.when.at = e.target.value; repaintEditor(); },
+            }), select({ fk: 'when-days', label: 'Which days', value: d.when.days, options: AM.DAYS.map(x => ({ value: x.id, label: x.label })),
+              onchange: v => { S.draft.when.days = v; repaintEditor(); } })]
+            : null,
+          d.when.type === 'focus'
+            ? select({ fk: 'when-edge', label: 'Starts or ends', value: d.when.edge, options: [{ value: 'start', label: 'starts' }, { value: 'end', label: 'ends' }],
+              onchange: v => { S.draft.when.edge = v; repaintEditor(); } })
+            : null,
+          d.when.type === 'daylight'
+            ? select({ fk: 'when-to', label: 'Dark or light', value: d.when.to, options: [{ value: 'dark', label: 'dark (sunset)' }, { value: 'light', label: 'light (sunrise)' }],
+              onchange: v => { S.draft.when.to = v; repaintEditor(); } })
             : null),
         issueFor(probs, 'when'));
 
@@ -1188,7 +1462,10 @@ defineApp({
           notes(d),
           h('div.am-testrow',
             h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'test-2' }, onclick: testDraft }, icon('play'), h('span', { text: 'Run these actions now' })),
-            h('small.dim', { text: 'Tries the actions straight away, without saving.' })),
+            h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'dry-2' }, onclick: dryDraft }, icon('eye'), h('span', { text: 'Dry run' })),
+            h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'copy-code' }, onclick: () => copyCode(d) }, icon('share'), h('span', { text: 'Copy rule code' })),
+            h('small.dim', { text: 'Run tries the actions straight away, without saving. Dry run only says what they would do.' })),
+          S.dryDraft ? dryPanel(S.dryDraft, 'dry-close', () => { S.dryDraft = null; render(); }) : null,
           testEl,
           h('section.am-sec', { 'aria-label': 'Details' },
             h('div.label.am-cap', { text: 'Details' }),

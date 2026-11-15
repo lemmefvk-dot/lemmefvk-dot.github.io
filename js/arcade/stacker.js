@@ -14,6 +14,16 @@
      lines; gravity speeds up with the level.
    · The round ends when a new piece has no room to appear, or a
      piece locks above the well.
+   · Modes (ctx.mode, each with its own best):
+       endless   as above, for as long as you last
+       marathon  150 lines to win, the levels climbing to 15 on the way
+       sprint    40 lines as fast as you can, at level 1's gravity: the
+                 score is the time (lower is better); a well that tops
+                 out first has no time
+   · The next three pieces show on the right. Each round counts its
+     line clears (singles, doubles, triples, fours), the longest run of
+     pieces that cleared lines one after another (combo) and the pieces
+     placed; the left panel keeps them live and the result lists them.
 
    Keys: ← → / A D move, ↓ / S soft drop, ↑ / W / X turn clockwise,
    Z turn the other way, Space hard drop, C / Shift hold. Touch:
@@ -53,18 +63,22 @@ for (const t of TYPES) {
 /* nudges tried when a turn does not fit where it is: sideways, then up */
 const KICKS = [[0, 0], [-1, 0], [1, 0], [-2, 0], [2, 0], [0, -1], [-1, -1], [1, -1]];
 const LINE_POINTS = [0, 100, 300, 500, 800];
+const GOAL = { marathon: 150, sprint: 40 };          /* lines to finish; endless has none */
+const fmtTime = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, '0')}`;
 
 export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
+    const MODE = GOAL[ctx.mode] ? ctx.mode : 'endless', goal = GOAL[MODE] || 0, sprint = MODE === 'sprint';
     const S = {
       state: 'ready',                    /* ready | play | dying | over */
-      paused: false,
+      paused: false, won: false,
       board: [], cur: null, hold: null, canHold: false, queue: [],
-      score: 0, lines: 0, level: 1, pieces: 0,
+      score: 0, lines: 0, level: 1, pieces: 0, playT: 0,
+      clears: [0, 0, 0, 0, 0], combo: 0, bestCombo: 0,        /* clears[n]: how many times n lines went at once */
       acc: 0, lockT: 0, resets: 0, dieT: 0, time: 0,
-      rand: rng(randomSeed()), parts: [], flash: [],
+      rand: rng(Number.isInteger(ctx.seed) ? ctx.seed >>> 0 : randomSeed()), parts: [], flash: [],   /* ctx.seed: the shell's, so a seed is a piece order */
     };
     const sf = surface(el, 'Stacker well', () => draw());
     let V = fitView(sf, VW, VH);
@@ -86,7 +100,8 @@ export default {
     });
     const cellsOf = p => SHAPES[p.t][p.rot].map(([r, c]) => [p.y + r, p.x + c]);
     const ghostY = () => { let y = S.cur.y; while (fits(S.cur.t, S.cur.rot, S.cur.x, y + 1)) y++; return y; };
-    const interval = () => Math.max(0.07, 0.8 * Math.pow(0.82, S.level - 1));
+    /* gravity by level (Sprint stays at level 1's) */
+    const interval = () => Math.max(0.07, 0.8 * Math.pow(0.82, (sprint ? 1 : S.level) - 1));
 
     function spawn(t) {
       refill();
@@ -129,7 +144,7 @@ export default {
     }
     function soft() {
       if (!S.cur || S.state !== 'play' || S.paused) return;
-      if (fits(S.cur.t, S.cur.rot, S.cur.x, S.cur.y + 1)) { S.cur.y++; S.score += 1; S.acc = 0; ctx.onScore(S.score); }
+      if (fits(S.cur.t, S.cur.rot, S.cur.x, S.cur.y + 1)) { S.cur.y++; S.score += 1; S.acc = 0; if (!sprint) ctx.onScore(S.score); }
     }
     function hard() {
       if (!S.cur || S.state !== 'play' || S.paused) return;
@@ -159,16 +174,44 @@ export default {
         S.board = S.board.filter((_, i) => !full.includes(i));
         while (S.board.length < ROWS) S.board.unshift(Array(COLS).fill(''));
         S.lines += full.length;
+        S.clears[full.length]++;
+        S.combo++; S.bestCombo = Math.max(S.bestCombo, S.combo);
         S.score += LINE_POINTS[full.length] * S.level;
-        const lv = 1 + Math.floor(S.lines / 10);
+        const lv = Math.min(MODE === 'marathon' ? 15 : Infinity, 1 + Math.floor(S.lines / 10));
         if (lv !== S.level) { S.level = lv; snd.blip(880, 0.15, 'square', 0.8, 1320); }
         snd.blip(660 + full.length * 120, 0.12, 'square', 0.9, 990);
         S.flash.push({ t: 0.5 });
-      }
-      ctx.onScore(S.score);
+      } else S.combo = 0;
+      ctx.onScore(sprint ? Math.round(S.playT * 10) / 10 : S.score);
       S.cur = null;
       if (above) { die(); return; }
+      /* Marathon and Sprint end when their lines are cleared */
+      if (goal && S.lines >= goal) { finish(true); return; }
       spawn();
+    }
+    /* the round's line clears, for the panel and the result */
+    function statsText() {
+      const [, one, two, three, four] = S.clears;
+      return `${one} single${one === 1 ? '' : 's'}, ${two} double${two === 1 ? '' : 's'}, ${three} triple${three === 1 ? '' : 's'}, ${four} four${four === 1 ? '' : 's'} · best combo ${S.bestCombo} · ${S.pieces} piece${S.pieces === 1 ? '' : 's'}`;
+    }
+    function finish(won) {
+      S.state = 'over';
+      S.won = won;
+      S.cur = null;
+      const lines = `${S.lines} ${S.lines === 1 ? 'line' : 'lines'}`;
+      const stats = { singles: S.clears[1], doubles: S.clears[2], triples: S.clears[3], fours: S.clears[4], bestCombo: S.bestCombo, pieces: S.pieces };
+      if (sprint) {
+        const t = Math.round(S.playT * 100) / 100;
+        ctx.onEnd(won
+          ? { score: t, won: true, detail: `40 lines in ${fmtTime(t)} · ${statsText()}`, stats }
+          : { score: null, won: false, detail: `Topped out after ${lines} of 40 (${fmtTime(t)}), so no time · ${statsText()}`, stats });
+        return;
+      }
+      ctx.onEnd({
+        score: S.score, won,
+        detail: `${won ? `Marathon won: ${lines}` : lines} · level ${S.level} · ${statsText()}`,
+        stats,
+      });
     }
     function burst(c, r, hue, n) {
       if (reduced) return;
@@ -181,6 +224,10 @@ export default {
     /* ------------------------------ loop ------------------------------ */
     function update(dt) {
       S.time += dt;
+      if (S.state === 'play') {
+        S.playT += dt;
+        if (sprint) ctx.onScore(Math.round(S.playT * 10) / 10);
+      }
       if (S.state === 'play' && S.cur) {
         if (fits(S.cur.t, S.cur.rot, S.cur.x, S.cur.y + 1)) {
           S.lockT = 0;
@@ -193,10 +240,7 @@ export default {
         }
       } else if (S.state === 'dying') {
         S.dieT += dt;
-        if (S.dieT >= DIE_SECS) {
-          S.state = 'over';
-          ctx.onEnd({ score: S.score, won: false, detail: `${S.lines} ${S.lines === 1 ? 'line' : 'lines'} · level ${S.level}` });
-        }
+        if (S.dieT >= DIE_SECS) finish(false);
       }
       for (const p of S.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 12 * dt; p.life -= dt; }
       S.parts = S.parts.filter(p => p.life > 0);
@@ -276,11 +320,22 @@ export default {
       S.queue.slice(0, 3).forEach((t, i) => mini(g, t, 390, 65 + i * 66, 14));
       g.textAlign = 'left';
       g.fillStyle = hsl(225, 30, 70); g.font = `600 12px ${FONT}`;
-      g.fillText(`LEVEL ${S.level}`, 8, 340);
-      g.fillText(`LINES ${S.lines}`, 8, 362);
+      g.fillText(MODE === 'endless' ? 'ENDLESS' : MODE === 'marathon' ? 'MARATHON' : 'SPRINT', 8, 128);
+      g.fillText(`LEVEL ${sprint ? 1 : S.level}`, 8, 150);
+      g.fillText(goal ? `LINES ${S.lines}/${goal}` : `LINES ${S.lines}`, 8, 172);
+      if (sprint) { g.fillStyle = hsl(50, 90, 70); g.fillText(fmtTime(S.playT), 8, 194); g.fillStyle = hsl(225, 30, 70); }
+      /* the round's clears so far: singles … fours, and the best combo */
+      g.font = `600 11px ${FONT}`;
+      ['SINGLE', 'DOUBLE', 'TRIPLE', 'FOUR'].forEach((n, i) => g.fillText(`${n} ${S.clears[i + 1]}`, 8, 240 + i * 18));
+      g.fillText(`COMBO ${S.combo}`, 8, 318);
+      g.fillText(`BEST COMBO ${S.bestCombo}`, 8, 336);
+      g.fillText(`PIECES ${S.pieces}`, 8, 354);
       g.restore();
 
-      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Tap or drag to start' : 'Press any move key to start', coarse() ? 'Drag to move, tap to turn, flick down to drop' : '← → move · ↑ turn · Space drop · C hold', 225, sf.h * 0.5);
+      if (S.state === 'ready') {
+        const what = MODE === 'marathon' ? 'Marathon: clear 150 lines' : sprint ? 'Sprint: 40 lines, against the clock' : null;
+        prompt(g, sf, coarse() ? 'Tap or drag to start' : 'Press any move key to start', what || (coarse() ? 'Drag to move, tap to turn, flick down to drop' : '← → move · ↑ turn · Space drop · C hold'), 225, sf.h * 0.5);
+      }
     }
 
     /* ------------------------------ input ------------------------------ */
@@ -363,7 +418,8 @@ export default {
         board: S.board.map(r => r.map(t => t || '.').join('')),
         piece: S.cur ? { t: S.cur.t, rot: S.cur.rot, x: S.cur.x, y: S.cur.y, cells: cellsOf(S.cur) } : null,
         ghost: S.cur ? SHAPES[S.cur.t][S.cur.rot].map(([r, c]) => [ghostY() + r, S.cur.x + c]) : null,
-        hold: S.hold, canHold: S.canHold, next: S.queue.slice(0, 5), bag: S.queue.slice(), time: S.time,
+        hold: S.hold, canHold: S.canHold, next: S.queue.slice(0, 5), shown: S.queue.slice(0, 3), bag: S.queue.slice(), time: S.time,
+        mode: MODE, goal, playT: S.playT, won: S.won, clears: S.clears.slice(1), combo: S.combo, bestCombo: S.bestCombo, gravity: interval(),
       }),
       /* test hook — nothing in the game calls it:
          step(seconds) · seed(n) · board(rows bottom-aligned, '.' empty) · piece({t,rot,x,y}) · queue([types]) */

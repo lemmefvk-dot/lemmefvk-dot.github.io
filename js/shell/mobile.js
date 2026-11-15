@@ -20,6 +20,13 @@
    · an app switcher — every open app as a card: tap to open,
      swipe a card up (or press its ×) to close, Close all
 
+   The home screen can be yours: edit the four favourites on the dock
+   (prefs.mobDock; until you do it follows the desktop dock), list the
+   app library by category (prefs.mobLibrary), pull down on it for
+   search, and switch on one-handed mode (the apps and search sit in the
+   lower half) and larger tap targets (prefs.mobOneHand, prefs.mobBig),
+   all from the Customise button under the search pill.
+
    Everything is additive: body.is-mobile plus our own elements,
    all removed again on the way back to a wide screen, so the
    desktop is never mutated. Layout lives in css/feat-mobile.css,
@@ -35,6 +42,7 @@ import { wm } from '../core/wm.js';
 import * as L from '../core/layers.js';
 import { roving } from '../core/roving.js';
 import { appTile } from '../core/appart.js';
+import { t } from '../core/i18n.js';
 
 /* The stylesheet is linked from index.html; this covers a page that
    lost the <link> (an old cached index.html after an update). */
@@ -46,13 +54,16 @@ function ensureStyles() {
 /* Phone mode: narrow, or a touch screen too short for a desktop (a phone
    on its side). Kept at 760px rather than 600px: apps already key their
    narrow layouts off body.is-mobile, and 600–760px is a big phone or a
-   small tablet in portrait, which wants the phone shell too. */
-export const PHONE_QUERY = '(max-width: 760px), (pointer: coarse) and (max-height: 500px)';
+   small tablet in portrait, which wants the phone shell too. A phone on
+   its side is at most ~960px wide: a short but wide tablet window (1024
+   across and 500 tall, say) keeps the desktop. */
+export const PHONE_QUERY = '(max-width: 760px), (pointer: coarse) and (max-height: 500px) and (max-width: 960px)';
 
 const reduced = () => !!store.get('prefs.reduceMotion')
   || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
 
 const DOCK_N = 4;
+const PULL_PX = 90;      /* how far down a pull on the home screen has to go to open search */
 /* inert, and marked so: js/core/cover.js wakes every shell surface up when
    the boot or lock screen goes away, except those that carry data-inert */
 function setInert(el, on) {
@@ -73,7 +84,10 @@ export function mountMobile(host) {
     recents: [],                 /* window ids, most recent first */
     frozen: null,                /* { order, idx, until } while flicking between apps */
     shade: null,                 /* the notification centre element, when it is our shade */
+    editing: false,              /* choosing the dock's favourites */
+    opts: null, optsRelease: null, editBar: null,
   };
+  const pref = (k, d) => store.get(`prefs.${k}`, d);
   const on = () => document.body.classList.contains('is-mobile');
 
   /* ---------------- the recents list ---------------- */
@@ -203,32 +217,145 @@ export function mountMobile(host) {
   /* ---------------- home screen ---------------- */
   const glyph = app => appTile(app);
   function appBtn(app, cls = '') {
-    const b = h('button.mob-app' + cls, {
-      type: 'button', 'aria-label': app.name, dataset: { app: app.id },
-      onclick: () => openApp(app.id, b.querySelector('.glyph')),
+    const fav = S.editing && dockIds().includes(app.id);
+    const b = h('button.mob-app' + cls + (fav ? '.is-fav' : ''), {
+      type: 'button', 'aria-label': S.editing ? `${app.name} — ${fav ? 'remove from' : 'add to'} favourites` : app.name,
+      'aria-pressed': S.editing ? String(fav) : null, dataset: { app: app.id },
+      onclick: () => (S.editing ? toggleFav(app) : openApp(app.id, b.querySelector('.glyph'))),
     }, glyph(app), h('span.mob-app__name', { text: app.name, 'aria-hidden': 'true' }));
     return b;
   }
+  /* the favourites: yours once you have edited them, else the desktop dock's first four */
   function dockIds() {
-    const saved = store.get('dock');
+    const mine = pref('mobDock');
+    const saved = Array.isArray(mine) ? mine : store.get('dock');
     const ids = Array.isArray(saved) ? saved : listApps().filter(a => a.dock).map(a => a.id);
     return ids.filter(id => getApp(id) && !getApp(id).hidden).slice(0, DOCK_N);
   }
+  function toggleFav(app) {
+    const cur = dockIds();
+    if (cur.includes(app.id)) store.set('prefs.mobDock', cur.filter(id => id !== app.id));
+    else if (cur.length >= DOCK_N) { bus.emit('noti:push', { app: 'StaticOS', icon: 'alert', title: t('Favourites hold {DOCK_N} apps', { DOCK_N }), message: t('Tap one on the dock to take it off first.'), timeout: 3000 }); return; }
+    else store.set('prefs.mobDock', [...cur, app.id]);
+    bus.emit('a11y:say', `${app.name} ${cur.includes(app.id) ? 'removed from' : 'added to'} favourites`);
+  }
+  const byCategory = () => pref('mobLibrary') === 'category';
   function paintHome() {
     if (!S.grid) return;
     clear(S.grid);
-    for (const app of listApps()) S.grid.appendChild(appBtn(app));
+    S.grid.classList.toggle('mob-home__grid--cat', byCategory());
+    if (byCategory()) {
+      const groups = new Map();
+      for (const app of listApps()) { const c = app.category || 'Other'; if (!groups.has(c)) groups.set(c, []); groups.get(c).push(app); }
+      for (const [cat, apps] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+        S.grid.appendChild(h('section.mob-cat', { 'aria-label': cat, dataset: { cat } },
+          h('h2.mob-cat__h', { text: cat }),
+          h('div.mob-cat__grid', apps.map(a => appBtn(a)))));
+      }
+    } else {
+      for (const app of listApps()) S.grid.appendChild(appBtn(app));
+    }
     clear(S.dock);
     for (const id of dockIds()) S.dock.appendChild(appBtn(getApp(id), '.mob-app--dock'));
+    S.libTabs?.querySelectorAll('button').forEach(b => {
+      const on = (b.dataset.v === 'category') === byCategory();
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
   }
   /* the grid's real column count, for ↑/↓ */
   const gridCols = () => {
-    const kids = S.grid ? [...S.grid.children] : [];
+    const kids = S.grid ? [...S.grid.querySelectorAll('.mob-app')] : [];
     if (kids.length < 2) return 1;
     const top = kids[0].offsetTop;
     const n = kids.findIndex(k => k.offsetTop !== top);
     return n > 0 ? n : kids.length;
   };
+
+  /* one-handed and larger-tap-target modes are body classes; CSS does the rest */
+  function applyOpts() {
+    document.body.classList.toggle('mob-onehand', on() && !!pref('mobOneHand'));
+    document.body.classList.toggle('mob-bigtap', on() && !!pref('mobBig'));
+  }
+
+  /* ---- editing the favourites ---- */
+  function startEdit() {
+    closeOpts();
+    S.editing = true;
+    document.body.classList.add('mob-editdock');
+    S.editBar = h('div.mob-editbar', { role: 'region', 'aria-label': t('Edit favourites') },
+      h('span', { text: t('Tap apps to add or remove favourites (up to {DOCK_N})', { DOCK_N }) }),
+      h('button.btn.btn--sm.btn--primary.mob-editbar__done', { type: 'button', onclick: stopEdit }, h('span', { text: t('Done') })));
+    host.appendChild(S.editBar);
+    paintHome();
+  }
+  function stopEdit() {
+    if (!S.editing) return;
+    S.editing = false;
+    document.body.classList.remove('mob-editdock');
+    S.editBar?.remove(); S.editBar = null;
+    paintHome();
+  }
+
+  /* ---- the Customise sheet ---- */
+  function closeOpts() {
+    if (!S.opts) return;
+    S.opts.remove(); S.opts = null;
+    S.optsRelease?.(); S.optsRelease = null;
+    S.optsBtn?.setAttribute('aria-expanded', 'false');
+  }
+  function openOpts() {
+    if (S.opts) { closeOpts(); return; }
+    const sw = (label, key) => {
+      const b = h('button.switch', { type: 'button', role: 'switch', 'aria-label': label });
+      const sync = () => { const v = !!pref(key); b.classList.toggle('is-on', v); b.setAttribute('aria-checked', String(v)); };
+      b.onclick = () => { store.set(`prefs.${key}`, !pref(key)); sync(); };
+      sync();
+      return b;
+    };
+    const line = (label, sub, ctl) => h('div.mob-opts__row', h('div.mob-opts__t', h('b', { text: label }), sub ? h('small', { text: sub }) : null), ctl);
+    S.opts = h('div.mob-opts', { role: 'dialog', 'aria-modal': 'true', 'aria-label': t('Customise the home screen') },
+      h('div.mob-opts__head', h('b', { text: t('Customise home') }),
+        h('button.mob-shade__btn', { type: 'button', 'aria-label': t('Close'), onclick: closeOpts }, icon('x'))),
+      line(t('Favourites'), t('The {DOCK_N} apps on the dock', { DOCK_N }), h('button.btn.btn--sm.mob-opts__edit', { type: 'button', onclick: startEdit }, icon('edit-3'), h('span', { text: t('Edit') }))),
+      Array.isArray(pref('mobDock')) ? line(t('Reset favourites'), t('Back to the first four of the desktop dock'),
+        h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => { store.set('prefs.mobDock', null); closeOpts(); } }, h('span', { text: t('Reset') }))) : null,
+      line(t('One-handed mode'), t('Apps and search sit in the lower half, in thumb reach'), sw(t('One-handed mode'), 'mobOneHand')),
+      line(t('Larger tap targets'), t('Bigger icons and buttons'), sw(t('Larger tap targets'), 'mobBig')));
+    host.appendChild(S.opts);
+    S.optsRelease = L.push({ name: 'mobile-options', el: S.opts, trap: true, close: closeOpts });
+    S.optsBtn?.setAttribute('aria-expanded', 'true');
+    S.opts.querySelector('.mob-opts__edit')?.focus({ preventScroll: true });
+  }
+
+  /* ---- pull down on the home screen: search ---- */
+  function pullToSearch(el) {
+    let g = null;
+    const reset = () => { el.style.removeProperty('--pull'); el.classList.remove('is-pulling', 'is-armed'); S.search?.classList.remove('is-armed'); g = null; };
+    el.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1 || el.scrollTop > 0 || S.editing || S.opts) { g = null; return; }
+      g = { x: e.touches[0].clientX, y: e.touches[0].clientY, dy: 0 };
+    }, { passive: true });
+    el.addEventListener('touchmove', e => {
+      if (!g) return;
+      const t = e.touches[0];
+      const dy = t.clientY - g.y, dx = t.clientX - g.x;
+      if (el.scrollTop > 0 || (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy))) { reset(); return; }
+      g.dy = Math.max(0, dy);
+      el.classList.add('is-pulling');
+      el.style.setProperty('--pull', `${Math.min(64, g.dy * 0.4)}px`);
+      const armed = g.dy >= PULL_PX;
+      el.classList.toggle('is-armed', armed);
+      S.search?.classList.toggle('is-armed', armed);
+    }, { passive: true });
+    const end = e => {
+      const go = !!g && g.dy >= PULL_PX && e.type === 'touchend';
+      reset();
+      if (go) bus.emit('spotlight:open', '');
+    };
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', end);
+  }
 
   /* ---------------- status bar + shade ---------------- */
   function openShade() {
@@ -245,11 +372,11 @@ export function mountMobile(host) {
     if (!on() || !el) return;
     S.shade = el;
     el.classList.add('noti--shade');
-    const qs = h('div.mob-qs', { role: 'group', 'aria-label': 'Quick settings' });
+    const qs = h('div.mob-qs', { role: 'group', 'aria-label': t('Quick settings') });
     const head = h('div.mob-shade__head',
       h('div.mob-shade__time', { 'aria-hidden': 'true' }),
       h('div.grow'),
-      h('button.mob-shade__btn', { type: 'button', 'aria-label': 'Close', onclick: closeShade }, icon('chevron-up')));
+      h('button.mob-shade__btn', { type: 'button', 'aria-label': t('Close'), onclick: closeShade }, icon('chevron-up')));
     paintTime(head.firstChild);
     el.prepend(head, qs);
     bus.emit('cc:render', qs);
@@ -418,7 +545,7 @@ export function mountMobile(host) {
       bus.emit('a11y:say', `${name} closed`);
     };
     const open = h('button.mob-card__open', {
-      type: 'button', 'aria-label': `Open ${name}`, dataset: { win: String(w.id) },
+      type: 'button', 'aria-label': t('Open {name}', { name }), dataset: { win: String(w.id) },
       onclick: () => { closeSwitcher(); switchTo(w, 0); },
       onkeydown: e => { if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); kill(); } },
     }, snapshot(w));
@@ -426,7 +553,7 @@ export function mountMobile(host) {
       h('div.mob-card__head',
         appTile(w.app),
         h('span.mob-card__name', { text: name }),
-        h('button.mob-card__x', { type: 'button', 'aria-label': `Close ${name}`, onclick: kill }, icon('x'))),
+        h('button.mob-card__x', { type: 'button', 'aria-label': t('Close {name}', { name }), onclick: kill }, icon('x'))),
       open);
     /* swipe a card up (or sideways) to close it */
     let s = null;
@@ -461,8 +588,8 @@ export function mountMobile(host) {
     clear(list);
     sw.querySelector('.mob-switch__clear').hidden = !wins.length;
     if (!wins.length) {
-      list.appendChild(h('div.mob-switch__empty', icon('layers'), h('b', { text: 'No recent apps' }),
-        h('small', { text: 'Apps you open show up here.' })));
+      list.appendChild(h('div.mob-switch__empty', icon('layers'), h('b', { text: t('No recent apps') }),
+        h('small', { text: t('Apps you open show up here.') })));
       return;
     }
     for (const w of wins) list.appendChild(card(w));
@@ -483,12 +610,12 @@ export function mountMobile(host) {
     if (!on()) return;
     if (S.switcher) { paintSwitcher(); return; }
     closeShade();
-    const sw = h('div.mob-switch', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Recent apps' },
+    const sw = h('div.mob-switch', { role: 'dialog', 'aria-modal': 'true', 'aria-label': t('Recent apps') },
       h('div.mob-switch__top',
-        h('b', { text: 'Recent apps' }),
+        h('b', { text: t('Recent apps') }),
         h('button.btn.mob-switch__clear', { type: 'button', onclick: () => { wm.list().forEach(w => wm.close(w.id)); closeSwitcher(); bus.emit('a11y:say', 'All apps closed'); } },
-          icon('x'), h('span', { text: 'Close all' }))),
-      h('div.mob-switch__list', { role: 'list', 'aria-label': 'Open apps' }));
+          icon('x'), h('span', { text: t('Close all') }))),
+      h('div.mob-switch__list', { role: 'list', 'aria-label': t('Open apps') }));
     sw.addEventListener('click', e => { if (e.target === sw || e.target.classList.contains('mob-switch__list')) closeSwitcher(); });
     host.appendChild(sw);
     S.switcher = sw;
@@ -573,28 +700,37 @@ export function mountMobile(host) {
   function build() {
     /* home */
     const search = h('button.mob-search', { type: 'button', onclick: () => bus.emit('spotlight:open', '') },
-      icon('search'), h('span', { text: 'Search apps, files and games' }));
-    S.grid = h('div.mob-home__grid', { role: 'group', 'aria-label': 'Apps' });
-    S.home = h('section.mob-home', { 'aria-label': 'Home screen' }, search, S.grid);
-    S.dock = h('nav.mob-dock', { 'aria-label': 'Favourites' });
+      icon('search'), h('span', { text: t('Search apps, files and games') }));
+    S.search = search;
+    /* All apps / By category, and Customise */
+    S.libTabs = h('div.mob-lib', { role: 'group', 'aria-label': t('App library') },
+      h('button.mob-lib__b', { type: 'button', text: t('All apps'), dataset: { v: 'all' }, onclick: () => store.set('prefs.mobLibrary', 'all') }),
+      h('button.mob-lib__b', { type: 'button', text: t('By category'), dataset: { v: 'category' }, onclick: () => store.set('prefs.mobLibrary', 'category') }));
+    S.optsBtn = h('button.mob-lib__opts', { type: 'button', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: openOpts }, icon('sliders'), h('span', { text: t('Customise') }));
+    const bar = h('div.mob-home__bar', S.libTabs, S.optsBtn);
+    S.grid = h('div.mob-home__grid', { role: 'group', 'aria-label': t('Apps') });
+    S.home = h('section.mob-home', { 'aria-label': t('Home screen') }, search, bar, S.grid);
+    pullToSearch(S.home);
+    S.dock = h('nav.mob-dock', { 'aria-label': t('Favourites') });
 
     /* status bar hit area (over the top bar, which goes inert on a phone) */
     S.status = h('button.mob-status', {
-      type: 'button', 'aria-label': 'Notifications and quick settings', 'aria-expanded': 'false', 'aria-haspopup': 'dialog',
+      type: 'button', 'aria-label': t('Notifications and quick settings'), 'aria-expanded': 'false', 'aria-haspopup': 'dialog',
     });
     statusGestures(S.status);
 
     /* gesture bar */
-    const recents = h('button.mob-nav__btn.mob-nav__recents', { type: 'button', 'aria-label': 'Recent apps', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: () => (S.switcher ? closeSwitcher() : openSwitcher()) }, icon('layers'));
-    const home = h('button.mob-nav__home', { type: 'button', 'aria-label': 'Home', onclick: goHome }, h('span.mob-nav__pill', { 'aria-hidden': 'true' }));
-    const last = h('button.mob-nav__btn.mob-nav__last', { type: 'button', 'aria-label': 'Switch to the last app', onclick: () => { if (!flick(1) && !current()) { const w = liveRecents()[0]; if (w) switchTo(w, 1); } } }, icon('repeat'));
-    S.bar = h('nav.mob-nav', { 'aria-label': 'Navigation — swipe up for home, sideways to switch apps' }, recents, home, last);
+    const recents = h('button.mob-nav__btn.mob-nav__recents', { type: 'button', 'aria-label': t('Recent apps'), 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: () => (S.switcher ? closeSwitcher() : openSwitcher()) }, icon('layers'));
+    const home = h('button.mob-nav__home', { type: 'button', 'aria-label': t('Home'), onclick: goHome }, h('span.mob-nav__pill', { 'aria-hidden': 'true' }));
+    const last = h('button.mob-nav__btn.mob-nav__last', { type: 'button', 'aria-label': t('Switch to the last app'), onclick: () => { if (!flick(1) && !current()) { const w = liveRecents()[0]; if (w) switchTo(w, 1); } } }, icon('repeat'));
+    S.bar = h('nav.mob-nav', { 'aria-label': t('Navigation — swipe up for home, sideways to switch apps') }, recents, home, last);
     barGestures(S.bar);
 
     host.append(S.home, S.dock, S.status, S.bar);
     S.els = [S.home, S.dock, S.status, S.bar];
     paintHome();
     S.rove.push(roving(S.grid, { items: '.mob-app', orientation: 'grid', columns: gridCols }));
+    applyOpts();
     S.rove.push(roving(S.dock, { items: '.mob-app', orientation: 'horizontal' }));
   }
 
@@ -631,8 +767,12 @@ export function mountMobile(host) {
       bus.on('noti:closed', () => { S.shade = null; S.status?.setAttribute('aria-expanded', 'false'); }),
       bus.on('apps:ready', paintHome),
       store.sub('dock', paintHome),
+      store.sub('prefs.mobDock', paintHome),
+      store.sub('prefs.mobLibrary', paintHome),
+      store.sub('prefs.mobOneHand', applyOpts),
+      store.sub('prefs.mobBig', applyOpts),
       bus.on('tick:5s', () => { if (S.shade) paintTime(S.shade.querySelector('.mob-shade__time')); }),
-      bus.on('power:lock', () => { closeShade(); closeSwitcher(); }),
+      bus.on('power:lock', () => { closeShade(); closeSwitcher(); closeOpts(); stopEdit(); }),
       bus.on('mobile:switcher', openSwitcher),
       bus.on('mobile:home', goHome),
     ];
@@ -643,11 +783,13 @@ export function mountMobile(host) {
     if (!on()) return;
     closeSwitcher();
     closeShade();
-    document.body.classList.remove('is-mobile', 'mob-has-win', 'mob-switching');
+    closeOpts();
+    stopEdit();
+    document.body.classList.remove('is-mobile', 'mob-has-win', 'mob-switching', 'mob-onehand', 'mob-bigtap', 'mob-editdock');
     S.offs.forEach(off => off()); S.offs = [];
     S.rove.forEach(off => off()); S.rove = [];
     S.els.forEach(el => el.remove()); S.els = [];
-    S.home = S.grid = S.dock = S.bar = S.status = null;
+    S.home = S.grid = S.dock = S.bar = S.status = S.search = S.libTabs = S.optsBtn = null;
     S.waitTop?.(); S.waitTop = null;
     const tb = host.querySelector('.topbar');
     setInert(tb, false);

@@ -22,6 +22,18 @@
    and picks up where you left off after a reload. Score = seconds from
    your first letter to the last, lower is better; a puzzle finished
    after using Reveal still counts as solved but sets no time.
+
+   Today's crossword (the Today button, or the last entry in the list):
+   a new grid each day, the same for everyone on that date, filled from
+   the fifty puzzles' answers with their own clues (crossworddaily.js).
+   Solving it moves the streak on (kept on this device, dailykit.js);
+   revealing the whole puzzle finishes it without counting the day.
+
+   ONLINE RACE (ctx.online.kit, ./race.js): the room's seed picks one
+   of the fifty, the same on both screens, and the clock runs from the
+   start. No picking, Today, Check, Reveal or Clear in a race, and
+   nothing is saved; the share of squares filled goes to the friend's
+   bar (filled, not right, so it can't be used as a check).
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
@@ -29,8 +41,11 @@ import { ownsKey, coarse, sounder } from './kit.js';
 import { CSS as BASE, load, save, fmtTime, reducedMotion, bag, clock } from './puzzlekit.js';
 import { PUZZLES } from './crosswords.data.js';
 import { parseGrid, clueOf, blank, put, isSolved, isFilled, filledCount, wrongCells, entriesAt, dirAt, firstCell, arrow, advance, backspace, stepEntry, reveal, solutionOf } from './crosswordlogic.js';
+import { dailyCrossword } from './crossworddaily.js';
+import * as daily from './dailykit.js';
 
 const GAME = 'crossword';
+const isDailyId = id => /^daily-\d{4}-\d{2}-\d{2}$/.test(String(id || ''));
 
 const CSS = `${BASE}
 .pz-cw__main{flex:1 1 auto;min-height:0;width:100%;display:flex;gap:var(--sp-4,12px);align-items:stretch;justify-content:center}
@@ -59,10 +74,24 @@ const CSS = `${BASE}
 .pz-cw__pad{flex:0 0 auto;width:min(100%,520px);display:flex;flex-direction:column;gap:5px}
 .pz-cw__pad div{display:flex;justify-content:center;gap:4px}
 .pz-cw__pad button{flex:1 1 0;max-width:44px;padding:9px 0;font:700 16px/1 var(--font,system-ui);color:var(--ink-0,#fff);background:var(--fill-2,rgba(255,255,255,.1));border:1px solid var(--line-1,rgba(255,255,255,.1));border-radius:7px;cursor:pointer}
+.pz-cw__day small{display:inline-flex;align-items:center;gap:2px;font-weight:700;color:#ffb46b;margin-left:2px}
+.pz-cw__day small:empty{display:none}
+.pz-cw__day small .icon,.pz-cw__day small svg{width:12px;height:12px}
 .pz-cw__card{position:absolute;inset:0;display:grid;place-items:center;z-index:4;background:rgba(10,8,16,.8);border-radius:6px;text-align:center;padding:12px}
 .pz-cw__card b{display:block;font-size:22px;margin-bottom:6px;color:#fff}
 .pz-cw__card div>span{font-size:13px;color:var(--ink-2,#bbb)}
 @container (max-width:700px){.pz-cw__main{flex-direction:column;gap:6px}.pz-cw__lists{width:100%;flex-direction:row;max-height:34%}.pz-cw__lists>div{flex:1 1 0;min-width:0}}
+/* the Arcade's "Larger text" (ctx.bigText): letters, numbers, the clue and the clue lists about a third bigger */
+.pz.is-big .pz-cw__c{font-size:calc(100cqw / var(--w) * .64)}
+.pz.is-big .pz-cw__c small{font-size:calc(100cqw / var(--w) * .25)}
+.pz.is-big .pz-cw__clue{min-height:52px;font-size:20px}
+.pz.is-big .pz-cw__clue b{font-size:15px}
+.pz.is-big .pz-cw__lists{width:min(340px,38%)}
+.pz.is-big .pz-cw__lists h4{font-size:14px}
+.pz.is-big .pz-cw__lists button{font-size:17px}
+.pz.is-big .pz-cw__pad button{font-size:21px;max-width:52px}
+.pz.is-big .pz__foot{font-size:15px}
+@container (max-width:700px){.pz.is-big .pz-cw__lists{width:100%}}
 `;
 
 export default {
@@ -73,19 +102,25 @@ export default {
     const L = bag();
     const snd = sounder(ctx);
     let dead = false, paused = false;
-    const sv = load(GAME);
+    /* an online race: one of the fifty from the room's seed, nothing saved */
+    const NET = ctx.online?.kit && Number.isInteger(ctx.online.seed) ? ctx.online : null;
+    const sv = NET ? {} : load(GAME);
     const progress = { ...(sv.progress || {}) };            /* id -> { s: letters, secs, rev, done } */
     const bests = { ...(sv.best || {}) };                   /* id -> seconds */
     const isDone = id => !!progress[id]?.done;
+    /* n: the puzzle's place in the fifty, or -1 for today's crossword */
     let n = 0, puz = PUZZLES[0], g = parseGrid(puz.grid);
-    let state = '', sel = 0, dir = 'A', rev = 0, done = false, msg = '';
+    let state = '', sel = 0, dir = 'A', rev = 0, shownAll = false, done = false, msg = '';
     let wrong = new Set(), clearArmed = 0;
     let nodes = [], clueBtns = {};
 
     /* ---------- chrome ---------- */
     const prevBtn = h('button.pz__btn', { type: 'button', title: 'Previous puzzle', 'aria-label': 'Previous puzzle' }, icon('chevron-left'));
     const nextBtn = h('button.pz__btn', { type: 'button', title: 'Next puzzle', 'aria-label': 'Next puzzle' }, icon('chevron-right'));
-    const pick = h('select.pz__sel', { 'aria-label': 'Puzzle' }, PUZZLES.map((p, i) => h('option', { value: String(i), text: `Puzzle ${i + 1}` })));
+    const pick = h('select.pz__sel', { 'aria-label': 'Puzzle' }, PUZZLES.map((p, i) => h('option', { value: String(i), text: `Puzzle ${i + 1}` })),
+      h('option', { value: 'daily', text: 'Today’s crossword' }));
+    const dayStreak = h('small');
+    const dayBtn = h('button.pz__btn.pz-cw__day', { type: 'button', 'aria-pressed': 'false', dataset: { act: 'daily' }, title: 'Today’s crossword: a new grid every day, the same for everyone today' }, icon('calendar'), h('span', { text: 'Today' }), dayStreak);
     const solvedV = h('small', { text: '' });
     const timeV = h('span', { text: '0:00' });
     const timeRead = h('div.pz__read', { title: 'Time', 'aria-label': 'Time' }, icon('clock'), timeV);
@@ -95,7 +130,8 @@ export default {
     const revAll = h('button.pz__btn', { type: 'button', title: 'Show the whole puzzle' }, h('span', { text: 'Puzzle' }));
     const revGroup = h('div.pz__seg', { role: 'group', 'aria-label': 'Reveal' }, h('small.pz__note', { style: { padding: '0 6px', alignSelf: 'center' }, text: 'Reveal' }), revLetter, revWord, revAll);
     const clearBtn = h('button.pz__btn', { type: 'button', title: 'Start this puzzle over' }, icon('trash'), h('span', { text: 'Clear' }));
-    const top = h('div.pz__top', prevBtn, pick, nextBtn, solvedV, timeRead, checkBtn, revGroup, clearBtn);
+    const top = h('div.pz__top', prevBtn, pick, nextBtn, dayBtn, solvedV, timeRead, checkBtn, revGroup, clearBtn);
+    if (NET) for (const b of [prevBtn, pick, nextBtn, dayBtn, solvedV, checkBtn, revGroup, clearBtn]) b.hidden = true;
     const clueBar = h('div.pz-cw__clue', { 'aria-live': 'polite' });
     const board = h('div.pz-cw__board', { role: 'grid', tabindex: '0', 'aria-label': 'Crossword grid' });
     const bw = h('div.pz-cw__bw', board);
@@ -109,6 +145,9 @@ export default {
     const root = h('div.pz' + (reduced ? '.is-reduced' : ''), { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } },
       h('style', { text: CSS }), top, main, foot, live);
     el.appendChild(root);
+    /* ctx.bigText is a getter: read when the game opens and with every puzzle */
+    const big = () => root.classList.toggle('is-big', !!ctx.bigText);
+    big();
 
     const say = m => { msg = m; live.textContent = ''; live.textContent = m; paintFoot(); };
     const paintFoot = () => foot.replaceChildren(msg ? h('span', { text: msg })
@@ -118,20 +157,34 @@ export default {
     /* ---------- saved progress ---------- */
     let lastSave = 0;
     const persist = (force = false) => {
+      if (NET) return;
       const now = Date.now();
       if (!force && now - lastSave < 1500) return;
       lastSave = now;
-      progress[puz.id] = { s: state, secs: Math.round(clk.secs), rev, done };
+      progress[puz.id] = { s: state, secs: Math.round(clk.secs), rev, done, ...(shownAll ? { ra: true } : {}) };
+      /* only today's crossword is kept among the dailies */
+      for (const k of Object.keys(progress)) if (isDailyId(k) && k !== puz.id) delete progress[k];
       save(GAME, { cur: puz.id, progress, best: bests });
     };
 
     /* ---------- the puzzle on screen ---------- */
     function open(i, fresh = false) {
-      clk.stop();
       n = Math.max(0, Math.min(PUZZLES.length - 1, i));
-      puz = PUZZLES[n]; g = parseGrid(puz.grid);
+      show(PUZZLES[n], fresh);
+    }
+    /* today's crossword (a new day's grid if the date has moved on) */
+    function openDaily(fresh = false) {
+      const p = dailyCrossword(daily.dayKey());
+      if (!p) { say('Today’s crossword couldn’t be made.'); return; }
+      n = -1;
+      show(p, fresh);
+    }
+    function show(p0, fresh) {
+      clk.stop();
+      big();
+      puz = p0; g = parseGrid(puz.grid);
       const p = fresh ? null : progress[puz.id];
-      state = blank(puz, p?.s); rev = p?.rev || 0; done = !!p?.done && isSolved(puz, state);
+      state = blank(puz, p?.s); rev = p?.rev || 0; shownAll = !!p?.ra; done = !!p?.done && isSolved(puz, state);
       if (fresh) { done = false; }
       clk.secs = p?.secs || 0; timeV.textContent = fmtTime(clk.secs);
       wrong = new Set(); clearArmed = 0; paused = false; msg = '';
@@ -156,12 +209,15 @@ export default {
           clueBtns[e.key] = b; ul.appendChild(h('li', b));
         }
       }
-      pick.value = String(n);
+      pick.value = n < 0 ? 'daily' : String(n);
       bw.querySelector('.pz-cw__card')?.remove();
       paint();
       if (done) showDone(true);
+      /* a race's clock runs from the start, the same moment on both screens */
+      if (NET && !done) clk.start();
       onScore(done ? Math.round(clk.secs) : 0);
-      say(done ? `Puzzle ${n + 1} is solved.` : `Puzzle ${n + 1}: ${g.entries.length} clues.`);
+      if (n < 0) say(done ? `Today’s crossword is done. A new one comes at midnight.` : `Today’s crossword (${daily.weekday(puz.day)}): ${g.entries.length} clues, the same grid for everyone today.`);
+      else say(done ? `Puzzle ${n + 1} is solved.` : `Puzzle ${n + 1}: ${g.entries.length} clues.`);
     }
     function paint() {
       const e = entriesAt(g, sel)[dir];
@@ -182,16 +238,23 @@ export default {
         b.classList.toggle('is-done', en.cells.every(k => state[k] !== '.'));
       }
       clueBtns[e?.key]?.scrollIntoView?.({ block: 'nearest' });
-      solvedV.textContent = `${PUZZLES.filter(p => isDone(p.id)).length} of ${PUZZLES.length} solved${isDone(puz.id) ? ' · this one ✓' : ''}`;
-      [...pick.options].forEach((o, i) => { o.textContent = `Puzzle ${i + 1}${isDone(PUZZLES[i].id) ? ' ✓' : ''}`; });
-      prevBtn.disabled = n === 0; nextBtn.disabled = n === PUZZLES.length - 1;
+      const st = daily.status(GAME);
+      solvedV.textContent = n < 0
+        ? `Today’s crossword${st.solved ? ' ✓' : ''}${st.streak ? ` · ${st.streak}-day streak` : ''}`
+        : `${PUZZLES.filter(p => isDone(p.id)).length} of ${PUZZLES.length} solved${isDone(puz.id) ? ' · this one ✓' : ''}`;
+      [...pick.options].forEach((o, i) => { o.textContent = i < PUZZLES.length ? `Puzzle ${i + 1}${isDone(PUZZLES[i].id) ? ' ✓' : ''}` : `Today’s crossword${st.solved ? ' ✓' : ''}`; });
+      prevBtn.disabled = n <= 0; nextBtn.disabled = n === PUZZLES.length - 1;
+      dayBtn.setAttribute('aria-pressed', String(n < 0));
+      const sk = st.streak ? `s${st.streak}` : st.solved ? 'ok' : '';
+      if (dayStreak.dataset.k !== sk) { dayStreak.dataset.k = sk; dayStreak.replaceChildren(...(st.streak ? [icon('flame'), String(st.streak)] : st.solved ? [icon('check')] : [])); }
+      dayBtn.title = `Today’s crossword: a new grid every day, the same for everyone today${st.solved ? ' · solved' : ''}${st.streak ? ` · ${st.streak}-day streak on this device` : ''}${st.best ? ` · best streak ${st.best}` : ''}`;
       const can = !done;
       [checkBtn, revLetter, revWord, revAll].forEach(b => { b.disabled = !can; });
     }
-    function showDone(already) {
+    function showDone(already, dayLine = '') {
       bw.querySelector('.pz-cw__card')?.remove();
       bw.appendChild(h('div.pz-cw__card', { dataset: { role: 'solved' } }, h('div', h('b', { text: 'Solved!' }),
-        h('span', { text: `${fmtTime(clk.secs)}${rev ? ' · with help, so no time is kept' : bests[puz.id] != null && !already ? ` · best ${fmtTime(bests[puz.id])}` : ''}${already && bests[puz.id] != null ? ` · your best ${fmtTime(bests[puz.id])}` : ''}` }))));
+        h('span', { text: `${fmtTime(clk.secs)}${rev ? ' · with help, so no time is kept' : bests[puz.id] != null && !already ? ` · best ${fmtTime(bests[puz.id])}` : ''}${already && bests[puz.id] != null ? ` · your best ${fmtTime(bests[puz.id])}` : ''}${dayLine}` }))));
     }
 
     /* ---------- moves ---------- */
@@ -208,9 +271,16 @@ export default {
       else { sel = k; dir = dirAt(g, k, dir) || dir; }
       paint(); board.focus({ preventScroll: true });
     }
+    /* the race's progress: the share of white squares with a letter in them */
+    function raceProgress() {
+      if (!NET) return;
+      const white = g.cells.filter(ch => ch !== '#').length;
+      NET.progress(done ? 1 : Math.min(0.99, filledCount(state) / Math.max(1, white)));
+    }
     function afterChange() {
       persist();
       paint();
+      raceProgress();
       if (isSolved(puz, state)) solve();
       else if (isFilled(state)) say('The grid is full, but something is wrong. Try Check.');
     }
@@ -232,17 +302,35 @@ export default {
     function solve() {
       done = true; clk.stop();
       const secs = Math.max(1, Math.round(clk.secs));
+      if (NET) {
+        paint(); showDone(false);
+        snd.blip(520, 0.09, 'triangle', 0.8); snd.blip(780, 0.12, 'triangle', 0.7);
+        say(`Solved in ${fmtTime(secs)}.`);
+        NET.progress(1);
+        onScore(secs);
+        onEnd({ score: secs, won: true, detail: `Race · Puzzle ${n + 1} · ${g.entries.length} clues`, race: { done: true, ms: Math.round(clk.secs * 1000), p: 1 } });
+        return;
+      }
       const helped = rev > 0;
-      if (!helped && (bests[puz.id] == null || secs < bests[puz.id])) bests[puz.id] = secs;
+      /* a daily's time lives in its streak record, not among the fifty's bests */
+      if (!helped && n >= 0 && (bests[puz.id] == null || secs < bests[puz.id])) bests[puz.id] = secs;
+      let dayLine = '';
+      if (n < 0) {
+        if (shownAll) dayLine =' · revealed, so the day doesn’t count for the streak';
+        else {
+          const st = daily.solved(GAME, puz.day, secs, rev);
+          dayLine = st.already ? '' : ` · ${st.streak === 1 ? 'a 1-day streak' : `${st.streak} days in a row`} on this device`;
+        }
+      }
       persist(true);
-      paint(); showDone(false);
+      paint(); showDone(false, dayLine);
       snd.blip(520, 0.09, 'triangle', 0.8); snd.blip(780, 0.12, 'triangle', 0.7);
-      say(helped ? 'Solved, with help.' : `Solved in ${fmtTime(secs)}.`);
+      say(`${helped ? 'Solved, with help' : `Solved in ${fmtTime(secs)}`}${dayLine}.`);
       onScore(secs);
-      onEnd({ score: helped ? null : secs, won: true, detail: `Puzzle ${n + 1} · ${fmtTime(secs)}${helped ? ' · with help' : ''}` });
+      onEnd({ score: helped ? null : secs, won: true, detail: `${n < 0 ? 'Today’s crossword' : `Puzzle ${n + 1}`} · ${fmtTime(secs)}${helped ? ' · with help' : ''}` });
     }
     function doCheck() {
-      if (!live1()) return;
+      if (!live1() || NET) return;
       const bad = wrongCells(puz, state);
       wrong = new Set(bad);
       snd.blip(bad.length ? 170 : 600, 0.1, bad.length ? 'sawtooth' : 'triangle', 0.4, bad.length ? 120 : 0);
@@ -250,18 +338,19 @@ export default {
       say(bad.length ? `${bad.length} letter${bad.length === 1 ? ' is' : 's are'} wrong.` : filledCount(state) ? 'Every letter so far is right.' : 'Nothing to check yet.');
     }
     function doReveal(what) {
-      if (!live1() || g.cells[sel] === '#') return;
+      if (!live1() || g.cells[sel] === '#' || NET) return;
       begin();
       const before = state;
       state = reveal(puz, state, what, sel, dir);
       let changed = 0; for (let k = 0; k < state.length; k++) if (state[k] !== before[k]) { changed++; wrong.delete(k); }
       if (!changed) { say('Nothing to reveal there.'); return; }
       rev += changed;
+      if (what === 'all') shownAll = true;
       say(what === 'cell' ? 'Revealed a letter.' : what === 'word' ? 'Revealed the word.' : 'Revealed the puzzle.');
       afterChange();
     }
     function doClear() {
-      if (dead) return;
+      if (dead || NET) return;
       if (!clearArmed || Date.now() - clearArmed > 3500) {
         clearArmed = Date.now();
         clearBtn.querySelector('span').textContent = 'Sure?';
@@ -271,18 +360,19 @@ export default {
       }
       clearArmed = 0; clearBtn.querySelector('span').textContent = 'Clear';
       delete progress[puz.id];
-      open(n, true);
+      if (n < 0) openDaily(true); else open(n, true);
       persist(true);
-      say(`Puzzle ${n + 1} cleared.`);
+      say(n < 0 ? 'Today’s crossword cleared.' : `Puzzle ${n + 1} cleared.`);
     }
     L.on(checkBtn, 'click', doCheck);
     L.on(revLetter, 'click', () => doReveal('cell'));
     L.on(revWord, 'click', () => doReveal('word'));
     L.on(revAll, 'click', () => doReveal('all'));
     L.on(clearBtn, 'click', doClear);
-    L.on(prevBtn, 'click', () => { persist(true); open(n - 1); });
-    L.on(nextBtn, 'click', () => { persist(true); open(n + 1); });
-    L.on(pick, 'change', () => { persist(true); open(+pick.value); board.focus({ preventScroll: true }); });
+    L.on(prevBtn, 'click', () => { if (NET) return; persist(true); open(n - 1); });
+    L.on(nextBtn, 'click', () => { if (NET) return; persist(true); open(n + 1); });
+    L.on(pick, 'change', () => { if (NET) return; persist(true); if (pick.value === 'daily') openDaily(); else open(+pick.value); board.focus({ preventScroll: true }); });
+    L.on(dayBtn, 'click', () => { if (n < 0 || dead || NET) return; persist(true); openDaily(); board.focus({ preventScroll: true }); });
     if (padEl) L.on(padEl, 'click', e => {
       const b = e.target.closest?.('button[data-key]');
       if (!b) return;
@@ -303,14 +393,23 @@ export default {
 
     /* ---------- boot ---------- */
     paintFoot();
-    const startId = PUZZLES.some(p => p.id === sv.cur) ? sv.cur : PUZZLES[0].id;
-    let start = PUZZLES.findIndex(p => p.id === startId);
-    if (isDone(PUZZLES[start].id)) {                       /* a finished puzzle was the last one: go on to the next unsolved */
-      const nxt = PUZZLES.findIndex((p, i) => i > start && !isDone(p.id));
-      const any = PUZZLES.findIndex(p => !isDone(p.id));
-      start = nxt >= 0 ? nxt : any >= 0 ? any : start;
+    if (NET) {
+      open((NET.seed >>> 0) % PUZZLES.length, true);
+      say(`Race: the same crossword as ${NET.peer?.name || 'your friend'}, ${g.entries.length} clues. The faster finish wins.`);
+      raceProgress();
     }
-    open(start);
+    /* today's crossword, unfinished, was the last one open: back to it */
+    else if (sv.cur === `daily-${daily.dayKey()}` && !progress[sv.cur]?.done) openDaily();
+    else {
+      const startId = PUZZLES.some(p => p.id === sv.cur) ? sv.cur : PUZZLES[0].id;
+      let start = PUZZLES.findIndex(p => p.id === startId);
+      if (isDone(PUZZLES[start].id) || isDailyId(sv.cur)) {   /* a finished puzzle was the last one: go on to the next unsolved */
+        const nxt = isDailyId(sv.cur) ? -1 : PUZZLES.findIndex((p, i) => i > start && !isDone(p.id));
+        const any = PUZZLES.findIndex(p => !isDone(p.id));
+        start = nxt >= 0 ? nxt : any >= 0 ? any : start;
+      }
+      open(start);
+    }
     requestAnimationFrame(() => { if (!dead) board.focus({ preventScroll: true }); });
 
     return {
@@ -338,12 +437,14 @@ export default {
       peek: () => ({
         n, id: puz.id, w: g.w, h: g.h, state, sel, dir, entry: entriesAt(g, sel)[dir]?.key || null, clue: clueBar.textContent, done, rev, secs: clk.secs, paused,
         wrong: [...wrong], solution: solutionOf(puz), solvedCount: PUZZLES.filter(p => isDone(p.id)).length, best: { ...bests }, keypad: !!padEl,
-        message: msg, running: clk.running,
+        message: msg, running: clk.running, bigText: root.classList.contains('is-big'), isDaily: n < 0, day: puz.day || null, grid: puz.grid.slice(), revAll: shownAll, daily: daily.status(GAME),
         shown: nodes.map(c => c.querySelector('.pz-cw__l')?.textContent || (c.classList.contains('is-black') ? '#' : '.')).join(''),
+        race: NET ? { seed: NET.seed >>> 0, id: puz.id } : null,
       }),
-      /* test hook — nothing in the game calls it: open({ n }) */
+      /* test hook — nothing in the game calls it: open({ n }) · fill(letters: the whole grid's state, '.' empty) */
       hook(cmd, arg) {
         if (cmd === 'open') { persist(true); open(arg.n); }
+        else if (cmd === 'fill' && typeof arg === 'string' && arg.length === state.length) { state = arg; paint(); }
         return true;
       },
     };

@@ -25,6 +25,8 @@ import * as wm from '../core/wm.js';
 import * as L from '../core/layers.js';
 import * as KM from '../core/keymap.js';
 import { appTile } from '../core/appart.js';
+import * as SL from '../core/shortcutlist.js';
+import { t } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-cheatsheet-css')) {
   const l = document.createElement('link');
@@ -63,31 +65,58 @@ export function mountCheatSheet(host) {
       h('ul.csheet__list', rows.map(keyRow)));
   }
 
+  /* the text a search looks in: the keys as written on this computer, what they do, the section */
+  const hay = (r, title) => `${KM.keysText(r.keys, mac)} ${r.keys} ${r.label} ${title}`.toLowerCase();
+
   function build() {
     const w = wm.getActive();
     const app = w && !w.min ? w.app : null;
     const own = KM.appRows(app);
     const rows = KM.globalRows(mac);
-    const secs = [];
-    if (own.length) {
-      secs.push(section(app.name, own, appTile(app, { gs: '18px', sel: 'span.glyph.csheet__glyph' })));
-    }
+    const groups = [];
+    if (own.length) groups.push({ title: app.name, rows: own, glyph: appTile(app, { gs: '18px', sel: 'span.glyph.csheet__glyph' }) });
     for (const g of KM.GROUPS) {
       const list = rows.filter(r => r.group === g);
-      if (list.length) secs.push(section(g, list));
+      if (list.length) groups.push({ title: g, rows: list });
     }
     const modName = mac ? '⌘' : 'Ctrl';
+    const body = h('div.csheet__body', { tabindex: pinned ? '0' : null, 'aria-label': pinned ? t('Shortcut list') : null });
+    const status = h('div.sr', { role: 'status', 'aria-live': 'polite' });
+    /* every section, or only the rows that match what was typed (words, any order) */
+    function paintBody(q = '') {
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const secs = [];
+      let n = 0;
+      for (const g of groups) {
+        const list = words.length ? g.rows.filter(r => words.every(x => hay(r, g.title).includes(x))) : g.rows;
+        if (list.length) { secs.push(section(g.title, list, g.glyph ? g.glyph.cloneNode(true) : null)); n += list.length; }
+      }
+      body.replaceChildren(...[
+        own.length || words.length ? null : h('p.csheet__none', { text: app ? t('{name} has no shortcuts of its own.', { name: app.name }) : t('No window is in front.') }),
+        words.length && !n ? h('p.csheet__empty', { text: `No shortcut matches “${q.trim()}”.` }) : null,
+        ...secs,
+      ].filter(Boolean));
+      status.textContent = words.length ? (n ? `${n} shortcut${n === 1 ? '' : 's'} match` : 'No shortcut matches') : '';
+    }
+    paintBody();
+    /* search and save only in the sheet that stays: the hold-to-peek one never takes focus */
+    const find = pinned ? h('input.input.csheet__find', {
+      type: 'search', placeholder: t('Search shortcuts…'), 'aria-label': t('Search shortcuts'),
+      oninput: e => paintBody(e.target.value),
+    }) : null;
+    const secsNow = () => SL.sections(mac, app);
+    const bar = pinned ? h('div.csheet__bar', find,
+      h('button.btn.btn--sm.csheet__note', { type: 'button', onclick: () => { SL.saveAsNote(secsNow()); hide(); } }, icon('sticky-note'), h('span', { text: t('Save as note') })),
+      h('button.btn.btn--sm.csheet__pdf', { type: 'button', onclick: () => { hide(true); SL.printList(secsNow()); } }, icon('printer'), h('span', { text: t('Save as PDF') }))) : null;
     const el = h('div.csheet' + (pinned ? '.is-pinned' : ''), {
       role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'csheet-title',
     },
       h('div.csheet__head',
         icon('keyboard'),
-        h('h2.csheet__title#csheet-title', { text: 'Keyboard shortcuts' }),
-        h('small.csheet__sub', { text: pinned ? 'Esc to close' : `Let go of ${modName} to close` }),
-        pinned ? h('button.ibtn.csheet__x', { type: 'button', 'aria-label': 'Close keyboard shortcuts', onclick: () => hide() }, icon('x')) : null),
-      h('div.csheet__body', { tabindex: pinned ? '0' : null, 'aria-label': pinned ? 'Shortcut list' : null },
-        own.length ? null : h('p.csheet__none', { text: app ? `${app.name} has no shortcuts of its own.` : 'No window is in front.' }),
-        secs));
+        h('h2.csheet__title#csheet-title', { text: t('Keyboard shortcuts') }),
+        h('small.csheet__sub', { text: pinned ? t('Esc to close') : t('Let go of {modName} to close', { modName }) }),
+        pinned ? h('button.ibtn.csheet__x', { type: 'button', 'aria-label': t('Close keyboard shortcuts'), onclick: () => hide() }, icon('x')) : null),
+      bar, status, body);
     return el;
   }
 
@@ -98,6 +127,7 @@ export function mountCheatSheet(host) {
     sheet = build();
     host.appendChild(sheet);
     release = L.push({ name: 'shortcuts', el: sheet, close: () => hide() });
+    if (pin) sheet.querySelector('.csheet__find')?.focus({ preventScroll: true });
     bus.emit('a11y:say', pin ? 'Keyboard shortcuts. Escape closes.' : 'Keyboard shortcuts. Let go to close.');
   }
 

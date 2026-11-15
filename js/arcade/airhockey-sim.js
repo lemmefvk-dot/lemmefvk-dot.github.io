@@ -30,9 +30,20 @@ const DRAG = 0.32;                       /* per second */
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-export function newTable() {
+/* How fast the puck plays (the local game's start screen): its top speed,
+   the air's drag and how lively a mallet hit is. Normal is the table as it
+   always was, and the only one online. */
+export const PUCKS = {
+  slow: { id: 'slow', label: 'Slow', max: 1100, drag: 0.62, e: 0.85 },
+  normal: { id: 'normal', label: 'Normal', max: MAX_PUCK, drag: 0.32, e: 0.9 },
+  fast: { id: 'fast', label: 'Fast', max: 2300, drag: 0.16, e: 0.96 },
+};
+
+export function newTable(puck = 'normal') {
+  const P = PUCKS[puck] || PUCKS.normal;
   const T = {
     t: 0,
+    pace: P.id, maxPuck: P.max, drag: P.drag, bounce: P.e,
     puck: { x: W / 2, y: H / 2, vx: 0, vy: 0 },
     m: [0, 1].map(i => ({ x: i ? W - 90 : 90, y: H / 2, vx: 0, vy: 0, tx: i ? W - 90 : 90, ty: H / 2 })),
     score: [0, 0],
@@ -70,7 +81,7 @@ function hitMallet(T, m) {
   p.x = m.x + nx * R; p.y = m.y + ny * R;
   const vn = (p.vx - m.vx) * nx + (p.vy - m.vy) * ny;
   if (vn < 0) {
-    const e = 0.9;
+    const e = T.bounce ?? 0.9;
     p.vx -= (1 + e) * vn * nx; p.vy -= (1 + e) * vn * ny;
     T.ev.push({ kind: 'hit', x: p.x, y: p.y, p: Math.min(1, Math.hypot(p.vx, p.vy) / 1200) });
   }
@@ -92,7 +103,7 @@ export function step(T, dt = STEP) {
   moveMallet(T.m[0], 0, dt);
   moveMallet(T.m[1], 1, dt);
   const p = T.puck;
-  const drag = Math.exp(-DRAG * dt);
+  const drag = Math.exp(-(T.drag ?? DRAG) * dt);
   p.vx *= drag; p.vy *= drag;
   p.x += p.vx * dt; p.y += p.vy * dt;
   /* the long rails */
@@ -105,8 +116,8 @@ export function step(T, dt = STEP) {
   for (const x of [0, W]) { hitPost(T, x, GY0); hitPost(T, x, GY1); }
   hitMallet(T, T.m[0]);
   hitMallet(T, T.m[1]);
-  const sp = Math.hypot(p.vx, p.vy);
-  if (sp > MAX_PUCK) { p.vx *= MAX_PUCK / sp; p.vy *= MAX_PUCK / sp; }
+  const sp = Math.hypot(p.vx, p.vy), top = T.maxPuck ?? MAX_PUCK;
+  if (sp > top) { p.vx *= top / sp; p.vy *= top / sp; }
   /* a goal: the puck's centre past the end line, inside the mouth */
   if (p.x < -PR * 0.4) { T.goal = 1; T.score[1]++; T.ev.push({ kind: 'goal', x: 0, y: p.y, p: 1 }); }
   else if (p.x > W + PR * 0.4) { T.goal = 0; T.score[0]++; T.ev.push({ kind: 'goal', x: W, y: p.y, p: 1 }); }

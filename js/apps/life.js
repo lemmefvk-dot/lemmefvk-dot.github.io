@@ -1,10 +1,12 @@
 /* ============================================================
    life.js — Static Life: four small everyday tools in one window.
 
-     Habits    daily or chosen-weekday habits, ticks, streaks
-     Budget    income and spending, monthly view, budgets, CSV export
-     Recipes   your recipes, scaling, cook mode
-     Workout   interval timer with saved routines
+     Habits    daily or chosen-weekday habits, ticks, streaks, 12-week heatmaps
+     Budget    income and spending, monthly view, budgets, repeating entries,
+               a savings goal, a six-month chart, CSV in and out, Open in Sheets
+     Recipes   your recipes, scaling, cook mode with step timers, text in and
+               out, a shopping list sent to Static Tasks
+     Workout   interval timer with saved routines, spoken cues, history
 
    Why one app with tabs rather than four: none of the four is big
    enough to earn its own dock icon, they share one saved record
@@ -13,7 +15,9 @@
    no exact-money or budget model, Clock › Focus is a fixed pomodoro
    cycle. Where an existing piece does the job it is used, not copied:
    reminders go through Automations, files through Files, the picture
-   picker through the media layer, cues through sfx.js and speech.js.
+   picker through the media layer, cues through sfx.js and speech.js,
+   charts through Sheets' js/sheets/chart.js, step timers through
+   Clock's js/core/alarms.js, shopping lists through js/core/tasks.js.
 
    The logic lives in js/core (habits, money, recipes, workout,
    wakelock: no DOM, unit-tested) and each tab's screen in js/life/.
@@ -49,7 +53,7 @@ defineApp({
   icon: 'heart',
   g1: '#ff9ec0', g2: '#c43d7a',
   category: 'Productivity',
-  keywords: ['habit', 'habits', 'streak', 'budget', 'allowance', 'money', 'spending', 'expenses', 'recipe', 'recipes', 'cooking', 'cook', 'workout', 'interval', 'timer', 'exercise', 'hiit', 'life', 'routine'],
+  keywords: ['habit', 'habits', 'streak', 'budget', 'allowance', 'money', 'spending', 'expenses', 'recipe', 'recipes', 'cooking', 'cook', 'workout', 'interval', 'timer', 'exercise', 'hiit', 'life', 'routine', 'heatmap', 'savings goal', 'shopping list', 'workout history'],
   desc: 'Habit streaks, a budget, a recipe box and a workout timer, kept on this device',
   singleton: true,
   win: { w: 860, h: 640, minW: 460, minH: 420 },

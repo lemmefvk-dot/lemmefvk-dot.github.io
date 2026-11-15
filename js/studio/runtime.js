@@ -23,12 +23,22 @@
    restart, keyboard (arrows / WASD / Space) and on-screen touch
    buttons. Game code gets a small `game` API (see DEFAULT_CODE).
 
+   Version 2 adds, all optional so that every older scene loads and plays
+   as before: a world bigger than the screen (settings.worldWidth /
+   worldHeight, a camera that follows the player), more levels
+   (scene.levels = levels 2 and up; scene.objects / events stay level 1),
+   tilemap objects (`tiles`), animated sprites (`anim`), objects that stay
+   on screen (`fixed`) or only appear when spawned (`spawnOnly`), the
+   shooter / spinner / bobber / spawner / clickable behaviours, the
+   say / setVar / addVar / spawn / teleport / nextLevel actions, an optional
+   `if` on an event, custom win and game-over screens and game music.
+
    Exports for Studio: BEHAVIOURS, ACTIONS, SETTINGS, RUNTIME_JS,
    buildDoc, readDoc, writeScene, formatScene, validateScene,
    newId, groupOf.
    ============================================================ */
 
-export const RUNTIME_VERSION = 1;
+export const RUNTIME_VERSION = 2;
 
 /* ---------- behaviours: what Studio shows, and the engine's defaults -- */
 /* param kinds: num {min,max,step,unit} · select {options:[[value,label]]}
@@ -93,6 +103,7 @@ export const BEHAVIOURS = [
     desc: 'A player who touches it wins the game.',
     params: [
       { k: 'needAll', label: 'Only after every collectible is taken', kind: 'bool', def: false },
+      { k: 'then', label: 'Then', kind: 'select', def: 'auto', options: [['auto', 'Go to the next level (win on the last one)'], ['win', 'Win the game right away']] },
     ],
   },
   {
@@ -110,6 +121,56 @@ export const BEHAVIOURS = [
     params: [
       { k: 'speed', label: 'Fall speed', kind: 'num', def: 180, min: 5, max: 1500, unit: 'px/s' },
       { k: 'speedUp', label: 'Gets faster by', kind: 'num', def: 4, min: 0, max: 200, unit: 'px/s each second' },
+      { k: 'dir', label: 'Flies', kind: 'select', def: 'down', options: [['down', 'Down'], ['up', 'Up'], ['left', 'Left (in from the right)'], ['right', 'Right (in from the left)']] },
+      { k: 'loop', label: 'Comes back round when it leaves', kind: 'bool', def: true },
+      { k: 'points', label: 'Points when it gets past', kind: 'num', def: 0, min: -1000, max: 1000 },
+    ],
+  },
+  {
+    type: 'shooter', label: 'Shooter', icon: 'zap', role: 'weapon',
+    desc: 'Fires bullets with X, F or the fire button. A bullet removes an enemy it hits (a patrolling or chasing enemy, or a falling hazard) and stops at solid things. Give it to a player.',
+    params: [
+      { k: 'dir', label: 'Shoots', kind: 'select', def: 'facing', options: [['facing', 'The way it faces'], ['up', 'Up'], ['down', 'Down'], ['left', 'Left'], ['right', 'Right']] },
+      { k: 'rate', label: 'Shots a second', kind: 'num', def: 4, min: 0.5, max: 20 },
+      { k: 'speed', label: 'Bullet speed', kind: 'num', def: 520, min: 60, max: 2000, unit: 'px/s' },
+      { k: 'size', label: 'Bullet size', kind: 'num', def: 8, min: 3, max: 40, unit: 'px' },
+      { k: 'points', label: 'Points for each enemy hit', kind: 'num', def: 5, min: -1000, max: 1000 },
+      { k: 'sound', label: 'Sound', kind: 'sound', def: '' },
+    ],
+  },
+  {
+    type: 'spinner', label: 'Spinner', icon: 'refresh', role: 'motion',
+    desc: 'Turns round and round. Only the picture spins; what it touches stays the same box.',
+    params: [
+      { k: 'speed', label: 'Turns', kind: 'num', def: 120, min: -1440, max: 1440, unit: 'degrees/s' },
+    ],
+  },
+  {
+    type: 'bobber', label: 'Bobber', icon: 'arrow-up', role: 'motion',
+    desc: 'Floats gently up and down (or side to side) around where you put it. Nice for coins and signs.',
+    params: [
+      { k: 'amount', label: 'How far', kind: 'num', def: 10, min: 0, max: 1000, unit: 'px' },
+      { k: 'period', label: 'One trip takes', kind: 'num', def: 2, min: 0.2, max: 60, unit: 'seconds' },
+      { k: 'axis', label: 'Direction', kind: 'select', def: 'y', options: [['y', 'Up and down'], ['x', 'Left and right']] },
+    ],
+  },
+  {
+    type: 'spawner', label: 'Timer spawner', icon: 'clock', role: 'spawner',
+    desc: 'Every few seconds, makes a new copy of another object where this one is. Pick the object to copy; tick “Only appears when spawned” on it so it is not there from the start.',
+    params: [
+      { k: 'what', label: 'Copies', kind: 'object', def: '' },
+      { k: 'every', label: 'Every', kind: 'num', def: 2, min: 0.1, max: 600, unit: 'seconds' },
+      { k: 'spread', label: 'Random spread', kind: 'num', def: 0, min: 0, max: 4000, unit: 'px across' },
+      { k: 'limit', label: 'At most this many at once', kind: 'num', def: 0, min: 0, max: 500, unit: '(0 = no limit)' },
+    ],
+  },
+  {
+    type: 'clickable', label: 'Clickable', icon: 'mouse-pointer', role: 'pickup',
+    desc: 'Click or tap it to score points. Good for clicker games.',
+    params: [
+      { k: 'points', label: 'Points per click', kind: 'num', def: 1, min: -1000, max: 1000 },
+      { k: 'pop', label: 'Disappears when clicked', kind: 'bool', def: false },
+      { k: 'sound', label: 'Sound', kind: 'sound', def: '' },
     ],
   },
 ];
@@ -127,7 +188,16 @@ export const ACTIONS = [
   { do: 'win', label: 'Win the game' },
   { do: 'lose', label: 'Lose the game' },
   { do: 'sound', label: 'Play a sound', sound: true },
+  { do: 'say', label: 'Show a message', text: true },
+  { do: 'setVar', label: 'Set a variable', varName: true, n: true, def: 0 },
+  { do: 'addVar', label: 'Change a variable by', varName: true, n: true, def: 1 },
+  { do: 'spawn', label: 'Spawn a copy of an object', obj: true, at: true },
+  { do: 'teleport', label: 'Move the player to an object', obj: true },
+  { do: 'nextLevel', label: 'Go to the next level' },
 ];
+export const IF_OPS = [['>=', 'is at least'], ['>', 'is more than'], ['<=', 'is at most'], ['<', 'is less than'], ['=', 'is'], ['!=', 'is not']];
+export const VAR_RE = /^[A-Za-z_][A-Za-z0-9_]{0,23}$/;
+export const BAD_VARS = ['__proto__', 'constructor', 'prototype', 'hasOwnProperty'];
 export const actionDef = d => ACTIONS.find(a => a.do === d) || null;
 
 export const SETTINGS = {
@@ -173,8 +243,33 @@ function studioEngine(DEF) {
     timerEnds: rs.timerEnds === 'win' ? 'win' : 'lose',
     winScore: num(rs.winScore, 0, 0),
     hud: rs.hud !== false,
+    worldWidth: Math.round(num(rs.worldWidth, 0, 0, 20000)),
+    worldHeight: Math.round(num(rs.worldHeight, 0, 0, 20000)),
+    music: typeof rs.music === 'string' ? rs.music : '',
+    musicVolume: num(rs.musicVolume, 0.5, 0, 1),
+    winTitle: typeof rs.winTitle === 'string' ? rs.winTitle.slice(0, 80) : '',
+    winText: typeof rs.winText === 'string' ? rs.winText.slice(0, 200) : '',
+    winColor: typeof rs.winColor === 'string' && rs.winColor ? rs.winColor : '#86efac',
+    winImage: typeof rs.winImage === 'string' ? rs.winImage : '',
+    loseTitle: typeof rs.loseTitle === 'string' ? rs.loseTitle.slice(0, 80) : '',
+    loseText: typeof rs.loseText === 'string' ? rs.loseText.slice(0, 200) : '',
+    loseColor: typeof rs.loseColor === 'string' && rs.loseColor ? rs.loseColor : '#fca5a5',
+    loseImage: typeof rs.loseImage === 'string' ? rs.loseImage : '',
+    vars: {},
   };
+  if (rs.vars && typeof rs.vars === 'object' && !Array.isArray(rs.vars)) {
+    for (const k of Object.keys(rs.vars).slice(0, 16)) {
+      if (/^[A-Za-z_][A-Za-z0-9_]{0,23}$/.test(k) && ['__proto__', 'constructor', 'prototype', 'hasOwnProperty', 'score', 'lives', 'time'].indexOf(k) < 0) S.vars[k] = num(rs.vars[k], 0);
+    }
+  }
   const W = S.width, H = S.height;
+  /* the world can be bigger than the screen; the camera follows the player */
+  const WW = Math.max(W, S.worldWidth || W), WH = Math.max(H, S.worldHeight || H);
+  const cam = { x: 0, y: 0 };
+  /* level 1 is scene.objects / scene.events; later levels are scene.levels */
+  const LV = [{ objects: scene.objects, events: scene.events }]
+    .concat((Array.isArray(scene.levels) ? scene.levels : []).filter(l => l && typeof l === 'object').slice(0, 30));
+  let level = 0;
   if (typeof scene.title === 'string' && scene.title && !document.title) document.title = scene.title;
 
   /* ---------- canvas, sized to the frame and crisp at any scale ---------- */
@@ -201,7 +296,7 @@ function studioEngine(DEF) {
 
   /* ---------- assets: sprites and sounds, looked up by id or name ---------- */
   const assetData = readData('studio-assets') || {};
-  const IMG = {}, SND = {}, NAMES = {};
+  const IMG = {}, SND = {}, NAMES = {}, SHEET = {};
   for (const id of Object.keys(assetData)) {
     const a = assetData[id];
     if (!a || typeof a.src !== 'string' || !a.src) continue;
@@ -210,6 +305,7 @@ function studioEngine(DEF) {
     NAMES[name.replace(/\.[a-z0-9]+$/, '')] = id;
     if (a.kind === 'audio') SND[id] = a.src;
     else { const im = new Image(); im.src = a.src; IMG[id] = im; }
+    if (a.sheet && typeof a.sheet === 'object') SHEET[id] = a.sheet;
   }
   const assetId = ref => {
     if (ref === null || ref === undefined || ref === '') return null;
@@ -226,8 +322,9 @@ function studioEngine(DEF) {
   const KEYS = {
     ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
     ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', Space: 'jump',
+    KeyX: 'fire', KeyF: 'fire',
   };
-  const held = { left: false, right: false, up: false, down: false, jump: false };
+  const held = { left: false, right: false, up: false, down: false, jump: false, fire: false };
   let hit = {};
   function press(k, down) {
     if (down && !held[k]) hit[k] = true;
@@ -241,6 +338,7 @@ function studioEngine(DEF) {
       else if (e.code === 'Enter' && state !== 'play') restart();
       else if (e.code === 'KeyP' || e.code === 'Escape') { if (state === 'play') paused = !paused; }
     }
+    musicOn();
     emit('key', e.key, true);
   });
   window.addEventListener('keyup', e => {
@@ -249,13 +347,18 @@ function studioEngine(DEF) {
     emit('key', e.key, false);
   });
   window.addEventListener('blur', () => { for (const k in held) held[k] = false; });
-  canvas.addEventListener('pointerdown', () => {
-    try { window.focus(); canvas.focus({ preventScroll: true }); } catch (e) { /* fine */ }
-    if (state !== 'play') restart();
+  canvas.addEventListener('pointerdown', e => {
+    try { window.focus(); canvas.focus({ preventScroll: true }); } catch (err) { /* fine */ }
+    musicOn();
+    if (state !== 'play') { restart(); return; }
+    if (paused) return;
+    const r = canvas.getBoundingClientRect();
+    const x = (e.clientX - r.left) / (r.width || 1) * W, y = (e.clientY - r.top) / (r.height || 1) * H;
+    clickAt(x, y);
   });
 
   /* ---------- game code hooks ---------- */
-  const handlers = { start: [], update: [], draw: [], touch: [], win: [], lose: [], hurt: [], key: [] };
+  const handlers = { start: [], update: [], draw: [], touch: [], win: [], lose: [], hurt: [], key: [], click: [], level: [] };
   function emit(name) {
     const list = handlers[name];
     if (!list || !list.length) return;
@@ -294,6 +397,8 @@ function studioEngine(DEF) {
       text: typeof src.text === 'string' ? src.text : '',
       solid: !!src.solid, visible: src.visible !== false, layer: num(src.layer, 0),
       vx: 0, vy: 0, alive: true, onGround: false, ground: null, face: 1, inv: 0,
+      fixed: src.fixed === true, spawnOnly: src.spawnOnly === true,
+      anim: src.anim && typeof src.anim === 'object' ? src.anim : null, at: 0, clip: '', rot: 0,
       data: src.data && typeof src.data === 'object' ? JSON.parse(JSON.stringify(src.data)) : {},
       behaviours: [], _b: {},
     };
@@ -308,22 +413,76 @@ function studioEngine(DEF) {
       o.behaviours.push(inst);
       o._b[b.type] = inst;
     }
-    o.sx = o.x; o.sy = o.y;
+    o.sx = o.x; o.sy = o.y; o.lx = o.x; o.ly = o.y;
     return o;
   }
 
-  function reset() {
+  /* a tilemap object is a grid of ground; the engine turns it into a few solid boxes */
+  function expandTiles(src) {
+    const t = src.tiles, rows = t && Array.isArray(t.rows) ? t.rows.slice(0, 400) : [];
+    const size = num(t && t.size, 32, 4, 256);
+    const out = [];
+    let open = {};
+    const flush = (key, until) => {
+      const r = open[key];
+      if (!r) return;
+      delete open[key];
+      out.push({ id: src.id + '#' + out.length, name: src.name, group: src.group || 'ground', x: num(src.x, 0) + r.x0 * size, y: num(src.y, 0) + r.r0 * size,
+        w: (r.x1 - r.x0) * size, h: (until - r.r0) * size, color: src.color, solid: src.solid !== false, layer: src.layer, visible: src.visible, tile: true });
+    };
+    for (let r = 0; r <= rows.length; r++) {
+      const row = r < rows.length ? String(rows[r]).slice(0, 400) : '';
+      const now = {};
+      for (let x = 0; x < row.length; x++) {
+        if (row[x] !== '#') continue;
+        let e = x;
+        while (e < row.length && row[e] === '#') e++;
+        now[x + ':' + e] = { x0: x, x1: e, r0: r };
+        x = e - 1;
+      }
+      for (const key of Object.keys(open)) if (!now[key]) flush(key, r);
+      for (const key of Object.keys(now)) if (!open[key]) open[key] = now[key];
+    }
+    return out;
+  }
+  let templates = {};
+  function loadObjects() {
+    const src = (Array.isArray(LV[level].objects) ? LV[level].objects : []).filter(o => o && typeof o === 'object').slice(0, 3000);
+    templates = {};
+    for (const o of src) if (o.id) templates[String(o.id)] = o;
+    const list = [];
+    for (const o of src) {
+      if (o.spawnOnly === true) continue;
+      if (o.tiles && typeof o.tiles === 'object') for (const t of expandTiles(o)) list.push(t);
+      else list.push(o);
+    }
     seq = 0;
-    objs = (Array.isArray(scene.objects) ? scene.objects : []).filter(o => o && typeof o === 'object').slice(0, 3000).map(makeObj);
+    objs = list.slice(0, 3000).map(makeObj);
     objs.forEach((o, i) => { o.order = i; });
-    vars = { score: S.score, lives: S.lives, time: S.timer };
+    prevTouch = new Set(); prevPairs = new Set(); doomed = [];
+    snapCamera();
+  }
+  function reset() {
+    level = 0;
+    loadObjects();
+    vars = Object.assign({}, S.vars, { score: S.score, lives: S.lives, time: S.timer });
     state = 'play'; paused = false; clock = 0; flash = null;
     hintT = 4.5;
-    prevTouch = new Set(); prevPairs = new Set(); doomed = [];
     for (const k in handlers) for (const h of handlers[k]) h.off = false;
     emit('start', game);
   }
   function restart() { reset(); }
+  /* on to the next level, keeping score and lives; after the last one the game is won */
+  function nextLevel() {
+    if (state !== 'play') return;
+    if (level + 1 >= LV.length) { win(); return; }
+    level++;
+    loadObjects();
+    vars.time = S.timer;
+    clock = 0;
+    say('Level ' + (level + 1), 2);
+    emit('level', level + 1, game);
+  }
 
   function pick(ref) {
     ref = String(ref === undefined || ref === null ? '' : ref);
@@ -368,10 +527,10 @@ function studioEngine(DEF) {
   }
   const keepIn = (o, bottom) => {
     if (o.x < 0) { o.x = 0; o.vx = 0; }
-    if (o.x + o.w > W) { o.x = W - o.w; o.vx = 0; }
+    if (o.x + o.w > WW) { o.x = WW - o.w; o.vx = 0; }
     if (bottom) {
       if (o.y < 0) { o.y = 0; o.vy = 0; }
-      if (o.y + o.h > H) { o.y = H - o.h; o.vy = 0; }
+      if (o.y + o.h > WH) { o.y = WH - o.h; o.vy = 0; }
     }
   };
 
@@ -404,7 +563,7 @@ function studioEngine(DEF) {
       o.vy = 0;
     }
     keepIn(o, false);
-    if (o.y > H + 80) hurt(o, '', true);
+    if (o.y > WH + 80) hurt(o, '', true);
   }
 
   function topdown(o, dt) {
@@ -427,7 +586,7 @@ function studioEngine(DEF) {
     const d = o.dir * b.speed * dt;
     const r = ax === 'x' ? moveBy(o, d, 0) : moveBy(o, 0, d);
     const off = ax === 'x' ? o.x - o.sx : o.y - o.sy;
-    const max = ax === 'x' ? W - o.w : H - o.h;
+    const max = ax === 'x' ? WW - o.w : WH - o.h;
     const pos = ax === 'x' ? o.x : o.y;
     if (r.hx || r.hy || (o.dir > 0 && (off >= b.distance || pos >= max)) || (o.dir < 0 && (off <= 0 || pos <= 0))) o.dir *= -1;
     if (ax === 'x') { o.x = Math.max(0, Math.min(max, o.x)); o.face = o.dir; }
@@ -453,14 +612,166 @@ function studioEngine(DEF) {
   }
 
   function recycle(o) {
-    o.y = -o.h - Math.random() * H * 0.5;
-    o.x = Math.random() * Math.max(0, W - o.w);
+    const d = o._b.faller ? o._b.faller.dir : 'down';
+    if (d === 'left' || d === 'right') {
+      o.x = d === 'left' ? WW + Math.random() * W * 0.5 : -o.w - Math.random() * W * 0.5;
+      o.y = Math.random() * Math.max(0, WH - o.h);
+    } else if (d === 'up') {
+      o.y = WH + Math.random() * H * 0.5;
+      o.x = Math.random() * Math.max(0, WW - o.w);
+    } else {
+      o.y = -o.h - Math.random() * H * 0.5;
+      o.x = Math.random() * Math.max(0, WW - o.w);
+    }
+  }
+  /* a falling thing that is used up either comes back round or is gone for good */
+  function reuse(o) {
+    if (o._b.faller && o._b.faller.loop === false) destroy(o);
+    else { recycle(o); o.fv = 0; }
   }
   function faller(o, dt) {
     const b = o._b.faller;
     o.fv = (o.fv || b.speed) + b.speedUp * dt;
-    o.y += o.fv * dt;
-    if (o.y > H) recycle(o);
+    const d = b.dir;
+    if (d === 'left') o.x -= o.fv * dt;
+    else if (d === 'right') o.x += o.fv * dt;
+    else if (d === 'up') o.y -= o.fv * dt;
+    else o.y += o.fv * dt;
+    const gone = d === 'left' ? o.x + o.w < 0 : d === 'right' ? o.x > WW : d === 'up' ? o.y + o.h < 0 : o.y > WH;
+    if (!gone) return;
+    if (b.loop === false) { vars.score += b.points; destroy(o); }
+    else recycle(o);
+  }
+
+  /* ---------- spinner, bobber, timer spawner ---------- */
+  function bobber(o) {
+    const b = o._b.bobber;
+    const v = Math.sin(clock * Math.PI * 2 / Math.max(0.2, b.period)) * b.amount;
+    if (b.axis === 'x') o.x = o.sx + v; else o.y = o.sy + v;
+  }
+  function spawner(o, dt) {
+    const b = o._b.spawner;
+    o.sp = (o.sp === undefined ? Math.min(b.every, 0.5) : o.sp) - dt;
+    if (o.sp > 0) return;
+    o.sp = b.every;
+    if (b.limit > 0 && objs.reduce((n, x) => n + (x.alive && x.parent === o.uid ? 1 : 0), 0) >= b.limit) return;
+    const c = spawnCopy(b.what, o.x + o.w / 2, o.y + o.h / 2, b.spread);
+    if (c) c.parent = o.uid;
+  }
+  /* a copy of an object (by id or name), centred on a point */
+  function spawnCopy(ref, cx, cy, spread) {
+    ref = String(ref || '');
+    let src = templates[ref];
+    if (!src) for (const k of Object.keys(templates)) if (templates[k].name === ref) { src = templates[k]; break; }
+    if (!src || objs.length > 3000) return null;
+    const copy = JSON.parse(JSON.stringify(src));
+    delete copy.spawnOnly; delete copy.tiles;
+    copy.id = 'spawn' + (seq + 1);
+    copy.x = cx - num(copy.w, 32, 1) / 2 + (spread ? (Math.random() - 0.5) * spread : 0);
+    copy.y = cy - num(copy.h, 32, 1) / 2;
+    const o = makeObj(copy);
+    o.order = objs.length ? objs[objs.length - 1].order + 1 : 0;
+    o.spawned = true;
+    objs.push(o);
+    return o;
+  }
+
+  /* ---------- shooting ---------- */
+  function shooter(o, dt) {
+    const b = o._b.shooter;
+    o.cool = Math.max(0, (o.cool || 0) - dt);
+    if (!held.fire || o.cool > 0 || state !== 'play') return;
+    o.cool = 1 / b.rate;
+    let dx = 0, dy = 0;
+    if (b.dir === 'facing') dx = o.face >= 0 ? 1 : -1;
+    else if (b.dir === 'up') dy = -1;
+    else if (b.dir === 'down') dy = 1;
+    else if (b.dir === 'left') dx = -1;
+    else dx = 1;
+    const sz = b.size;
+    const bu = makeObj({ id: 'bullet' + (seq + 1), name: 'Bullet', group: 'bullet', w: sz, h: sz, color: '#fde68a', shape: 'ellipse', layer: 5,
+      x: o.x + o.w / 2 - sz / 2 + dx * (o.w / 2 + sz / 2), y: o.y + o.h / 2 - sz / 2 + dy * (o.h / 2 + sz / 2) });
+    bu.order = objs.length ? objs[objs.length - 1].order + 1 : 0;
+    bu.bullet = { vx: dx * b.speed, vy: dy * b.speed, points: b.points };
+    objs.push(bu);
+    play(b.sound);
+  }
+  const killable = t => !!(t._b.patrol || t._b.chase || (t._b.faller && t._b.hazard));
+  function bullet(o, dt) {
+    const k = o.bullet;
+    const n = Math.max(1, Math.ceil(Math.max(Math.abs(k.vx), Math.abs(k.vy)) * dt / 6));
+    for (let i = 0; i < n && o.alive; i++) {
+      o.x += k.vx * dt / n; o.y += k.vy * dt / n;
+      if (o.x + o.w < -20 || o.x > WW + 20 || o.y + o.h < -20 || o.y > WH + 20) { destroy(o); break; }
+      if (solids.some(s => s.alive && overlap(o, s))) { destroy(o); break; }
+      const t = objs.find(x => x.alive && !x.bullet && killable(x) && overlap(o, x));
+      if (t) {
+        destroy(o);
+        vars.score += k.points;
+        if (t._b.faller) reuse(t); else destroy(t);
+        break;
+      }
+    }
+  }
+
+  /* ---------- clicking ---------- */
+  function clickAt(sx, sy) {
+    const list = objs.filter(o => o.alive && o.visible).sort((a, b) => b.layer - a.layer || b.order - a.order);
+    let hitObj = null;
+    for (const o of list) {
+      const x = o.fixed ? sx : sx + cam.x, y = o.fixed ? sy : sy + cam.y;
+      if (x >= o.x && x <= o.x + o.w && y >= o.y && y <= o.y + o.h) { if (o._b.clickable) { hitObj = o; break; } }
+    }
+    if (hitObj) {
+      const c = hitObj._b.clickable;
+      vars.score += c.points;
+      play(c.sound);
+      hitObj.pulse = 0.18;
+      if (c.pop) destroy(hitObj);
+    }
+    emit('click', hitObj, sx + cam.x, sy + cam.y, game);
+  }
+
+  /* ---------- the camera ---------- */
+  function camTarget(p) {
+    return {
+      x: Math.max(0, Math.min(WW - W, p.x + p.w / 2 - W / 2)),
+      y: Math.max(0, Math.min(WH - H, p.y + p.h / 2 - H / 2)),
+    };
+  }
+  function snapCamera() {
+    const p = objs.find(o => o.alive && isPlayer(o));
+    const t = p ? camTarget(p) : { x: 0, y: 0 };
+    cam.x = WW > W ? t.x : 0; cam.y = WH > H ? t.y : 0;
+  }
+  function followCamera(dt) {
+    if (WW <= W && WH <= H) return;
+    const p = firstPlayer();
+    if (!p) return;
+    const t = camTarget(p), k = Math.min(1, dt * 9);
+    if (WW > W) cam.x += (t.x - cam.x) * k;
+    if (WH > H) cam.y += (t.y - cam.y) * k;
+  }
+
+  /* ---------- music ---------- */
+  let song = null, songTried = false;
+  function musicOn() {
+    if (songTried) return;
+    const id = assetId(S.music);
+    if (!id || !SND[id]) return;
+    songTried = true;
+    try { song = new Audio(SND[id]); song.loop = true; song.volume = S.musicVolume; musicSync(); } catch (e) { song = null; }
+  }
+  let singing = false;
+  function musicSync() {
+    if (!song) return;
+    const want = state === 'play' && !paused;
+    if (want === singing) return;
+    singing = want;
+    try {
+      if (want) { const p = song.play(); if (p && p.catch) p.catch(() => {}); }
+      else song.pause();
+    } catch (e) { /* no audio here */ }
   }
 
   function mover(o) {
@@ -511,17 +822,17 @@ function studioEngine(DEF) {
         if (o._b.collectible) {
           vars.score += o._b.collectible.points;
           play(o._b.collectible.sound);
-          if (o._b.faller) { recycle(o); o.fv = 0; } else destroy(o);
+          if (o._b.faller) reuse(o); else destroy(o);
           continue;
         }
         if (o._b.goal) {
           const left = objs.some(c => c.alive && c._b.collectible && !c._b.faller);
-          if (!o._b.goal.needAll || !left) win();
+          if (!o._b.goal.needAll || !left) { if (o._b.goal.then === 'win') win(); else nextLevel(); }
           else if (!flash) say('Collect everything first!');
         }
         if (o._b.hazard && p.inv <= 0) {
           hurt(p, o._b.hazard.sound);
-          if (o._b.faller) recycle(o);
+          if (o._b.faller) reuse(o);
           continue;
         }
         const e = enemyOf(o);
@@ -536,6 +847,7 @@ function studioEngine(DEF) {
     }
   }
 
+  const VAR_OK = /^[A-Za-z_][A-Za-z0-9_]{0,23}$/, BAD_VARS = ['__proto__', 'constructor', 'prototype', 'hasOwnProperty'];
   function runActions(actions, a, b) {
     for (const x of Array.isArray(actions) ? actions : []) {
       if (!x || state !== 'play') continue;
@@ -550,13 +862,47 @@ function studioEngine(DEF) {
         case 'win': win(); break;
         case 'lose': lose(); break;
         case 'sound': play(x.sound); break;
+        case 'say': say(fillText(x.text || ''), 2.2); break;
+        case 'setVar': case 'addVar': {
+          const k = String(x.name || '');
+          if (!VAR_OK.test(k) || BAD_VARS.indexOf(k) >= 0) break;
+          const n = num(x.n, 0);
+          vars[k] = x.do === 'setVar' ? n : num(vars[k], 0) + n;
+          break;
+        }
+        case 'spawn': {
+          const at = x.at === 'a' ? a : x.at === 'spot' ? null : b;
+          const t = at || templates[x.obj] || b || a;
+          if (t) spawnCopy(x.obj, t.x + t.w / 2, t.y + t.h / 2, 0);
+          break;
+        }
+        case 'teleport': {
+          const who = isPlayer(a) ? a : isPlayer(b) ? b : a;
+          const to = objs.find(t => t.alive && (t.id === x.obj || t.name === x.obj)) || templates[x.obj];
+          if (who && to) { who.x = to.x + to.w / 2 - who.w / 2; who.y = to.y + to.h / 2 - who.h / 2; who.vx = 0; who.vy = 0; who.sx = who.x; who.sy = who.y; }
+          break;
+        }
+        case 'nextLevel': nextLevel(); break;
         default: break;
       }
     }
   }
 
+  /* an event can have a condition: only when a variable is (at least, …) a number */
+  function passes(c) {
+    if (!c || typeof c !== 'object' || !c.v) return true;
+    const have = c.v === 'time' ? vars.time || 0 : num(vars[c.v], 0), want = num(c.n, 0);
+    switch (c.op) {
+      case '>': return have > want;
+      case '<': return have < want;
+      case '<=': return have <= want;
+      case '=': return have === want;
+      case '!=': return have !== want;
+      default: return have >= want;
+    }
+  }
   function events() {
-    const evs = Array.isArray(scene.events) ? scene.events : [];
+    const evs = Array.isArray(LV[level].events) ? LV[level].events : [];
     const now = new Set();
     evs.forEach((ev, i) => {
       if (!ev) return;
@@ -565,7 +911,7 @@ function studioEngine(DEF) {
         if (a === b || !a.alive || !b.alive || !overlap(a, b, 0.5)) continue;
         const key = i + ':' + a.uid + ':' + b.uid;
         now.add(key);
-        if (!prevTouch.has(key)) runActions(ev.actions, a, b);
+        if (!prevTouch.has(key) && passes(ev.if)) runActions(ev.actions, a, b);
       }
     });
     prevTouch = now;
@@ -592,9 +938,15 @@ function studioEngine(DEF) {
       if (o.inv > 0) o.inv = Math.max(0, o.inv - dt);
       if (o._b.platformer) platformer(o, dt);
       else if (o._b.topdown) topdown(o, dt);
+      if (o._b.shooter) shooter(o, dt);
     }
     for (const o of objs) {
       if (!o.alive) continue;
+      if (o.bullet) { bullet(o, dt); continue; }
+      if (o._b.spinner) o.rot += o._b.spinner.speed * dt;
+      if (o._b.bobber) bobber(o);
+      if (o._b.spawner) spawner(o, dt);
+      if (o.pulse > 0) o.pulse = Math.max(0, o.pulse - dt);
       if (o._b.patrol) patrol(o, dt);
       else if (o._b.chase) chase(o, dt);
       if (o._b.faller) faller(o, dt);
@@ -610,6 +962,13 @@ function studioEngine(DEF) {
       if (vars.time <= 0) { if (S.timerEnds === 'win') win(); else lose(); }
     }
     if (state === 'play' && S.winScore > 0 && vars.score >= S.winScore) win();
+    for (const o of objs) {
+      if (!o.alive || !o.anim) continue;
+      o.moving = Math.hypot(o.x - o.lx, o.y - o.ly) > 8 * dt;
+      o.lx = o.x; o.ly = o.y;
+      o.at += dt;
+    }
+    followCamera(dt);
     emit('update', dt, game);
     if (objs.some(o => !o.alive)) objs = objs.filter(o => o.alive);
   }
@@ -633,13 +992,51 @@ function studioEngine(DEF) {
   const fillText = t => String(t)
     .replace(/\{score\}/g, String(Math.round(vars.score)))
     .replace(/\{lives\}/g, String(vars.lives))
-    .replace(/\{time\}/g, fmtTime(vars.time || 0));
+    .replace(/\{time\}/g, fmtTime(vars.time || 0))
+    .replace(/\{level\}/g, String(level + 1))
+    .replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(vars, k) && BAD_VARS.indexOf(k) < 0 ? String(Math.round(num(vars[k], 0) * 100) / 100) : m));
+
+  /* the frames of a sprite sheet: from Asset Lab's sheet data, or a grid of frame-sized cells */
+  function framesOf(o, id, im) {
+    const sh = SHEET[id], an = o.anim || {};
+    if (sh && Array.isArray(sh.frames) && sh.frames.length) return sh.frames;
+    const fw = num(an.fw || (sh && sh.fw), 0, 0), fh = num(an.fh || (sh && sh.fh), 0, 0);
+    if (!fw || !fh || !im.naturalWidth) return null;
+    const cols = Math.max(1, Math.floor(im.naturalWidth / fw)), rows = Math.max(1, Math.floor(im.naturalHeight / fh));
+    const out = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) out.push([c * fw, r * fh, fw, fh]);
+    return out;
+  }
+  function clipOf(o, n) {
+    const an = o.anim || {};
+    const pick = (o.moving ? an.walk : an.idle) || an.idle;
+    return pick && pick.length === 2 ? [Math.max(0, Math.min(n - 1, Math.round(pick[0]))), Math.max(0, Math.min(n - 1, Math.round(pick[1])))] : [0, n - 1];
+  }
+  function frameOf(o, id, im) {
+    const fr = framesOf(o, id, im);
+    if (!fr || !fr.length) return null;
+    const an = o.anim || {}, sh = SHEET[id] || {};
+    const c = clipOf(o, fr.length), key = c[0] + '-' + c[1];
+    if (o.clip !== key) { o.clip = key; o.at = 0; }
+    const fps = num(an.fps || sh.fps, 8, 0.5, 60);
+    const len = Math.max(1, c[1] - c[0] + 1);
+    const i = still ? 0 : Math.floor(o.at * fps) % len;
+    return fr[Math.min(fr.length - 1, c[0] + i)];
+  }
 
   function drawObj(o) {
     ctx.save();
+    if (o.fixed) ctx.translate(cam.x, cam.y);
+    if (o.pulse > 0 && !still) {
+      const k = 1 + o.pulse * 0.5;
+      ctx.translate(o.x + o.w / 2, o.y + o.h / 2); ctx.scale(k, k); ctx.translate(-(o.x + o.w / 2), -(o.y + o.h / 2));
+    }
+    if (o.rot) {
+      ctx.translate(o.x + o.w / 2, o.y + o.h / 2); ctx.rotate(o.rot * Math.PI / 180); ctx.translate(-(o.x + o.w / 2), -(o.y + o.h / 2));
+    }
     /* a hurt player blinks for a moment, or just fades when motion is reduced */
     if (o.inv > 0 && (still || Math.floor(o.inv * 10) % 2)) ctx.globalAlpha = still ? 0.5 : 0.35;
-    const im = o.sprite && IMG[assetId(o.sprite)];
+    const imId = o.sprite && assetId(o.sprite), im = imId && IMG[imId];
     if (o.text) {
       const t = fillText(o.text);
       let size = Math.max(6, o.h * 0.8);
@@ -651,11 +1048,13 @@ function studioEngine(DEF) {
       ctx.textBaseline = 'middle';
       ctx.fillText(t, o.x + o.w / 2, o.y + o.h / 2);
     } else if (im && im.complete && im.naturalWidth) {
+      const fr = o.anim ? frameOf(o, imId, im) : null;
       if (o.face < 0 && (isPlayer(o) || enemyOf(o))) {
         ctx.translate(o.x + o.w, o.y);
         ctx.scale(-1, 1);
-        ctx.drawImage(im, 0, 0, o.w, o.h);
-      } else ctx.drawImage(im, o.x, o.y, o.w, o.h);
+        if (fr) ctx.drawImage(im, fr[0], fr[1], fr[2], fr[3], 0, 0, o.w, o.h); else ctx.drawImage(im, 0, 0, o.w, o.h);
+      } else if (fr) ctx.drawImage(im, fr[0], fr[1], fr[2], fr[3], o.x, o.y, o.w, o.h);
+      else ctx.drawImage(im, o.x, o.y, o.w, o.h);
     } else {
       ctx.fillStyle = o.color;
       if (o.shape === 'ellipse') {
@@ -690,6 +1089,7 @@ function studioEngine(DEF) {
       pill(lives, W - 12, 10, 'right');
     }
     if (S.timer > 0) pill(fmtTime(vars.time), W / 2, 10, 'center');
+    if (LV.length > 1) { ctx.font = '600 14px ' + FONT; pill('Level ' + (level + 1) + ' of ' + LV.length, 12, 44, 'left'); }
   }
 
   let touchOn = false;
@@ -698,20 +1098,27 @@ function studioEngine(DEF) {
     if (!ps.length) return '';
     /* on a touch screen the keys are not there: talk about the buttons */
     if (touchOn) return ps.some(o => o._b.platformer) ? 'Hold ◀ ▶ to move  ·  ⬆ to jump' : 'Hold the arrow buttons to move';
-    if (ps.some(o => o._b.platformer)) return '← → move  ·  ↑ or Space jump  ·  P pause  ·  R restart';
+    const shoot = objs.some(o => o.alive && o._b.shooter) ? '  ·  X shoot' : '';
+    if (ps.some(o => o._b.platformer)) return '← → move  ·  ↑ or Space jump' + shoot + '  ·  P pause  ·  R restart';
     const ax = ps[0]._b.topdown.axis;
-    if (ax === 'x') return '← → move  ·  P pause  ·  R restart';
-    if (ax === 'y') return '↑ ↓ move  ·  P pause  ·  R restart';
-    return 'Arrow keys or WASD move  ·  P pause  ·  R restart';
+    if (ax === 'x') return '← → move' + shoot + '  ·  P pause  ·  R restart';
+    if (ax === 'y') return '↑ ↓ move' + shoot + '  ·  P pause  ·  R restart';
+    return 'Arrow keys or WASD move' + shoot + '  ·  P pause  ·  R restart';
   }
 
-  function banner(title, sub, tint) {
+  function banner(title, sub, tint, img) {
     ctx.fillStyle = 'rgba(6,6,12,.62)';
     ctx.fillRect(0, 0, W, H);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+        const im = img && IMG[assetId(img)];
+    if (im && im.complete && im.naturalWidth) {
+      const k = Math.min(1, (H * 0.34) / im.naturalHeight, (W * 0.6) / im.naturalWidth);
+      const iw = im.naturalWidth * k, ih = im.naturalHeight * k;
+      ctx.drawImage(im, W / 2 - iw / 2, H / 2 - 22 - 40 - ih, iw, ih);
+    }
     ctx.fillStyle = tint;
-    ctx.font = '800 ' + Math.round(Math.min(56, W / 9)) + 'px ' + FONT;
+    ctx.font = '800 ' + Math.round(Math.min(56, W / Math.max(9, String(title).length * 0.9))) + 'px ' + FONT;
     ctx.fillText(title, W / 2, H / 2 - 22);
     ctx.fillStyle = '#ffffff';
     ctx.font = '500 16px ' + FONT;
@@ -722,6 +1129,7 @@ function studioEngine(DEF) {
     ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
     ctx.fillStyle = S.background;
     ctx.fillRect(0, 0, W, H);
+    ctx.translate(-Math.round(cam.x * scale * dpr) / (scale * dpr), -Math.round(cam.y * scale * dpr) / (scale * dpr));
     const list = objs.filter(o => o.alive && o.visible).sort((a, b) => a.layer - b.layer || a.order - b.order);
     for (const o of list) drawObj(o);
     emit('draw', ctx, game);
@@ -734,8 +1142,9 @@ function studioEngine(DEF) {
     }
     if (paused && state === 'play') banner('Paused', 'Press P to carry on', '#ffffff');
     const again = touchOn ? 'tap to play again' : 'press R or tap to play again';
-    if (state === 'won') banner('You win!', 'Score ' + Math.round(vars.score) + '  ·  ' + again, '#86efac');
-    if (state === 'lost') banner('Game over', 'Score ' + Math.round(vars.score) + '  ·  ' + again, '#fca5a5');
+    const more = (t, d) => (t ? fillText(t) + '  ·  ' + again : d + '  ·  ' + again);
+    if (state === 'won') banner(S.winTitle ? fillText(S.winTitle) : 'You win!', more(S.winText, 'Score ' + Math.round(vars.score)), S.winColor, S.winImage);
+    if (state === 'lost') banner(S.loseTitle ? fillText(S.loseTitle) : 'Game over', more(S.loseText, 'Score ' + Math.round(vars.score)), S.loseColor, S.loseImage);
   }
 
   /* ---------- on-screen buttons for touch screens ---------- */
@@ -765,6 +1174,7 @@ function studioEngine(DEF) {
     const right = document.createElement('div');
     right.className = 'pad';
     if (vert) { right.appendChild(btn('up', '▲', 'Up')); right.appendChild(btn('down', '▼', 'Down')); }
+    if (objs.some(o => o._b.shooter)) right.appendChild(btn('fire', '●', 'Fire'));
     if (hasPlat) right.appendChild(btn('jump', '⬆', 'Jump'));
     pad.appendChild(left);
     pad.appendChild(right);
@@ -780,6 +1190,11 @@ function studioEngine(DEF) {
   const game = {
     get width() { return W; },
     get height() { return H; },
+    get world() { return { width: WW, height: WH }; },
+    get camera() { return cam; },
+    get level() { return level + 1; },
+    get levels() { return LV.length; },
+    nextLevel,
     settings: S,
     scene: scene,
     get vars() { return vars; },
@@ -798,6 +1213,7 @@ function studioEngine(DEF) {
       return o;
     },
     destroy,
+    clone(ref, x, y) { return spawnCopy(ref, num(x, 0), num(y, 0), 0); },
     touching: (a, b) => !!(a && b && a.alive && b.alive && overlap(a, b, 0.5)),
     behaviour: (o, type) => (o && o._b && o._b[type]) || null,
     addScore(n) { vars.score += num(n, 0); },
@@ -814,13 +1230,15 @@ function studioEngine(DEF) {
   window.game = game;
 
   /* ---------- the loop ---------- */
-  let last = 0;
+  let last = 0, musicKey = '';
   function frame(now) {
     const dt = last ? Math.min(0.034, Math.max(0, (now - last) / 1000)) : 1 / 60;
     last = now;
     try {
       if (state === 'play' && !paused) step(dt);
       draw();
+      const mk = state + paused;
+      if (mk !== musicKey) { musicKey = mk; musicSync(); }
     } catch (err) {
       if (!frame.failed) console.error('The game stopped: ' + ((err && err.message) || err) + where(err));
       frame.failed = true;
@@ -883,7 +1301,7 @@ export const groupOf = name => String(name || '').toLowerCase().replace(/\s*\d+$
 
 const json = v => JSON.stringify(v).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 
-const OBJ_ORDER = ['id', 'name', 'group', 'x', 'y', 'w', 'h', 'color', 'shape', 'sprite', 'text', 'solid', 'visible', 'layer', 'locked', 'behaviours'];
+const OBJ_ORDER = ['id', 'name', 'group', 'x', 'y', 'w', 'h', 'color', 'shape', 'sprite', 'anim', 'text', 'solid', 'visible', 'layer', 'locked', 'fixed', 'spawnOnly', 'tiles', 'behaviours'];
 const ordered = (o, keys) => {
   const out = {};
   for (const k of keys) if (o[k] !== undefined) out[k] = o[k];
@@ -931,8 +1349,12 @@ export function formatScene(scene, { compact = false } = {}) {
   top.push(evs.length
     ? `  "events": [\n${evs.map(e => '    ' + json(e)).join(',\n')}\n  ]`
     : '  "events": []');
+  const lvs = Array.isArray(s.levels) ? s.levels : [];
+  if (lvs.length) {
+    top.push(`  "levels": [\n${lvs.map(l => '    {' + `"id": ${json(l.id || "")}, "name": ${json(l.name || "")},\n     "objects": [\n${(l.objects || []).map(o => '      ' + json(ordered(compact ? compactObj(o) : o, OBJ_ORDER))).join(',\n')}\n     ],\n     "events": [${(l.events || []).map(e => '\n      ' + json(e)).join(',')}${(l.events || []).length ? '\n     ' : ''}]}`).join(',\n')}\n  ]`);
+  }
   for (const k of Object.keys(s)) {
-    if (['v', 'title', 'settings', 'objects', 'events'].includes(k)) continue;
+    if (['v', 'title', 'settings', 'objects', 'events', 'levels'].includes(k)) continue;
     top.push(`  ${json(k)}: ${json(s[k])}`);
   }
   lines.push(top.join(',\n'));
@@ -970,14 +1392,40 @@ export function validateScene(raw) {
   setNum('score', -1e6, 1e6);
   setNum('timer', 0, 86400);
   setNum('winScore', 0, 1e9);
+  /* settings added in v2 are only checked (and kept) when they are there */
+  for (const [k, lo, hi] of [['worldWidth', 120, 20000], ['worldHeight', 120, 20000]]) {
+    if (st[k] === undefined || st[k] === null || st[k] === '' || st[k] === 0) { delete st[k]; continue; }
+    const v = Number(st[k]);
+    if (!Number.isFinite(v)) { errors.push(`settings.${k} must be a number.`); delete st[k]; continue; }
+    st[k] = Math.round(Math.min(hi, Math.max(lo, v)));
+    if (k === 'worldWidth' && st[k] <= st.width) delete st[k];
+    if (k === 'worldHeight' && st[k] <= st.height) delete st[k];
+  }
+  for (const k of ['music', 'winImage', 'loseImage']) { if (typeof st[k] === 'string' && st[k]) st[k] = st[k].slice(0, 80); else delete st[k]; }
+  if (st.musicVolume !== undefined) { const v = Number(st.musicVolume); if (Number.isFinite(v)) st.musicVolume = Math.min(1, Math.max(0, v)); else delete st.musicVolume; }
+  if (st.vars !== undefined) {
+    const v = st.vars, out = {};
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      for (const k of Object.keys(v).slice(0, 16)) {
+        if (!VAR_RE.test(k) || BAD_VARS.includes(k) || ['score', 'lives', 'time'].includes(k)) { warnings.push(`Variable "${k}" is not a usable name; left out.`); continue; }
+        const n = Number(v[k]);
+        out[k] = Number.isFinite(n) ? n : 0;
+      }
+    }
+    if (Object.keys(out).length) st.vars = out; else delete st.vars;
+  }
+  for (const k of ['winTitle', 'loseTitle']) { if (typeof st[k] === 'string' && st[k]) st[k] = st[k].slice(0, 80); else delete st[k]; }
+  for (const k of ['winText', 'loseText']) { if (typeof st[k] === 'string' && st[k]) st[k] = st[k].slice(0, 200); else delete st[k]; }
+  for (const k of ['winColor', 'loseColor']) { if (typeof st[k] === 'string' && st[k]) st[k] = st[k].slice(0, 32); else delete st[k]; }
   if (typeof st.background !== 'string' || !st.background.trim()) { warnings.push('settings.background was missing; set to the default.'); st.background = SETTINGS.background; }
   st.timerEnds = st.timerEnds === 'win' ? 'win' : 'lose';
   st.hud = st.hud !== false;
   s.settings = st;
 
-  if (raw.objects !== undefined && !Array.isArray(raw.objects)) errors.push('"objects" must be a list ([ … ]).');
+  function cleanLevel(rawObjects, rawEvents, tag) {
+  if (rawObjects !== undefined && !Array.isArray(rawObjects)) errors.push(`${tag}"objects" must be a list ([ … ]).`);
   const seen = new Set();
-  s.objects = (Array.isArray(raw.objects) ? raw.objects : []).map((o, i) => {
+  const objects = (Array.isArray(rawObjects) ? rawObjects : []).map((o, i) => {
     const label = o && typeof o.name === 'string' && o.name ? `"${o.name}"` : `#${i + 1}`;
     if (!o || typeof o !== 'object' || Array.isArray(o)) { errors.push(`Object ${label} is not an object.`); return null; }
     const out = { ...o };
@@ -1003,6 +1451,24 @@ export function validateScene(raw) {
     /* locked is Studio's alone (the stage will not pick, move, resize or
        delete it); the engine never reads it. Only true is written down. */
     if (out.locked === true || out.locked === 'true') out.locked = true; else delete out.locked;
+    /* v2 fields: only written when they are on */
+    for (const k of ['fixed', 'spawnOnly']) { if (out[k] === true || out[k] === 'true') out[k] = true; else delete out[k]; }
+    if (out.tiles !== undefined) {
+      const t = out.tiles;
+      if (!t || typeof t !== 'object' || !Array.isArray(t.rows)) { errors.push(`Object ${label}: "tiles" needs a list of rows.`); delete out.tiles; }
+      else out.tiles = { size: Math.min(256, Math.max(4, Math.round(Number(t.size)) || 32)), rows: t.rows.slice(0, 400).map(r => String(r).slice(0, 400).replace(/[^#.]/g, '.')) };
+    }
+    if (out.anim !== undefined) {
+      const an = out.anim, c = {};
+      if (an && typeof an === 'object' && !Array.isArray(an)) {
+        for (const k of ['fw', 'fh']) { const v = Math.round(Number(an[k])); if (v >= 1 && v <= 4096) c[k] = v; }
+        const fps = Number(an.fps); if (Number.isFinite(fps) && fps > 0) c.fps = Math.min(60, Math.max(0.5, fps));
+        for (const k of ['idle', 'walk']) {
+          if (Array.isArray(an[k]) && an[k].length === 2) { const a0 = Math.round(Number(an[k][0])), a1 = Math.round(Number(an[k][1])); if (a0 >= 0 && a1 >= a0 && a1 < 4096) c[k] = [a0, a1]; }
+        }
+      }
+      if (Object.keys(c).length) out.anim = c; else delete out.anim;
+    }
     if (out.behaviours !== undefined && !Array.isArray(out.behaviours)) errors.push(`Object ${label}: "behaviours" must be a list.`);
     const types = new Set();
     out.behaviours = (Array.isArray(out.behaviours) ? out.behaviours : []).map(b => {
@@ -1031,9 +1497,9 @@ export function validateScene(raw) {
     return out;
   }).filter(Boolean);
 
-  const ids = new Set(s.objects.map(o => o.id));
-  if (raw.events !== undefined && !Array.isArray(raw.events)) errors.push('"events" must be a list ([ … ]).');
-  s.events = (Array.isArray(raw.events) ? raw.events : []).map((e, i) => {
+  const ids = new Set(objects.map(o => o.id));
+  if (rawEvents !== undefined && !Array.isArray(rawEvents)) errors.push(`${tag}"events" must be a list ([ … ]).`);
+  const events = (Array.isArray(rawEvents) ? rawEvents : []).map((e, i) => {
     if (!e || typeof e !== 'object') { errors.push(`Event #${i + 1} is not an object.`); return null; }
     const out = { ...e, id: typeof e.id === 'string' && e.id ? e.id : newId('e') };
     for (const side of ['a', 'b']) {
@@ -1045,6 +1511,12 @@ export function validateScene(raw) {
       }
       errors.push(`Event #${i + 1}: "${side}" must be "player", "any", "group:<name>" or "id:<object id>".`);
     }
+    if (e.if !== undefined) {
+      const c = e.if;
+      if (c && typeof c === 'object' && typeof c.v === 'string' && c.v.trim()) {
+        out.if = { v: c.v.trim().slice(0, 24), op: IF_OPS.some(o => o[0] === c.op) ? c.op : '>=', n: Number.isFinite(Number(c.n)) ? Number(c.n) : 0 };
+      } else delete out.if;
+    }
     if (!Array.isArray(e.actions)) { errors.push(`Event #${i + 1}: "actions" must be a list.`); out.actions = []; }
     else out.actions = e.actions.map(a => {
       const def = a && actionDef(a.do);
@@ -1052,10 +1524,32 @@ export function validateScene(raw) {
       const x = { do: a.do };
       if (def.n) x.n = Number.isFinite(Number(a.n)) ? Number(a.n) : def.def;
       if (def.sound || a.sound) x.sound = typeof a.sound === 'string' ? a.sound : '';
+      if (def.text) x.text = typeof a.text === 'string' ? a.text.slice(0, 200) : '';
+      if (def.varName) {
+        x.name = typeof a.name === 'string' ? a.name.trim().slice(0, 24) : '';
+        if (x.name && (!VAR_RE.test(x.name) || BAD_VARS.includes(x.name))) { warnings.push(`Event #${i + 1}: "${x.name}" is not a usable variable name; cleared.`); x.name = ''; }
+      }
+      if (def.obj) x.obj = typeof a.obj === 'string' ? a.obj : '';
+      if (def.at) x.at = ['a', 'b', 'spot'].includes(a.at) ? a.at : 'b';
       return x;
     }).filter(Boolean);
     return out;
   }).filter(Boolean);
+  return { objects, events };
+  }
+
+  const lvl1 = cleanLevel(raw.objects, raw.events, '');
+  s.objects = lvl1.objects;
+  s.events = lvl1.events;
+  delete s._at;
+  if (raw.levels !== undefined && !Array.isArray(raw.levels)) { errors.push('"levels" must be a list ([ … ]).'); delete s.levels; }
+  else if (Array.isArray(raw.levels) && raw.levels.length) {
+    s.levels = raw.levels.slice(0, 30).map((l, i) => {
+      if (!l || typeof l !== 'object' || Array.isArray(l)) { errors.push(`Level ${i + 2} is not an object.`); return null; }
+      const c = cleanLevel(l.objects, l.events, `Level ${i + 2}: `);
+      return { id: typeof l.id === 'string' && l.id ? l.id : newId('l'), name: typeof l.name === 'string' ? l.name.slice(0, 40) : '', objects: c.objects, events: c.events };
+    }).filter(Boolean);
+  } else delete s.levels;
 
   return { scene: errors.length ? null : s, errors, warnings };
 }
@@ -1069,7 +1563,10 @@ const safeCode = code => String(code).replace(/<\/script/gi, '<\\/script');
 export function assetsJSON(assets) {
   const map = {};
   for (const a of Array.isArray(assets) ? assets : []) {
-    if (a && a.id && a.dataUrl) map[a.id] = { name: a.name || a.id, kind: a.kind === 'audio' ? 'audio' : 'image', src: a.dataUrl };
+    if (a && a.id && a.dataUrl) {
+      map[a.id] = { name: a.name || a.id, kind: a.kind === 'audio' ? 'audio' : 'image', src: a.dataUrl };
+      if (a.kind !== 'audio' && a.sheet && typeof a.sheet === 'object') map[a.id].sheet = a.sheet;
+    }
   }
   const keys = Object.keys(map);
   if (!keys.length) return '{}';
@@ -1194,7 +1691,10 @@ export function readDoc(html) {
   if (c) { out.code = c[2].replace(/^\n/, '').replace(/\n$/, ''); out.codeLine = lineAt(src, c.index + c[1].length); }
   const r = src.match(blockRe('studio-runtime'));
   if (r) {
-    out.runtime = r[2].trim() === RUNTIME_JS.trim() ? 'ok' : 'modified';
+    /* 'older': the untouched engine of an earlier Studio (known by its fingerprint).
+       Build swaps it for this one without asking; anything else that differs was edited by hand. */
+    const text = r[2].trim();
+    out.runtime = text === RUNTIME_JS.trim() ? 'ok' : OLD_ENGINES.includes(fingerprint(text)) ? 'older' : 'modified';
     out.runtimeLine = lineAt(src, r.index + r[1].length);
   }
   let raw = null;
@@ -1217,6 +1717,10 @@ export function readDoc(html) {
   out.warnings.push(...v.warnings);
   return out;
 }
+
+const fingerprint = t => { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16); };
+/* fingerprints of the engines earlier versions of Studio wrote (v1) */
+const OLD_ENGINES = ['46397f5b'];
 
 /** Replace the body of one <script id=…> block. Returns null when it is not there. */
 export function setBlock(html, id, body) {

@@ -12,17 +12,25 @@
    backboard, the net, the floor) on a fixed 1/480 s step, so every
    miss is a miss you can see coming.
 
-   Score: 2 points a basket, +1 for a clean swish (no rim, no glass)
-   — 30 at most. Seven baskets or more counts as a win. Follows the
-   module contract in ./index.js; stop() removes every listener, the
-   loop and the audio context.
+   Score: 2 points a basket, +1 for a clean swish (no rim, no glass).
+   ON FIRE: three baskets in a row and you are on fire — every basket
+   after that scores 1 more, until you miss (the ball burns while it
+   lasts). Seven baskets or more counts as a win.
+
+   Modes (ctx.mode, each with its own best):
+     Free throws   ten shots from the line, 4.2 m
+     3-point round ten shots from the arc, 6.75 m (./basketball-sim.js
+                   SPOTS.three): 3 points a basket, +1 a swish, +1 on
+                   fire; five baskets is the mark.
+   Follows the module contract in ./index.js; stop() removes every
+   listener, the loop and the audio context.
    ============================================================ */
 import { clamp, hsl, FONT, coarse, surface, ownsKey, sounder, looper, rr, prompt, stepper } from './kit.js';
 import * as B from './basketball-sim.js';
 
 const HUE = 22;
 const SHOTS = 10;
-const WIN_MADE = 7;
+const FIRE_AT = 3;                     /* baskets in a row that light you up */
 const STEP = 1 / 120;
 const LABEL = {
   swish: ['SWISH!', 140], bank: ['Off the glass — good!', 160], 'rim-in': ['Rattled in!', 120],
@@ -34,10 +42,12 @@ export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
+    const MODE = ctx.mode === 'three' ? 'three' : 'free';
+    const SPOT = B.SPOTS[MODE], BASE = MODE === 'three' ? 3 : 2, WIN_MADE = MODE === 'three' ? 5 : 7;
     const S = {
       state: 'aim',                /* aim | flight | result | over */
       paused: false,
-      shot: 0, made: 0, swishes: 0, points: 0, streak: 0, best: 0,
+      shot: 0, made: 0, swishes: 0, points: 0, streak: 0, best: 0, fires: 0, fireNow: false, trail: [],
       meterT: 0, meterP: 0,
       locked: null,                /* the meter value of the last release */
       ball: null,                  /* the flying shot */
@@ -55,7 +65,8 @@ export default {
     function release(p) {
       if (S.paused || S.state !== 'aim') return false;
       S.locked = clamp(Number.isFinite(p) ? p : S.meterP, 0, 1);
-      S.ball = B.newShot(S.locked);
+      S.ball = B.newShot(S.locked, SPOT);
+      S.trail = [];
       S.state = 'flight';
       S.started = true;
       S.resolved = false;
@@ -72,15 +83,23 @@ export default {
       const res = B.outcome(s);
       S.outcome = res;
       const scored = s.scored;
+      /* on fire: this shot came after FIRE_AT or more baskets in a row */
+      const fire = S.streak >= FIRE_AT;
       S.shot++;
+      let gain = 0;
       if (scored) {
         S.made++; S.streak++; S.best = Math.max(S.best, S.streak);
-        S.points += 2 + (res === 'swish' ? 1 : 0);
+        gain = BASE + (res === 'swish' ? 1 : 0) + (fire ? 1 : 0);
+        S.points += gain;
         if (res === 'swish') S.swishes++;
+        if (fire) S.fires++;
       } else S.streak = 0;
-      S.log.push({ p: S.locked, result: res });
+      const lit = !S.fireNow && S.streak >= FIRE_AT;
+      S.fireNow = S.streak >= FIRE_AT;
+      S.log.push({ p: S.locked, result: res, gain, fire: scored && fire });
       const [text, hue] = LABEL[res];
-      S.banner = text; S.bannerHue = hue;
+      S.banner = scored && fire ? `${text} · on fire +1` : lit ? `${text} You’re on fire!` : !scored && fire ? `${text} · the fire’s out` : text;
+      S.bannerHue = scored && (fire || lit) ? 30 : hue;
       S.state = 'result';
       S.timer = reduced ? 1.1 : 1.5;
       report();
@@ -102,7 +121,7 @@ export default {
       snd.blip(220, 0.5, 'sawtooth', 0.8);
       ctx.onEnd({
         score: S.points, won: S.made >= WIN_MADE,
-        detail: `${S.made} of ${SHOTS} made, ${S.swishes} clean swish${S.swishes === 1 ? '' : 'es'}, best streak ${S.best}. ${S.made >= WIN_MADE ? 'Cold from the line!' : `${WIN_MADE} baskets is the mark to beat.`}`,
+        detail: `${MODE === 'three' ? 'Threes: ' : ''}${S.made} of ${SHOTS} made, ${S.swishes} clean swish${S.swishes === 1 ? '' : 'es'}, best streak ${S.best}${S.fires ? `, ${S.fires} basket${S.fires === 1 ? '' : 's'} on fire` : ''}. ${S.made >= WIN_MADE ? (MODE === 'three' ? 'Lights out from the arc!' : 'Cold from the line!') : `${WIN_MADE} baskets is the mark to beat.`}`,
       });
     }
 
@@ -115,6 +134,8 @@ export default {
       } else if (S.state === 'flight' || S.state === 'result') {
         const s = S.ball;
         if (s && !s.done) B.stepShot(s, dt);
+        /* the flames behind a ball shot while on fire */
+        if (s && S.fireNow && S.state === 'flight') { S.trail.push({ x: s.x, y: s.y }); if (S.trail.length > 14) S.trail.shift(); }
         if (s) {
           while (S.seenEvents < s.events.length) {
             const ev = s.events[S.seenEvents++];
@@ -145,7 +166,7 @@ export default {
     function view() {
       const w = sf.w, h = sf.h;
       const hudH = clamp(h * 0.11, 40, 64);
-      const x0 = -1.9, x1 = 6.5, y0 = -0.45, y1 = 4.75;
+      const x0 = SPOT.x - 1.9, x1 = 6.5, y0 = -0.45, y1 = MODE === 'three' ? 5.35 : 4.75;
       const s = Math.max(0.1, Math.min(w / (x1 - x0), (h - hudH) / (y1 - y0)));
       const ox = (w - (x1 - x0) * s) / 2 - x0 * s + 8;
       const oy = hudH + ((h - hudH) - (y1 - y0) * s) / 2 + y1 * s;
@@ -171,7 +192,7 @@ export default {
       if (S.banner && (S.state === 'result' || S.state === 'over')) banner(g, v);
       if (!S.started && S.state === 'aim') {
         const touch = coarse();
-        prompt(g, sf, touch ? 'Tap when the meter is in the green' : 'Press Space when the meter is in the green', `Ten free throws · ${WIN_MADE} baskets to win · a clean swish scores a bonus`, HUE, v.hudH + (v.h - v.hudH) * 0.3);
+        prompt(g, sf, touch ? 'Tap when the meter is in the green' : 'Press Space when the meter is in the green', `${MODE === 'three' ? 'Ten threes from the arc' : 'Ten free throws'} · ${WIN_MADE} baskets to win · a swish scores a bonus, three in a row and you’re on fire`, HUE, v.hudH + (v.h - v.hudH) * 0.3);
       }
     }
 
@@ -208,6 +229,13 @@ export default {
       g.fillRect(X(v, B.REL.x), Y(v, 0) + 4, (B.BOARD.x + 0.9 - B.REL.x) * v.s, Math.max(6, (v.h - Y(v, 0)) * 0.3));
       g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 2;
       g.strokeRect(X(v, B.REL.x), Y(v, 0) + 4, (B.BOARD.x + 0.9 - B.REL.x) * v.s, Math.max(6, (v.h - Y(v, 0)) * 0.3));
+      /* the three-point line, where a 3-point round shoots from */
+      if (MODE === 'three') {
+        g.fillStyle = 'rgba(255,255,255,.85)';
+        g.fillRect(X(v, SPOT.x - 0.02), Y(v, 0), 3, Math.max(8, v.s * 0.35));
+        g.fillStyle = 'rgba(255,255,255,.5)'; g.font = `700 ${Math.round(clamp(v.s * 0.16, 9, 13))}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'top';
+        g.fillText('6.75 m', X(v, SPOT.x), Y(v, 0) + Math.max(10, v.s * 0.38));
+      }
       g.fillStyle = 'rgba(0,0,0,.25)';
       g.fillRect(0, Y(v, 0) - 2, v.w, 3);
     }
@@ -257,7 +285,7 @@ export default {
 
     function drawPlayer(g, v) {
       /* an original little shooter: boxy jersey, round head, arms up */
-      const px = B.REL.x - 0.35, gy = 0;
+      const px = SPOT.x - 0.35, gy = 0;
       const crouch = S.state === 'aim' ? Math.sin(S.time * 3) * 0.015 : 0;
       const up = S.state === 'flight' || S.state === 'result';
       const hue = 200;
@@ -279,7 +307,7 @@ export default {
       g.fillStyle = '#2a1d16';
       g.beginPath(); g.arc(X(v, px + 0.02), Y(v, 1.85 + crouch), v.s * 0.13, Math.PI, 2 * Math.PI); g.fill();
       /* the shooting arm: to the ball, and up through the release */
-      const hand = up ? { x: B.REL.x - 0.05, y: B.REL.y - 0.05 } : { x: px + 0.28, y: 1.62 + crouch + Math.sin(S.time * 3) * 0.02 };
+      const hand = up ? { x: SPOT.x - 0.05, y: SPOT.y - 0.05 } : { x: px + 0.28, y: 1.62 + crouch + Math.sin(S.time * 3) * 0.02 };
       g.strokeStyle = '#e0b48a'; g.lineWidth = v.s * 0.09;
       g.beginPath(); g.moveTo(X(v, px + 0.12), Y(v, 1.52 + crouch)); g.lineTo(X(v, (px + 0.12 + hand.x) / 2 + 0.05), Y(v, (1.52 + hand.y) / 2 - 0.05)); g.lineTo(X(v, hand.x), Y(v, hand.y)); g.stroke();
       g.restore();
@@ -288,8 +316,23 @@ export default {
     function drawBall(g, v) {
       let x, y, rot = 0;
       if (S.ball) { x = S.ball.x; y = S.ball.y; rot = S.ball.rot; }
-      else { x = B.REL.x + 0.05; y = 1.68 + Math.sin(S.time * 3) * 0.02; }
+      else { x = SPOT.x + 0.05; y = 1.68 + Math.sin(S.time * 3) * 0.02; }
       const px = X(v, x), py = Y(v, y), r = B.BALL_R * v.s;
+      /* on fire: flames trail the ball, and it glows (steady with reduced motion) */
+      if (S.fireNow) {
+        g.save();
+        g.globalCompositeOperation = 'lighter';
+        S.trail.forEach((t, i) => {
+          const k = (i + 1) / S.trail.length;
+          const fl = reduced ? 1 : 0.8 + 0.2 * Math.sin(S.time * 30 + i);
+          g.fillStyle = hsl(18 + 30 * k, 100, 55, 0.22 * k);
+          g.beginPath(); g.arc(X(v, t.x), Y(v, t.y), r * (0.5 + 0.9 * k) * fl, 0, 7); g.fill();
+        });
+        const glow = g.createRadialGradient(px, py, r * 0.6, px, py, r * 2.4);
+        glow.addColorStop(0, hsl(35, 100, 60, 0.55)); glow.addColorStop(1, 'rgba(255,80,0,0)');
+        g.fillStyle = glow; g.beginPath(); g.arc(px, py, r * 2.4, 0, 7); g.fill();
+        g.restore();
+      }
       g.save();
       g.translate(px, py);
       g.rotate(rot);
@@ -346,15 +389,16 @@ export default {
       g.fillText(`Shot ${Math.min(SHOTS, S.shot + (S.state === 'aim' || S.state === 'flight' ? 1 : 0))} of ${SHOTS}`, 14, v.hudH / 2);
       g.textAlign = 'center';
       g.fillText(`Made ${S.made}`, v.w / 2, v.hudH / 2);
-      g.fillStyle = S.streak >= 2 ? '#ffd23f' : 'rgba(255,255,255,.55)';
-      g.font = `700 ${Math.round(fs * 0.8)}px ${FONT}`;
-      g.fillText(S.streak >= 2 ? `${S.streak} in a row` : 'Streak 0', v.w / 2 + Math.min(150, v.w * 0.17), v.hudH / 2);
-      /* the ten results as pips */
+      g.fillStyle = S.fireNow ? '#ff8a2a' : S.streak >= 2 ? '#ffd23f' : 'rgba(255,255,255,.55)';
+      g.font = `${S.fireNow ? 900 : 700} ${Math.round(fs * 0.8)}px ${FONT}`;
+      g.fillText(S.fireNow ? `ON FIRE · ${S.streak} in a row` : S.streak >= 2 ? `${S.streak} in a row` : 'Streak 0', v.w / 2 + Math.min(150, v.w * 0.17), v.hudH / 2);
+      /* the ten results as pips: a basket made on fire has an orange ring */
       const pw = Math.min(16, (v.w * 0.3) / SHOTS), px0 = v.w - 14 - pw * SHOTS;
       for (let i = 0; i < SHOTS; i++) {
         const r = S.log[i];
         g.fillStyle = !r ? 'rgba(255,255,255,.16)' : r.result === 'swish' || r.result === 'bank' || r.result === 'rim-in' ? (r.result === 'swish' ? '#7dffa0' : '#58d68a') : '#ff7a6b';
         g.beginPath(); g.arc(px0 + pw * i + pw / 2, v.hudH / 2, pw * 0.34, 0, 7); g.fill();
+        if (r?.fire) { g.strokeStyle = '#ff8a2a'; g.lineWidth = 2; g.beginPath(); g.arc(px0 + pw * i + pw / 2, v.hudH / 2, pw * 0.45, 0, 7); g.stroke(); }
       }
       g.restore();
     }
@@ -406,7 +450,7 @@ export default {
         const b = S.ball;
         return {
           state: S.state, paused: S.paused, time: S.time, over: S.state === 'over', reduced,
-          shot: S.shot, made: S.made, swishes: S.swishes, points: S.points, streak: S.streak,
+          shot: S.shot, made: S.made, swishes: S.swishes, points: S.points, streak: S.streak, mode: MODE, spot: { x: SPOT.x, y: SPOT.y, dist: SPOT.dist }, fire: S.fireNow, fires: S.fires,
           meterP: S.meterP, meterT: S.meterT, locked: S.locked, outcome: S.outcome, banner: S.banner, hint: S.hint,
           log: S.log.slice(),
           ball: b ? { x: b.x, y: b.y, vx: b.vx, vy: b.vy, t: b.t, rim: b.rim, board: b.board, floor: b.floor, scored: b.scored, crossX: b.crossX } : null,

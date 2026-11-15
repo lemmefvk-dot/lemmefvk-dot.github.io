@@ -6,7 +6,9 @@
      Next tip    another one right now (it counts as seen too)
      ✕ / Esc     hides it until tomorrow
      Don't show tips   a switch; Settings › Desktop › Startup turns it back on
-   (prefs.tips). The tips are in tips.data.js, 70-odd, each with the code
+   (prefs.tips). The same place has "Replay a tip": every tip you have been
+   shown (kept in `ever`) is listed there and shows again when picked, even
+   with tips switched off (bus 'tips:replay' { id?, x?, y? }). The tips are in tips.data.js, 70-odd, each with the code
    that makes it true; shortcuts in them are read from js/core/keymap.js.
 
    A tip never competes with anything else at start-up. The order is:
@@ -17,10 +19,11 @@
    the What's New check has answered; if setup or the tour ran this load,
    or the sheet appeared, today's tip is simply skipped.
 
-   session.tips = { day: 'YYYY-MM-DD', seen: [ids] }
+   session.tips = { day: 'YYYY-MM-DD', seen: [ids], ever: [ids] }
      day   the last day a tip was shown (local time)
      seen  tips shown since the list last ran out: none repeats until
            every one has been seen
+     ever  every tip ever shown, newest last — what "Replay a tip" lists
    ============================================================ */
 import api from '../core/api.js?v=ps5-cloud-proxy-v11';
 import { bus } from '../core/bus.js';
@@ -28,6 +31,7 @@ import { store } from '../core/store.js';
 import { covered } from '../core/cover.js';
 import { hasIcon } from '../core/icons.js';
 import { TIPS } from './tips.data.js';
+import { t } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-tips-css')) {
   const l = document.createElement('link');
@@ -65,7 +69,12 @@ export function showMe(tip) {
 export function mountTips(host) {
   const { h, icon } = api;
   let card = null, timer = 0, dead = false, bootAt = 0, skipLoad = false, shownThisLoad = false;
-  const state = () => { const s = store.get(KEY); return s && typeof s === 'object' ? { day: s.day || '', seen: Array.isArray(s.seen) ? s.seen : [] } : { day: '', seen: [] }; };
+  const state = () => {
+    const s = store.get(KEY);
+    if (!s || typeof s !== 'object') return { day: '', seen: [], ever: [] };
+    const seen = Array.isArray(s.seen) ? s.seen : [];
+    return { day: s.day || '', seen, ever: Array.isArray(s.ever) ? s.ever : seen };
+  };
   const on = () => store.get(PREF, true) !== false;
 
   /** Pick one not yet seen (everything seen: start over, but not on the one just shown). */
@@ -77,7 +86,7 @@ export function mountTips(host) {
     const t = pool[Math.floor(Math.random() * pool.length)];
     if (!t) return null;
     st.seen = [...st.seen.filter(id => all.some(x => x.id === id)), t.id];
-    store.set(KEY, { day: dayOf(), seen: st.seen });
+    store.set(KEY, { day: dayOf(), seen: st.seen, ever: [...st.ever.filter(id => id !== t.id), t.id] });
     return t;
   }
 
@@ -103,17 +112,40 @@ export function mountTips(host) {
       },
     });
     const me = h('button.btn.btn--primary.btn--sm', { type: 'button', onclick: () => { hide(); showMe(tip); } },
-      icon('arrow-right'), 'Show me');
-    const nx = h('button.btn.btn--sm', { type: 'button', onclick: () => { const t = pick(tip.id); if (t) { tip = t; text.textContent = t.now; if (card) card.dataset.tip = t.id; } } }, 'Next tip');
+      icon('arrow-right'), t('Show me'));
+    const nx = h('button.btn.btn--sm', { type: 'button', onclick: () => { const t = pick(tip.id); if (t) { tip = t; text.textContent = t.now; if (card) card.dataset.tip = t.id; } } }, t('Next tip'));
     return h('div.tipc', {
-      role: 'region', 'aria-label': 'Tip of the day', dataset: { tip: tip.id },
+      role: 'region', 'aria-label': t('Tip of the day'), dataset: { tip: tip.id },
       onkeydown: e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hide(); } },
     },
-      h('div.tipc__head', h('span.tipc__ico', ico), h('span.tipc__k', { text: 'Tip of the day' }), h('div.grow'),
-        h('button.tipc__x', { type: 'button', 'aria-label': 'Close tip', onclick: hide }, icon('x'))),
+      h('div.tipc__head', h('span.tipc__ico', ico), h('span.tipc__k', { text: t('Tip of the day') }), h('div.grow'),
+        h('button.tipc__x', { type: 'button', 'aria-label': t('Close tip'), onclick: hide }, icon('x'))),
       text,
       h('div.tipc__acts', me, nx),
-      h('label.tipc__never', never, h('span#tipc-never-l', { text: 'Don’t show tips' })));
+      h('label.tipc__never', never, h('span#tipc-never-l', { text: t('Don’t show tips') })));
+  }
+
+  /** Show a tip you have seen before (or list them to pick one). Doesn't use up today's tip. */
+  function replay(arg = {}) {
+    if (dead) return;
+    const all = usableTips();
+    if (arg.id) {
+      const t = all.find(x => x.id === arg.id);
+      if (!t) return;
+      hide();
+      card = paint(t);
+      host.appendChild(card);
+      return;
+    }
+    const seen = state().ever.map(id => all.find(t => t.id === id)).filter(Boolean).reverse();
+    if (!seen.length) {
+      api.notify({ app: 'Tips', icon: 'sparkles', title: t('No tips to replay yet'), message: t('A tip you have been shown is listed here, to see again.') });
+      return;
+    }
+    const clip = s => (s.length > 72 ? `${s.slice(0, 69)}…` : s);
+    api.menu([{ header: true, label: t('Replay a tip') },
+      ...seen.slice(0, 14).map(t => ({ label: clip(t.now), icon: 'sparkles', onClick: () => replay({ id: t.id }) }))],
+    Number.isFinite(arg.x) ? arg.x : innerWidth / 2, Number.isFinite(arg.y) ? arg.y : innerHeight / 3);
   }
 
   function show() {
@@ -152,6 +184,7 @@ export function mountTips(host) {
     /* setup, the tour or the sheet in this load: no tip until the next one */
     bus.on('onboarding:done', () => { skipLoad = true; }),
     bus.on('tour:open', () => { skipLoad = true; }),
+    bus.on('tips:replay', replay),
     bus.on('boot:ready', () => {
       bootAt = Date.now();
       if (document.querySelector('.ob')) skipLoad = true;

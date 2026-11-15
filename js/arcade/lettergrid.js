@@ -3,10 +3,11 @@
 
    Shake the dice and find words in the grid of letters: a word is a
    chain of touching cells (sides or corners), each cell used once
-   per word, three letters or more. You have three minutes. Longer
-   words score more (3 letters 1 point, 4 → 2, 5 → 4, 6 → 6, 7 → 9,
-   8 and up 12+). Pick a 4×4 or a 5×5 grid. When time is up, the words
-   you missed are listed (click one to see where it hides).
+   per word, three letters or more. You have three minutes, or one in
+   the sprint. Longer words score more (3 letters 1 point, 4 → 2,
+   5 → 4, 6 → 6, 7 → 9, 8 and up 12+). Pick a 4×4, 5×5 or 6×6 grid.
+   When time is up, the words you missed are listed (click one to see
+   where it hides).
 
    The rules, the dice and the search that rejects weak grids are in
    lettergridlogic.js; the word list (words.js) is fetched when this
@@ -22,15 +23,23 @@
    last ten seconds. With reduced motion both stop: the letters just
    appear, and the warning is the clock turning red.
 
-   Score = points, higher is better; the best per grid size is kept on
-   this device (portal.arcadePuzzles.lettergrid).
+   Score = points, higher is better; the best per grid size (and per
+   size in the sprint) is kept on this device
+   (portal.arcadePuzzles.lettergrid).
+
+   ONLINE RACE (ctx.online.kit, js/arcade/race.js): a 4×4 grid rolled
+   from the room's seed, three minutes, so both screens get the same
+   letters; it shakes as soon as the word list is in, size, sprint and
+   New grid are off, nothing is saved. When time is up the round ends at
+   once, with the words found going to the race kit (it marks the ones
+   only one of you found).
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { ownsKey, randomSeed, sounder } from './kit.js';
 import { CSS as BASE, load, save, fmtTime, reducedMotion, bag, clock } from './puzzlekit.js';
 import { loadWords } from './words.js';
-import { makeGrid, pathFor, spell, wordPoints, touching, SIZES, ROUND_SECONDS, MIN_LEN } from './lettergridlogic.js';
+import { makeGrid, pathFor, spell, wordPoints, touching, SIZES, ROUND_SECONDS, SPRINT_SECONDS, MIN_LEN } from './lettergridlogic.js';
 
 const GAME = 'lettergrid';
 const SHAKE_MS = 800;
@@ -73,6 +82,15 @@ button.pz-lg__chip{cursor:pointer}button.pz-lg__chip:focus-visible{outline:2px s
 .pz-lg__done b{font-size:20px;color:#fff}.pz-lg__done>span{font-size:12px;color:var(--ink-2,#bbb);max-width:44ch}
 .pz.is-low .pz__read.is-clock{color:#ff7b7b}
 @container (max-width:620px){.pz-lg__main{flex-direction:column;gap:6px}.pz-lg__side{width:100%;flex:0 0 auto;max-height:42%}.pz-lg__list{min-height:40px}}
+/* the Arcade's "Larger text" (ctx.bigText): the letters, the word being made and the lists about a third bigger */
+.pz.is-big .pz-lg__c{font-size:calc(100cqw / var(--n) * .6)}
+.pz.is-big .pz-lg__c b{font-size:calc(100cqw / var(--n) * .21)}
+.pz.is-big .pz-lg__side{width:250px}
+.pz.is-big .pz-lg__word{min-height:54px;font-size:30px}
+.pz.is-big .pz-lg__chip{font-size:16px;padding:6px 8px}
+.pz.is-big .pz-lg__list h4{font-size:14px}
+.pz.is-big .pz__foot{font-size:15px}
+@container (max-width:620px){.pz.is-big .pz-lg__side{width:100%}}
 `;
 
 export default {
@@ -83,9 +101,15 @@ export default {
     const L = bag();
     const snd = sounder(ctx);
     let dead = false, paused = false;
-    const sv = load(GAME);
+    /* an online race: the shell's race kit, the room's seed */
+    const RACE = ctx.online?.kit && Number.isInteger(ctx.online.seed) ? ctx.online : null;
+    const sv = RACE ? {} : load(GAME);
     const bests = { ...(sv.best || {}) };
-    const prefs = { size: SIZES[sv.size] ? sv.size : '4' };
+    const prefs = RACE ? { size: '4', sprint: false } : { size: SIZES[sv.size] ? sv.size : '4', sprint: sv.sprint === true };
+    /* the round's length, fixed when the grid is dealt */
+    let roundLen = prefs.sprint ? SPRINT_SECONDS : ROUND_SECONDS;
+    const bestKey = (size, sprint) => (sprint ? `sprint-${size}` : size);
+    const kindName = (size, sprint) => `${SIZES[size].n}×${SIZES[size].n}${sprint ? ' sprint' : ''}`;
     let lex = null;
     let G = null;                       /* the grid: { size, n, seed, cells, found: Map(all words -> path), grade } */
     let phase = 'loading';              /* loading · ready · shaking · play · review · done */
@@ -103,11 +127,12 @@ export default {
     const scoreRead = h('div.pz__read', { title: 'Score', 'aria-label': 'Score' }, icon('star'), scoreV);
     const countV = h('span', { text: '0 words' });
     const countRead = h('div.pz__read', { title: 'Words found', 'aria-label': 'Words found' }, icon('list'), countV);
-    const timeV = h('span', { text: fmtTime(ROUND_SECONDS) });
+    const timeV = h('span', { text: fmtTime(roundLen) });
+    const sprintBtn = h('button.pz__btn', { type: 'button', 'aria-pressed': 'false', dataset: { act: 'sprint' }, title: 'A 1-minute sprint instead of 3 minutes' }, icon('zap'), h('span', { text: '1-min sprint' }));
     const timeRead = h('div.pz__read.is-clock', { title: 'Time left', 'aria-label': 'Time left' }, icon('clock'), timeV);
     const bestV = h('small', { text: '' });
     const newBtn = h('button.pz__btn', { type: 'button', title: 'A new grid' }, icon('refresh'), h('span.pz__long', { text: 'New grid' }));
-    const top = h('div.pz__top', seg, scoreRead, countRead, timeRead, bestV, newBtn);
+    const top = h('div.pz__top', seg, sprintBtn, scoreRead, countRead, timeRead, bestV, newBtn);
     const board = h('div.pz-lg__board', { role: 'grid', tabindex: '0', 'aria-label': 'Letter grid' });
     const bw = h('div.pz-lg__bw', board);
     const wordEl = h('div.pz-lg__word', { 'aria-live': 'off', dataset: { role: 'current' } });
@@ -121,6 +146,10 @@ export default {
     const root = h('div.pz' + (reduced ? '.is-reduced' : ''), { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } },
       h('style', { text: CSS }), top, main, foot, live);
     el.appendChild(root);
+    if (RACE) for (const b of [seg, sprintBtn, newBtn, bestV]) b.hidden = true;
+    /* ctx.bigText is a getter: read when the game opens and on every new grid */
+    const big = () => root.classList.toggle('is-big', !!ctx.bigText);
+    big();
 
     const say = m => { msg = m; live.textContent = ''; live.textContent = m; paintFoot(); };
     const paintFoot = () => foot.replaceChildren(msg
@@ -129,7 +158,7 @@ export default {
 
     /* ---------- time ---------- */
     const clk = clock(secs => {
-      const left = Math.max(0, ROUND_SECONDS - secs);
+      const left = Math.max(0, roundLen - secs);
       timeV.textContent = fmtTime(Math.ceil(left));
       const low = phase === 'play' && left <= LOW_SECONDS;
       root.classList.toggle('is-low', low);
@@ -165,8 +194,10 @@ export default {
       wordEl.className = 'pz-lg__word' + (typed !== null && typed && !path.length ? ' is-bad' : '') + (failed ? ' is-bad' : '');
       scoreV.textContent = String(score);
       countV.textContent = `${mine.size} word${mine.size === 1 ? '' : 's'}`;
-      bestV.textContent = bests[G.size] != null ? `Best ${SIZES[G.size].n}×${SIZES[G.size].n}: ${bests[G.size]}` : '';
+      const bk = bestKey(G.size, G.sprint);
+      bestV.textContent = bests[bk] != null ? `Best ${kindName(G.size, G.sprint)}: ${bests[bk]}` : '';
       sizeBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.size === G.size)));
+      sprintBtn.setAttribute('aria-pressed', String(!!G.sprint));
       const live1 = phase === 'play';
       submitBtn.disabled = !live1; clearBtn.disabled = !live1;
     }
@@ -191,19 +222,25 @@ export default {
     function deal(size = prefs.size, seed = randomSeed()) {
       clearInterval(rollTimer); clearTimeout(shakeTimer);
       clk.stop(); clk.secs = 0;
+      big();
       G = makeGrid(lex, size, seed);
-      prefs.size = size; save(GAME, { size });
+      G.sprint = prefs.sprint;
+      roundLen = G.sprint ? SPRINT_SECONDS : ROUND_SECONDS;
+      prefs.size = size;
+      if (!RACE) save(GAME, { size, sprint: prefs.sprint });
       score = 0; mine = new Map(); path = []; typed = null; showPath = null; failed = ''; missedList = []; cursor = 0; keyUsed = false;
       paused = false; phase = 'ready';
       side.querySelector('.pz-lg__done')?.remove();
       root.classList.remove('is-low'); board.classList.remove('is-low', 'is-shaking');
-      timeV.textContent = fmtTime(ROUND_SECONDS);
+      timeV.textContent = fmtTime(roundLen);
       build(); paint(); paintList(); onScore(0);
       /* the letters stay hidden until the shake */
       nodes.forEach(c => { c.textContent = ' '; });
       const go = h('button.btn.btn--primary', { type: 'button', dataset: { act: 'shake' }, onclick: () => start() }, icon('play', { fill: true }), h('span', { text: 'Shake the grid' }));
-      card('Ready?', `${ROUND_SECONDS / 60} minutes. Find words of ${MIN_LEN}+ touching letters. Longer words score more.`, go);
-      say(`${SIZES[size].n}×${SIZES[size].n} grid ready. Press Enter or Space to shake it and start.`);
+      /* a race was counted down by the Arcade: the grid shakes at once */
+      if (RACE) { start(); return; }
+      card(G.sprint ? 'Sprint: ready?' : 'Ready?', `${G.sprint ? 'One minute' : `${roundLen / 60} minutes`}. Find words of ${MIN_LEN}+ touching letters. Longer words score more.`, go);
+      say(`${SIZES[size].n}×${SIZES[size].n} grid ready${G.sprint ? ' for a 1-minute sprint' : ''}. Press Enter or Space to shake it and start.`);
       setTimeout(() => { if (!dead && phase === 'ready') go.focus({ preventScroll: true }); }, 30);
     }
     function start() {
@@ -242,17 +279,25 @@ export default {
       side.insertBefore(h('div.pz-lg__done', h('b', { text: 'Time!' }), h('span', { text: `You found ${mine.size} of the ${total} words in this grid, for ${score} points. The ${missedList.length} you missed are listed — click one to see it.` }), fin), list);
       say(`Time is up. ${mine.size} of ${total} words, ${score} points.`);
       snd.blip(300, 0.2, 'triangle', 0.8, 150);
+      /* a race doesn't wait for a click: the friend is waiting for the result */
+      if (RACE) { finish(); return; }
       setTimeout(() => { if (!dead && phase === 'review') fin.focus({ preventScroll: true }); }, 30);
     }
     function finish() {
       if (dead || phase !== 'review') return;
       phase = 'done';
-      const prev = bests[G.size];
-      if (prev == null || score > prev) { bests[G.size] = score; save(GAME, { best: bests }); }
+      const bk = bestKey(G.size, G.sprint);
+      const prev = bests[bk];
+      if (!RACE && (prev == null || score > prev)) { bests[bk] = score; save(GAME, { best: bests }); }
       side.querySelector('.pz-lg__done')?.remove();
       paint();
       onScore(score);
-      onEnd({ score, won: true, detail: `${SIZES[G.size].n}×${SIZES[G.size].n} grid · ${mine.size} of ${G.grade.words} words${[...mine.keys()].length ? ` · longest ${[...mine.keys()].sort((a, b) => b.length - a.length)[0]}` : ''}` });
+      if (RACE) {
+        onEnd({ score, won: true, detail: `${kindName(G.size, G.sprint)} grid · ${mine.size} of ${G.grade.words} words`,
+          race: { sc: score, n: mine.size, w: [...mine.keys()].join(' ').toUpperCase() } });
+        return;
+      }
+      onEnd({ score, won: true, detail: `${kindName(G.size, G.sprint)} grid ·${mine.size} of ${G.grade.words} words${[...mine.keys()].length ? ` · longest ${[...mine.keys()].sort((a, b) => b.length - a.length)[0]}` : ''}` });
     }
 
     /* ---------- words ---------- */
@@ -378,13 +423,14 @@ export default {
     });
 
     L.on(seg, 'click', e => { const b = e.target.closest?.('button[data-size]'); if (b && !dead && lex) deal(b.dataset.size); });
+    L.on(sprintBtn, 'click', () => { if (dead || !lex) return; prefs.sprint = !prefs.sprint; deal(prefs.size); });
     L.on(newBtn, 'click', () => { if (!dead && lex) deal(); });
 
     /* ---------- boot: the word list loads first ---------- */
     paintFoot(); paintList(); onScore(0);
     board.style.setProperty('--n', 4);
     card('Loading the word list…', 'About 300 KB; the browser keeps a copy for next time.');
-    const loadIt = () => loadWords().then(l => { if (dead) return; lex = l; deal(); }).catch(err => {
+    const loadIt = () => loadWords().then(l => { if (dead) return; lex = l; deal(prefs.size, RACE ? RACE.seed >>> 0 : randomSeed()); }).catch(err => {
       if (dead) return;
       card('The word list did not load', 'The first time, it needs the network. Check your connection and try again.',
         h('button.btn.btn--primary', { type: 'button', onclick: () => { card('Loading the word list…', ''); loadIt(); } }, icon('refresh'), h('span', { text: 'Try again' })));
@@ -415,11 +461,11 @@ export default {
       },
       /* a read-only snapshot for automated play-tests */
       peek: () => G && ({
-        phase, size: G.size, n: G.n, seed: G.seed, cells: G.cells.slice(), score, secs: clk.secs, left: Math.max(0, ROUND_SECONDS - clk.secs), paused,
+        phase, size: G.size, n: G.n, seed: G.seed, cells: G.cells.slice(), score, secs: clk.secs, left: Math.max(0, roundLen - clk.secs), paused, sprint: !!G.sprint, roundLen,
         found: [...mine.keys()], points: Object.fromEntries(mine), path: path.slice(), typed, current: current(), total: G.grade.words, grade: G.grade, rolls: G.rolls,
         all: [...G.found].map(([w, p]) => ({ word: w, path: p })), missed: missedList.slice(), best: { ...bests }, reduced,
         shaking: board.classList.contains('is-shaking'), low: board.classList.contains('is-low'), anim: getComputedStyle(board).animationName,
-        loaded: !!lex,
+        loaded: !!lex, bigText: root.classList.contains('is-big'), race: RACE ? { seed: RACE.seed } : null,
       }),
       /* test hook — nothing in the game calls it: deal({ size, seed }), time({ secs }) */
       hook(cmd, arg) {

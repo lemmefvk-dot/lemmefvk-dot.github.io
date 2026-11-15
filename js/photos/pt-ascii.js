@@ -19,12 +19,13 @@
    ============================================================ */
 import { pickerView, blobOfSource, bitmapOf, sizeOfBitmap, sourceOfPath, clamp } from './pt-common.js';
 import vfs from '../core/vfs.js';
+import { t } from '../core/i18n.js';
 
 export const RAMPS = [
-  { id: 'classic', label: 'Classic', chars: ' .:-=+*#%@' },
-  { id: 'simple', label: 'Simple', chars: ' .oO@' },
-  { id: 'blocks', label: 'Blocks', chars: ' ░▒▓█' },
-  { id: 'binary', label: 'Two tones', chars: ' #' },
+  { id: 'classic', label: t('Classic'), chars: ' .:-=+*#%@' },
+  { id: 'simple', label: t('Simple'), chars: ' .oO@' },
+  { id: 'blocks', label: t('Blocks'), chars: ' ░▒▓█' },
+  { id: 'binary', label: t('Two tones'), chars: ' #' },
 ];
 
 /* ---------- picture -> characters ---------- */
@@ -110,7 +111,7 @@ export function mountAscii({ api, root, opts }) {
   const S = { mode: 'picture', text: '', alive: true, imgData: null, name: '', seq: 0 };
   const O = { cols: 80, ramp: 'classic', invert: false, contrast: 0, fill: '█', wide: true, words: '' };
 
-  const pre = h('pre.pt-ascii__pre', { tabindex: 0, 'aria-label': 'ASCII art', dataset: { mode: 'picture' } });
+  const pre = h('pre.pt-ascii__pre', { tabindex: 0, 'aria-label': t('ASCII art'), dataset: { mode: 'picture' } });
   const stage = h('div.pt__stage.pt-ascii__stage', pre);
   const foot = h('div.pt__foot', { role: 'status', 'aria-live': 'polite' });
 
@@ -159,35 +160,35 @@ export function mountAscii({ api, root, opts }) {
       S.name = src.name;
       render();
     } catch (err) {
-      if (seq === S.seq) api.notify({ app: 'Picture Tools', icon: 'alert', title: 'Can’t open that picture', message: err?.message || String(err) });
+      if (seq === S.seq) api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Can’t open that picture'), message: err?.message || String(err) });
     }
   }
-  const picker = pickerView(api, { label: 'Pictures to turn into ASCII', onChange: list => { if (list[0]) open(list[0]); else { S.imgData = null; render(); } } });
+  const picker = pickerView(api, { label: t('Pictures to turn into ASCII'), onChange: list => { if (list[0]) open(list[0]); else { S.imgData = null; render(); } } });
   const slider = (label, key, min, max, fmt = v => String(v)) => {
     const out = h('output', { text: fmt(O[key]) });
     const input = h('input', { type: 'range', min, max, step: 1, value: O[key], 'aria-label': label, dataset: { key },
       oninput: () => { O[key] = Number(input.value); out.textContent = fmt(O[key]); render(); } });
     return h('label.pt__slider', h('span', { text: label }), input, out);
   };
-  const rampSel = h('select', { 'aria-label': 'Characters', onchange: () => { O.ramp = rampSel.value; render(); } },
+  const rampSel = h('select', { 'aria-label': t('Characters'), onchange: () => { O.ramp = rampSel.value; render(); } },
     RAMPS.map(r => h('option', { value: r.id, text: `${r.label}  ${r.chars.trim() ? r.chars.replace(/ /g, '·') : ''}` })));
-  const invert = h('input', { type: 'checkbox', 'aria-label': 'Invert', onchange: () => { O.invert = invert.checked; render(); } });
+  const invert = h('input', { type: 'checkbox', 'aria-label': t('Invert'), onchange: () => { O.invert = invert.checked; render(); } });
   const pictureSide = h('div.pt__group',
     picker.el,
     slider('Width', 'cols', 20, 200, v => `${v} chars`),
     slider('Contrast', 'contrast', -100, 100, v => (v > 0 ? `+${v}` : String(v))),
-    h('label.pt__line', h('span', { text: 'Characters' }), rampSel),
-    h('label.pt__check', invert, h('span', { text: 'Invert (dark ink on light paper)' })));
+    h('label.pt__line', h('span', { text: t('Characters') }), rampSel),
+    h('label.pt__check', invert, h('span', { text: t('Invert (dark ink on light paper)') })));
 
   /* ---------- text side ---------- */
-  const words = h('textarea.pt-ascii__words', { rows: 3, spellcheck: 'false', placeholder: 'Type something', 'aria-label': 'Words for the banner',
+  const words = h('textarea.pt-ascii__words', { rows: 3, spellcheck: 'false', placeholder: t('Type something'), 'aria-label': t('Words for the banner'),
     oninput: () => { O.words = words.value; render(); } });
-  const fillSel = h('select', { 'aria-label': 'Fill character', onchange: () => { O.fill = fillSel.value; render(); } },
+  const fillSel = h('select', { 'aria-label': t('Fill character'), onchange: () => { O.fill = fillSel.value; render(); } },
     FILLS.map(f => h('option', { value: f, text: f })));
-  const wide = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Wide letters', onchange: () => { O.wide = wide.checked; render(); } });
-  const textSide = h('div.pt__group', { hidden: true }, h('label.pt__col2', h('span.pt__label', { text: 'Words' }), words),
-    h('label.pt__line', h('span', { text: 'Fill' }), fillSel),
-    h('label.pt__check', wide, h('span', { text: 'Wide letters (two characters per dot, so they look square)' })));
+  const wide = h('input', { type: 'checkbox', checked: true, 'aria-label': t('Wide letters'), onchange: () => { O.wide = wide.checked; render(); } });
+  const textSide = h('div.pt__group', { hidden: true }, h('label.pt__col2', h('span.pt__label', { text: t('Words') }), words),
+    h('label.pt__line', h('span', { text: t('Fill') }), fillSel),
+    h('label.pt__check', wide, h('span', { text: t('Wide letters (two characters per dot, so they look square)') })));
 
   const modeBtns = [['picture', 'Picture', 'image'], ['text', 'Text banner', 'type']].map(([id, label, ic]) => h('button.pt__segbtn', {
     type: 'button', role: 'radio', 'aria-checked': String(id === S.mode), dataset: { v: id },
@@ -217,12 +218,12 @@ export function mountAscii({ api, root, opts }) {
     while (vfs.node(`${dir}/${name}`)) name = `${stem} ${i++}.txt`;
     const node = vfs.write(`${dir}/${name}`, S.text + '\n');
     if (!node) { say('Not saved', `${dir} can’t be written.`, 'alert'); return; }
-    say('Saved', name, 'file-text', [{ label: 'Open', onClick: () => api.openFile(`${dir}/${name}`) }, { label: 'Show in Files', onClick: () => api.openApp('files', { path: `${dir}/${name}` }) }]);
+    say('Saved', name, 'file-text', [{ label: t('Open'), onClick: () => api.openFile(`${dir}/${name}`) }, { label: t('Show in Files'), onClick: () => api.openApp('files', { path: `${dir}/${name}` }) }]);
   }
-  const copyBtn = h('button.btn', { type: 'button', 'aria-label': 'Copy as text', onclick: () => copy() }, icon('copy'), h('span', { text: 'Copy text' }));
-  const saveBtn = h('button.btn.btn--primary', { type: 'button', 'aria-label': 'Save as a .txt file', onclick: () => save() }, icon('save'), h('span', { text: 'Save .txt' }));
+  const copyBtn = h('button.btn', { type: 'button', 'aria-label': t('Copy as text'), onclick: () => copy() }, icon('copy'), h('span', { text: t('Copy text') }));
+  const saveBtn = h('button.btn.btn--primary', { type: 'button', 'aria-label': t('Save as a .txt file'), onclick: () => save() }, icon('save'), h('span', { text: t('Save .txt') }));
 
-  const side = h('div.pt__side', h('div.pt__seg', { role: 'radiogroup', 'aria-label': 'Make ASCII art from' }, modeBtns), pictureSide, textSide, h('div.pt__actions', copyBtn, saveBtn));
+  const side = h('div.pt__side', h('div.pt__seg', { role: 'radiogroup', 'aria-label': t('Make ASCII art from') }, modeBtns), pictureSide, textSide, h('div.pt__actions', copyBtn, saveBtn));
   root.append(h('div.pt__split', h('div.pt__col', stage, foot), side));
   render();
 

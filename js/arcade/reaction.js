@@ -14,6 +14,10 @@
    finished screen says that out loud. Score = the average of the five
    rounds in ms, lower is better.
 
+   False starts are counted all the way through: the strip under the
+   rounds shows how many so far, and the finished screen and the
+   result always say how many there were (none is worth saying too).
+
    The green switch is deliberately instant (no colour transition,
    reduced motion or not): a fade would put the start of the round in
    the middle of an animation.
@@ -56,6 +60,9 @@ const CSS = `
 .arx-rt__round.is-now{border-color:color-mix(in srgb,var(--ga) 60%,transparent);background:color-mix(in srgb,var(--ga) 12%,transparent)}
 .arx-rt__round.is-best b{color:var(--ga)}
 .arx-rt__round.is-empty b{color:var(--ink-4,#555)}
+.arx-rt__fouls{display:flex;justify-content:center;gap:6px;font-size:var(--fs-12,12px);color:var(--ink-3,#888);font-variant-numeric:tabular-nums;margin:0}
+.arx-rt__fouls b{color:var(--ink-1,#ddd);font-weight:700}
+.arx-rt__fouls.is-some b{color:#f59e0b}
 .arx-rt__sum{width:min(100%,440px);display:flex;flex-direction:column;gap:6px;margin-top:var(--sp-4,12px)}
 .arx-rt__bar{display:grid;grid-template-columns:52px 1fr 64px;align-items:center;gap:var(--sp-3,8px);font-size:var(--fs-12,12px);color:var(--ink-2,#aaa)}
 .arx-rt__bar i{display:block;height:8px;border-radius:99px;background:color-mix(in srgb,var(--ink-0,#fff) 22%,transparent)}
@@ -88,6 +95,7 @@ const keyHint = text => text.split(/(Space)/).map(part =>
   part === 'Space' ? h('kbd', { text: 'Space' }) : document.createTextNode(part));
 
 const avg = xs => xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0;
+const falseStarts = n => (n ? `${n} false ${n === 1 ? 'start' : 'starts'}` : 'no false starts');
 
 export default {
   mount(el, ctx = {}) {
@@ -117,7 +125,9 @@ export default {
     const pills = Array.from({ length: ROUNDS }, (_, i) =>
       h('li.arx-rt__round', h('b', { text: '—' }), h('span', { text: `Round ${i + 1}` })));
     const rounds = h('ol.arx-rt__rounds', { 'aria-label': 'Round times' }, pills);
-    const root = h('div.arx-rt', { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } }, style, stage, rounds, live);
+    const foulN = h('b', { text: '0' });
+    const foulEl = h('p.arx-rt__fouls', h('span', { text: 'False starts' }), foulN);
+    const root = h('div.arx-rt', { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } }, style, stage, rounds, foulEl, live);
     el.appendChild(root);
 
     const say = msg => { live.textContent = msg; };
@@ -132,6 +142,9 @@ export default {
         li.classList.toggle('is-now', v == null && i === times.length && state !== 'done');
         li.classList.toggle('is-best', v != null && v === best && times.length > 1);
       });
+      foulN.textContent = String(fouls);
+      foulEl.classList.toggle('is-some', fouls > 0);
+      foulEl.setAttribute('aria-label', `${fouls} false ${fouls === 1 ? 'start' : 'starts'}`);
     }
 
     function view(next, { g, title, text, foot, label, body } = {}) {
@@ -182,7 +195,7 @@ export default {
       fouls++;
       view('foul', {
         g: 'alert', title: 'Too soon!',
-        text: 'That was before the green, so this round does not count.',
+        text: `That was before the green, so this round does not count. False starts so far: ${fouls}.`,
         foot: 'Click, tap or press Space to try the round again',
         label: 'Too soon. Press Space to try the round again.',
       });
@@ -223,14 +236,14 @@ export default {
       });
       view('done', {
         g: 'gauge', title: ms(score),
-        text: `Average of ${ROUNDS} rounds · fastest ${fastest} ms${fouls ? ` · ${fouls} early ${fouls === 1 ? 'click' : 'clicks'}` : ''}`,
+        text: `Average of ${ROUNDS} rounds · fastest ${fastest} ms · ${falseStarts(fouls)}`,
         body: h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center' } }, bars, note),
         label: `Finished. Average ${score} milliseconds.`,
       });
       say(`Finished. Average ${score} milliseconds.`);
       onEnd({
         score, won: true,
-        detail: `Average ${score} ms over ${ROUNDS} rounds · fastest ${fastest} ms · slowest ${slowest} ms${fouls ? ` · ${fouls} too soon` : ''}`,
+        detail: `Average ${score} ms over ${ROUNDS} rounds · fastest ${fastest} ms · slowest ${slowest} ms · ${falseStarts(fouls)}`,
         rounds: times.slice(), fouls,
       });
     }
@@ -277,6 +290,8 @@ export default {
         offs.splice(0).forEach(off => off());
         root.remove();
       },
+      /* a read-only snapshot for automated play-tests */
+      peek: () => ({ state, paused, rounds: times.slice(), fouls, average: avg(times) }),
       /* A pause mid-round throws that round's wait away rather than
          letting the green fire while nobody is looking. */
       pause() {

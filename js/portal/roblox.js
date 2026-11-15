@@ -34,7 +34,32 @@
 
 import { BRAND } from './brand.js';
 import * as RB from './roblox.data.js';
-import * as ST from './roblox.stream.js';
+import { paintFriendPanel } from './sendfriend.js';
+
+if (typeof document !== 'undefined' && !document.getElementById('gamesportal-css')) {
+  const link = document.createElement('link');
+  link.id = 'gamesportal-css';
+  link.rel = 'stylesheet';
+  link.href = 'css/gamesportal.css';
+  document.head.appendChild(link);
+}
+
+/* "Play in browser (Roblox Web Play)" button. OFF until Roblox makes Web Play public.
+   Today (checked 2026-11-09) it is a Chrome-only creator beta started from Creator
+   Hub, with no public link that starts a given experience. Turn this on when Roblox
+   announces public Web Play, and re-check then which browsers and Chromebooks it
+   accepts. The button only opens the experience's roblox.com page in a new tab:
+   roblox.com refuses to be framed (X-Frame-Options: SAMEORIGIN) and is never framed here. */
+const WEB_PLAY = false;
+let webPlayOn = WEB_PLAY;
+/** Test hook: flip the switch for this page load without editing the constant. */
+export const setWebPlayForTest = on => { webPlayOn = !!on; };
+
+/* How long to wait for any sign that the browser handed the link to another app. */
+const HANDOFF_WAIT_MS = 1500;
+let lastHandOff = '';
+/** Test hook: the last custom-scheme link handed to the OS. */
+export const lastHandOffUrl = () => lastHandOff;
 
 const LIB = 'static://roblox';
 const urlFor = id => `${LIB}/${id}`;
@@ -56,6 +81,59 @@ const toggleFav = (api, id) => {
   api.store.set(FAV_KEY, next.slice(0, 300));
   return next.includes(v);
 };
+/* "Want to play": [{ id, rem }]. `rem` is the id of an ordinary reminder this
+   person asked for, which lives in Automations like any other and can be
+   changed or removed there. */
+const WANT_KEY = 'portal.roblox.want';
+const MAX_WANT = 100;
+const wantRows = api => {
+  const raw = api.store.get(WANT_KEY, []);
+  return Array.isArray(raw) ? raw.filter(r => r && typeof r.id === 'string') : [];
+};
+const isWant = (api, id) => wantRows(api).some(r => r.id === String(id));
+const wantAM = () => import('../core/automations.js');
+async function dropReminder(id) {
+  if (!id) return;
+  try { (await wantAM()).removeReminder(id); } catch (e) { /* already gone */ }
+}
+async function toggleWant(api, id) {
+  const v = String(id);
+  const rows = wantRows(api);
+  const cur = rows.find(r => r.id === v);
+  if (cur) {
+    api.store.set(WANT_KEY, rows.filter(r => r.id !== v));
+    await dropReminder(cur.rem);
+    return false;
+  }
+  api.store.set(WANT_KEY, [{ id: v, rem: '' }, ...rows].slice(0, MAX_WANT));
+  return true;
+}
+/** Remind me to play it: 'hour' | '3h' | 'tomorrow'. -> { ok, text? } */
+async function setWantReminder(api, row, choice) {
+  const AM = await wantAM();
+  const d = new Date(Date.now() + ({ hour: 3600e3, '3h': 3 * 3600e3, tomorrow: 24 * 3600e3 }[choice] || 3600e3));
+  d.setSeconds(0, 0);
+  d.setMinutes(d.getMinutes() + 1);
+  const res = AM.addReminder({
+    text: `Play ${row.name} on Roblox`, repeat: 'once', enabled: true,
+    time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, date: AM.ymd(d),
+  });
+  if (!res.ok || !res.reminder) return { ok: false, text: (res.issues && res.issues[0] && res.issues[0].text) || 'Could not set the reminder.' };
+  const rows = wantRows(api);
+  const cur = rows.find(r => r.id === row.id);
+  if (cur && cur.rem && cur.rem !== res.reminder.id) await dropReminder(cur.rem);
+  const next = { id: row.id, rem: res.reminder.id };
+  api.store.set(WANT_KEY, [next, ...rows.filter(r => r.id !== row.id)].slice(0, MAX_WANT));
+  return { ok: true, text: `${res.reminder.date} at ${res.reminder.time}` };
+}
+async function reminderText(rem) {
+  if (!rem) return '';
+  try {
+    const r = (await wantAM()).reminders().find(x => x.id === rem);
+    return r ? `Reminder: ${r.date || 'daily'} at ${r.time}${r.enabled === false ? ' (off)' : ''}` : '';
+  } catch (e) { return ''; }
+}
+
 const noteplayed = (api, id) => {
   const v = String(id);
   const next = [v, ...readList(api, RECENT_KEY).filter(x => x !== v)].slice(0, 40);
@@ -100,6 +178,8 @@ function lifecycle(root) {
   return { add: fn => fns.push(fn), dead, run };
 }
 
+const num = n => Number(n || 0).toLocaleString();
+
 const compact = n => {
   const v = Number(n) || 0;
   if (v >= 1e9) return `${(v / 1e9).toFixed(1).replace(/\.0$/, '')}B`;
@@ -119,6 +199,7 @@ const compact = n => {
  * person decide.
  */
 function handOff(url) {
+  lastHandOff = url;
   const f = document.createElement('iframe');
   f.style.cssText = 'position:absolute;width:0;height:0;border:0;opacity:0';
   f.setAttribute('aria-hidden', 'true');
@@ -168,9 +249,10 @@ function launchButton(api, row, { big = false } = {}) {
 }
 
 function launch(api, row, btn) {
-  const { notify } = api;
   noteplayed(api, row.id);
+  const root = btn && btn.closest('.cx');
   handOff(RB.launchLink(row.placeId));
+  if (root) watchHandOff(api, root, row);
   if (btn) {
     const span = btn.querySelector('span');
     const was = span ? span.textContent : '';
@@ -181,122 +263,61 @@ function launch(api, row, btn) {
       if (span) span.textContent = was;
     }, 2600);
   }
-  notify?.({
-    title: row.name,
-    message: 'Sent to the installed Roblox player. A web fallback is not opened from Static.',
-    icon: 'box',
-  });
 }
 
-
-/* ---------- streamed play ----------------------------------- *
- * Roblox has no web player, so "play here" means streaming the real
- * client off a cloud Android device. Every such service refuses to be
- * framed; Static's tunnel gets past that by serving the page from our
- * own origin. See roblox.stream.js for why the video survives that.
- * ---------------------------------------------------------- */
-
-function streamStage(api, { onBack, title = 'Roblox' } = {}) {
-  const { h, icon } = api;
-  const app = ST.byId('roblox');
-
-  const frame = h('iframe.rbx-stream__frame', {
-    title: `${app.name} — streamed`,
-    allow: 'autoplay; fullscreen; gamepad; clipboard-write; encrypted-media; microphone; camera',
-    allowfullscreen: '',
+/* No browser says whether a custom-scheme link opened an app. The only signs are
+   that this tab lost focus or was hidden soon after (a prompt, or the app taking
+   the screen). Either is reported as "handed off", never as "installed"; with
+   neither, Roblox's documented web link is offered. */
+function watchHandOff(api, root, row) {
+  const { h } = api;
+  let seen = false;
+  const onBlur = () => { seen = true; };
+  const onVis = () => { if (document.visibilityState === 'hidden') seen = true; };
+  window.addEventListener('blur', onBlur);
+  document.addEventListener('visibilitychange', onVis);
+  let note = root.querySelector(':scope > .rbx-note');
+  if (!note) {
+    note = h('div.rbx-note', { role: 'status' });
+    root.insertBefore(note, root.children[1] || null);
+  }
+  const say = (kind, ...kids) => { note.dataset.kind = kind; note.replaceChildren(...kids); };
+  const link = label => h('a', {
+    href: RB.startLink(row.placeId), target: '_blank', rel: 'noopener',
+    dataset: { rbx: 'fallback' }, text: label,
   });
-
-  const stageLine = h('div.rbx-stream__stage', { text: 'Opening the tunnel…' });
-  const clock = h('span.rbx-stream__clock', { text: '0s' });
-  const spinner = h('div.spinner');
-  const veil = h('div.rbx-stream__veil',
-    spinner,
-    h('b', { text: `Starting ${app.name}` }),
-    stageLine,
-    h('div.rbx-stream__meta', clock,
-      h('span', { text: '·' }),
-      h('span', { text: 'streamed from a cloud device' })),
-    h('ul.rbx-stream__caveats', ST.CAVEATS.map(c => h('li', { text: c }))));
-
-  const wrap = h('div.rbx-stream__wrap', frame, veil);
-
-  const badge = h('span.rbx-stream__badge', h('i.rbx-dot'), h('span', { text: 'starting' }));
-
-  const root = h('div.rbx-stream',
-    h('div.rbx-stream__bar',
-      h('button.btn.btn--ghost.btn--sm', { type: 'button', onclick: () => onBack?.() },
-        icon('arrow-left', { size: 13 }), 'Back'),
-      h('b.rbx-stream__title', { text: title }),
-      badge,
-      h('div.grow'),
-      h('button.ibtn.tip', { type: 'button', 'data-tip': 'Reload the stream', 'aria-label': 'Reload the stream',
-        onclick: () => start() }, icon('refresh')),
-      h('button.ibtn.tip', { type: 'button', 'data-tip': 'Fill the window', 'aria-label': 'Fill the window',
-        onclick: e => e.currentTarget.closest('.rbx-stream').classList.toggle('is-full') }, icon('maximize-2'))),
-    wrap);
-
-  let watching = null;
-  start();
-  return root;
-
-  function fail(why, retry = true) {
-    api.clear(veil);
-    veil.append(
-      icon('alert', { size: 22 }),
-      h('b', { text: `${app.name} would not start` }),
-      h('div.rbx-stream__stage', { text: why }),
-      h('div.rbx-stream__acts',
-        retry ? h('button.btn', { type: 'button', onclick: () => start() },
-          icon('refresh', { size: 13 }), 'Try again') : null,
-        h('button.btn.btn--ghost', { type: 'button', onclick: () => onBack?.() },
-          icon('arrow-left', { size: 13 }), 'Back')),
-      h('ul.rbx-stream__caveats', ST.CAVEATS.map(c => h('li', { text: c }))));
-    badge.className = 'rbx-stream__badge is-bad';
-    api.clear(badge);
-    badge.append(icon('alert', { size: 11 }), h('span', { text: 'not running' }));
-  }
-
-  async function start() {
-    /* rebuild the waiting state on a retry */
-    api.clear(veil);
-    veil.append(spinner, h('b', { text: `Starting ${app.name}` }), stageLine,
-      h('div.rbx-stream__meta', clock, h('span', { text: '·' }),
-        h('span', { text: 'streamed from a cloud device' })),
-      h('ul.rbx-stream__caveats', ST.CAVEATS.map(c => h('li', { text: c }))));
-    if (!veil.isConnected) wrap.appendChild(veil);
-    stageLine.textContent = 'Opening the tunnel…';
-
-    const prep = await ST.prepare();
-    if (!prep.ok) {
-      fail(`${prep.why} The stream needs the tunnel, because that is what gets it past the player's frame rules.`, false);
-      return;
-    }
-
-    try {
-      frame.src = ST.streamUrl(app);
-    } catch (err) {
-      fail(err.message);
-      return;
-    }
-
-    watching = ST.watch(frame, {
-      onState: ({ seconds, detail }) => {
-        clock.textContent = `${seconds}s`;
-        stageLine.textContent = detail;
-      },
-    });
-
-    const out = await watching;
-    if (!root.isConnected) return;
-    if (out.phase === 'live') {
-      veil.remove();
-      badge.className = 'rbx-stream__badge is-live';
-      api.clear(badge);
-      badge.append(h('i.rbx-dot'), h('span', { text: 'live' }));
+  say('wait', `Asking Roblox to open ${row.name}…`);
+  const mine = note.dataset.n = String(Number(note.dataset.n || 0) + 1);
+  setTimeout(() => {
+    window.removeEventListener('blur', onBlur);
+    document.removeEventListener('visibilitychange', onVis);
+    if (note.dataset.n !== mine) return;        // a newer attempt owns the note now
+    if (seen) {
+      say('handed', `Handed to another app. Static cannot tell whether Roblox opened ${row.name}. If it did not, `,
+        link('open it on roblox.com'), '.');
     } else {
-      fail('The cloud device never started. Their queue may be full — this is their capacity, not a bug here.');
+      say('fallback', 'Roblox did not respond, so it may not be installed here. ',
+        link('Open it on roblox.com instead'), ' (a new tab).');
     }
-  }
+  }, HANDOFF_WAIT_MS);
+}
+
+/** The official route on this device (from the user agent), in a few plain words. */
+function deviceNote(api) {
+  const g = RB.deviceGuide();
+  return api.h('div.rbx-device', { dataset: { device: g.id } },
+    api.h('b', { text: `${g.title}: ` }), api.h('span', { text: g.text }));
+}
+
+/* Roblox's Name and Logo Guidelines, as the research (docs/roblox-research.md) summarises
+   them: no Roblox logo, plain text only; Roblox-owned content stays off unless Roblox
+   allows it; game art belongs to its creators. Nothing here is the Roblox logo. */
+function affiliation(api) {
+  return api.h('small.dim.rbx-legal', {
+    text: 'Static is not affiliated with Roblox Corporation and is not endorsed by it. '
+        + 'Roblox is a trademark of Roblox Corporation. Experience names, icons and descriptions '
+        + 'belong to their creators and come from Roblox’s public pages; the icons load from Roblox’s own image servers.',
+  });
 }
 
 /* ================================================================== *
@@ -312,25 +333,19 @@ export function buildRoblox(ctx) {
 
   const body = h('div');
   root.appendChild(body);
+  root.appendChild(h('div.cx__sec', deviceNote(api), affiliation(api)));
 
   const S = {
     cat: 'all', q: '', sort: 'playing', page: 1,
+    year: 0, mat: '',    // made in / Roblox's maturity rating
+    cmp: [],             // up to three catalogue ids being compared
     liveRows: null,      // results from the live mirror for the current query
     liveBusy: false,
     seq: 0,              // guards against a slow search landing after a newer one
+    wseq: 0,             // the same, for the Want to play list
+    showCmp: false,
   };
   const E = {};
-
-  /* The stage replaces the library wholesale — a streamed client wants the
-     whole window, and leaving the grid mounted behind it would keep its
-     live-count refreshes running under a video. */
-  function showStream(title) {
-    api.clear(body);
-    body.appendChild(streamStage(api, {
-      title,
-      onBack: () => { buildShell(); start(); },
-    }));
-  }
 
   buildShell();
   start();
@@ -363,10 +378,27 @@ export function buildRoblox(ctx) {
       h('option', { value: 'playing', text: 'Playing now' }),
       h('option', { value: 'rating', text: 'Top rated' }),
       h('option', { value: 'visits', text: 'Most visits' }),
+      h('option', { value: 'updated', text: 'Recently updated' }),
       h('option', { value: 'az', text: 'A–Z' }));
     E.sort.value = S.sort;
 
     E.bar = h('div.cx__bar', E.cats, E.filter, E.sort);
+    /* made in … and Roblox's own maturity rating, from the catalogue's rows */
+    E.year = h('select.select', {
+      'aria-label': 'Filter by the year it was made',
+      onchange: e => { S.year = Number(e.target.value) || 0; S.page = 1; paintGrid(); },
+    }, h('option', { value: '0', text: 'Any year made' }),
+      RB.years().map(y => h('option', { value: String(y.year), text: `Made in ${y.year} (${y.n})` })));
+    E.mat = h('select.select', {
+      'aria-label': 'Filter by maturity',
+      onchange: e => { S.mat = e.target.value; S.page = 1; paintGrid(); },
+    }, h('option', { value: '', text: 'Any maturity' }),
+      RB.maturities().map(m => h('option', { value: m.id, text: `${m.name} (${m.n})` })));
+    E.bar2 = h('div.rbx-bar2', E.year, E.mat);
+    E.because = h('div');
+    E.wantBox = h('div');
+    E.cmpBox = h('div');
+    E.cmpBar = h('div.rbx-cmpbar.hidden', { role: 'status' });
     E.secT = h('div.cx__sec-t', { text: 'Experiences' });
     E.secN = h('div.cx__sec-n', { text: 'loading…' });
     E.live = h('div.rbx-livechip', { style: { marginLeft: 'auto' } });
@@ -376,6 +408,11 @@ export function buildRoblox(ctx) {
     body.append(
       E.hero,
       E.bar,
+      E.bar2,
+      E.because,
+      E.wantBox,
+      E.cmpBox,
+      E.cmpBar,
       h('div.cx__sec',
         h('div.cx__sec-h', icon('box'), E.secT, E.secN, E.live),
         E.grid, E.pager),
@@ -395,7 +432,7 @@ export function buildRoblox(ctx) {
       E.grid.appendChild(h('div.empty', icon('alert'),
         h('b', { text: 'The Roblox catalogue did not load' }),
         h('small', { text: String(RB.loadError().message || RB.loadError()) }),
-        h('small', { text: 'Run node tools/sync-roblox.mjs to rebuild data/roblox.json.' })));
+        h('small', { text: 'Check your connection and open Static Roblox again in a moment.' })));
       E.secN.textContent = 'unavailable';
       return;
     }
@@ -405,11 +442,13 @@ export function buildRoblox(ctx) {
     refreshVisible();
   }
 
+  const qopts = () => ({ category: S.cat, q: S.q, sort: S.sort, page: S.page, perPage: 48, year: S.year, maturity: S.mat });
+
   /* Top the numbers up for whatever is actually on screen. Never invents a
      figure: if the mirror is unreachable the baked ones stay, and the
      status line says when they were taken. */
   async function refreshVisible() {
-    const shown = RB.query({ category: S.cat, q: S.q, sort: S.sort, page: S.page, perPage: 48 }).items;
+    const shown = RB.query(qopts()).items;
     const n = await RB.refreshPlaying(shown);
     if (life.dead()) return;
     if (n) { paintHero(); paintGrid(); }
@@ -427,8 +466,9 @@ export function buildRoblox(ctx) {
       E.live.title = 'Player counts are being read from the live Roblox mirror.';
     } else {
       E.live.appendChild(icon('alert', { size: 11 }));
-      E.live.appendChild(h('span', { text: 'catalogue numbers' }));
-      E.live.title = 'The live mirror did not answer, so these are the numbers from the last sync.';
+      E.live.appendChild(h('span', { text: RB.asOf() ? `snapshot of ${RB.fmtDay(RB.asOf())}` : 'last sync' }));
+      E.live.title = 'The live mirror did not answer, so these are the counts from the last sync'
+        + (RB.asOf() ? `, read on ${RB.fmtDay(RB.asOf())}.` : '.');
     }
   }
 
@@ -437,8 +477,10 @@ export function buildRoblox(ctx) {
     const c = RB.counts();
     const favN = readList(api, FAV_KEY).length;
     const recN = readList(api, RECENT_KEY).length;
+    const wantN = wantRows(api).length;
     const rows = [
       ...(favN ? [['favourites', 'Favourites', favN]] : []),
+      ...(wantN ? [['want', 'Want to play', wantN]] : []),
       ...(recN ? [['recent', 'Recently played', recN]] : []),
       ...RB.CATEGORIES.map(([id, label]) => [id, label, c.get(id) || 0]),
     ];
@@ -457,51 +499,48 @@ export function buildRoblox(ctx) {
     if (!top) return;
 
     const art = h('div.rbx-hero__art');
-    if (top.wide || top.art) {
+    if (RB.iconUrl(top, 'wide') || RB.iconUrl(top)) {
       art.appendChild(h('img', {
-        src: top.wide || top.art, alt: '', loading: 'eager', decoding: 'async',
+        src: RB.iconUrl(top, 'wide') || RB.iconUrl(top), alt: '', loading: 'eager', decoding: 'async',
         referrerpolicy: 'no-referrer',
       }));
     }
 
     E.hero.appendChild(h('div.rbx-hero', art,
       h('div.rbx-hero__b',
-        h('div.rbx-hero__k', icon('box'), h('span', { text: 'Most played right now' })),
+        h('div.rbx-hero__k', icon('box'), h('span', { text: top.live ? 'Most played right now' : 'Most played at the last sync' })),
         h('h2.rbx-hero__t', { text: top.name }),
         h('div.rbx-hero__m',
-          h('b', { text: compact(top.playing) }), ' playing · ',
+          h('b', { text: compact(top.playing) }), ` playing (${RB.countWhen(top, true)}) · `,
           h('b', { text: compact(top.visits) }), ' visits · ',
           h('b', { text: `${top.rating}%` }), ' rated'),
         h('div.rbx-hero__a',
           launchButton(api, top, { big: true }),
-          h('button.btn.btn--go', {
-            type: 'button',
-            'aria-label': 'Play Roblox in this window, streamed',
-            onclick: () => showStream('Roblox'),
-          }, icon('cast', { size: 14 }), h('span', { text: 'Play in this window' })),
           h('button.btn.btn--ghost', {
             type: 'button', onclick: () => navigate(urlFor(top.id)),
           }, icon('info'), 'Details')),
-        h('div.rbx-hero__n', { text: `${compact(RB.playersOnline())} players across ${RB.all().length} experiences` }))));
+        h('div.rbx-hero__n', { text: `${compact(RB.playersOnline())} players across ${RB.all().length} experiences, counted ${RB.asOf() ? `on ${RB.fmtDay(RB.asOf())}` : 'at the last sync'}; ones refreshed live say so` }))));
   }
 
   /* The two store-backed views are ordered by the stored list, not by
      player count — "recently played" that reorders itself is not a
      history, and a favourites list that reshuffles is disorienting. */
   function localRows() {
-    if (S.cat === 'favourites' || S.cat === 'recent') {
-      const ids = readList(api, S.cat === 'favourites' ? FAV_KEY : RECENT_KEY);
+    if (S.cat === 'favourites' || S.cat === 'recent' || S.cat === 'want') {
+      const ids = S.cat === 'want' ? wantRows(api).map(r => r.id) : readList(api, S.cat === 'favourites' ? FAV_KEY : RECENT_KEY);
       const low = S.q.trim().toLowerCase();
       const rows = ids.map(id => RB.byId(id)).filter(Boolean)
-        .filter(r => !low || r.name.toLowerCase().includes(low));
+        .filter(r => (!low || r.name.toLowerCase().includes(low))
+          && (!S.year || r.year === S.year) && (!S.mat || r.maturity === S.mat));
       return { items: rows, total: rows.length, page: 1, pages: 1 };
     }
-    return RB.query({ category: S.cat, q: S.q, sort: S.sort, page: S.page, perPage: 48 });
+    return RB.query(qopts());
   }
 
   function labelFor() {
     if (S.cat === 'favourites') return 'Favourites';
     if (S.cat === 'recent') return 'Recently played';
+    if (S.cat === 'want') return 'Want to play';
     return RB.CATEGORIES.find(c => c[0] === S.cat)?.[1] || 'Experiences';
   }
 
@@ -515,6 +554,9 @@ export function buildRoblox(ctx) {
       : `${n.toLocaleString()} experience${n === 1 ? '' : 's'}`;
 
     api.clear(E.grid);
+    paintBecause();
+    paintWant();
+    paintCompare();
     if (!res.items.length && !live.length) {
       E.grid.appendChild(emptyState());
       api.clear(E.pager);
@@ -534,7 +576,136 @@ export function buildRoblox(ctx) {
     paintPager(res);
   }
 
+  /* "Because you played …": experiences like the one you launched last, from the
+     catalogue (same creator, then shared categories). Nothing here is a guess
+     about other people, and it is only there once you have played something. */
+  function paintBecause() {
+    api.clear(E.because);
+    if (S.cat !== 'all' || S.q.trim() || S.year || S.mat) return;
+    const recent = readList(api, RECENT_KEY);
+    const seed = recent.map(id => RB.byId(id)).find(Boolean);
+    if (!seed) return;
+    const skip = new Set(recent);
+    const picks = RB.related(seed, 24).filter(r => !skip.has(r.id)).slice(0, 12);
+    if (picks.length < 3) return;
+    const rail = h('div.cx__grid--rail');
+    for (const r of picks) rail.appendChild(card(r));
+    E.because.appendChild(h('div.cx__sec', { dataset: { shelf: 'because' } },
+      h('div.cx__sec-h', icon('compass'), h('div.cx__sec-t', { text: `Because you played ${seed.name}` }),
+        h('div.cx__sec-n', { text: 'same maker or similar experiences, from the catalogue' })),
+      rail));
+  }
+
+  /* Want to play: the list, with a reminder each if you asked for one. */
+  async function paintWant() {
+    api.clear(E.wantBox);
+    if (S.cat !== 'want') return;
+    const rows = wantRows(api);
+    if (!rows.length) return;
+    const seq = ++S.wseq;
+    const items = [];
+    for (const w of rows) {
+      const r = RB.byId(w.id);
+      if (!r) continue;
+      items.push([w, r, await reminderText(w.rem)]);
+    }
+    if (seq !== S.wseq || life.dead() || S.cat !== 'want') return;
+    api.clear(E.wantBox);
+    E.wantBox.appendChild(h('div.rbx-want', { 'aria-label': 'Want to play, with reminders' },
+      ...items.map(([w, r, rem]) => h('div.rbx-want__row', { dataset: { id: r.id } },
+        h('b', { text: r.name }),
+        h('small.dim', { text: rem || 'No reminder' }),
+        reminderSelect(r, () => paintGrid()),
+        w.rem ? h('button.btn.btn--ghost.btn--sm', {
+          type: 'button', onclick: async () => { await dropReminder(w.rem); api.store.set(WANT_KEY, wantRows(api).map(x => (x.id === r.id ? { id: r.id, rem: '' } : x))); paintWant(); },
+        }, 'Clear reminder') : null,
+        h('button.btn.btn--ghost.btn--sm', {
+          type: 'button', 'aria-label': `Take ${r.name} off the list`,
+          onclick: async () => { await toggleWant(api, r.id); paintCats(); paintGrid(); },
+        }, icon('x', { size: 12 }), 'Remove')))));
+  }
+
+  /** The "Remind me…" picker: makes an ordinary reminder, listed in Automations. */
+  function reminderSelect(row, done) {
+    const sel = h('select.select', {
+      'aria-label': `Remind me to play ${row.name}`,
+      onchange: async e => {
+        const v = e.target.value;
+        e.target.value = '';
+        if (!v) return;
+        const r = await setWantReminder(api, row, v);
+        api.notify?.({ title: r.ok ? 'Reminder set' : 'Could not set it', message: r.ok ? `${row.name}: ${r.text}. It is in Automations too.` : r.text, icon: r.ok ? 'bell' : 'alert' });
+        if (typeof done === 'function') done();
+      },
+    }, h('option', { value: '', text: 'Remind me…' }),
+      h('option', { value: 'hour', text: 'in 1 hour' }),
+      h('option', { value: '3h', text: 'in 3 hours' }),
+      h('option', { value: 'tomorrow', text: 'tomorrow, same time' }));
+    return sel;
+  }
+
+  /* Compare up to three experiences side by side. Only catalogue rows can be
+     compared, and the table shows the catalogue's own fields — no scores. */
+  function toggleCmp(id) {
+    if (S.cmp.includes(id)) S.cmp = S.cmp.filter(x => x !== id);
+    else if (S.cmp.length < 3) S.cmp = [...S.cmp, id];
+    else api.notify?.({ title: 'Three at most', message: 'Take one off the comparison to add another.', icon: 'info' });
+    S.showCmp = S.showCmp && S.cmp.length > 1;
+    paintGrid();
+  }
+
+  function paintCompare() {
+    api.clear(E.cmpBox);
+    api.clear(E.cmpBar);
+    const rows = S.cmp.map(id => RB.byId(id)).filter(Boolean);
+    E.cmpBar.classList.toggle('hidden', !rows.length);
+    if (!rows.length) return;
+    E.cmpBar.append(
+      h('span', { text: `Comparing ${rows.map(r => r.name).join(' · ')}` }),
+      h('button.btn.btn--primary.btn--sm', {
+        type: 'button', disabled: rows.length < 2 ? '' : null, dataset: { act: 'compare' },
+        onclick: () => { S.showCmp = !S.showCmp; paintCompare(); },
+      }, rows.length < 2 ? 'Pick one more' : S.showCmp ? 'Hide the table' : `Compare ${rows.length}`),
+      h('button.btn.btn--ghost.btn--sm', { type: 'button', onclick: () => { S.cmp = []; S.showCmp = false; paintGrid(); } }, 'Clear'));
+    if (!S.showCmp || rows.length < 2) return;
+
+    /* [label, value text, the number to rank by (or null)] */
+    const line = [
+      ['Made by', r => r.creator || 'Roblox', null],
+      [`Playing (${RB.asOf() ? RB.fmtDay(RB.asOf(), false) : 'last sync'})`, r => `${num(r.playing)}${r.live ? ' · live' : ''}`, r => r.playing],
+      ['Visits', r => num(r.visits), r => r.visits],
+      ['Favourites', r => num(r.favorites), r => r.favorites],
+      ['Rated up', r => (r.rating ? `${r.rating}%` : '—'), r => r.rating],
+      ['Max players', r => (r.maxPlayers ? String(r.maxPlayers) : '—'), r => r.maxPlayers],
+      ['Maturity', r => RB.maturityName(r.maturity) || '—', null],
+      ['Made', r => (r.created ? RB.fmtDay(r.created) : '—'), null],
+      ['Last updated', r => (r.updated ? RB.fmtDay(r.updated) : '—'), null],
+    ];
+    const best = f => {
+      if (!f) return -1;
+      const v = rows.map(f);
+      const top = Math.max(...v);
+      return top > 0 && v.filter(x => x === top).length === 1 ? v.indexOf(top) : -1;
+    };
+    E.cmpBox.appendChild(h('div.rbx-cmp', { 'aria-label': 'Comparison' },
+      h('table',
+        h('thead', h('tr', h('th'), ...rows.map(r => h('th', { text: r.name })))),
+        h('tbody', line.map(([label, text, f]) => {
+          const b = best(f);
+          return h('tr', h('th', { scope: 'row', text: label }),
+            ...rows.map((r, i) => h(i === b ? 'td.is-best' : 'td', { text: text(r) })));
+        }))),
+      h('small.dim', { text: 'Highlighted is the larger number where one is clearly larger. These come from the catalogue, not from a score.' })));
+  }
+
   function emptyState() {
+    if (S.cat === 'want') {
+      return h('div.empty', icon('bookmark'),
+        h('b', { text: 'Nothing on your list' }),
+        h('small', { text: 'The + on a card, or Want to play on its page, adds an experience here. You can ask for a reminder too.' }),
+        h('button.btn', { type: 'button', onclick: () => { S.cat = 'all'; paintCats(); paintGrid(); } },
+          icon('box', { size: 14 }), 'Browse experiences'));
+    }
     if (S.cat === 'favourites') {
       return h('div.empty', icon('heart'),
         h('b', { text: 'No favourites yet' }),
@@ -577,14 +748,44 @@ export function buildRoblox(ctx) {
 
   function card(row) {
     const art = h('div.rbx-card__art');
-    if (row.art) {
+    if (RB.iconUrl(row)) {
       art.appendChild(h('img', {
-        src: row.art, alt: '', loading: 'lazy', decoding: 'async',
+        src: RB.iconUrl(row), alt: '', loading: 'lazy', decoding: 'async',
         referrerpolicy: 'no-referrer',
         onerror: e => { e.target.remove(); },
       }));
     }
-    art.appendChild(h('div.rbx-card__live', h('i.rbx-dot'), h('span', { text: compact(row.playing) })));
+    /* every count says which day it is from: "live" only if the mirror just refreshed it */
+    art.appendChild(h('div.rbx-card__live', { title: row.live ? 'Read live just now' : `Counted at the last sync${RB.asOf() ? `, ${RB.fmtDay(RB.asOf())}` : ''}` },
+      h('i.rbx-dot'), h('span', { text: compact(row.playing) }), h('small.rbx-asof', { text: RB.countWhen(row) })));
+
+    /* Want to play and Compare sit on the art beside the heart (catalogue rows only —
+       a live search result has no catalogue entry to list or compare). */
+    const inCatalogue = !!RB.byId(row.id);
+    if (inCatalogue) {
+      const want = h('button.rbx-card__add', {
+        type: 'button', dataset: { act: 'want' },
+        'aria-label': `${isWant(api, row.id) ? 'Take off' : 'Add to'} Want to play: ${row.name}`,
+        'aria-pressed': String(isWant(api, row.id)),
+        onclick: async e => {
+          e.stopPropagation();
+          const on = await toggleWant(api, row.id);
+          want.classList.toggle('is-on', on);
+          want.setAttribute('aria-pressed', String(on));
+          want.setAttribute('aria-label', `${on ? 'Take off' : 'Add to'} Want to play: ${row.name}`);
+          paintCats();
+          if (S.cat === 'want') paintGrid();
+        },
+      }, icon(isWant(api, row.id) ? 'bookmark' : 'plus', { size: 13 }));
+      if (isWant(api, row.id)) want.classList.add('is-on');
+      art.appendChild(want);
+      const cmpOn = S.cmp.includes(row.id);
+      art.appendChild(h(cmpOn ? 'button.rbx-card__cmpb.is-on' : 'button.rbx-card__cmpb', {
+        type: 'button', dataset: { act: 'compare' }, 'aria-pressed': String(cmpOn),
+        'aria-label': `${cmpOn ? 'Take out of' : 'Add to'} the comparison: ${row.name}`,
+        onclick: e => { e.stopPropagation(); toggleCmp(row.id); },
+      }, icon('layers', { size: 12 }), h('span', { text: cmpOn ? 'Comparing' : 'Compare' })));
+    }
 
     /* The heart lives on the art so hovering never reflows the card. */
     const fav = h('button.rbx-card__fav', {
@@ -612,7 +813,7 @@ export function buildRoblox(ctx) {
       h('span.rbx-card__by', { text: row.creator || 'Roblox' }),
       row.verified ? icon('check-circle', { size: 11 }) : null,
       h('span.rbx-card__sp'),
-      h('span', { text: `${row.rating}%` }));
+      h('span', { text: S.sort === 'updated' && row.updated ? `Updated ${RB.fmtDay(row.updated, false)}` : `${row.rating}%` }));
 
     return h('div.rbx-card', {
       role: 'button', tabindex: '0',
@@ -644,7 +845,7 @@ export function buildRoblox(ctx) {
           text: 'Roblox sends X-Frame-Options: SAMEORIGIN on every page, so no part of it can render '
               + 'inside a window here. Play hands the place id straight to the installed Roblox player '
               + 'with Roblox’s own roblox:// deep link, which opens the experience without a web page in '
-              + 'between. The art and the numbers are baked by tools/sync-roblox.mjs, because Roblox’s '
+              + 'between. The art and the numbers are saved into the catalogue ahead of time, because Roblox’s '
               + 'APIs send no CORS header — images never needed one, so the artwork is the real thing. '
               + 'Set up your own proxy on the Proxy page and the player counts go live through it too.',
         })));
@@ -668,15 +869,8 @@ export function buildRobloxDetail(ctx) {
 
   body.appendChild(h('div.cx__sec', h('div.empty', icon('box'), h('b', { text: 'Loading…' }))));
 
-  /* Swapping the whole body rather than overlaying: a streamed client wants
-     every pixel, and leaving the detail page mounted underneath would keep
-     its live-refresh timers running behind a video. */
-  function showStream(title) {
-    api.clear(body);
-    body.appendChild(streamStage(api, { title, onBack: () => paintDetail() }));
-  }
-
   let paintDetail = () => {};
+  let sendOpen = false;
 
   (async () => {
     RB.bridge.base = api.store.get('portal.proxyWorker', '') || '';
@@ -700,19 +894,19 @@ export function buildRobloxDetail(ctx) {
 
   function detail(row) {
     const art = h('div.rbx-det__art');
-    if (row.wide || row.art) {
+    if (RB.iconUrl(row, 'wide') || RB.iconUrl(row)) {
       art.appendChild(h('img', {
-        src: row.wide || row.art, alt: '', decoding: 'async', referrerpolicy: 'no-referrer',
+        src: RB.iconUrl(row, 'wide') || RB.iconUrl(row), alt: '', decoding: 'async', referrerpolicy: 'no-referrer',
       }));
     }
 
     const stats = h('div.rbx-det__stats',
-      stat('Playing now', compact(row.playing), 'users'),
+      stat(row.live ? 'Playing now · live' : `Playing · ${RB.asOf() ? RB.fmtDay(RB.asOf(), false) : 'last sync'}`, compact(row.playing), 'users'),
       stat('Visits', compact(row.visits), 'trending-up'),
       stat('Favourites', compact(row.favorites), 'heart'),
       stat('Rating', `${row.rating}%`, 'star'),
       stat('Max players', row.maxPlayers ? String(row.maxPlayers) : '—', 'user'),
-      stat('Maturity', row.maturity || '—', 'shield'));
+      stat('Maturity', RB.maturityName(row.maturity) || '—', 'shield'));
 
     const favBtn = h('button.btn.btn--ghost', {
       type: 'button',
@@ -727,30 +921,82 @@ export function buildRobloxDetail(ctx) {
     }, icon('heart', { size: 14 }), h('span', { text: isFav(api, row.id) ? 'Favourited' : 'Favourite' }));
     if (isFav(api, row.id)) favBtn.classList.add('is-on');
 
-    const streamBtn = h('button.btn.btn--go', {
-      type: 'button',
-      'aria-label': `Play Roblox in this window, streamed`,
-      onclick: () => showStream(`${row.name} — via Roblox`),
-    }, icon('cast', { size: 14 }), h('span', { text: 'Play in this window' }));
+    /* two copy buttons, so it is clear which link you are taking */
+    const copyButton = (label, which, link, tip) => h('button.btn.btn--ghost', {
+      type: 'button', dataset: { copy: which }, title: tip,
+      onclick: async () => {
+        try {
+          await navigator.clipboard.writeText(link);
+          api.notify?.({ title: `${which === 'app' ? 'App' : 'Web'} link copied`, message: link, icon: 'link' });
+        } catch (err) {
+          api.notify?.({ title: 'Could not copy', message: link, icon: 'link' });
+        }
+      },
+    }, icon('link'), label);
+
+    const wantBtn = h('button.btn.btn--ghost', { type: 'button', dataset: { act: 'want' } });
+    const sendBtn = h('button.btn.btn--ghost', { type: 'button', 'aria-expanded': 'false' }, icon('users'), 'Send to a friend');
+
+    /* the Want to play button, and (once it is on the list) a reminder picker */
+    async function paintWantHold(hold, r, btn) {
+      const on = isWant(api, r.id);
+      btn.classList.toggle('is-on', on);
+      btn.setAttribute('aria-pressed', String(on));
+      api.render(btn, icon(on ? 'bookmark' : 'plus'), h('span', { text: on ? 'On my want-to-play list' : 'Want to play' }));
+      btn.onclick = async () => { await toggleWant(api, r.id); paintWantHold(hold, r, btn); };
+      api.clear(hold);
+      if (!on) return;
+      const cur = wantRows(api).find(x => x.id === r.id);
+      const txt = await reminderText(cur && cur.rem);
+      if (life.dead()) return;
+      api.clear(hold);
+      hold.append(h('small.dim', { text: txt || 'No reminder set' }), reminderSelectFor(r, () => paintWantHold(hold, r, btn)));
+    }
+    function reminderSelectFor(r, done) {
+      return h('select.select', {
+        'aria-label': `Remind me to play ${r.name}`,
+        onchange: async e => {
+          const v = e.target.value;
+          e.target.value = '';
+          if (!v) return;
+          const res = await setWantReminder(api, r, v);
+          api.notify?.({ title: res.ok ? 'Reminder set' : 'Could not set it', message: res.ok ? `${r.name}: ${res.text}. It is in Automations too.` : res.text, icon: res.ok ? 'bell' : 'alert' });
+          done();
+        },
+      }, h('option', { value: '', text: 'Remind me…' }),
+        h('option', { value: 'hour', text: 'in 1 hour' }),
+        h('option', { value: '3h', text: 'in 3 hours' }),
+        h('option', { value: 'tomorrow', text: 'tomorrow, same time' }));
+    }
 
     const actions = h('div.rbx-det__a',
       launchButton(api, row, { big: true }),
-      streamBtn,
       favBtn,
       h('button.btn.btn--ghost', {
-        type: 'button', onclick: () => launch(api, row),
+        type: 'button', onclick: e => launch(api, row, e.currentTarget),
       }, icon('play'), 'Try Roblox again'),
-      h('button.btn.btn--ghost', {
-        type: 'button',
-        onclick: async () => {
-          try {
-            await navigator.clipboard.writeText(RB.webLink(row.placeId));
-            api.notify?.({ title: 'Link copied', message: RB.webLink(row.placeId), icon: 'link' });
-          } catch (err) {
-            api.notify?.({ title: 'Could not copy', message: RB.webLink(row.placeId), icon: 'link' });
-          }
-        },
-      }, icon('link'), 'Copy link'));
+      webPlayOn ? h('a.btn.btn--ghost', {
+        href: RB.webLink(row.placeId), target: '_blank', rel: 'noopener',
+        dataset: { rbx: 'webplay' },
+        title: 'Opens this experience on roblox.com in a new tab',
+      }, icon('globe'), 'Play in browser (Roblox Web Play)') : null,
+      copyButton('Copy app link', 'app', RB.launchLink(row.placeId), 'The link the Roblox app opens'),
+      copyButton('Copy web link', 'web', RB.webLink(row.placeId), 'The roblox.com page'),
+      wantBtn,
+      sendBtn);
+
+    const sendHold = h('div.rbx-det__send.hidden', { role: 'group', 'aria-label': 'Send to a friend' });
+    /* the page repaints when live numbers arrive: an open panel must stay open */
+    const showSend = open => {
+      sendHold.classList.toggle('hidden', !open);
+      sendBtn.setAttribute('aria-expanded', String(open));
+      sendOpen = open;
+      if (open) paintFriendPanel(ctx, sendHold, { kind: 'roblox', id: row.id, title: row.name }, () => !life.dead());
+    };
+    sendBtn.onclick = () => showSend(!sendOpen);
+    if (sendOpen) showSend(true);
+    const wantHold = h('div.rbx-want__row', { dataset: { want: row.id } });
+    paintWantHold(wantHold, row, wantBtn);
 
     return h('div.cx__sec',
       h('button.btn.btn--ghost.btn--sm', {
@@ -764,18 +1010,23 @@ export function buildRobloxDetail(ctx) {
             row.verified ? icon('check-circle', { size: 12 }) : null),
           row.desc ? h('p.rbx-det__d', { text: row.desc }) : null,
           actions,
+          wantHold,
+          sendHold,
+          deviceNote(api),
           h('small.dim.rbx-det__routes', {
-            text: 'Two ways in. “Play in Roblox” hands the place id to the Roblox app on this '
-                + 'machine, which is instant if it is installed. “Play in this window” streams the '
-                + 'real client off a cloud Android device through Static’s tunnel — no install, but '
-                + 'it queues, and you land in Roblox rather than straight into this experience.',
+            text: 'Play hands the place id to the Roblox app on this device. Roblox cannot be played '
+                + 'inside this window, and Static never shows roblox.com in a frame.',
           }),
           h('div.rbx-det__ids',
             h('span', { text: `Place ${row.placeId}` }),
             h('span', { text: `Universe ${row.id}` }),
             row.updated ? h('span', { text: `Updated ${String(row.updated).slice(0, 10)}` }) : null))),
       stats,
-      serverPanel(row));
+      h('small.dim.rbx-det__asof', {
+        text: `Counts are a snapshot${RB.asOf() ? ` from ${RB.fmtDay(RB.asOf())}` : ' from the last catalogue sync'}${row.live ? '; this one was just refreshed live' : ''}. Maturity is Roblox’s own rating.`,
+      }),
+      serverPanel(row),
+      affiliation(api));
   }
 
   /* Real public servers, read live. Shows nothing at all rather than a

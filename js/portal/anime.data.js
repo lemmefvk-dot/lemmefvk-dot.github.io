@@ -222,6 +222,7 @@ export const SORT_OPTIONS = [
  */
 export function query({
   kind = 'anime', q = '', genre = '', year = '', status = '',
+  season = '', type = '', rating = '', band = '',
   sort = 'score', page = 1, perPage = 36,
 } = {}) {
   const rows = cache[kind] || [];
@@ -236,6 +237,13 @@ export function query({
   if (genre) items = items.filter(r => r.genres.includes(genre));
   if (year) items = items.filter(r => String(r.year) === String(year));
   if (status) items = items.filter(r => r.status === status);
+  if (season) items = items.filter(r => String(r.season).toLowerCase() === String(season).toLowerCase());
+  if (type) items = items.filter(r => r.mediaType === type);
+  if (rating) items = items.filter(r => ratingCode(r.rating) === rating);
+  if (band !== '' && band !== null && band !== undefined && Number.isFinite(Number(band))) {
+    const lo = Number(band);
+    items = items.filter(r => r.score !== null && r.score >= lo && r.score < lo + 1);
+  }
 
   items = [...items].sort(SORTS[sort] || SORTS.score);
 
@@ -262,6 +270,14 @@ function rank(r, low) {
   if (t.includes(low)) return 1;
   return 0;
 }
+
+/** "PG-13 - Teens 13 or older" -> "PG-13" (the part before the dash). */
+export const ratingCode = r => (r ? String(r).split(' - ')[0].trim() : '');
+/** The age ratings, mildest first, and the media types, that this catalogue's rows actually use. */
+export const RATINGS = [['G', 'G · all ages'], ['PG', 'PG · children'], ['PG-13', 'PG-13 · teens'], ['R', 'R · 17+'], ['R+', 'R+ · mild nudity']];
+export const TYPES = ['TV', 'Movie', 'OVA', 'ONA', 'Special', 'TV Special'];
+/** The score bands a "same score band" chip and the filter use: 9 means 9.00 to 9.99. */
+export const bandOf = rec => (rec && rec.score !== null && rec.score !== undefined ? Math.floor(rec.score) : null);
 
 export const byId = (id, kind = 'anime') =>
   (cache[kind] || []).find(r => r.id === String(id)) || null;
@@ -415,6 +431,52 @@ export function similar(rec, kind = 'anime', limit = 18) {
   return scored.slice(0, limit).map(x => x[1]);
 }
 
+/**
+ * The watch order of a title and what shares its name — "Start here" first.
+ * The catalogue has no prequel/sequel links, so this is the title match
+ * `related()` makes, put in release order: by year, then season, with the
+ * main run (TV, movies) before side material (OVAs, specials). Entries that
+ * have no year go last. `start` is the first main-run entry.
+ */
+const MAIN_TYPE = new Set(['TV', 'Movie', 'ONA']);
+export function watchOrder(rec, kind = 'anime') {
+  if (!rec) return [];
+  const group = [rec, ...related(rec, kind, 60).filter(r => r.id !== rec.id)];
+  if (group.length < 2) return [];
+  const at = r => (r.year || 9999) * 10 + (SEASON_AT[String(r.season).toLowerCase()] || 5);
+  group.sort((a, b) => at(a) - at(b) || (MAIN_TYPE.has(b.mediaType) - MAIN_TYPE.has(a.mediaType)) || a.title.localeCompare(b.title));
+  const main = group.find(r => MAIN_TYPE.has(r.mediaType) && r.year) || group[0];
+  return group.map(r => ({ rec: r, start: r === main, main: MAIN_TYPE.has(r.mediaType) }));
+}
+
+/**
+ * Titles to try next, from the genres of titles the person finished: every
+ * genre of a finished title adds one point, a candidate scores the points of
+ * its genres (averaged by its own genre count, so a grab-bag doesn't win), and
+ * `skip` (ids already saved, finished or dropped) are left out. Plain counting
+ * over the catalogue's genres — a match, not a prediction.
+ * -> { items, genres: the top genres used, from: how many finished titles }
+ */
+export function likeFinished(finished, kind = 'anime', { skip = [], limit = 20 } = {}) {
+  const rows = cache[kind] || [];
+  const pts = new Map();
+  for (const r of finished) for (const g of r.genres || []) pts.set(g, (pts.get(g) || 0) + 1);
+  if (!pts.size) return { items: [], genres: [], from: finished.length };
+  const out = new Set(skip.map(String));
+  for (const r of finished) out.add(String(r.id));
+  const scored = [];
+  for (const r of rows) {
+    if (out.has(r.id) || !r.genres.length || r.score === null) continue;
+    let sum = 0;
+    for (const g of r.genres) sum += pts.get(g) || 0;
+    if (!sum) continue;
+    scored.push([sum / Math.sqrt(r.genres.length), r]);
+  }
+  scored.sort((a, b) => b[0] - a[0] || (b[1].score || 0) - (a[1].score || 0));
+  const genres = [...pts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 3).map(x => x[0]);
+  return { items: scored.slice(0, limit).map(x => x[1]), genres, from: finished.length };
+}
+
 /** The genres with the most titles, for the home page's per-genre rails. */
 export function topGenres(kind = 'anime', n = 10) {
   return genresOf(kind).slice(0, n);
@@ -474,5 +536,6 @@ export function shortIds(kind = 'anime') {
 
 export default { load, refresh, peek, isLoaded, query, byId, byIds, rails, genresOf, yearsOf,
                  topGenres, latestSeason, seasonal, seasonLabel, SEASONS, related, similar,
+                 watchOrder, likeFinished, ratingCode, bandOf, RATINGS, TYPES,
                  facts, shortId, shortIds,
                  SORT_OPTIONS, LIVE_STATUS, sync, syncStatus };

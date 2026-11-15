@@ -24,6 +24,9 @@
    crash; the rest of the Arcade keeps working.
 
    Scores: store 'portal.arcade' = { best: { [id]: n }, filter, sound }.
+   A game with modes (index.js `modes`, js/arcade/modes.js) keeps each
+   mode other than its first under `<id>:<mode>` (best, best three,
+   ghost); the HUD's Mode menu picks one and a Beat-this link carries it.
    Only 1-player rounds set a best (two people on one keyboard is
    not one person's score); every round end still emits
    bus 'arcade:score' { game, score, best, newBest, hadBest, players, won? }
@@ -80,14 +83,34 @@ import * as plays from '../core/plays.js';
 import * as DB from '../core/db.js';
 import * as padmap from '../core/padmap.js';
 import { addToDesktop } from '../core/shortcuts.js';
-import { pickMenu } from '../core/collections.js';
-import { openRoom, normalizeCode, isCode } from '../arcade/room.js';
+import { pickMenu, askName } from '../core/collections.js';
+import { openRoom, normalizeCode, isCode, REACTIONS, REACTION_NAMES, BESTS, REJOIN_MS, QUIET_MS } from '../arcade/room.js';
+import { raceOf, raceKit, resultText as raceText, headline as raceHead, one as raceUnit } from '../arcade/race.js';
 import { sharer, watcherView } from '../arcade/watchui.js';
 import * as live from '../portal/live.js';
 import * as daily from '../arcade/daily-state.js';
-import { dayKey, parseDay, REGION_HUES } from '../arcade/stars.js';
+import * as dword from '../arcade/dailyword-state.js';
+import { dayKey, parseDay, REGION_HUES, LEVEL_NAME } from '../arcade/stars.js';
 import { CLASSICS, classicFromGameId } from '../classics/catalog.js';
 import { ART_SPORTS2 } from '../arcade/art-sports2.js';
+import { ART_NEWGAMES1 } from '../arcade/art-newgames1.js';
+import { ART_NEWGAMES2 } from '../arcade/art-newgames2.js';
+import { ART_NEWGAMES3 } from '../arcade/art-newgames3.js';
+import { ART_NEWGAMES4 } from '../arcade/art-newgames4.js';
+import { ART_PULSERUN } from '../arcade/art-pulserun.js';
+import * as records from '../arcade/records.js';
+import * as OPT from '../arcade/options.js';
+import * as MD from '../arcade/modes.js';
+import * as CH from '../arcade/challenge.js';
+import { remapper } from '../arcade/keyremap.js';
+import { touchKeys } from '../arcade/touchkeys.js';
+import { padCursor } from '../arcade/padcursor.js';
+import { optionsCard } from '../arcade/optionsui.js';
+import { statsView } from '../arcade/statsview.js';
+import { clipTrimmer } from '../arcade/cliptrim.js';
+import { friendsView } from '../arcade/friendsview.js';
+import * as identity from '../core/identity.js';
+import { t as tr, plural as plu } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-arcade-css')) {
   const l = document.createElement('link');
@@ -96,29 +119,62 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-arcade-css
   l.href = 'css/feat-arcade.css';
   document.head.appendChild(l);
 }
+if (typeof document !== 'undefined' && !document.getElementById('feat-arcade-online-css')) {
+  const l = document.createElement('link');
+  l.id = 'feat-arcade-online-css';
+  l.rel = 'stylesheet';
+  l.href = 'css/feat-arcade-online.css';
+  document.head.appendChild(l);
+}
+if (typeof document !== 'undefined' && !document.getElementById('feat-arcade-shell-css')) {
+  const l = document.createElement('link');
+  l.id = 'feat-arcade-shell-css';
+  l.rel = 'stylesheet';
+  l.href = 'css/feat-arcade-shell.css';
+  document.head.appendChild(l);
+}
 
 const KEY = 'portal.arcade';
 const REC_MAX_MS = 30_000;
 const AUTO_STOP_MS = 1500;           /* keep filming this long after a round ends */
 
+/* test(g, F): F = { fav: Set, played: Set } — this device's favourites and the games it has played */
 const FILTERS = [
-  { id: 'all', label: 'All', test: () => true },
-  { id: 'quick', label: 'Quick', title: 'A round takes 2 minutes or less', test: g => g.minutes <= 2 },
-  { id: 'duo', label: '2 Player', title: 'Two people on one keyboard or screen', test: g => g.players.includes(2) },
-  { id: 'online', label: 'Online', title: 'Play a friend on another device, with a room code', test: g => !!g.online || g.tags.includes('multiplayer') },
-  { id: 'skill', label: 'Skill', test: g => g.tags.includes('skill') },
-  { id: 'puzzle', label: 'Puzzle', test: g => g.tags.includes('puzzle') },
-  { id: 'classic', label: 'Classic', test: g => g.tags.includes('classic') },
-  { id: 'cards', label: 'Cards', title: 'Solitaire, Spider, FreeCell, Crazy Eights and Blackjack', test: g => g.tags.includes('cards') },
+  { id: 'all', label: tr('All'), test: () => true },
+  { id: 'fav', label: tr('Favourites'), title: tr('Games you starred'), test: (g, F) => F.fav.has(g.id) },
+  { id: 'never', label: tr('Never played'), title: tr('Games you haven’t opened on this device yet'), test: (g, F) => !F.played.has(g.id) },
+  { id: 'quick', label: tr('Quick'), title: tr('A round takes 2 minutes or less'), test: g => g.minutes <= 2 },
+  /* a duel played only online (Battleship: two fleets can't hide on one screen) is a 2-player game too */
+  { id: 'duo', label: tr('2 Player'), title: tr('Two people on one keyboard or screen, or against a friend online'), test: g => g.players.includes(2) || g.online === 'duel' },
+  { id: 'online', label: tr('Online'), title: tr('Play a friend on another device, with a room code'), test: g => !!g.online || g.tags.includes('multiplayer') },
+  { id: 'skill', label: tr('Skill'), test: g => g.tags.includes('skill') },
+  { id: 'puzzle', label: tr('Puzzle'), test: g => g.tags.includes('puzzle') },
+  { id: 'classic', label: tr('Classic'), test: g => g.tags.includes('classic') },
+  { id: 'cards', label: tr('Cards'), title: tr('Solitaire, Spider, FreeCell, Crazy Eights and Blackjack'), test: g => g.tags.includes('cards') },
   /* not ARCADE games: its own shelf, see js/classics/ */
-  { id: 'freeclassics', label: 'Old Games', title: 'Free Classics: old games their makers released for free', test: () => false, count: () => CLASSICS.length },
+  { id: 'freeclassics', label: tr('Old Games'), title: tr('Free Classics: old games their makers released for free'), test: () => false, count: () => CLASSICS.length },
 ];
 const filterOf = id => FILTERS.find(f => f.id === id) || FILTERS[0];
+/* how the grid is ordered: the shelf's own order, by name, or by this device's own play history */
+const SORTS = [
+  { id: 'shelf', label: tr('Arcade order') },
+  { id: 'az', label: tr('A to Z') },
+  { id: 'recent', label: tr('Recently played') },
+  { id: 'most', label: tr('Most played') },
+];
+const sortOf = id => SORTS.find(s => s.id === id) || SORTS[0];
+/* searching: title, blurb and tags, every word must match */
+const matches = (g, q) => {
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const text = `${g.title} ${g.blurb} ${g.tags.join(' ')} ${g.id}`.toLowerCase();
+  return words.every(w => text.includes(w));
+};
 
 const INPUTS = {
-  keyboard: { icon: 'keyboard', label: 'Keyboard' },
-  mouse: { icon: 'mouse-pointer', label: 'Mouse' },
-  touch: { icon: null, label: 'Touch' },
+  keyboard: { icon: 'keyboard', label: tr('Keyboard') },
+  mouse: { icon: 'mouse-pointer', label: tr('Mouse') },
+  touch: { icon: null, label: tr('Touch') },
 };
 /* no touch glyph in the icon set: a static phone outline */
 const TOUCH_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>';
@@ -129,7 +185,7 @@ const UNITS = {
   snake: 'length', pong: 'points', breakout: 'points', flap: 'pipes', racer: 'metres', g2048: 'points', blocks: 'points',
   reaction: 'ms', aim: 'ms', typing: 'WPM', memory: 'moves', mines: 'seconds', echo: 'in a row',
   'ghost-hunt': 'points', 'candy-catcher': 'points', 'haunted-maze': 'seconds',
-  daily: 'seconds', chess: 'moves', connect4: 'moves', ttt: 'marks', dnb: 'boxes',
+  daily: 'seconds', dailyword: 'tries', chess: 'moves', connect4: 'moves', ttt: 'marks', dnb: 'boxes',
   mancala: 'stones', crazy8: 'points', blackjack: 'points', sketch: 'points',
   solitaire: 'seconds', spider: 'seconds', freecell: 'seconds',
   stacker: 'points', defenders: 'points', hopper: 'points', bubbles: 'points',
@@ -144,10 +200,18 @@ const UNITS = {
   fivedice: 'points', dominoes: 'points', go: 'points', gomoku: 'stones',
   pipelink: 'seconds', jigsaw: 'seconds', clicker: 'seconds',
   lettergrid: 'points', unscramble: 'points', crossword: 'seconds', sumgrid: 'seconds',
+  colorflood: 'moves', pondhopper: 'seconds', heist: 'turns', tactics: 'rounds', cavediver: 'metres', garden: 'items', orbit: 'points',
+  tileslide: 'points', numberchain: 'points', painter: 'pixels', beatblocks: 'points', stackcafe: 'points', kite: 'points',
 };
+Object.assign(UNITS, { slabtower: 'points', touchdown: 'points', pegs: 'points', skyguard: 'points', rockdrift: 'points', crateshift: 'moves', hanoi: 'moves', treadduel: 'moves' });
+Object.assign(UNITS, { signalrelay: 'seconds', hexclaim: 'hexagons', wordladder: 'steps', robotiles: 'commands', bridgebuilder: 'cost', cannoncrush: 'shots', railswitch: 'flips' });
 const SHORT_UNITS = { metres: 'm', seconds: 's' };
+UNITS.pulserun = 'percent'; SHORT_UNITS.percent = '%';
 const unitOf = id => UNITS[id] || '';
 const shortUnit = id => { const u = unitOf(id); return SHORT_UNITS[u] || (u === 'ms' || u === 'WPM' ? u : ''); };
+/* the same for a game as a mode scores it (js/arcade/modes.js scoring(): Stacker's Sprint is a time) */
+const unitFor = g => g.unit || unitOf(g.id);
+const shortFor = g => { const u = unitFor(g); return SHORT_UNITS[u] || (u === 'ms' || u === 'WPM' ? u : ''); };
 
 const fmtN = n => (typeof n === 'number' ? n.toLocaleString(undefined, { maximumFractionDigits: 1 }) : String(n ?? '—'));
 const dur = ms => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -156,18 +220,32 @@ const bytes = n => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` 
 /* ---------- online play ---------- */
 const COUNTDOWN = 3;
 const LIVE_TEXT = {
-  idle: 'Not connected yet',
-  connecting: 'Connecting to the live server…',
-  live: 'Connected to the live server',
-  offline: 'Can’t reach the live server — this network may block it. Trying again…',
+  idle: tr('Not connected yet'),
+  connecting: tr('Connecting to the live server…'),
+  live: tr('Connected to the live server'),
+  offline: tr('Can’t reach the live server — this network may block it. Trying again…'),
 };
 const JOIN_ERR = {
-  invalid: ['That isn’t a room code', 'Room codes are 6 letters and numbers, like K7QM2X.'],
-  nobody: ['No room answered', 'Nobody has a room open with that code right now. Check the code, and that your friend still has the room open.'],
-  full: ['That room is full', 'It already has two players.'],
-  game: ['Can’t play that room here', 'It is playing a game this StaticOS doesn’t have.'],
+  invalid: [tr('That isn’t a room code'), tr('Room codes are 6 letters and numbers, like K7QM2X.')],
+  nobody: [tr('No room answered'), tr('Nobody has a room open with that code right now. Check the code, and that your friend still has the room open.')],
+  full: [tr('That room is full'), tr('It already has two players.')],
+  game: [tr('Can’t play that room here'), tr('It is playing a game this StaticOS doesn’t have.')],
 };
 const spaced = code => String(code || '').split('').join(' ');
+/* a room code read out loud: in two halves, letters by their spelling-alphabet word
+   (the code's alphabet has no 0/O, 1/I/L, so every one of these is unmistakable) */
+const SAY = { A: 'Alpha', B: 'Bravo', C: 'Charlie', D: 'Delta', E: 'Echo', F: 'Foxtrot', G: 'Golf', H: 'Hotel', J: 'Juliet', K: 'Kilo', M: 'Mike', N: 'November',
+  P: 'Papa', Q: 'Quebec', R: 'Romeo', S: 'Sierra', T: 'Tango', U: 'Uniform', V: 'Victor', W: 'Whiskey', X: 'X-ray', Y: 'Yankee', Z: 'Zulu',
+  2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six', 7: 'seven', 8: 'eight', 9: 'nine' };
+const sayCode = code => [String(code || '').slice(0, 3), String(code || '').slice(3)].map(half => [...half].map(ch => SAY[ch] || ch).join(' ')).join(' · ');
+/* how a duel's sides change for a rematch, said on the result card */
+const SWAPS = {
+  chess: tr('Colours swap: the other player has White.'), connect4: tr('The first move swaps.'), ttt: tr('X swaps: the other player goes first.'),
+  dnb: tr('The first line swaps.'), mancala: tr('Sides swap: the other player sows first.'), reversi: tr('Colours swap: the other player has Black.'),
+  checkers: tr('Sides swap: the other player is Red and moves first.'), go: tr('Colours swap: the other player has Black.'), gomoku: tr('Colours swap: the other player has Black.'),
+  battleship: tr('The first shot swaps.'), pool: tr('The break swaps.'),
+  fivedice: tr('The first roll swaps.'), crazy8: tr('The first turn swaps.'),
+};
 const watchLink = (id, code) => {
   try { return `${location.origin}${location.pathname}#arcade=${encodeURIComponent(id)}&spectate=${code}`; } catch (err) { return ''; }
 };
@@ -298,11 +376,14 @@ defineApp({
     'dot chaser', 'maze chase', 'ghosts', 'endless runner', 'runner', 'jump', 'whack a mole', 'whack-a-mole', 'moles', 'fruit slice', 'fruit ninja', 'slice', 'reflex',
     'rhythm', 'rhythm tap', 'music game', 'beat', 'sliding puzzle', '15 puzzle', 'lights out', 'tower defense', 'td', 'strategy',
     'free classics', 'old games', 'freeware', 'beneath a steel sky', 'adventure', 'point and click', 'micropolis', 'city builder', 'sopwith', 'biplane',
+    'flight of the amazon queen', 'lure of the temptress', 'drascula', 'freedoom', 'doom', 'scummvm', 'own copy', 'daily word', 'word of the day',
     'darts', 'dartboard', '501', 'around the clock', 'pool', '8 ball', 'billiards', 'archery', 'bow', 'lap rush', 'time trial', 'ghost lap',
     'snake battle', 'two snakes', 'snake versus', 'air hockey', 'hockey', 'puck', 'bowling', 'strike', 'spare', 'ten pin', 'basketball', 'free throw', 'hoops', 'sports',
     'five dice', 'dice', 'dominoes', 'domino', 'go', 'baduk', 'weiqi', 'gomoku', 'five in a row', 'tabletop',
-    'letter grid', 'word grid', 'find words', 'unscramble', 'anagram', 'anagrams', 'jumble', 'crossword', 'mini crossword', 'crosswords', 'sum grid', 'killer sudoku', 'cages', 'number logic'],
-  desc: `${ARCADE.length} quick games built into StaticOS, with best scores and clip recording`,
+    'letter grid', 'word grid', 'find words', 'unscramble', 'anagram', 'anagrams', 'jumble', 'crossword', 'mini crossword', 'crosswords', 'sum grid', 'killer sudoku', 'cages', 'number logic',
+    'stats', 'game stats', 'leaderboard', 'friends leaderboard', 'tournament', 'cup', 'bracket', 'weekly challenge', 'beat this', 'challenge a friend',
+    'ghost', 'ghost replay', 'replay', 'colour blind', 'color blind', 'one button', 'remap keys', 'game speed', 'trim clip'],
+  desc: tr('{length} quick games built into StaticOS, with best scores and clip recording', { length: ARCADE.length }),
   singleton: true,
   win: { w: 980, h: 680, minW: 380, minH: 460 },
   /* keys listed on the shortcut sheet (hold ⌘ / Ctrl): each one is bound below */
@@ -327,8 +408,9 @@ defineApp({
     const notify = n => api.notify({ app: 'Static Arcade', icon: 'gamepad', ...n });
 
     const S = {
-      view: 'games',             /* games | clips | play | classic */
+      view: 'games',             /* games | stats | friends | clips | play | classic | watch */
       filter: filterOf(readState().filter).id,
+      sort: sortOf(readState().sort).id, q: '',
       game: null, players: 1,
       inst: null, token: 0,
       status: 'idle',            /* idle | loading | playing | paused | over | error */
@@ -340,77 +422,106 @@ defineApp({
       net: null,                  /* the online session — see netStart() */
       watch: null,                /* a friend's game being watched — see startWatch() */
       lastScore: null,
+      round: null,                /* what the next round is: { seed, shared, ghost, beat, weekly, cup } — see roundSpec() */
+      played: null,               /* what the current round got: { seed, speed, oneButton, ghost, mode } */
+      mode: null,                 /* the play view's mode (index.js `modes`, js/arcade/modes.js); null for a game without modes */
       dead: false,
     };
     const offs = [];
 
     /* ============================ skeleton ============================ */
     const uid = `arc-${Math.random().toString(36).slice(2, 8)}`;
+    /* the home screen's sections: arrow keys move between them (roving tabindex) */
+    const TABS = ['games', 'stats', 'friends', 'clips'];
     const onTabKey = e => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
       e.preventDefault();
-      const next = e.key === 'Home' ? 'games' : e.key === 'End' ? 'clips' : S.view === 'games' ? 'clips' : 'games';
+      const i = Math.max(0, TABS.indexOf(S.view));
+      const next = e.key === 'Home' ? TABS[0] : e.key === 'End' ? TABS[TABS.length - 1]
+        : TABS[(i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length];
       go(next);
-      (next === 'games' ? tabGames : tabClips).focus();
+      tabEls[next].focus();
     };
-    const tabGames = h('button.arc-tab', { type: 'button', role: 'tab', id: `${uid}-tg`, 'aria-controls': `${uid}-panel`, onclick: () => go('games'), onkeydown: onTabKey },
-      icon('grid-9'), h('span', { text: 'Games' }));
+    const tab = (id, ic, label, ...more) => h('button.arc-tab', { type: 'button', role: 'tab', id: `${uid}-t${id}`, 'aria-controls': `${uid}-panel`, dataset: { tab: id }, onclick: () => go(id), onkeydown: onTabKey },
+      icon(ic), h('span', { text: label }), ...more);
+    const tabGames = tab('games', 'grid-9', 'Games');
+    const tabStats = tab('stats', 'bar-chart', 'Stats');
+    const tabFriends = tab('friends', 'users', 'Friends');
     const clipCountEl = h('span.arc-tab__n', { 'aria-hidden': 'true' });
-    const tabClips = h('button.arc-tab', { type: 'button', role: 'tab', id: `${uid}-tc`, 'aria-controls': `${uid}-panel`, onclick: () => go('clips'), onkeydown: onTabKey },
-      icon('film'), h('span', { text: 'Clips' }), clipCountEl);
-    const randomBtn = h('button.arc-rand', { type: 'button', onclick: randomQuick, title: 'Start a random game that takes 2 minutes or less' },
-      icon('shuffle'), h('span', { text: 'Random quick game' }));
+    const tabClips = tab('clips', 'film', 'Clips', clipCountEl);
+    const tabEls = { games: tabGames, stats: tabStats, friends: tabFriends, clips: tabClips };
+    const randomBtn = h('button.arc-rand', { type: 'button', onclick: randomQuick, title: tr('Start a random game that takes 2 minutes or less') },
+      icon('shuffle'), h('span', { text: tr('Random quick game') }));
     const joinOpenBtn = h('button.arc-rand.arc-rand--join', {
       type: 'button', 'aria-expanded': 'false', 'aria-controls': `${uid}-join`,
-      title: 'Type the room code a friend sent you', onclick: () => toggleJoinBar(),
-    }, icon('globe'), h('span', { text: 'Join a friend' }));
+      title: tr('Type the room code a friend sent you'), onclick: () => toggleJoinBar(),
+    }, icon('globe'), h('span', { text: tr('Join a friend') }));
     /* the home screen's join form: a code from a friend → their room */
     const joinInput = h('input.arc-net__input', {
       type: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '80',
-      placeholder: 'Room code, e.g. K7QM2X', 'aria-label': 'Room code from your friend', id: `${uid}-jcode`,
+      placeholder: tr('Room code, e.g. K7QM2X'), 'aria-label': tr('Room code from your friend'), id: `${uid}-jcode`,
     });
     const joinStatus = h('div.arc-joinbar__status', { role: 'status', 'aria-live': 'polite' });
     const joinBar = h('form.arc-joinbar', {
       id: `${uid}-join`, hidden: true,
       onsubmit: e => { e.preventDefault(); joinOnline(joinInput.value, 'home'); },
     },
-      h('label.arc-joinbar__lab', { for: `${uid}-jcode` }, icon('globe'), h('span', { text: 'Join a friend’s room' })),
+      h('label.arc-joinbar__lab', { for: `${uid}-jcode` }, icon('globe'), h('span', { text: tr('Join a friend’s room') })),
       h('div.arc-joinbar__row', joinInput,
-        h('button.btn.btn--primary', { type: 'submit' }, h('span', { text: 'Join' })),
-        h('button.btn.arc-joinbar__watch', { type: 'button', title: 'Watch a friend’s shared game with their watch code', onclick: () => startWatch(joinInput.value) }, icon('eye'), h('span', { text: 'Watch' })),
-        h('button.btn.btn--ghost', { type: 'button', onclick: () => toggleJoinBar(false) }, h('span', { text: 'Cancel' }))),
+        h('button.btn.btn--primary', { type: 'submit' }, h('span', { text: tr('Join') })),
+        h('button.btn.arc-joinbar__watch', { type: 'button', title: tr('Watch a friend’s shared game with their watch code'), onclick: () => startWatch(joinInput.value) }, icon('eye'), h('span', { text: tr('Watch') })),
+        h('button.btn.btn--ghost', { type: 'button', onclick: () => toggleJoinBar(false) }, h('span', { text: tr('Cancel') }))),
       joinStatus,
-      h('div.arc-joinbar__note', { text: 'Online rooms and watching use StaticOS’s live connection, a free public server: anyone with the code can join or watch, and nothing is saved. Watching needs a watch code, which a player makes with the eye button in their game.' }));
+      h('div.arc-joinbar__note', { text: tr('Online rooms and watching use StaticOS’s live connection, a free public server: anyone with the code can join or watch, and nothing is saved. Watching needs a watch code, which a player makes with the eye button in their game.') }));
     const top = h('header.arc-top',
       h('div.arc-brand',
         h('span.arc-brand__logo', icon('gamepad')),
         h('div.arc-brand__txt',
-          h('div.arc-brand__name', h('span', { text: 'Static' }), h('b', { text: 'Arcade' })),
-          h('div.arc-brand__sub', { text: `${ARCADE.length} games built in · scores and clips stay on this device` }))),
+          h('div.arc-brand__name', h('span', { text: tr('Static') }), h('b', { text: tr('Arcade') })),
+          h('div.arc-brand__sub', { text: tr('{length} games built in · scores and clips stay on this device', { length: ARCADE.length }) }))),
       h('div.arc-top__right',
-        h('div.arc-tabs', { role: 'tablist', 'aria-label': 'Arcade sections' }, tabGames, tabClips),
+        h('div.arc-tabs', { role: 'tablist', 'aria-label': tr('Arcade sections') }, tabGames, tabStats, tabFriends, tabClips),
         joinOpenBtn, randomBtn));
-    const filtersEl = h('div.arc-filters', { role: 'toolbar', 'aria-label': 'Filter games' });
-    const main = h('div.arc-scroll', { role: 'tabpanel', id: `${uid}-panel`, 'aria-labelledby': `${uid}-tg` });
-    const home = h('section.arc-home', top, joinBar, filtersEl, main);
+    const filtersEl = h('div.arc-filters', { role: 'toolbar', 'aria-label': tr('Filter games') });
+    /* search and sort, above the filters */
+    const searchIn = h('input.arc-find__q', {
+      type: 'search', placeholder: tr('Search games'), 'aria-label': tr('Search games'), autocomplete: 'off', spellcheck: 'false', maxlength: '60',
+      oninput: () => { S.q = searchIn.value; paintGrid(); },
+      onkeydown: e => { if (e.key === 'Escape' && searchIn.value) { e.preventDefault(); e.stopPropagation(); searchIn.value = ''; S.q = ''; paintGrid(); } },
+    });
+    const sortSel = h('select.arc-find__sort', {
+      'aria-label': tr('Sort games'),
+      onchange: () => { S.sort = sortOf(sortSel.value).id; writeState({ sort: S.sort }); paintGrid(); },
+    }, SORTS.map(s => h('option', { value: s.id, text: s.label })));
+    const findBar = h('div.arc-find',
+      h('label.arc-find__box', icon('search'), searchIn),
+      h('label.arc-find__sortlab', h('span', { text: tr('Sort') }), sortSel));
+    sortSel.value = S.sort;
+    const main = h('div.arc-scroll', { role: 'tabpanel', id: `${uid}-panel`, 'aria-labelledby': `${uid}-tgames` });
+    const home = h('section.arc-home', top, joinBar, findBar, filtersEl, main);
 
     /* play view */
-    const backBtn = h('button.arc-ib.arc-ib--back', { type: 'button', 'aria-label': 'Back to the Arcade', title: 'Back to the Arcade', onclick: () => go('games') },
-      icon('chevron-left'), h('span', { text: 'Arcade' }));
+    const backBtn = h('button.arc-ib.arc-ib--back', { type: 'button', 'aria-label': tr('Back to the Arcade'), title: tr('Back to the Arcade'), onclick: () => go('games') },
+      icon('chevron-left'), h('span', { text: tr('Arcade') }));
     const hudDot = h('span.arc-hud__dot');
     const hudName = h('span.arc-hud__name');
     const scoreEl = h('b.arc-hud__num', { text: '0' });
     const bestEl = h('b.arc-hud__num.arc-hud__num--best', { text: '—' });
-    const bestLab = h('span.arc-hud__lab', { text: 'Best' });
-    const scoreLab = h('span.arc-hud__lab', { text: 'Score' });
-    const stats = h('div.arc-hud__stats', { 'aria-label': 'Score' },
+    const bestLab = h('span.arc-hud__lab', { text: tr('Best') });
+    const scoreLab = h('span.arc-hud__lab', { text: tr('Score') });
+    const stats = h('div.arc-hud__stats', { 'aria-label': tr('Score') },
       h('div.arc-hud__stat', scoreLab, scoreEl),
       h('div.arc-hud__stat', bestLab, bestEl));
-    const segEl = h('div.arc-seg', { role: 'group', 'aria-label': 'Players' });
+    const segEl = h('div.arc-seg', { role: 'group', 'aria-label': tr('Players') });
+    /* a game's modes (index.js `modes`): each keeps its own best */
+    const modeSel = h('select.arc-modesel', { 'aria-label': tr('Mode'), hidden: true, onchange: () => switchMode(modeSel.value) });
     const pauseBtn = h('button.arc-ib', { type: 'button', onclick: () => (S.status === 'paused' ? resume() : pause()) });
-    const restartBtn = h('button.arc-ib', { type: 'button', 'aria-label': 'Restart', title: 'Restart', onclick: () => startRound() }, icon('rotate-ccw'));
+    const restartBtn = h('button.arc-ib', { type: 'button', 'aria-label': tr('Restart'), title: tr('Restart'), onclick: () => startRound() }, icon('rotate-ccw'));
     const recSlot = h('div.arc-recslot');
     const soundBtn = h('button.arc-ib', { type: 'button', onclick: toggleSound });
+    const optsBtn = h('button.arc-ib', { type: 'button', dataset: { act: 'options' }, 'aria-label': tr('Options: colours, text, speed, keys, controller'), title: tr('Options'), 'aria-haspopup': 'dialog', onclick: () => openOptions() }, icon('sliders'));
+    /* what this round is, when it is more than a round: a link's score to beat, the week's challenge, a cup match, a ghost */
+    const goalChip = h('span.arc-goal', { hidden: true, role: 'note' });
     const canFs = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen;
     const fsBtn = canFs ? h('button.arc-ib', { type: 'button', onclick: toggleFs }) : null;
     const padSlot = h('div.arc-padslot', { 'aria-live': 'polite' });
@@ -419,13 +530,18 @@ defineApp({
     const shareKit = sharer({ notify, linkFor: (id, code) => watchLink(id, code) });
     shareKit.setSource(() => snapshotNow());
     const hud = h('div.arc-hud',
-      h('div.arc-hud__left', backBtn, h('div.arc-hud__title', hudDot, hudName), roomChip, padSlot),
+      h('div.arc-hud__left', backBtn, h('div.arc-hud__title', hudDot, hudName), roomChip, goalChip, padSlot),
       stats,
-      h('div.arc-hud__tools', segEl, shareKit.btn, pauseBtn, restartBtn, recSlot, soundBtn, fsBtn));
+      h('div.arc-hud__tools', modeSel, segEl, shareKit.btn, pauseBtn, restartBtn, recSlot, optsBtn, soundBtn, fsBtn));
     const gameHost = h('div.arc-stage__game');
     const overlay = h('div.arc-stage__ov', { 'aria-live': 'polite' });
-    const stage = h('div.arc-stage', { tabindex: '0', 'aria-label': 'Game' }, gameHost, overlay);
-    const play = h('section.arc-play', hud, shareKit.panel, stage);
+    /* the Options card sits above everything else on the stage, the game paused under it */
+    const optsLayer = h('div.arc-stage__opts', { hidden: true });
+    const tkSlot = h('div.arc-tkslot');
+    const stage = h('div.arc-stage', { tabindex: '0', 'aria-label': tr('Game') }, gameHost, tkSlot, overlay, optsLayer);
+    /* ctx.announce: what a game wants said to a screen reader (an opponent's move) */
+    const srLive = h('div.arc-sr', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+    const play = h('section.arc-play', hud, shareKit.panel, stage, srLive);
     const watchSec = h('div.arc-watchsec', { hidden: true, style: { display: 'flex', flex: '1', minHeight: '0', flexDirection: 'column' } });
 
     /* Free Classics: loaded when first wanted, so the Arcade itself stays as quick to open */
@@ -434,13 +550,13 @@ defineApp({
       if (!classics && !S.dead) {
         classics = m.classicsUI({
           api, h, icon, clear, plays, soundOn,
-          onOpen: id => openClassic(id),
+          onOpen: (id, opts) => openClassic(id, opts),
           onBack: () => go('games'),
           onToggleSound: () => writeState({ sound: readState().sound === false }),
           soundBtnPaint: paintSoundOn,
           onToggleFs: canFs ? v => {
             if (document.fullscreenElement === v) document.exitFullscreen().catch(() => {});
-            else v.requestFullscreen?.().catch(err => notify({ icon: 'alert', title: 'Full screen was refused', message: err.message }));
+            else v.requestFullscreen?.().catch(err => notify({ icon: 'alert', title: tr('Full screen was refused'), message: err.message }));
             classics?.focus();
           } : null,
           fsBtnPaint: paintFsOn,
@@ -456,8 +572,9 @@ defineApp({
     shell.arcadeNet = () => {
       const N = S.net, room = N?.room;
       return N ? {
-        phase: N.phase, peerScore: N.peerScore, error: N.err,
-        room: room ? { code: room.code, role: room.role, game: room.game, phase: room.phase, round: room.round, peer: room.peer ? { ...room.peer } : null, stats: room.stats(), wantAgain: room.wantAgain, peerAgain: room.peerAgain } : null,
+        phase: N.phase, peerScore: N.peerScore, error: N.err, match: { ...N.match }, lost: !!N.lost,
+        room: room ? { code: room.code, role: room.role, game: room.game, phase: room.phase, round: room.round, peer: room.peer ? { ...room.peer } : null, stats: room.stats(), wantAgain: room.wantAgain, peerAgain: room.peerAgain,
+          best: room.best, match: room.match, lost: room.lost, friend: room.friend } : null,
       } : null;
     };
 
@@ -478,18 +595,25 @@ defineApp({
       if (view === S.view) return;
       if (S.view === 'classic' && view !== 'classic') leaveClassic();
       if (S.view === 'play' && view !== 'play') {
+        closeOptions(false);
         stopRound();
         leaveOnline();
         S.game = null;
+        S.round = null;
+        remap.release();
+        paintGoal();
         shareKit.sync(null);
         if (document.fullscreenElement === play) document.exitFullscreen().catch(() => {});
       }
       if (S.view === 'watch' && view !== 'watch') stopWatch();
-      if (S.view === 'clips') { S.clipsToken++; revokeClipUrls(); }   /* the players go with the tab */
+      if (S.view === 'clips') { S.clipsToken++; revokeClipUrls(); closeTrim(); }   /* the players go with the tab */
+      if (S.view === 'friends') leaveFriends();
       S.view = view;
       paintView();
       if (view === 'games') { paintFilters(); paintGrid(); }
       if (view === 'clips') paintClips();
+      if (view === 'stats') paintStats();
+      if (view === 'friends') paintFriends();
     }
 
     function paintView() {
@@ -502,15 +626,17 @@ defineApp({
       classicSlot.hidden = !classic;
       shell.classList.toggle('is-playing', playing || classic);
       filtersEl.hidden = S.view !== 'games';
-      tabGames.classList.toggle('is-on', S.view === 'games');
-      tabClips.classList.toggle('is-on', S.view === 'clips');
-      tabGames.setAttribute('aria-selected', String(S.view === 'games'));
-      tabClips.setAttribute('aria-selected', String(S.view === 'clips'));
-      tabGames.tabIndex = S.view === 'clips' ? -1 : 0;
-      tabClips.tabIndex = S.view === 'clips' ? 0 : -1;
-      main.setAttribute('aria-labelledby', S.view === 'clips' ? tabClips.id : tabGames.id);
+      findBar.hidden = S.view !== 'games';
+      const onTab = TABS.includes(S.view) ? S.view : 'games';
+      for (const id of TABS) {
+        tabEls[id].classList.toggle('is-on', id === S.view);
+        tabEls[id].setAttribute('aria-selected', String(id === S.view));
+        tabEls[id].tabIndex = id === onTab ? 0 : -1;
+      }
+      main.setAttribute('aria-labelledby', tabEls[onTab].id);
       const cg = classic ? classics?.current() : null;
-      win.setSubtitle?.(cg ? cg.title : playing && S.game ? S.game.title : S.view === 'clips' ? 'Clips' : '');
+      const sub = { clips: 'Clips', stats: 'Stats', friends: 'Friends' }[S.view] || '';
+      win.setSubtitle?.(cg ? cg.title : playing && S.game ? S.game.title : sub);
       /* the game in this window, for Screen Time (js/core/screentime.js) */
       const now = cg ? { kind: 'arcade', id: `classic-${cg.id}`, title: cg.title, icon: cg.icon || null }
         : playing && S.game ? { kind: 'arcade', id: S.game.id, title: S.game.title, icon: S.game.icon || null } : null;
@@ -523,37 +649,128 @@ defineApp({
     /* ============================ controllers ============================ */
     /* The bridge runs only while a game is on screen and the person has
        the toggle on; it follows the toggle live (store.sub below). */
+    /* A game played with the mouse gets a controller cursor instead of keys
+       (js/arcade/padcursor.js): automatic when it reads no keyboard, or
+       chosen in Options for any pointer game. */
+    const cursorWanted = g => {
+      if (!g || !(g.input.includes('mouse') || g.input.includes('touch'))) return false;
+      const c = OPT.gamePrefs(g.id).cursor;
+      return c ?? !g.input.includes('keyboard');
+    };
+    let pcur = null;
     function syncPad() {
-      const want = !S.dead && S.view === 'play' && padmap.isEnabled();
+      const on = !S.dead && S.view === 'play' && padmap.isEnabled();
+      const cur = on && cursorWanted(S.game);
+      const want = on && !cur;
       if (want && !S.padOn) {
-        try { padmap.start({ target: window }); S.padOn = true; } catch (err) { console.error('[arcade] padmap', err); }
+        /* the game's own mapping profile, if it has one (Controller Center), read as it runs */
+        try { padmap.start({ target: window, game: () => S.game?.id || null }); S.padOn = true; } catch (err) { console.error('[arcade] padmap', err); }
       } else if (!want && S.padOn) {
         S.padOn = false;
         try { padmap.stop(); } catch (err) { /* already stopped */ }
       }
+      if (cur) {
+        if (!pcur) pcur = padCursor({ host: stage, gate: () => !S.dead && S.view === 'play' && padmap.appInFront('arcade') && document.visibilityState !== 'hidden' });
+        pcur.start();
+      } else pcur?.stop();
+      S.cursorOn = !!cur;
       paintPad();
     }
+    offs.push(() => pcur?.destroy());
 
     function paintPad() {
       clear(padSlot);
       if (S.dead || S.view !== 'play') return;
       let n = 0;
       try { n = padmap.connectedPads().length; } catch (err) { n = 0; }
+      if (S.cursorOn) {
+        const tip = n ? 'Your controller moves a pointer in this game: left stick or D-pad to move, A to click, B to right-click.'
+          : '"Play keyboard games with a controller" is on: connect a controller and it moves a pointer in this game.';
+        padSlot.append(h('span.arc-pad', { title: tip, role: 'status', 'aria-label': tip, dataset: { pad: n ? 'cursor' : 'waiting' } },
+          icon('gamepad'), h('span', { text: n ? tr('Controller cursor') : tr('Controller on') })));
+        return;
+      }
+      /* the bridge is on but nothing is plugged in: a quiet icon, so it is clear a pad would work */
+      if (!n && S.padOn) {
+        const tip = '"Play keyboard games with a controller" is on: connect a controller and it drives this game.';
+        padSlot.append(h('span.arc-pad.arc-pad--idle', { title: tip, role: 'status', 'aria-label': tip, dataset: { pad: 'waiting' } }, icon('gamepad'), h('span', { text: tr('Controller on') })));
+        return;
+      }
       if (!n) return;
       if (S.padOn) {
-        const map = padmap.getConfig().mapping;
+        const own = padmap.hasProfile(S.game?.id);
+        const map = padmap.mappingFor(S.game?.id);
         const lab = id => padmap.codeLabel(map[id]) || 'nothing';
-        const tip = `Your controller drives this game: D-pad and left stick → arrow keys, A → ${lab('a')}, B → ${lab('b')}, Start → ${lab('start')}. Change it in Controller Center.`;
-        padSlot.append(h('span.arc-pad', { title: tip, role: 'status', 'aria-label': `Controller connected. ${tip}` },
-          icon('gamepad'), h('span', { text: 'Controller connected' })));
+        const tip = `Your controller drives this game${own ? ' with its own mapping' : ''}: A → ${lab('a')}, B → ${lab('b')}, Start → ${lab('start')}, D-pad up → ${lab('up')}. Change it in Controller Center.`;
+        padSlot.append(h('span.arc-pad', { title: tip, role: 'status', 'aria-label': tr('Controller connected. {tip}', { tip }), dataset: { pad: 'keys' } },
+          icon('gamepad'), h('span', { text: tr('Controller connected') })));
       } else {
         const tip = 'A controller is connected, but "Play keyboard games with a controller" is off, so it does nothing here. Click to turn it on.';
         padSlot.append(h('button.arc-pad.arc-pad--off', {
           type: 'button', title: tip, 'aria-label': tip,
           onclick: () => { padmap.setEnabled(true); focusStage(); },
-        }, icon('gamepad'), h('span', { text: 'Controller found · use it' })));
+        }, icon('gamepad'), h('span', { text: tr('Controller found · use it') })));
       }
     }
+    /* remapped keys (Options › Keys): only while a game is on screen, in front, with Options closed */
+    const remap = remapper({
+      active: () => !S.dead && S.view === 'play' && !S.optsOpen && !!S.game && win.el.classList.contains('is-active'),
+      map: () => (S.game ? OPT.gamePrefs(S.game.id).keys : {}),
+    });
+    offs.push(() => remap.stop());
+
+    /* on-screen buttons for keyboard games (index.js touchKeys): on by default on a touch screen */
+    let tk = null;
+    function paintTouch() {
+      tk?.release();
+      tk = null;
+      clear(tkSlot);
+      const g = S.game;
+      if (S.dead || !g?.touchKeys || S.view !== 'play') return;
+      const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+      if (!(OPT.gamePrefs(g.id).touch ?? coarse)) return;
+      tk = touchKeys(h, icon, g.touchKeys, `${g.title}: on-screen buttons`);
+      tkSlot.append(tk.el);
+    }
+    offs.push(() => tk?.release());
+
+    /* ---------- the Options card ---------- */
+    let optsUI = null;
+    function openOptions() {
+      if (!S.game || optsUI || S.dead) return;
+      S.optsPaused = S.status === 'playing' && !!S.inst?.pause;
+      if (S.optsPaused) pause();
+      S.optsOpen = true;
+      optsUI = optionsCard({
+        h, icon, game: S.game, ARCADE,
+        onRestart: () => { closeOptions(false); if (S.online) return; startRound(); },
+        onClose: () => closeOptions(true),
+        onChange: what => {
+          if (what === 'hudBig') paintHudSize();
+          else if (what === 'touch') paintTouch();
+          else if (what === 'cursor') syncPad();
+        },
+      });
+      optsLayer.replaceChildren(optsUI.el);
+      optsLayer.hidden = false;
+      optsBtn.setAttribute('aria-expanded', 'true');
+      setTimeout(() => optsUI?.el.querySelector('button,input')?.focus({ preventScroll: true }), 30);
+    }
+    function closeOptions(resumeToo) {
+      if (!optsUI) return;
+      optsUI.destroy();
+      optsUI = null;
+      optsLayer.replaceChildren();
+      optsLayer.hidden = true;
+      optsBtn.setAttribute('aria-expanded', 'false');
+      S.optsOpen = false;
+      const was = S.optsPaused;
+      S.optsPaused = false;
+      if (resumeToo && was && S.status === 'paused') resume();
+      else if (resumeToo) setTimeout(() => { if (!S.dead && S.view === 'play' && !overlay.contains(document.activeElement)) optsBtn.focus({ preventScroll: true }); }, 0);
+    }
+    const paintHudSize = () => shell.classList.toggle('arc--hudbig', OPT.prefs().hudBig);
+
     const onPads = () => { if (!S.dead) paintPad(); };
     window.addEventListener('gamepadconnected', onPads);
     window.addEventListener('gamepaddisconnected', onPads);
@@ -577,10 +794,23 @@ defineApp({
     }
 
     /* ============================ home ============================ */
+    /* the games this device has played (a launch, a round, or a best from before the
+       rounds were counted) and the starred ones: what the filters need (F in FILTERS) */
+    function playedSet() {
+      const out = new Set();
+      const d = store.get('portal.play', {})?.distinct || {};
+      for (const k of Object.keys(d)) if (k.startsWith('arcade:')) { const g = arcadeById(k.slice(7)); if (g) out.add(g.id); }
+      for (const id of Object.keys(records.allStats())) out.add(id);
+      for (const [id, n] of Object.entries(readState().best || {})) if (Number.isFinite(n)) out.add(id);
+      return out;
+    }
+    const filterCtx = () => ({ fav: new Set(records.favs()), played: playedSet() });
+
     function paintFilters() {
       clear(filtersEl);
+      const F = filterCtx();
       for (const f of FILTERS) {
-        const n = f.count ? f.count() : ARCADE.filter(f.test).length;
+        const n = f.count ? f.count() : ARCADE.filter(g => f.test(g, F)).length;
         filtersEl.append(h('button.arc-chip', {
           type: 'button', class: f.id === S.filter ? 'is-on' : '',
           'aria-pressed': String(f.id === S.filter), title: f.title || null,
@@ -605,7 +835,7 @@ defineApp({
       }).catch(err => {
         console.error('[arcade] free classics', err);
         slot.dataset.state = 'error';
-        slot.append(h('div.arc-note', icon('alert'), h('span', { text: 'Free Classics could not load. Check your connection and open the Arcade again.' })));
+        slot.append(h('div.arc-note', icon('alert'), h('span', { text: tr('Free Classics could not load. Check your connection and open the Arcade again.') })));
       });
     }
 
@@ -615,82 +845,175 @@ defineApp({
       classics?.view.remove();
     }
 
-    function openClassic(id) {
+    /* opts.own: "Play your own copy" — the player picks their own game files first */
+    function openClassic(id, opts = {}) {
       return classicsReady().then(ui => {
         if (S.dead || !ui) return;
         /* the same game again (the Library, a Desktop icon): carry on, do not restart it */
-        if (S.view === 'classic' && ui.current()?.id === id) { ui.focus(); return; }
+        if (S.view === 'classic' && ui.current()?.id === id && !opts.own) { ui.focus(); return; }
         if (S.view === 'play' || S.view === 'clips' || S.view === 'watch') go('games');
         if (document.fullscreenElement === play) document.exitFullscreen().catch(() => {});
-        if (!ui.open(id)) return;
+        if (!ui.open(id, opts)) return;
         /* in the page only while a game is open: it shares the HUD's classes with the Arcade's own player */
         classicSlot.append(ui.view);
         S.view = 'classic';
         paintView();
-      }).catch(err => notify({ icon: 'alert', title: 'That game could not open', message: err?.message || String(err) }));
+      }).catch(err => notify({ icon: 'alert', title: tr('That game could not open'), message: err?.message || String(err) }));
+    }
+
+    /* the grid's order (SORTS): by name, or by this device's own history — games never played keep the shelf's order at the end */
+    function sorted(list) {
+      if (S.sort === 'az') return list.slice().sort((a, b) => a.title.localeCompare(b.title));
+      const rank = new Map();
+      if (S.sort === 'recent') {
+        plays.recent(80, 'arcade').forEach((r, i) => { const g = arcadeById(r.id); if (g && !rank.has(g.id)) rank.set(g.id, -1e12 + i); });
+        for (const [id, st] of Object.entries(records.allStats())) if (!rank.has(id) && st?.last) rank.set(id, -st.last / 1e3);
+      } else if (S.sort === 'most') {
+        const counts = store.get('portal.play', {})?.counts || {};
+        for (const g of ARCADE) {
+          const n = (Number.isInteger(counts[`arcade:${g.id}`]) ? counts[`arcade:${g.id}`] : 0) + (records.statsOf(g.id)?.n || 0);
+          if (n > 0) rank.set(g.id, -n);
+        }
+      } else return list;
+      const at = new Map(list.map((g, i) => [g.id, i]));
+      return list.slice().sort((a, b) => (rank.get(a.id) ?? 1e15 + at.get(a.id)) - (rank.get(b.id) ?? 1e15 + at.get(b.id)));
     }
 
     function paintGrid() {
       clear(main);
       const f = filterOf(S.filter);
-      if (f.id === 'freeclassics') { appendClassicShelf(); return; }
-      /* the puzzle of the day is its own card on top, not a cabinet in the grid */
-      const withDaily = (f.id === 'all' || f.id === 'puzzle') && !!arcadeById('daily');
-      if (withDaily) { const c = dailyCard(); if (c) main.append(c); }
-      const list = ARCADE.filter(f.test).filter(g => !(withDaily && g.id === 'daily'));
+      const q = (S.q || '').trim();
+      if (f.id === 'freeclassics' && !q) { appendClassicShelf(); return; }
+      const F = filterCtx();
+      const plain = !q && f.id === 'all';
+      /* the puzzle of the day and the week's challenge are their own cards on top, not cabinets in the grid */
+      const withDaily = !q && (f.id === 'all' || f.id === 'puzzle') && !!arcadeById('daily');
+      if (withDaily) { const c = dailyCard(); if (c) main.append(c); const w = wordCard(); if (w) main.append(w); }
+      if (plain) { const w = weeklyCard(); if (w) main.append(w); const r = recentRow(); if (r) main.append(r); }
+      const list = sorted(ARCADE.filter(g => (q ? matches(g, q) : true) && (f.id === 'freeclassics' || f.test(g, F)))
+        .filter(g => !(withDaily && (g.id === 'daily' || g.id === 'dailyword'))));
       if (!list.length && withDaily) return;
       if (!list.length) {
-        main.append(h('div.arc-empty', icon('gamepad'), h('b', { text: 'Nothing in this filter' }),
-          h('small', { text: 'Try All.' })));
+        const [title, hint] = q ? [`No game matches “${q}”`, f.id === 'all' ? 'Try another word.' : 'Try another word, or All.']
+          : f.id === 'fav' ? ['No favourites yet', 'Press the star on a game’s card to keep it here.']
+            : f.id === 'never' ? ['You’ve played every game here', 'Nice. Everything shows under All.']
+              : ['Nothing in this filter', 'Try All.'];
+        main.append(h('div.arc-empty', icon(f.id === 'fav' ? 'star' : 'gamepad'), h('b', { text: title }), h('small', { text: hint })));
         return;
       }
+      if (q) main.append(h('div.arc-found', { role: 'status', text: `${list.length} game${list.length === 1 ? '' : 's'} for “${q}”` }));
       main.append(h('div.arc-grid', list.map(cabinet)));
-      if (f.id === 'all') appendClassicShelf();
+      if (plain) appendClassicShelf();
+    }
+
+    /* ---------- Recently played: this device's last few Arcade games ---------- */
+    function recentRow() {
+      const seen = new Set();
+      const list = [];
+      for (const r of plays.recent(40, 'arcade')) {
+        const g = arcadeById(r.id);
+        if (!g || seen.has(g.id)) continue;
+        seen.add(g.id);
+        list.push({ g, at: r.at });
+        if (list.length >= 6) break;
+      }
+      if (!list.length) return null;
+      return h('section.arc-recent', { 'aria-label': tr('Recently played') },
+        h('div.arc-recent__head', icon('clock'), h('span', { text: tr('Recently played') })),
+        h('div.arc-recent__row', list.map(({ g, at }) => {
+          const best = getBest(g.id);
+          const su = shortUnit(g.id);
+          return h('button.arc-recent__tile', {
+            type: 'button', style: { '--h': g.hue }, dataset: { game: g.id },
+            'aria-label': `${g.title}, played ${api.fmt.fmtAgo(at)}${best !== null ? `, your best ${fmtN(best)}` : ''}`,
+            onclick: () => launch(g.id),
+          },
+            h('span.arc-recent__ic', icon(g.icon)),
+            h('span.arc-recent__txt', h('b', { text: g.title }), h('small', { text: `${api.fmt.fmtAgo(at)}${best !== null ? ` · best ${fmtN(best)}${su ? ` ${su}` : ''}` : ''}` })));
+        })));
     }
 
     /* ---------- Today's puzzle ---------- */
     function dailyCard() {
       let st;
-      try { st = daily.status(); } catch (err) { console.error('[arcade] daily', err); return null; }
+      /* the level picked last (the game's mode): its puzzle, its board */
+      try { st = daily.status(undefined, prefMode(arcadeById('daily'))); } catch (err) { console.error('[arcade] daily', err); return null; }
       const when = parseDay(st.day);
       const short = when.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
       const long = when.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
       const art = h('canvas.arc-daily__art', { 'aria-hidden': 'true' });
       drawDaily(art, st);
       const state = st.solved
-        ? h('span.arc-daily__state.is-solved', icon('check'), h('span', { text: `Solved · ${dur(st.ms)}` }))
+        ? h('span.arc-daily__state.is-solved', icon('check'), h('span', { text: tr('Solved · {time}', { time: dur(st.ms) }) }))
         : st.started
           ? h('span.arc-daily__state', icon('clock'), h('span', { text: `In progress · ${dur(st.ms)}` }))
-          : h('span.arc-daily__state.is-new', icon('play', { fill: true }), h('span', { text: 'Play today’s puzzle' }));
+          : h('span.arc-daily__state.is-new', icon('play', { fill: true }), h('span', { text: tr('Play today’s puzzle') }));
       const days = n => `${n} day${n === 1 ? '' : 's'}`;
-      const streak = h('span.arc-daily__streak', { title: `Days in a row you have solved it on this device · best ${days(st.best)}` },
-        icon('flame'), h('b', { text: String(st.streak) }), h('span', { text: 'day streak' }),
-        st.best > st.streak ? h('small', { text: `best ${st.best}` }) : null);
+      const streak = h('span.arc-daily__streak', { title: `Daily streak: days in a row you solved a daily puzzle (Daily Stars at any level, or Daily Word) on this device · best ${days(st.best)}` },
+        icon('flame'), h('b', { text: String(st.streak) }), h('span', { text: tr('day streak') }),
+        st.best > st.streak ? h('small', { text: tr('best {best}', { best: st.best }) }) : null);
       const label = [
-        `Today’s puzzle: Daily Stars for ${long}, ${st.n} by ${st.n}`,
-        st.solved ? `Solved in ${dur(st.ms)}` : st.started ? `In progress, ${dur(st.ms)} so far` : 'Not started',
+        `Today’s puzzle: Daily Stars for ${long}, ${LEVEL_NAME[st.level]}, ${st.n} by ${st.n}`,
+        st.solved ? tr('Solved in {time}', { time: dur(st.ms) }) : st.started ? tr('In progress, {time} so far', { time: dur(st.ms) }) : tr('Not started'),
         `Streak ${days(st.streak)}, best ${days(st.best)}`,
       ].join('. ');
       return h('button.arc-daily', {
         type: 'button', 'aria-label': label, style: { '--h': arcadeById('daily')?.hue ?? 45 },
         dataset: { solved: String(!!st.solved), day: st.day }, onclick: () => launch('daily'),
       },
-        h('span.arc-daily__screen', art, st.solved ? h('span.arc-daily__tick', { title: 'Solved today' }, icon('check')) : null),
+        h('span.arc-daily__screen', art, st.solved ? h('span.arc-daily__tick', { title: tr('Solved today') }, icon('check')) : null),
         h('span.arc-daily__body',
-          h('span.arc-daily__kicker', icon('calendar'), h('span', { text: `Today’s puzzle · ${short}` })),
-          h('span.arc-daily__title', h('span', { text: 'Daily Stars' }), h('small', { text: `${st.n}×${st.n}` })),
-          h('span.arc-daily__blurb', { text: 'A new puzzle every day — the same one for everyone who plays today. Your time and streak stay on this device.' })),
+          h('span.arc-daily__kicker', icon('calendar'), h('span', { text: tr('Today’s puzzle · {short}', { short }) })),
+          h('span.arc-daily__title', h('span', { text: tr('Daily Stars') }), h('small', { text: `${LEVEL_NAME[st.level]} ${st.n}×${st.n}` })),
+          h('span.arc-daily__blurb', { text: tr('A new puzzle every day at Easy, Normal and Hard: the same puzzle for everyone on the same date. Your streak stays on this device.') })),
+        h('span.arc-daily__side', state, streak));
+    }
+    /* Today's word: Daily Word's state, shown as colours only (letters would give the word away) */
+    function wordCard() {
+      if (!arcadeById('dailyword')) return null;
+      let st;
+      try { st = dword.status(); } catch (err) { console.error('[arcade] daily word', err); return null; }
+      const short = parseDay(st.day).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+      const days = n => `${n} day${n === 1 ? '' : 's'}`;
+      const tries = n => `${n} ${n === 1 ? 'try' : 'tries'}`;
+      const ds = daily.dailyStreak();
+      const state = st.done
+        ? st.won
+          ? h('span.arc-daily__state.is-solved', icon('check'), h('span', { text: `Solved in ${tries(st.guesses)}` }))
+          : h('span.arc-daily__state', icon('x'), h('span', { text: tr('Out of tries') }))
+        : st.started
+          ? h('span.arc-daily__state', icon('clock'), h('span', { text: tr('In progress · {guesses} of {TRIES}', { guesses: st.guesses, TRIES: dword.TRIES }) }))
+          : h('span.arc-daily__state.is-new', icon('play', { fill: true }), h('span', { text: tr('Play today’s word') }));
+      const streak = h('span.arc-daily__streak', { title: `Daily streak: days in a row you solved a daily puzzle (Daily Stars or Daily Word) on this device · best ${days(ds.best)}. Daily Word’s own: ${days(st.streak)}.` },
+        icon('flame'), h('b', { text: String(ds.cur) }), h('span', { text: tr('day streak') }));
+      const tiles = h('span.arc-dword__grid', { 'aria-hidden': 'true' },
+        Array.from({ length: dword.TRIES }, (_, r) => Array.from({ length: dword.LENGTH }, (_, c) => h('i', { dataset: { s: st.marks[r]?.[c] ?? '' } }))).flat());
+      const label = [
+        `Today’s word: Daily Word for ${short}`,
+        st.done ? (st.won ? tr('Solved in {tries}', { tries: tries(st.guesses) }) : tr('Out of tries')) : st.started ? tr('In progress, {guesses} of {TRIES} tries used', { guesses: st.guesses, TRIES: dword.TRIES }) : tr('Not started'),
+        `Daily streak ${days(ds.cur)}`,
+      ].join('. ');
+      return h('button.arc-dword', {
+        type: 'button', 'aria-label': label, style: { '--h': arcadeById('dailyword')?.hue ?? 150 },
+        dataset: { done: String(!!st.done), won: String(!!st.won), day: st.day }, onclick: () => launch('dailyword'),
+      },
+        h('span.arc-daily__screen.arc-dword__screen', tiles, st.won ? h('span.arc-daily__tick', { title: tr('Solved today') }, icon('check')) : null),
+        h('span.arc-daily__body',
+          h('span.arc-daily__kicker', icon('calendar'), h('span', { text: tr('Today’s word · {short}', { short }) })),
+          h('span.arc-daily__title', h('span', { text: tr('Daily Word') }), h('small', { text: tr('5 letters') })),
+          h('span.arc-daily__blurb', { text: tr('Guess the day’s word in six tries: the same word for everyone on the same date. It counts in your daily streak.') })),
         h('span.arc-daily__side', state, streak));
     }
     function repaintDaily() {
       if (S.dead || S.view !== 'games') return;
       const old = main.querySelector('.arc-daily');
-      if (!old) return;
-      const fresh = dailyCard();
-      if (fresh) old.replaceWith(fresh);
+      if (old) { const fresh = dailyCard(); if (fresh) old.replaceWith(fresh); }
+      const oldW = main.querySelector('.arc-dword');
+      if (oldW) { const fresh = wordCard(); if (fresh) oldW.replaceWith(fresh); }
     }
     let dailyDay = dayKey();
     offs.push(store.sub(daily.KEY, () => repaintDaily()));
+    offs.push(store.sub('portal.arcadePuzzles', () => repaintDaily()));
     const dayTimer = setInterval(() => {
       const d = dayKey();
       if (d === dailyDay) return;
@@ -698,6 +1021,83 @@ defineApp({
       repaintDaily();
     }, 30_000);
     offs.push(() => clearInterval(dayTimer));
+
+    /* ---------- This week's challenge (js/arcade/challenge.js): one seeded game for everyone this week ---------- */
+    function weeklyCard() {
+      const W = CH.weekly();
+      const g = arcadeById(W.game);
+      if (!g) return null;
+      const mine = records.weeklyOf(W.week);
+      const days = Math.max(0, Math.ceil((W.end - Date.now()) / 86400_000));
+      const ends = new Date(W.end).toLocaleString(undefined, { weekday: 'long', hour: 'numeric', minute: '2-digit' });
+      const art = h('canvas.arc-week__art', { 'aria-hidden': 'true' });
+      drawArt(art, g);
+      const side = mine && mine.best !== null
+        ? h('span.arc-week__state.is-played', icon('star', { fill: true }), h('span', { text: `Your best ${withUnit(g, mine.best)} · ${mine.tries} ${mine.tries === 1 ? 'try' : 'tries'}` }))
+        : h('span.arc-week__state.is-new', icon('play', { fill: true }), h('span', { text: tr('Not played yet') }));
+      /* its own classes (styled like Today's puzzle in css/feat-arcade-shell.css): .arc-daily is Daily Stars' alone */
+      return h('button.arc-week', {
+        type: 'button', style: { '--h': g.hue }, dataset: { week: W.week, game: g.id },
+        'aria-label': `This week’s challenge: ${g.title}, the same course for everyone until ${ends}. ${mine && mine.best !== null ? `Your best this week ${fmtN(mine.best)}, ${mine.tries} tries` : 'Not played yet'}.`,
+        onclick: () => launch(g.id, 1, null, { seed: W.seed, shared: true, weekly: W }),
+      },
+        h('span.arc-week__screen', art),
+        h('span.arc-week__body',
+          h('span.arc-week__kicker', icon('calendar'), h('span', { text: tr('This week’s challenge · {week}', { week: W.week }) })),
+          h('span.arc-week__title', h('span', { text: g.title })),
+          h('span.arc-week__blurb', { text: `The same ${g.title} course for everyone this week, worked out from the date — no server. ${days <= 1 ? 'A new one comes on Monday.' : `${days} days left; a new one comes on Monday (00:00 UTC).`}` })),
+        h('span.arc-week__side', side));
+    }
+
+    /* ---------- Stats and Friends tabs (js/arcade/statsview.js, friendsview.js) ---------- */
+    const ago = at => api.fmt.fmtAgo(at);
+    function paintStats() {
+      clear(main);
+      main.append(statsView({ h, icon, ARCADE, records, withUnit, ago, onPlay: id => launch(id) }));
+    }
+    let friendsUI = null;
+    function paintFriends(focusCup = null) {
+      leaveFriends();
+      clear(main);
+      friendsUI = friendsView({
+        h, icon, api, ARCADE, getBest, withUnit, ago, weekly: () => CH.weekly(), weeklyMine: w => records.weeklyOf(w),
+        onPlay: (id, round) => launch(id, 1, null, round), focusCup,
+      });
+      main.append(friendsUI.el);
+    }
+    function leaveFriends() { friendsUI?.destroy(); friendsUI = null; }
+    offs.push(() => leaveFriends());
+
+    /* ---------- friends, for the result card (core/friends.js is only touched once someone has friends) ---------- */
+    let FR = null;
+    import('../core/friends.js').then(m => { FR = m; }).catch(() => {});
+    const friendsReady = () => !!FR && FR.available() && FR.started?.() && FR.friends().length > 0;
+    const friendsList = () => (friendsReady() ? FR.friends() : []);
+    async function shareBest(g) {
+      const best = getBest(g.id);
+      if (best === null) return;
+      const FPm = await import('../arcade/friendplay.js');
+      const r = await FPm.shareBests([[g.id, best]]);
+      notify(r.unavailable ? { icon: 'alert', title: tr('Friends aren’t available here'), message: tr('A guest has no friends list.') }
+        : { icon: 'users', title: tr('Shared your {title} best', { title: g.title }), message: `${withUnit(g, best)} went to ${r.total} friend${r.total === 1 ? '' : 's'}’ leaderboards. Stop sharing it any time in Arcade › Friends.` });
+    }
+    async function sendBeat(f, g, r) {
+      const FPm = await import('../arcade/friendplay.js');
+      const out = await FPm.sendBeat(f.fp, g.id, r.seed, r.score, g.mode && !g.first ? g.mode.id : '');
+      notify({ icon: 'send', title: out.total ? tr('Challenge sent to {display}', { display: f.display }) : tr('That challenge couldn’t be sent'), message: out.total ? `${g.title} · beat ${withUnit(g, r.score)}. ${out.sent ? '' : 'They get it when the live connection is back.'}`.trim() : tr('They may no longer be your friend.') });
+    }
+    /* a cup match ended: friendplay sends it to the host (or, for the host, writes it in) — the card shows what happened */
+    function cupReport(cup, score) {
+      const tok = S.token;
+      import('../arcade/friendplay.js').then(m => m.reportCup(cup.id, score)).then(text => {
+        if (!text || S.dead || !S.result || S.token !== tok) return;
+        S.result.cup = text;
+        if (S.status === 'over') setStatus('over');
+      }).catch(() => {});
+      /* one round a match: after this, Try again is plain practice on the same course */
+      if (S.round) S.round = { ...S.round, cup: null, practice: cup };
+      return 'Sending your score…';
+    }
 
     function inputIcon(k) {
       const d = INPUTS[k];
@@ -709,20 +1109,24 @@ defineApp({
     function cabinet(g) {
       const best = getBest(g.id);
       const two = g.players.includes(2);
+      /* two players only online (Battleship): still a 2-player game */
+      const duelOnly = !two && g.online === 'duel';
       const art = h('canvas.arc-cab__art', { 'aria-hidden': 'true' });
       drawArt(art, g);
       const inputs = g.input.map(k => INPUTS[k]?.label).filter(Boolean).join(', ');
+      /* the same test as the Online filter: a room-code game, or one played only online (Sketch & Guess) */
+      const onlineish = !!g.online || g.tags.includes('multiplayer');
       const label = [
         `${g.title}. ${g.blurb.replace(/[.!?]+$/, '')}`,
-        two ? '1 or 2 players' : '1 player',
-        g.online ? 'can be played online with a friend' : null,
+        two ? '1 or 2 players' : duelOnly ? '1 player, or 2 online' : '1 player',
+        g.online ? 'can be played online with a friend' : onlineish ? 'played online with friends' : null,
         inputs,
         `about ${g.minutes} minute${g.minutes === 1 ? '' : 's'}`,
         best !== null ? `your best ${fmtN(best)}${g.better === 'low' ? ', lower is better' : ''}` : 'no score yet',
       ].filter(Boolean).join('. ');
       const su = shortUnit(g.id);
       const more = h('button.arc-cab__more', {
-        type: 'button', 'aria-label': `More for ${g.title}`, title: 'More', 'aria-haspopup': 'menu',
+        type: 'button', 'aria-label': tr('More for {title}', { title: g.title }), title: tr('More'), 'aria-haspopup': 'menu',
         onclick: e => {
           e.stopPropagation();
           const r = more.getBoundingClientRect();
@@ -747,19 +1151,25 @@ defineApp({
           h('span.arc-cab__badge', icon(g.icon)),
           best !== null
             ? h('span.arc-cab__best', { title: `Your best on this device${unitOf(g.id) ? `, in ${unitOf(g.id)}` : ''}${g.better === 'low' ? ' (lower is better)' : ''}` },
-              icon('star', { fill: true }), h('b', { text: fmtN(best) + (su ? ` ${su}` : '') }), g.better === 'low' ? h('small', { text: 'low wins' }) : null)
+              icon('star', { fill: true }), h('b', { text: fmtN(best) + (su ? ` ${su}` : '') }), g.better === 'low' ? h('small', { text: tr('low wins') }) : null)
             : null,
           h('span.arc-cab__go', icon('play', { fill: true }))),
         h('div.arc-cab__body',
           h('div.arc-cab__title', { text: g.title }),
           h('div.arc-cab__blurb', { text: g.blurb }),
           h('div.arc-cab__meta',
-            h('span.arc-meta', { title: two ? '1 or 2 players on this device' : '1 player' },
-              icon(two ? 'users' : 'user'), h('span', { text: two ? '1–2P' : '1P' })),
-            g.online ? h('span.arc-meta.arc-meta--online', { title: 'Play a friend on another device with a room code' },
-              icon('globe'), h('span', { text: 'Online' })) : null,
+            h('span.arc-meta', { title: two ? tr('1 or 2 players on this device') : duelOnly ? tr('1 player against the computer, or 2 online') : tr('1 player') },
+              icon(two || duelOnly ? 'users' : 'user'), h('span', { text: two || duelOnly ? '1–2P' : '1P' })),
+            onlineish ? h('span.arc-meta.arc-meta--online', { title: g.online ? tr('Play a friend on another device with a room code') : tr('Played online, with friends on their own devices') },
+              icon('globe'), h('span', { text: tr('Online') })) : null,
             h('span.arc-meta.arc-meta--in', g.input.map(inputIcon)),
-            h('span.arc-meta.arc-meta--min', { title: 'A typical round' }, icon('clock'), h('span', { text: `~${g.minutes} min` })))));
+            h('span.arc-meta.arc-meta--min', { title: tr('A typical round') }, icon('clock'), h('span', { text: tr('~{minutes} min', { minutes: g.minutes }) })))));
+      const faved = records.isFav(g.id);
+      const fav = h('button.arc-cab__fav', {
+        type: 'button', class: faved ? 'is-on' : '', 'aria-pressed': String(faved), dataset: { fav: g.id },
+        'aria-label': tr('Favourite: {title}', { title: g.title }), title: faved ? tr('In your favourites') : tr('Add to favourites'),
+        onclick: e => { e.stopPropagation(); toggleFav(g); },
+      }, icon('star', { fill: faved }));
       return h('div.arc-cab', {
         style: { '--h': g.hue }, dataset: { game: g.id },
         oncontextmenu: e => {
@@ -768,7 +1178,24 @@ defineApp({
           if (!e.clientX && !e.clientY) { const r = main.getBoundingClientRect(); cabMenu(g, r.left + 16, r.top + 40); }
           else cabMenu(g, e.clientX, e.clientY);
         },
-      }, main, more);
+      }, main, fav, more);
+    }
+
+    function toggleFav(g) {
+      const on = records.toggleFav(g.id);
+      /* repaint just what shows it: the card's star and the filter counts (the Favourites filter repaints its grid) */
+      for (const b of main.querySelectorAll(`[data-fav="${CSS.escape(g.id)}"]`)) {
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', String(on));
+        b.title = on ? 'In your favourites' : 'Add to favourites';
+        b.replaceChildren(icon('star', { fill: on }));
+      }
+      paintFilters();
+      if (S.filter === 'fav') {
+        const keep = document.activeElement?.dataset?.fav;
+        paintGrid();
+        if (keep) main.querySelector(`[data-fav="${CSS.escape(keep)}"]`)?.focus({ preventScroll: true });
+      }
     }
 
     function cabMenu(g, x, y) {
@@ -777,12 +1204,14 @@ defineApp({
       const two = g.players.includes(2);
       api.menu([
         { header: true, label: g.title },
-        { label: 'Play', icon: 'play', onClick: () => launch(g.id, 1) },
-        two ? { label: 'Play with 2 players', icon: 'users', hint: 'same device', onClick: () => launch(g.id, 2) } : null,
-        g.online ? { label: 'Play a friend online', icon: 'globe', hint: 'room code', onClick: () => launch(g.id, 'online') } : null,
+        { label: tr('Play'), icon: 'play', onClick: () => launch(g.id, 1) },
+        two ? { label: tr('Play with 2 players'), icon: 'users', hint: 'same device', onClick: () => launch(g.id, 2) } : null,
+        g.online ? { label: tr('Play a friend online'), icon: 'globe', hint: 'room code', onClick: () => launch(g.id, 'online') } : null,
+        g.ghosts && ghostOf(MD.bestKey(g, prefMode(g))) ? { label: tr('Race your best run'), icon: 'ghost', onClick: () => raceGhost(g.id) } : null,
         '-',
-        { label: 'Add to Desktop', icon: 'monitor', onClick: () => addToDesktop(item) },
-        { label: 'Add to collection…', icon: 'bookmark', onClick: () => pickMenu(api, item, x, y) },
+        { label: records.isFav(g.id) ? tr('Remove from favourites') : tr('Add to favourites'), icon: 'star', onClick: () => toggleFav(g) },
+        { label: tr('Add to Desktop'), icon: 'monitor', onClick: () => addToDesktop(item) },
+        { label: tr('Add to collection…'), icon: 'bookmark', onClick: () => pickMenu(api, item, x, y) },
       ].filter(Boolean), x, y);
     }
 
@@ -802,14 +1231,15 @@ defineApp({
 
     async function paintClips() {
       const token = ++S.clipsToken;
+      closeTrim();
       revokeClipUrls();
       clear(main);
       const notes = [];
-      if (!REC.ok) notes.push(h('div.arc-note', icon('info'), h('span', { text: `Recording is not available here. ${REC.why}` })));
-      if (!DB.persistent) notes.push(h('div.arc-note', icon('alert'), h('span', { text: 'This browser is not letting StaticOS store files, so clips only last until you close it.' })));
+      if (!REC.ok) notes.push(h('div.arc-note', icon('info'), h('span', { text: tr('Recording is not available here. {why}', { why: REC.why }) })));
+      if (!DB.persistent) notes.push(h('div.arc-note', icon('alert'), h('span', { text: tr('This browser is not letting StaticOS store files, so clips only last until you close it.') })));
       const head = h('div.arc-clips__head',
-        h('div.arc-clips__title', { text: 'Your clips' }),
-        h('div.arc-clips__sub', { text: 'Press Record while playing a canvas game to keep up to 30 seconds. Clips are saved in this browser only.' }),
+        h('div.arc-clips__title', { text: tr('Your clips') }),
+        h('div.arc-clips__sub', { text: tr('Press Record while playing a canvas game to keep up to 30 seconds. Clips are saved in this browser only.') }),
         notes);
       main.append(head);
       let list = [];
@@ -819,11 +1249,66 @@ defineApp({
       S.clipCount = list.length;
       paintTabs();
       if (!list.length) {
-        main.append(h('div.arc-empty', icon('film'), h('b', { text: 'No clips yet' }),
-          h('small', { text: REC.ok ? 'Start a game and press Record in the bar above it.' : 'This browser cannot record, so there is nothing to show.' })));
+        main.append(h('div.arc-empty', icon('film'), h('b', { text: tr('No clips yet') }),
+          h('small', { text: REC.ok ? tr('Start a game and press Record in the bar above it.') : tr('This browser cannot record, so there is nothing to show.') })));
         return;
       }
-      main.append(h('div.arc-clips', list.map(clipCard)));
+      /* storage: the clips' own bytes, and what the browser says this site uses of what it allows */
+      const used = list.reduce((n, c) => n + c.blob.size, 0);
+      const store2 = h('div.arc-clips__store', { dataset: { bytes: String(used) } }, icon('hard-drive'),
+        h('span', { text: tr('Clips use {size} ({clips})', { size: bytes(used), clips: plu(list.length, '{n} clip', '{n} clips') }) }));
+      navigator.storage?.estimate?.().then(est => {
+        if (!est || !store2.isConnected || !(est.quota > 0)) return;
+        store2.append(h('small', { text: ` · StaticOS uses ${bytes(est.usage || 0)} of the ${bytes(est.quota)} this browser allows it` }));
+      }).catch(() => {});
+      /* filter by game: only games that have clips */
+      const games = [...new Set(list.map(c => c.game))].map(id => ({ id, title: arcadeById(id)?.title || list.find(c => c.game === id)?.title || id }))
+        .sort((a, b) => a.title.localeCompare(b.title));
+      if (S.clipGame && !games.some(x => x.id === S.clipGame)) S.clipGame = '';
+      const pick = h('select.arc-clips__pick', { 'aria-label': tr('Show clips of'), dataset: { k: 'clipgame' }, onchange: () => { S.clipGame = pick.value; paintClips(); } },
+        h('option', { value: '', text: tr('All games ({length})', { length: list.length }) }),
+        games.map(x => h('option', { value: x.id, text: `${x.title} (${list.filter(c => c.game === x.id).length})` })));
+      pick.value = S.clipGame || '';
+      main.append(h('div.arc-clips__bar', h('label.arc-find__sortlab', h('span', { text: tr('Game') }), pick), store2));
+      const shown = S.clipGame ? list.filter(c => c.game === S.clipGame) : list;
+      main.append(h('div.arc-clips', shown.map(clipCard)));
+      const keep = S.clipFocus;
+      S.clipFocus = null;
+      if (keep) main.querySelector(`[data-clip="${CSS.escape(keep.id)}"] [data-act="${keep.act}"]`)?.focus({ preventScroll: true });
+    }
+
+    /* ---------- rename and trim ---------- */
+    async function renameClip(c) {
+      const name = await askName(api, { title: tr('Rename this clip'), label: tr('Clip name'), value: c.title || '', ok: tr('Rename'), hint: `${arcadeById(c.game)?.title || 'Arcade'} · ${dur(c.durationMs || 0)}` });
+      const t = String(name ?? '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 60);
+      if (!t || t === c.title || S.dead) return;
+      try { await DB.kv('clips').set(c.id, { ...c, title: t }); } catch (err) { notify({ icon: 'alert', title: tr('Could not rename the clip'), message: err.message }); return; }
+      S.clipFocus = { id: c.id, act: 'rename' };
+      bus.emit('clips:change', { id: c.id, kind: 'rename' });
+    }
+    let trimUI = null;
+    function closeTrim() { trimUI?.destroy(); trimUI = null; }
+    offs.push(() => closeTrim());
+    function openTrim(c) {
+      closeTrim();
+      S.clipsToken++;
+      revokeClipUrls();
+      clear(main);
+      trimUI = clipTrimmer({
+        h, icon, clip: c,
+        onClose: () => { closeTrim(); S.clipFocus = { id: c.id, act: 'trim' }; paintClips(); },
+        onSave: async ({ blob, mime, ms }, replace) => {
+          const clip = replace ? { ...c, blob, mime, durationMs: ms }
+            : { id: `clip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, game: c.game, title: tr('{title} (trimmed)', { title: c.title }).slice(0, 60), at: Date.now(), mime, blob, durationMs: ms };
+          await DB.kv('clips').set(clip.id, clip);
+          notify({ icon: 'film', title: replace ? tr('Clip trimmed') : tr('Trimmed copy saved'), message: `${clip.title} · ${dur(ms)}` });
+          closeTrim();
+          S.clipFocus = { id: clip.id, act: 'trim' };
+          bus.emit('clips:change', { id: clip.id, kind: 'save' });
+        },
+      });
+      main.append(trimUI.el);
+      setTimeout(() => trimUI?.el.querySelector('input')?.focus({ preventScroll: true }), 30);
     }
 
     function clipCard(c) {
@@ -831,7 +1316,7 @@ defineApp({
       S.clipUrls.push(url);
       const meta = arcadeById(c.game);
       const video = h('video.arc-clip__video', {
-        src: url, controls: true, preload: 'metadata', playsinline: true, 'aria-label': `${c.title} clip`,
+        src: url, controls: true, preload: 'metadata', playsinline: true, 'aria-label': tr('{title} clip', { title: c.title }),
       });
       /* Clips saved before the header fix (webmWithDuration) have no
          length: seek to the end once so the player learns it, then come
@@ -859,25 +1344,31 @@ defineApp({
       const d = new Date(c.at || Date.now());
       const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
       const when = d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-      return h('article.arc-clip', { style: { '--h': meta?.hue ?? 300 } },
+      /* a renamed clip still says which game it is */
+      const gameName = meta?.title || '';
+      return h('article.arc-clip', { style: { '--h': meta?.hue ?? 300 }, dataset: { clip: c.id, game: c.game } },
         h('div.arc-clip__frame', video),
         h('div.arc-clip__info',
           h('div.arc-clip__title', h('span.arc-clip__dot'), h('span', { text: c.title || c.game })),
-          h('div.arc-clip__sub', { text: `${when} · ${dur(c.durationMs || 0)} · ${bytes(c.blob.size)}` })),
+          h('div.arc-clip__sub', { text: `${gameName && gameName !== c.title ? `${gameName} · ` : ''}${when} · ${dur(c.durationMs || 0)} · ${bytes(c.blob.size)}` })),
         h('div.arc-clip__acts',
-          h('a.btn.btn--sm', { href: url, download: `static-arcade-${c.game}-${stamp}.${ext}`, 'aria-label': `Download the ${c.title} clip` },
-            icon('download'), h('span', { text: 'Download' })),
-          h('button.btn.btn--sm.btn--ghost', { type: 'button', 'aria-label': `Delete the ${c.title} clip`, onclick: () => deleteClip(c) },
-            icon('trash'), h('span', { text: 'Delete' }))));
+          h('a.btn.btn--sm', { href: url, download: `static-arcade-${c.game}-${stamp}.${ext}`, 'aria-label': tr('Download the {title} clip', { title: c.title }) },
+            icon('download'), h('span', { text: tr('Download') })),
+          h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { act: 'rename' }, 'aria-label': tr('Rename the {title} clip', { title: c.title }), onclick: () => renameClip(c) },
+            icon('edit-3'), h('span', { text: tr('Rename') })),
+          h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { act: 'trim' }, 'aria-label': tr('Trim the {title} clip', { title: c.title }), onclick: () => openTrim(c) },
+            icon('crop'), h('span', { text: tr('Trim') })),
+          h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { act: 'delete' }, 'aria-label': tr('Delete the {title} clip', { title: c.title }), onclick: () => deleteClip(c) },
+            icon('trash'), h('span', { text: tr('Delete') }))));
     }
 
     async function deleteClip(c) {
-      const ok = await api.confirm({ title: 'Delete this clip?', message: `${c.title} · ${dur(c.durationMs || 0)}. It is only stored here, so this cannot be undone.`, ok: 'Delete', danger: true });
+      const ok = await api.confirm({ title: tr('Delete this clip?'), message: tr('{title} · {time}. It is only stored here, so this cannot be undone.', { title: c.title, time: dur(c.durationMs || 0) }), ok: tr('Delete'), danger: true });
       if (!ok || S.dead) return;
       try {
         await DB.kv('clips').del(c.id);
       } catch (err) {
-        notify({ icon: 'alert', title: 'Could not delete the clip', message: err.message });
+        notify({ icon: 'alert', title: tr('Could not delete the clip'), message: err.message });
         return;
       }
       bus.emit('clips:change', { id: c.id, kind: 'delete' });   /* our own listener repaints */
@@ -889,17 +1380,19 @@ defineApp({
       clearTimeout(clipsLater);
       clipsLater = setTimeout(() => {
         if (S.dead) return;
-        if (S.view === 'clips') paintClips(); else refreshClipCount();
+        if (S.view === 'clips' && !trimUI) paintClips(); else refreshClipCount();
       }, 60);
     }));
     offs.push(() => clearTimeout(clipsLater));
 
     /* ============================ play ============================ */
-    /* players: 1 | 2 | 'online'; room: an already-joined room to play in */
-    async function launch(id, players, room = null) {
+    /* players: 1 | 2 | 'online'; room: an already-joined room to play in;
+       round: what the rounds are — { seed, shared, ghost, beat, weekly, cup } (null: ordinary rounds, a fresh seed each) */
+    async function launch(id, players, room = null, round = null) {
       const g = arcadeById(id);
       if (!g || S.dead) return;
-      if (S.view === 'play') stopRound();
+      if (S.view === 'play') { closeOptions(false); stopRound(); }
+      S.round = round && !room && players !== 'online' ? { ...round } : null;
       if (S.view === 'clips') { S.clipsToken++; revokeClipUrls(); clear(main); }
       if (S.view === 'classic') leaveClassic();
       if (S.view === 'watch') stopWatch();
@@ -908,9 +1401,14 @@ defineApp({
       if (S.homeRoom && S.homeRoom !== room) toggleJoinBar(false);   /* a join still knocking from the home screen stops */
       S.game = g;
       S.online = online;
-      S.players = online ? 1 : g.players.includes(Number(players)) ? Number(players) : g.players[0];
+      S.players = online || S.round ? 1 : g.players.includes(Number(players)) ? Number(players) : g.players[0];
+      /* the mode: the one a link or a ghost was made in, the first one for the week, cups and online, else the last one picked */
+      S.mode = !MD.modesOf(g) ? null : S.round && MD.isMode(g, S.round.mode) ? S.round.mode
+        : S.round?.weekly || S.round?.cup || online ? MD.firstMode(g) : prefMode(g);
       S.view = 'play';
       paintView();
+      paintTouch();
+      paintGoal();
       if (online) {
         if (!S.net) netStart(room);
         else if (room && S.net.room === room && room.peer && S.net.phase === 'joining') S.net.phase = 'ready';
@@ -919,6 +1417,8 @@ defineApp({
         return;
       }
       paintHud();
+      /* a round someone else set up (a link, a cup match) waits for Play */
+      if (S.round?.offer) { stopRound(); gameHost.replaceChildren(); setStatus('offer'); return; }
       await startRound();
     }
 
@@ -935,7 +1435,7 @@ defineApp({
           const on = n === 'online' ? S.online : !S.online && S.players === n;
           segEl.append(h('button', {
             type: 'button', class: on ? 'is-on' : '', 'aria-pressed': String(on),
-            title: n === 'online' ? 'Play a friend on another device' : n === 1 ? 'One player' : 'Two players on this device',
+            title: n === 'online' ? tr('Play a friend on another device') : n === 1 ? tr('One player') : tr('Two players on this device'),
             onclick: () => {
               if (on) { focusStage(); return; }
               if (n === 'online') { launch(g.id, 'online'); return; }
@@ -944,9 +1444,10 @@ defineApp({
               paintHud();
               startRound();
             },
-          }, n === 'online' ? icon('globe') : null, h('span', { text: n === 'online' ? 'Online' : `${n}P` })));
+          }, n === 'online' ? icon('globe') : null, h('span', { text: n === 'online' ? tr('Online') : `${n}P` })));
         }
       }
+      paintModes();
       paintRoomChip();
       shareKit.sync(g.id);
       paintBest();
@@ -954,6 +1455,28 @@ defineApp({
       paintRec();
       paintSound();
       paintFs();
+    }
+
+    /* the HUD's Mode menu: fixed while the round is one someone set up (a link, the week, a cup, a ghost) */
+    function paintModes() {
+      const g = S.game, ms = MD.modesOf(g);
+      modeSel.hidden = !ms || S.online;
+      if (!ms) { modeSel.replaceChildren(); return; }
+      modeSel.replaceChildren(...ms.map(m => h('option', { value: m.id, text: m.label, title: m.tip || '' })));
+      const m = MD.modeOf(g, S.mode);
+      modeSel.value = m.id;
+      modeSel.disabled = !!S.round;
+      modeSel.title = S.round ? 'This round’s mode came with it' : `${m.label}${m.tip ? ` · ${m.tip}` : ''} · each mode keeps its own best`;
+    }
+    function switchMode(id) {
+      const g = S.game;
+      if (!g || !MD.isMode(g, id) || S.dead || S.online || S.round) { paintModes(); return; }
+      OPT.setGamePref(g.id, 'mode', id);
+      S.mode = id;
+      paintModes();
+      paintBest();
+      closeOptions(false);
+      startRound();
     }
 
     function paintBest() {
@@ -965,25 +1488,41 @@ defineApp({
         bestLab.textContent = peer ? peer.name : 'Friend';
         bestLab.title = peer ? `${peer.name} — names aren’t verified` : '';
         const ps = S.net?.peerScore;
-        bestEl.textContent = ps === null || ps === undefined ? '—' : fmtN(ps);
+        const kit = S.net?.kit, spec = kit ? raceOf(g.id) : null;
+        /* a puzzle race: how far along they are, not a score */
+        if (spec && spec.rank !== 'score') bestEl.textContent = kit.theirs ? raceHead(spec, kit.theirs) : kit.live.them.at ? `${Math.round(kit.live.them.p * 100)}%` : '—';
+        else bestEl.textContent = ps === null || ps === undefined ? '—' : fmtN(ps);
         bestEl.parentElement.title = peer ? `${peer.name}’s score this round` : 'Your friend’s score, once they join';
         return;
       }
       bestLab.title = '';
-      const best = getBest(g.id);
+      const gm = MD.scoring(g, S.mode);
+      const best = getBest(MD.bestKey(g, S.mode));
       bestEl.textContent = S.players === 2 ? '—' : fmtN(best ?? '—');
-      const su = shortUnit(g.id);
-      scoreLab.textContent = su ? `Score · ${su}` : 'Score';
-      bestLab.textContent = g.better === 'low' ? 'Best ↓' : 'Best';
+      const su = shortFor(gm);
+      scoreLab.textContent = su ? tr('Score · {unit}', { unit: su }) : tr('Score');
+      bestLab.textContent = gm.better === 'low' ? 'Best ↓' : 'Best';
+      const inMode = gm.mode ? ` in ${gm.mode.label}` : '';
       bestEl.parentElement.title = S.players === 2
         ? 'Two-player rounds do not change your best'
-        : g.better === 'low' ? 'Your best on this device — lower is better' : 'Your best on this device';
+        : gm.better === 'low' ? `Your best${inMode} on this device — lower is better` : `Your best${inMode} on this device`;
     }
 
     function setScore(n) {
       S.lastScore = Number.isFinite(n) ? n : null;
       scoreEl.textContent = fmtN(n);
     }
+
+    /* the same words twice in a row are still said twice: clear, then set on the next tick */
+    let srT = 0;
+    function announce(text) {
+      const t = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (!t) return;
+      clearTimeout(srT);
+      srLive.textContent = '';
+      srT = setTimeout(() => { if (!S.dead) srLive.textContent = t; }, 60);
+    }
+    offs.push(() => clearTimeout(srT));
 
     function paintControls() {
       const canPause = !!S.inst?.pause && (S.status === 'playing' || S.status === 'paused');
@@ -1026,14 +1565,36 @@ defineApp({
       const el = h('div.arc-mount');
       gameHost.replaceChildren(el);
       let ended = false;
+      /* the round's seed: the one a link, the week or a ghost asked for, else a fresh one
+         (js/arcade/challenge.js) — so any seeded run can be replayed or shared afterwards */
+      const R = S.round;
+      /* a race the kit runs (js/arcade/race.js): both screens play the room's seed, in the game's standard mode */
+      const spec = net?.room ? raceOf(g.id) : null;
+      const seed = spec ? net.room.seed >>> 0 : g.seeded && !net ? (Number.isInteger(R?.seed) ? R.seed >>> 0 : CH.randomSeed()) : undefined;
+      const gp = OPT.gamePrefs(g.id);
+      const mode = MD.modesOf(g) ? MD.modeOf(g, S.mode).id : null;
+      S.played = { seed, speed: g.speed ? gp.speed : 1, oneButton: !!g.oneButton && gp.oneButton, ghost: R?.ghost || null, mode };
       const gctx = {
         players: S.players,
-        best: S.players === 1 ? getBest(g.id) : null,
-        reduced: reducedMotion(),
+        best: S.players === 1 ? getBest(MD.bestKey(g, mode)) : null,
+        /* the round's mode (index.js `modes`), and a game's own picker asking for another */
+        mode,
+        setMode: id => { if (token === S.token && !S.dead) setTimeout(() => { if (token === S.token) switchMode(id); }, 0); },
+        /* the game's own settings (index.js `settings`): how it looks or feels, read live */
+        get settings() { return MD.settingsOf(g, OPT.gamePrefs(g.id).set); },
+        reduced: reducedMotion() || OPT.prefs().calm,
         accent: accent(),
         get sound() { return soundOn(); },
-        get volume() { return Math.max(0, Math.min(1, (store.get('prefs.volume', 62) || 0) / 100)); },
-        onScore: n => { if (token === S.token && !ended && !S.dead) setScore(n); },
+        /* the system volume, times the Arcade's own game volume (Options) */
+        get volume() { return Math.max(0, Math.min(1, (store.get('prefs.volume', 62) || 0) / 100 * OPT.prefs().volume / 100)); },
+        seed, shared: !!R?.shared || !!spec, ghost: R?.ghost ? Object.freeze({ watch: !!R.ghost.watch, data: R.ghost.data }) : null,
+        get palette() { return g.palette && OPT.prefs().palette === 'cb' ? 'cb' : 'standard'; },
+        get bigText() { return !!g.bigText && OPT.prefs().bigText; },
+        speed: S.played.speed,
+        oneButton: S.played.oneButton,
+        keys: Object.freeze({ ...gp.keys }),
+        announce: text => { if (token === S.token && !S.dead) announce(text); },
+        onScore: n => { if (token === S.token && !ended && !S.dead) { setScore(n); net?.kit?.score(n); } },
         onEnd: r => {
           if (token !== S.token || ended || S.dead) return;
           ended = true;
@@ -1043,9 +1604,25 @@ defineApp({
       if (net && net.room) {
         const room = net.room;
         net.peerScore = null;
+        net.kit?.stop();
+        net.kit = null;
+        if (spec) {
+          const kit = net.kit = raceKit(spec, d => (token === S.token ? room.send(d) : false));
+          kit.on((type, who) => {
+            if (token !== S.token || S.dead || S.net !== net) return;
+            if (spec.rank === 'score' && kit.live.them.at) net.peerScore = kit.live.them.sc;
+            paintBest();
+            paintRace();
+            if (type === 'done' && who === 'them' && kit.mine) settleRace();
+          });
+          S.giveUp = () => gctx.onEnd({ score: null, won: false, detail: 'You gave up.', race: { done: false, p: kit.live.me.p, ms: Math.round(clock.ms + (clock.at ? performance.now() - clock.at : 0)) } });
+        }
         gctx.online = Object.freeze({
           role: room.role, seed: room.seed, round: room.round,
           peer: Object.freeze({ ...room.peer }),
+          /* a kit race: how much of the puzzle is done, 0–1, for the friend's progress bar */
+          kit: !!spec,
+          progress: p => { if (token === S.token && !ended && !S.dead) net.kit?.progress(p); },
           /* still open after the round ends: the twin may need a lost move again */
           send: d => (token === S.token ? room.send(d) : false),
           on: fn => { net.listeners.add(fn); return () => net.listeners.delete(fn); },
@@ -1059,6 +1636,7 @@ defineApp({
         net.phase = 'playing';
       }
       setScore(0);
+      paintRace();
       try {
         S.inst = impl.mount(el, gctx) || null;
         /* the game's read-only snapshot, for automated play-tests */
@@ -1086,12 +1664,17 @@ defineApp({
       S.token++;
       if (S.rec) stopRec('round');
       clearTimeout(S.autoStop);
+      tk?.release();
+      /* a round left before it ended still counts as time played (a replay doesn't) */
+      const ms = clockTake();
+      if (S.game && S.inst && !S.result && !S.played?.ghost?.watch) records.addTime(S.game.id, ms);
       /* games remove their own canvas when stopped, so copy the last frame first */
       const still = keepFrame ? stillOf(gameHost.querySelector('canvas')) : null;
       if (S.inst) {
         try { S.inst.stop?.(); } catch (err) { console.error('[arcade] stop failed', err); }
       }
       S.inst = null;
+      S.giveUp = null;
       if (S.net) S.net.listeners.clear();
       if (!keepFrame) gameHost.replaceChildren();
       else if (still && still.home.isConnected && !still.home.querySelector('canvas')) still.home.appendChild(still.el);
@@ -1100,13 +1683,67 @@ defineApp({
       S.status = 'idle';
     }
 
+    /* time playing: runs only while a round is on screen and not paused (setStatus) */
+    const clock = { ms: 0, at: 0 };
+    function clockRun(on) {
+      if (on && !clock.at) clock.at = performance.now();
+      else if (!on && clock.at) { clock.ms += performance.now() - clock.at; clock.at = 0; }
+    }
+    function clockTake() { clockRun(false); const ms = clock.ms; clock.ms = 0; return ms; }
+
+    /* ---------- ghosts: the best run's replay, kept per game (index.js `ghosts`) ---------- */
+    const GHOST_MAX = 60_000;             /* characters of JSON: a replay is small, a broken one isn't kept */
+    const ghostOf = id => { const gh = readState().ghosts?.[id]; return gh && Number.isInteger(gh.seed) && gh.data !== undefined && Number.isFinite(gh.score) ? gh : null; };
+    function saveGhost(id, gh) {
+      try { if (JSON.stringify(gh.data).length > GHOST_MAX) return false; } catch (err) { return false; }
+      writeState({ ghosts: { ...(readState().ghosts || {}), [id]: gh } });
+      return true;
+    }
+    /* the mode a game opens in: the last one picked, else its first (js/arcade/modes.js) */
+    function prefMode(g) { const m = OPT.gamePrefs(g.id).mode; return MD.isMode(g, m) ? m : MD.firstMode(g); }
+    /* race your best run (in the mode on screen, else the one last picked) on its own seed, or watch it played back */
+    function raceGhost(id, watch = false) {
+      const g = arcadeById(id);
+      if (!g) return;
+      const mode = MD.modesOf(g) ? (S.game?.id === g.id && S.mode ? S.mode : prefMode(g)) : null;
+      const gh = ghostOf(MD.bestKey(g, mode));
+      if (!gh) return;
+      launch(g.id, 1, null, { seed: gh.seed, mode, ghost: { watch, data: gh.data, score: gh.score, at: gh.at } });
+    }
+
     function finish(r) {
-      const g = S.game;
       const score = Number.isFinite(r.score) ? r.score : null;
-      const prev = getBest(g.id);
+      /* a short buzz on a controller that can, if the person asked for it (Controller Center) */
+      if (!S.played?.ghost?.watch) { try { padmap.roundRumble({ won: !!r.won }); } catch (err) { /* no rumble is fine */ } }
+      const ms = clockTake();
+      const P = S.played || {}, R = S.round || {};
+      /* a mode keeps its own best, best three and ghost, and may score the other way round (js/arcade/modes.js) */
+      const g = MD.scoring(S.game, P.mode), bk = MD.bestKey(S.game, P.mode);
+      const prev = getBest(bk);
+      /* a replay of your best run is not a round: no score, no stats, nothing for badges */
+      if (P.ghost?.watch) {
+        S.result = { replay: true, score, ghostScore: P.ghost.score, detail: typeof r.detail === 'string' ? r.detail : '' };
+        if (score !== null) setScore(score);
+        setStatus('over');
+        return;
+      }
+      if (S.online && S.net?.kit) {
+        /* a kit race: my result goes to the friend; the card waits for theirs (settleRace) */
+        const kit = S.net.kit;
+        records.recordRound({ id: g.id, score, dir: g.better, counts: false, ms });
+        kit.finish(r.race && typeof r.race === 'object' ? r.race : { done: r.won !== false, sc: score ?? 0, ms: Math.round(ms) });
+        S.result = { score, online: true, race: true, waiting: true, won: null, void: false, me: null, them: null, detail: typeof r.detail === 'string' ? r.detail : '' };
+        if (score !== null) setScore(score);
+        S.net.phase = 'result';
+        paintRace();
+        if (!settleRace()) setStatus('over');
+        if (S.rec) S.autoStop = setTimeout(() => stopRec('end'), AUTO_STOP_MS);
+        return;
+      }
       if (S.online && S.net) {
         const v = r.versus && typeof r.versus === 'object' ? r.versus : {};
         const won = typeof r.won === 'boolean' ? r.won : null;
+        records.recordRound({ id: g.id, score, dir: g.better, counts: false, ms });
         bus.emit('arcade:score', { game: g.id, score, best: prev, newBest: false, hadBest: prev !== null, players: 2, online: true,
           ...(won !== null && !r.void ? { won } : {}) });
         S.result = {
@@ -1114,6 +1751,7 @@ defineApp({
           me: Number.isFinite(v.me) ? v.me : score, them: Number.isFinite(v.them) ? v.them : S.net.peerScore,
           detail: typeof r.detail === 'string' ? r.detail : '',
         };
+        tally(won, !!r.void);
         if (score !== null) setScore(score);
         S.net.phase = 'result';
         S.net.peerScore = S.result.them;
@@ -1122,21 +1760,173 @@ defineApp({
         if (S.rec) S.autoStop = setTimeout(() => stopRec('end'), AUTO_STOP_MS);
         return;
       }
-      const counts = score !== null && S.players === 1;
+      /* a slowed round, or one the game says was made easier, is counted but never sets a best */
+      const slowed = (P.speed ?? 1) < 1;
+      /* assisted may be a sentence: the game's own reason (a custom board, a picture from a code) */
+      const why = typeof r.assisted === 'string' ? r.assisted.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+      const assisted = r.assisted === true || !!why || slowed;
+      const counts = score !== null && S.players === 1 && !assisted;
+      /* the best three first: a best from before they were kept is read as the old best, not this one */
+      const { place } = records.recordRound({ id: g.id, key: bk, score, dir: g.better, counts, ms, seed: P.seed });
+      /* a board game against the computer keeps its won / lost / drawn at each level */
+      if (r.vs && S.players === 1) records.recordVs(g.id, r.vs);
       let newBest = false;
       if (counts && (prev === null || (g.better === 'low' ? score < prev : score > prev))) {
         newBest = true;
-        setBest(g.id, score);
+        setBest(bk, score);
       }
-      const best = getBest(g.id);
+      const best = getBest(bk);
+      /* the best run becomes the ghost to race (Snake, Flap, Neon Lanes, Pixel Jumper's time attack); a game
+         with a fixed course and no seeds keeps seed 0 */
+      let ghostSaved = false;
+      if (newBest && g.ghosts && r.replay !== undefined && (Number.isInteger(P.seed) || !g.seeded)) {
+        ghostSaved = saveGhost(bk, { seed: Number.isInteger(P.seed) ? P.seed : 0, score, at: Date.now(), data: r.replay, ...(P.mode ? { mode: P.mode } : {}) });
+      }
+      /* this week's challenge keeps its own best, from fair rounds only */
+      const weekly = R.weekly && score !== null && S.players === 1 && !assisted
+        ? records.recordWeekly({ week: R.weekly.week, game: g.id, seed: P.seed, score, dir: g.better }) : null;
+      /* a cup match goes to the cup's host (js/arcade/friendplay.js) */
+      const cup = R.cup && score !== null && !assisted ? cupReport(R.cup, score) : null;
       bus.emit('arcade:score', { game: g.id, score, best, newBest, hadBest: prev !== null, players: S.players,
-        ...(typeof r.won === 'boolean' ? { won: r.won } : {}) });
-      S.result = { score, best, newBest, hadBest: prev !== null, won: !!r.won, detail: typeof r.detail === 'string' ? r.detail : '', counts };
+        ...(typeof r.won === 'boolean' ? { won: r.won } : {}), ...(assisted ? { assisted: true } : {}), ...(g.mode && !g.first ? { mode: g.mode.id } : {}) });
+      S.result = {
+        score, best, prev, newBest, hadBest: prev !== null, won: !!r.won, detail: typeof r.detail === 'string' ? r.detail : '', counts,
+        place, assisted, assistedWhy: why, slowed, speed: P.speed ?? 1, seed: P.seed, weekly, beat: R.beat || null, cup, ghostSaved, raced: P.ghost || null, mode: P.mode,
+      };
       if (score !== null) setScore(score);
       paintBest();
       setStatus('over');
       if (S.rec) S.autoStop = setTimeout(() => stopRec('end'), AUTO_STOP_MS);
     }
+
+    /* both race results are in: decide on this device (the friend's does the same), say it */
+    function settleRace() {
+      const N = S.net, kit = N?.kit, r = S.result;
+      if (!kit || !r?.race || !r.waiting) return false;
+      const out = kit.outcome();
+      if (!out) { if (S.status === 'over') setStatus('over'); return false; }
+      const g = S.game, spec = raceOf(g.id);
+      r.waiting = false;
+      r.won = out.won;
+      r.me = raceHead(spec, kit.mine);
+      r.them = raceHead(spec, kit.theirs);
+      const unit = spec.rank === 'score' ? unitOf(g.id) : '';
+      r.mine = raceText(spec, kit.mine, unit);
+      r.theirs = raceText(spec, kit.theirs, unit);
+      /* Letter Grid: who found which word — the ones only one of you found stand out */
+      if (spec.words) {
+        const a = new Set((kit.mine.w || '').split(' ').filter(Boolean)), b = new Set((kit.theirs.w || '').split(' ').filter(Boolean));
+        r.words = { mine: [...a].map(w => ({ w, only: !b.has(w) })), theirs: [...b].map(w => ({ w, only: !a.has(w) })) };
+      }
+      const prev = getBest(g.id);
+      bus.emit('arcade:score', { game: g.id, score: r.score, best: prev, newBest: false, hadBest: prev !== null, players: 2, online: true, ...(out.won !== null ? { won: out.won } : {}) });
+      tally(out.won, false);
+      setStatus('over');
+      return true;
+    }
+
+    /* the match so far, on this device: a best-of ends when one side has won more than half */
+    function tally(won, voided) {
+      const N = S.net;
+      if (!N) return;
+      const M = N.match;
+      const best = N.room?.best || N.best || 1;
+      if (!voided) { M.played++; if (won === true) M.me++; else if (won === false) M.them++; }
+      M.best = best;
+      M.over = best === 1 ? true : Math.max(M.me, M.them) > best / 2;
+      /* a head-to-head record counts finished matches only, against a friend the room recognised */
+      const fp = N.room?.friend;
+      if (M.over && !M.recorded && fp && !(best === 1 && voided)) {
+        M.recorded = true;
+        const result = M.me > M.them ? 'win' : M.me < M.them ? 'loss' : 'draw';
+        N.h2h = records.recordH2H(fp, { name: N.room.peer?.name || '', game: S.game.id, result });
+      }
+    }
+
+    /* ---------- the race strip: you and your friend, side by side ---------- */
+    const raceBar = h('div.arc-race', { hidden: true, role: 'group', 'aria-label': tr('Race') });
+    function paintRace() {
+      const N = S.net, kit = S.online ? N?.kit : null, g = S.game;
+      const spec = kit && g ? raceOf(g.id) : null;
+      raceBar.hidden = !spec;
+      if (!spec) { raceBar.replaceChildren(); return; }
+      const peer = N.room?.peer?.name || 'Friend';
+      const { me, them } = kit.live;
+      const unit = shortUnit(g.id) || unitOf(g.id);
+      const top = Math.max(1, me.sc, them.sc);
+      const row = (who, L, res, mine) => {
+        const w = spec.bar || spec.rank === 'score' ? Math.max(0, Math.min(1, L.sc / top)) : L.p;
+        const text = res ? raceText(spec, res, unitOf(g.id)) : spec.rank === 'score' ? `${fmtN(L.sc)}${unit ? ` ${raceUnit(L.sc, unit)}` : ''}` : `${Math.round(L.p * 100)}%`;
+        return h('div.arc-race__row', { class: mine ? 'is-me' : '', dataset: { who: mine ? 'me' : 'them', done: String(!!res) } },
+          h('span.arc-race__who', { text: who }),
+          h('span.arc-race__bar', { role: 'progressbar', 'aria-label': `${who}: ${text}`, 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(w * 100)) },
+            h('i', { style: { width: `${Math.round(w * 1000) / 10}%` } })),
+          h('span.arc-race__txt', { text: res && !mine && !kit.mine ? `${res.done || spec.rank === 'score' ? 'Finished' : 'Out'} · ${text}` : text }));
+      };
+      const playing = S.status === 'playing' && !kit.mine;
+      const quit = playing && spec.rank !== 'score' && S.giveUp
+        ? h('button.btn.btn--ghost.arc-race__quit', { type: 'button', dataset: { act: 'giveup' }, onclick: () => S.giveUp?.() }, h('span', { text: tr('Give up') })) : null;
+      raceBar.replaceChildren(row('You', me, kit.mine, true), row(peer, them, kit.theirs, false), quit);
+    }
+
+    /* ---------- reactions: four emoji, by index, rate-limited in room.js ---------- */
+    const reactBar = h('div.arc-react', { hidden: true, role: 'group', 'aria-label': tr('Send a reaction') },
+      REACTIONS.map((e, i) => h('button.arc-react__b', {
+        type: 'button', dataset: { e: String(i) }, title: `Send “${REACTION_NAMES[i]}”`, 'aria-label': `Send ${REACTION_NAMES[i]}`,
+        onclick: ev => {
+          const room = S.net?.room;
+          const b = ev.currentTarget;
+          if (!room?.peer || !room.react(i)) { b.classList.add('is-wait'); setTimeout(() => b.classList.remove('is-wait'), 400); return; }
+          showReaction('You', i);
+          if (S.status === 'playing') focusStage();
+        },
+      }, h('span', { text: e, 'aria-hidden': 'true' }))));
+    const reactLayer = h('div.arc-reacts', { 'aria-hidden': 'true' });
+    function paintReact() {
+      const room = S.online ? S.net?.room : null;
+      reactBar.hidden = !(room?.peer && room.phase !== 'closed');
+    }
+    function showReaction(who, i) {
+      if (S.dead || !REACTIONS[i]) return;
+      const b = h('div.arc-reacts__b', { class: who === 'You' ? 'is-me' : '', dataset: { e: String(i) } },
+        h('span.arc-reacts__e', { text: REACTIONS[i] }), h('span.arc-reacts__n', { text: who }));
+      reactLayer.append(b);
+      while (reactLayer.children.length > 4) reactLayer.firstChild.remove();
+      setTimeout(() => b.remove(), 2400);
+      if (who !== 'You') announce(`${who}: ${REACTION_NAMES[i]}`);
+    }
+
+    /* ---------- a drop: the friend has REJOIN_MS to come back (room.js) ---------- */
+    const lostEl = h('div.arc-lost', { hidden: true, role: 'status', 'aria-live': 'polite' });
+    let backT = 0;
+    function paintLost(back = null) {
+      const N = S.net;
+      clearInterval(N?.lostT);
+      clearTimeout(backT);
+      if (back && !N?.lost) {
+        lostEl.hidden = false;
+        lostEl.className = 'arc-lost is-back';
+        lostEl.replaceChildren(icon('wifi'), h('span', { text: tr('{back} is back', { back }) }));
+        backT = setTimeout(() => { if (!S.net?.lost) lostEl.hidden = true; }, 2200);
+        return;
+      }
+      if (!N?.lost || !S.online) { lostEl.hidden = true; return; }
+      const peer = N.room?.peer?.name || 'your friend';
+      const tick = () => {
+        if (S.net !== N || !N.lost) { clearInterval(N.lostT); return; }
+        const left = Math.max(0, Math.ceil((REJOIN_MS - (performance.now() - N.lost.at)) / 1000));
+        lostEl.hidden = false;
+        lostEl.className = 'arc-lost';
+        lostEl.replaceChildren(icon('wifi-off'), h('span', { text: tr('Lost touch with {peer}. Waiting {left} s for them to come back…', { peer, left }) }));
+      };
+      tick();
+      N.lostT = setInterval(tick, 500);
+    }
+    offs.push(() => { clearTimeout(backT); clearInterval(S.net?.lostT); });
+    /* into the play view: the strip under the toolbar, the reactions beside the room chip, the bubbles and the drop notice over the stage */
+    play.insertBefore(raceBar, stage);
+    roomChip.after(reactBar);
+    stage.append(reactLayer, lostEl);
 
     function pause() {
       if (S.status !== 'playing' || !S.inst?.pause) return;
@@ -1155,34 +1945,37 @@ defineApp({
     /* ---------- overlays ---------- */
     function setStatus(st) {
       S.status = st;
+      clockRun(st === 'playing');
       clear(overlay);
       overlay.className = 'arc-stage__ov';
       stage.classList.toggle('is-covered', st !== 'playing');
       const g = S.game;
       if (st === 'loading') {
-        overlay.append(h('div.arc-load', h('i.arc-spin'), h('span', { text: `Loading ${g.title}…` })));
+        overlay.append(h('div.arc-load', h('i.arc-spin'), h('span', { text: tr('Loading {title}…', { title: g.title }) })));
       } else if (st === 'error') {
-        const again = h('button.btn.btn--primary', { type: 'button', onclick: () => startRound() }, icon('refresh'), h('span', { text: 'Try again' }));
+        const again = h('button.btn.btn--primary', { type: 'button', onclick: () => startRound() }, icon('refresh'), h('span', { text: tr('Try again') }));
         overlay.append(h('div.arc-card.arc-card--err', { role: 'alert' },
           h('span.arc-card__ic', icon('alert')),
-          h('div.arc-card__title', { text: `Couldn’t load ${g.title}` }),
-          h('div.arc-card__text', { text: 'This game’s file is missing or failed to start. The other games still work.' }),
+          h('div.arc-card__title', { text: tr('Couldn’t load {title}', { title: g.title }) }),
+          h('div.arc-card__text', { text: tr('This game’s file is missing or failed to start. The other games still work.') }),
           S.error?.message ? h('code.arc-card__code', { text: String(S.error.message).slice(0, 160) }) : null,
           h('div.arc-card__row', again,
-            h('button.btn', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: 'Arcade' })))));
+            h('button.btn', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: tr('Arcade') })))));
         setTimeout(() => { if (overlay.contains(again)) again.focus({ preventScroll: true }); }, 30);
       } else if (st === 'paused') {
-        const res = h('button.btn.btn--primary', { type: 'button', onclick: resume }, icon('play', { fill: true }), h('span', { text: 'Resume' }));
-        overlay.append(h('div.arc-card', { role: 'dialog', 'aria-label': 'Paused' },
+        const res = h('button.btn.btn--primary', { type: 'button', onclick: resume }, icon('play', { fill: true }), h('span', { text: tr('Resume') }));
+        overlay.append(h('div.arc-card', { role: 'dialog', 'aria-label': tr('Paused') },
           h('div.arc-card__kicker', { text: g.title }),
-          h('div.arc-card__title.arc-card__title--big', { text: 'Paused' }),
+          h('div.arc-card__title.arc-card__title--big', { text: tr('Paused') }),
           h('div.arc-card__row', res,
-            h('button.btn', { type: 'button', onclick: () => startRound() }, icon('rotate-ccw'), h('span', { text: 'Restart' })),
-            h('button.btn.btn--ghost', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: 'Arcade' }))),
-          h('div.arc-card__hint', { text: 'Press P or Esc to resume' })));
+            h('button.btn', { type: 'button', onclick: () => startRound() }, icon('rotate-ccw'), h('span', { text: tr('Restart') })),
+            h('button.btn.btn--ghost', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: tr('Arcade') }))),
+          h('div.arc-card__hint', { text: tr('Press P or Esc to resume') })));
         setTimeout(() => { if (overlay.contains(res)) res.focus({ preventScroll: true }); }, 30);
+      } else if (st === 'offer') {
+        overlay.append(offerCard());
       } else if (st === 'over' || st === 'online') {
-        const card = st === 'online' ? netCard() : S.online ? netResultCard() : resultCard();
+        const card = st === 'online' ? netCard() : S.online ? netResultCard() : S.result?.replay ? replayCard() : resultCard();
         /* an online card repainted on the same step ("waiting…", "wants a rematch")
            doesn't pop in again */
         const step = st === 'online' ? S.net?.phase : S.online ? 'result' : null;
@@ -1192,36 +1985,190 @@ defineApp({
       if (S.net) S.net.shown = st === 'online' ? S.net.phase : st === 'over' && S.online ? 'result' : null;
       paintControls();
       paintRec();
+      paintRace();
     }
 
+    /* "12 points short of your best" / "2.1 s faster": how far a score is from another, in the game's own words */
+    /* "12 points", "340 m", "length 7" */
+    const withUnit = (g, n) => (unitFor(g) === 'length' ? `length ${fmtN(n)}`
+      : `${fmtN(n)}${shortFor(g) ? ` ${shortFor(g)}` : unitFor(g) ? ` ${unitFor(g)}` : ''}`);
+    function gapText(g, a, b) {
+      const d = Math.abs(a - b);
+      const ahead = g.better === 'low' ? a < b : a > b;
+      if (d === 0) return 'level';
+      const r = Math.round(d * 100) / 100;
+      const u = unitFor(g);
+      if (u === 'length') return `${fmtN(r)} ${ahead ? 'longer' : 'shorter'}`;
+      const amt = u === 'length' ? fmtN(r) : withUnit(g, r);
+      const timed = u === 'seconds' || u === 'ms';
+      if (g.better === 'low') return `${amt} ${ahead ? (timed ? 'faster' : 'fewer') : (timed ? 'slower' : 'more')}`;
+      return `${amt} ${ahead ? 'ahead' : 'short'}`;
+    }
+    /* "5 pipes ahead of your best", "2.1 s slower than your ghost", "level with the link's score" */
+    function vsText(g, a, b, what) {
+      const gap = gapText(g, a, b);
+      if (gap === 'level') return `Level with ${what}`;
+      const joined = gap.replace(/ (ahead|short)$/, ' $1 of').replace(/ (faster|slower|fewer|more|longer|shorter)$/, ' $1 than');
+      return `${joined[0].toUpperCase()}${joined.slice(1)} ${what}`;
+    }
+    const isAhead = (g, a, b) => (g.better === 'low' ? a < b : a > b);
+    const ORD = ['best', '2nd best', '3rd best'];
+    const dateText = at => (Number.isFinite(at) ? new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: new Date(at).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' }) : 'before dates were kept');
+
     function resultCard() {
-      const g = S.game, r = S.result;
+      const r = S.result, g = MD.scoring(S.game, r.mode);       /* the mode scores it: its own best, direction and unit */
+      const bk = MD.bestKey(S.game, r.mode);
       const title = S.players === 2 ? 'Match over' : r.won ? 'You win!' : 'Game over';
+      const lines = [];
       let badge = null;
-      if (r.newBest && r.hadBest) badge = h('div.arc-res__new', icon('sparkles'), h('span', { text: 'New best!' }));
-      else if (r.newBest) badge = h('div.arc-res__first', icon('star', { fill: true }), h('span', { text: 'First score saved on this device' }));
-      else if (S.players === 2) badge = h('div.arc-res__note', { text: 'Two-player rounds don’t change your best' });
-      else if (r.best !== null) badge = h('div.arc-res__best', { text: `Your best ${fmtN(r.best)}${shortUnit(g.id) ? ` ${shortUnit(g.id)}` : ''}${g.better === 'low' ? ' · lower wins' : ''}` });
+      /* how this round sits against your best (only ever this device's own rounds) */
+      if (r.newBest && r.hadBest) {
+        badge = h('div.arc-res__new', icon('sparkles'), h('span', { text: tr('New best!') }));
+        lines.push(vsText(g, r.score, r.prev, `your old best (${withUnit(g, r.prev)})`));
+      } else if (r.newBest) badge = h('div.arc-res__first', icon('star', { fill: true }), h('span', { text: tr('First score saved on this device') }));
+      else if (S.players === 2) badge = h('div.arc-res__note', { text: tr('Two-player rounds don’t change your best') });
+      else if (r.assisted) badge = h('div.arc-res__note', { text: r.slowed ? tr('Played at {pct}% speed, so it doesn’t change your best', { pct: Math.round(r.speed * 100) }) : r.assistedWhy || tr('An easier mode was on, so it doesn’t change your best') });
+      else if (r.best !== null) badge = h('div.arc-res__best', { text: g.better === 'low' ? tr('Your best {score} · lower wins', { score: withUnit(g, r.best) }) : tr('Your best {score}', { score: withUnit(g, r.best) }) });
+      if (!r.newBest && r.best !== null && r.score !== null && S.players === 1) lines.push(vsText(g, r.score, r.best, `your best (${withUnit(g, r.best)})`));
+      if (r.counts && r.place > 0) lines.push(`Your ${ORD[r.place]} score on this device`);
+      if (r.raced && Number.isFinite(r.raced.score) && r.score !== null) lines.push(vsText(g, r.score, r.raced.score, `your ghost (${withUnit(g, r.raced.score)})`));
+      if (r.ghostSaved) lines.push('This run is your new ghost to race.');
+      if (r.weekly) lines.push(r.weekly.newBest ? tr('Your best this week: {score} (try {n})', { score: withUnit(g, r.weekly.best), n: r.weekly.tries }) : tr('This week’s best stays {score} · try {n}', { score: withUnit(g, r.weekly.best), n: r.weekly.tries }));
+      if (r.cup) lines.push(r.cup);
+      /* a Beat-this link: compared here, on this device */
+      let beat = null;
+      if (r.beat && r.score !== null) {
+        const level = r.score === r.beat.score, won = isAhead(g, r.score, r.beat.score);
+        beat = h('div.arc-res__beat', { class: won ? 'is-won' : '', dataset: { beat: level ? 'level' : won ? 'won' : 'lost' } },
+          h('b', { text: level ? tr('Level with the link’s score') : won ? tr('You beat it!') : tr('Not this time') }),
+          h('span', { text: `${r.beat.by ? `${r.beat.by}’s link` : 'The link'} says ${withUnit(g, r.beat.score)} · you ${withUnit(g, r.score)}${level ? '' : ` · ${gapText(g, r.score, r.beat.score)}`}` }));
+      }
       const again = h('button.btn.btn--primary.arc-res__again', { type: 'button', onclick: () => startRound() },
-        icon('rotate-ccw'), h('span', { text: 'Play again' }));
+        icon('rotate-ccw'), h('span', { text: S.round ? tr('Try again') : tr('Play again') }));   /* a set-up round (a link, the week, a ghost) plays the same course again */
       setTimeout(() => { if (overlay.contains(again)) again.focus({ preventScroll: true }); }, 40);
+      /* more: challenge a friend to this round, race or watch the best run */
+      const more = [];
+      if (g.seeded && Number.isInteger(r.seed) && r.score !== null && S.players === 1 && !r.assisted) {
+        more.push(h('button.btn.btn--sm', { type: 'button', dataset: { act: 'beat' }, title: tr('A link to this exact round and your score'), onclick: e => beatMenu(g, r, e.currentTarget) },
+          icon('link'), h('span', { text: tr('Beat this') })));
+      }
+      if (g.ghosts && ghostOf(bk)) {
+        more.push(h('button.btn.btn--sm', { type: 'button', dataset: { act: 'ghost' }, onclick: () => raceGhost(g.id) }, icon('ghost'), h('span', { text: tr('Race your best') })));
+        more.push(h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { act: 'watch' }, onclick: () => raceGhost(g.id, true) }, icon('eye'), h('span', { text: tr('Watch it') })));
+      }
+      /* friends' leaderboards hold one best a game: the first mode's */
+      if (r.counts && friendsReady() && r.best !== null && (!g.mode || g.first)) {
+        more.push(h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { act: 'sharebest' }, title: tr('Send your best to your friends’ leaderboards'), onclick: () => shareBest(g) },
+          icon('users'), h('span', { text: tr('Share best') })));
+      }
       return h('div.arc-card.arc-res', { role: 'dialog', 'aria-label': `${title}. Score ${r.score === null ? 'none' : fmtN(r.score)}` },
-        h('div.arc-card__kicker', { text: g.title }),
+        h('div.arc-card__kicker', { dataset: { mode: g.mode?.id || '' }, text: `${g.title}${g.mode ? ` · ${g.mode.label}` : ''}${S.round?.weekly ? ' · weekly challenge' : r.beat ? ' · Beat this' : ''}` }),
         h('div.arc-card__title', { text: title }),
         h('div.arc-res__score', { text: r.score === null ? '—' : fmtN(r.score) }),
-        h('div.arc-res__lab', { text: r.score === null ? 'No score this round' : unitOf(g.id) ? `Score · ${unitOf(g.id)}` : 'Score' }),
+        h('div.arc-res__lab', { text: r.score === null ? tr('No score this round') : unitFor(g) ? tr('Score · {unit}', { unit: unitFor(g) }) : tr('Score') }),
         badge,
+        beat,
+        lines.length ? h('ul.arc-res__vs', lines.map(t => h('li', { text: t }))) : null,
         r.detail ? h('div.arc-res__detail', { text: r.detail }) : null,
         h('div.arc-card__row', again,
-          h('button.btn', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: 'Arcade' }))),
-        h('div.arc-card__hint', { text: 'Enter to play again' }));
+          h('button.btn', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: tr('Arcade') }))),
+        more.length ? h('div.arc-card__row.arc-res__more', more) : null,
+        h('div.arc-card__hint', { text: tr('Enter to play again') }),
+        ...asideButtons());
+    }
+    /* the card can step aside so the game's own finished screen (a scorecard, a chart, a heatmap) can be seen and used */
+    function asideButtons() {
+      const set = on => {
+        overlay.classList.toggle('is-aside', on);
+        const b = overlay.querySelector(on ? '[data-act="back"]' : '[data-act="aside"]');
+        if (b) setTimeout(() => b.focus({ preventScroll: true }), 0);
+      };
+      return [
+        h('button.btn.btn--sm.btn--ghost.arc-res__aside', { type: 'button', dataset: { act: 'aside' }, onclick: () => set(true) }, icon('eye'), h('span', { text: tr('See the game') })),
+        h('button.btn.btn--sm.arc-res__back', { type: 'button', dataset: { act: 'back' }, onclick: () => set(false) }, icon('chevron-up'), h('span', { text: tr('Back to the result') })),
+      ];
+    }
+
+    /* a ghost replay played to its end */
+    function replayCard() {
+      const r = S.result, g = MD.scoring(S.game, S.played?.mode);
+      const race = h('button.btn.btn--primary.arc-res__again', { type: 'button', onclick: () => raceGhost(g.id) }, icon('ghost'), h('span', { text: tr('Race it') }));
+      setTimeout(() => { if (overlay.contains(race)) race.focus({ preventScroll: true }); }, 40);
+      const same = r.score !== null && r.score === r.ghostScore;
+      return h('div.arc-card.arc-res', { role: 'dialog', 'aria-label': `Replay finished. ${fmtN(r.score)}` },
+        h('div.arc-card__kicker', { text: `${g.title}${g.mode ? ` · ${g.mode.label}` : ''} · replay of your best` }),
+        h('div.arc-card__title', { text: tr('Replay finished') }),
+        h('div.arc-res__score', { text: r.score === null ? '—' : fmtN(r.score) }),
+        h('div.arc-res__lab', { text: unitFor(g) ? tr('Score · {unit}', { unit: unitFor(g) }) : tr('Score') }),
+        h('div.arc-res__note', { dataset: { same: String(same) }, text: same ? tr('The same score as the run it was recorded from') : tr('The run it was recorded from scored {score}', { score: fmtN(r.ghostScore) }) }),
+        h('div.arc-card__row', race,
+          h('button.btn', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: tr('Arcade') }))),
+        h('div.arc-card__hint', { text: tr('A replay never changes your best or your stats') }));
+    }
+
+    /* before a round someone else set up (a Beat-this link, a cup match): what it is, and Play */
+    function offerCard() {
+      const R = S.round || {}, g = MD.scoring(S.game, S.mode);
+      const playBtn = h('button.btn.btn--primary', { type: 'button', dataset: { act: 'play' }, onclick: () => { if (S.round) S.round.offer = false; startRound(); } },
+        icon('play', { fill: true }), h('span', { text: tr('Play') }));
+      setTimeout(() => { if (overlay.contains(playBtn)) playBtn.focus({ preventScroll: true }); }, 40);
+      let title = g.title, text = '';
+      if (R.beat) {
+        title = `Beat ${withUnit(g, R.beat.score)}`;
+        text = `${R.beat.by ? `${R.beat.by} sent` : 'Someone sent'} a link to one round of ${g.title}${g.mode && !g.first ? ` (${g.mode.label})` : ''} and says they scored ${withUnit(g, R.beat.score)}${g.better === 'low' ? ' (lower is better)' : ''}. You get exactly the same round; when it ends, the two scores are compared here. A link can be edited, so the score is only what it says.`;
+      } else if (R.cup) {
+        title = R.cup.title;
+        text = R.cup.text;
+      }
+      return h('div.arc-card.arc-offer', { role: 'dialog', 'aria-label': title },
+        h('div.arc-card__kicker', { text: R.beat ? tr('{title} · Beat this', { title: g.title }) : R.cup ? tr('{title} · cup', { title: g.title }) : g.title }),
+        h('div.arc-card__title', { text: title }),
+        text ? h('div.arc-card__text', { text }) : null,
+        h('div.arc-card__row', playBtn,
+          h('button.btn.btn--ghost', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: tr('Arcade') }))));
+    }
+
+    /* the HUD's note of what this round is */
+    function paintGoal() {
+      const g = S.game, R = S.round;
+      let text = '', tip = '';
+      if (g && R?.ghost) { text = R.ghost.watch ? 'Replay of your best' : `Racing your best · ${fmtN(R.ghost.score)}`; tip = R.ghost.watch ? 'Your best run, played back from its recorded moves' : 'Your best run drives the see-through ghost'; }
+      else if (g && R?.beat) { text = `Beat ${fmtN(R.beat.score)}`; tip = `The score in ${R.beat.by ? `${R.beat.by}’s` : 'the'} link — the same round as theirs`; }
+      else if (g && R?.weekly) { text = 'Weekly challenge'; tip = `The same ${g.title} course for everyone this week (${R.weekly.week})`; }
+      else if (g && R?.cup) { text = R.cup.chip; tip = R.cup.text; }
+      goalChip.hidden = !text;
+      goalChip.textContent = text;
+      goalChip.title = tip;
+      goalChip.setAttribute('aria-label', tip ? `${text}. ${tip}` : text);
+    }
+
+    /* "Beat this": copy a link to the exact round, or send it to a friend */
+    function beatMenu(g, r, anchor) {
+      const by = (() => { try { return identity.me().name || ''; } catch (err) { return ''; } })();
+      const link = CH.beatLink({ game: g.id, seed: r.seed, score: r.score, by, mode: g.mode && !g.first ? g.mode.id : '' });
+      const copy = async () => {
+        const text = `Beat my ${withUnit(g, r.score)} in ${g.title} on Static Arcade — the same round, from this link: ${link}`;
+        try { await navigator.clipboard.writeText(text); notify({ icon: 'copy', title: tr('Beat-this link copied'), message: `${g.title} · ${withUnit(g, r.score)}. Send it to a friend: they get exactly this round.` }); }
+        catch (err) { notify({ icon: 'info', title: tr('Copying was blocked here'), message: link }); }
+      };
+      const fl = friendsList();
+      const rect = anchor.getBoundingClientRect();
+      api.menu([
+        { header: true, label: `Beat ${withUnit(g, r.score)}` },
+        { label: tr('Copy link'), icon: 'copy', onClick: copy },
+        ...(fl.length ? ['-', ...fl.slice(0, 12).map(f => ({ label: tr('Send to {display}', { display: f.display }), icon: 'send', hint: f.presence === 'offline' ? 'offline' : '', onClick: () => sendBeat(f, g, r) }))] : []),
+      ], rect.left, rect.bottom + 4);
     }
 
     /* ============================ online ============================ */
-    /* S.net = { room, phase, err, peerScore, listeners, live, cd, gone }
-       phase: lobby | hosting | joining | ready | countdown | playing | result | left | error */
+    /* S.net = { room, phase, err, peerScore, listeners, live, cd, gone, kit, match, lost }
+       phase: lobby | hosting | joining | ready | countdown | playing | result | left | error
+       kit: the race kit of a RACES game's round (js/arcade/race.js) · match: this device's
+       tally of a best-of match · lost: { at } while the friend has gone quiet */
+    const newMatch = () => ({ me: 0, them: 0, played: 0, over: false, recorded: false });
     function netStart(room = null) {
-      const N = S.net = { room: null, phase: 'lobby', err: null, peerScore: null, listeners: new Set(), live: 'idle', cd: 0, cdN: 0, gone: null, off: null, liveEl: null };
+      const N = S.net = { room: null, phase: 'lobby', err: null, peerScore: null, listeners: new Set(), live: 'idle', cd: 0, cdN: 0, gone: null, off: null, liveEl: null,
+        kit: null, match: newMatch(), lost: null, lostT: 0, best: 1 };
       /* connect as soon as Online is chosen, so the lobby can say whether this
          network allows it before anyone makes a room (a room reports its own) */
       N.offLive = live.onStatus(st => {
@@ -1241,10 +2188,16 @@ defineApp({
       N.live = room.live();
       N.off = room.on((type, data) => onRoom(room, type, data));
       N.phase = room.peer ? 'ready' : room.role === 'host' ? 'hosting' : 'joining';
+      N.match = newMatch();
+      N.best = room.best;
+      /* a rematch the host's room starts by itself is the next game of the match, or game 1 of a new one */
+      room.nextMatch = () => (N.match.over ? 1 : N.match.played + 1);
     }
 
     function dropRoom(N) {
       clearTimeout(N.cd);
+      clearInterval(N.lostT);
+      N.kit?.stop(); N.kit = null;
       try { N.off?.(); } catch (err) { /* gone */ }
       try { N.room?.leave(); } catch (err) { /* gone */ }
       N.listeners.clear();
@@ -1267,7 +2220,8 @@ defineApp({
       const N = S.net;
       if (N.phase === 'playing' || N.phase === 'countdown') stopRound();
       dropRoom(N);
-      Object.assign(N, { room: null, phase: 'lobby', err: null, peerScore: null, gone: null, off: null, live: live.status() });
+      Object.assign(N, { room: null, phase: 'lobby', err: null, peerScore: null, gone: null, off: null, live: live.status(), match: newMatch(), lost: null, best: 1 });
+      paintLost();
     }
 
     function makeRoom() {
@@ -1330,21 +2284,37 @@ defineApp({
         return;
       }
       if (type === 'game') {
+        /* the race kit's own messages go to it, not to the game */
+        if (N.kit?.take(data)) return;
         N.listeners.forEach(fn => { try { fn(data); } catch (err) { console.error('[arcade] online game', err); } });
         return;
       }
+      if (type === 'react') { showReaction(room.peer?.name || 'Friend', data.e); return; }
+      if (type === 'lost') { N.lost = { at: performance.now() }; paintLost(); return; }
+      if (type === 'back') { N.lost = null; paintLost(room.peer?.name || 'Your friend'); return; }
+      if (type === 'best') { N.best = data; if (N.phase === 'ready' || N.phase === 'result') paintNet(); return; }
+      if (type === 'friend') { paintNet(); return; }
       if (type === 'peer') {
         /* a guest learns the game from the room: switch to it if needed */
         if (room.role === 'guest' && room.game && S.game?.id !== room.game) { launch(room.game, 'online', room); return; }
         N.phase = 'ready';
-        if (room.role === 'host') notify({ icon: 'users', title: `${data.name} joined your room`, message: `${S.game.title} · room ${room.code}. Start when you’re both ready.` });
+        if (room.role === 'host') notify({ icon: 'users', title: tr('{name} joined your room', { name: data.name }), message: tr('{title} · room {code}. Start when you’re both ready.', { title: S.game.title, code: room.code }) });
         paintNet();
         return;
       }
-      if (type === 'start') { countdown(); return; }
+      if (type === 'start') {
+        /* game 1 of a match starts a new tally (the host decides which game it is) */
+        N.best = data.best || 1;
+        if (data.match === 1 || N.match.over) N.match = newMatch();
+        countdown();
+        return;
+      }
       if (type === 'again') { if (N.phase === 'result') paintNet(); return; }
       if (type === 'left') {
         const who = data?.peer?.name || 'Your friend';
+        N.lost = null;
+        paintLost();
+        paintReact();
         if (N.phase === 'result') { N.gone = { who, reason: data?.reason }; paintNet(); return; }
         const wasPlaying = N.phase === 'playing' || N.phase === 'countdown';
         clearTimeout(N.cd);
@@ -1401,6 +2371,7 @@ defineApp({
       if (!room) { roomChip.textContent = ''; roomChip.title = ''; return; }
       roomChip.textContent = `Online · ${room.code}`;
       roomChip.title = room.peer ? `Room ${room.code} with ${room.peer.name}` : `Room ${room.code}`;
+      paintReact();
     }
 
     function paintLive(el, st) {
@@ -1419,138 +2390,251 @@ defineApp({
       const text = `Play ${S.game.title} with me in Static Arcade — room code ${room.code}${link ? ` · ${link}` : ''}`;
       try {
         await navigator.clipboard.writeText(text);
-        notify({ icon: 'copy', title: 'Invite copied', message: `Room code ${room.code}. Send it to your friend.` });
+        notify({ icon: 'copy', title: tr('Invite copied'), message: tr('Room code {code}. Send it to your friend.', { code: room.code }) });
       } catch (err) {
-        notify({ icon: 'info', title: `Room code ${room.code}`, message: 'Copying was blocked here — read the code out or type it to your friend.' });
+        notify({ icon: 'info', title: tr('Room code {code}', { code: room.code }), message: tr('Copying was blocked here — read the code out or type it to your friend.') });
       }
+    }
+    /* just the link: opening it on their StaticOS joins the room */
+    async function copyLink(room) {
+      const link = inviteLink(S.game.id, room.code);
+      try {
+        await navigator.clipboard.writeText(link);
+        notify({ icon: 'link', title: tr('Invite link copied'), message: tr('Opening it on your friend’s StaticOS joins your room.') });
+      } catch (err) {
+        notify({ icon: 'info', title: tr('Room code {code}', { code: room.code }), message: tr('Copying was blocked here — read the code out or type it to your friend.') });
+      }
+    }
+
+    /* "Invite a friend": your friends from Static Social, each a button that sends this room's code
+       to that one friend (core/friends.js sendRoomInvite). Nothing for a profile without friends. */
+    function inviteList(room) {
+      const box = h('div.arc-net__friends', { dataset: { k: 'invite' }, hidden: true });
+      import('../core/friends.js').then(F => {
+        if (S.dead || !box.isConnected) return;
+        if (!F.available() || !F.friends().length) return;
+        const list = F.friends().slice(0, 8);
+        box.hidden = false;
+        box.append(h('div.arc-net__or', h('span', { text: tr('or invite a friend') })),
+          h('div.arc-net__flist', list.map(f => {
+            const b = h('button.btn.arc-net__fbtn', {
+              type: 'button', dataset: { fp: f.fp }, title: f.presence === 'offline' ? tr('{display} looks offline: the invite reaches them only if they come online soon', { display: f.display }) : tr('Send {display} this room’s code', { display: f.display }),
+              onclick: async () => {
+                b.disabled = true;
+                const r = await F.sendRoomInvite(f.fp, { game: S.game.id, code: room.code }).catch(() => ({ ok: false }));
+                if (S.dead) return;
+                const txt = b.querySelector('.arc-net__fst');
+                if (r.ok) { b.classList.add('is-sent'); txt.textContent = tr('Invited'); notify({ icon: 'send', title: tr('Invited {display}', { display: f.display }), message: tr('They get a notice with a Join button. Room {code}.', { code: room.code }) }); }
+                else { txt.textContent = r.error === 'wait' ? 'Wait a moment' : 'Couldn’t send'; setTimeout(() => { if (!S.dead) { b.disabled = false; txt.textContent = 'Invite'; } }, 2000); }
+              },
+            }, h('i.arc-net__pres', { dataset: { p: f.presence || 'offline' }, 'aria-hidden': 'true' }), h('span.arc-net__fname', { text: f.display }), h('span.arc-net__fst', { text: tr('Invite') }));
+            return b;
+          })));
+      }).catch(() => {});
+      return box;
+    }
+
+    /* your record against this friend (records.js h2h), or nothing when the room doesn't know them as a friend */
+    function h2hLine(room) {
+      const fp = room?.friend;
+      if (!fp) return null;
+      const r = records.h2hOf(fp);
+      const g = r?.games?.[S.game.id];
+      const name = room.peer?.name || 'your friend';
+      if (!g) return h('div.arc-net__h2h', { dataset: { k: 'h2h' } }, icon('users'), h('span', { text: tr('{name} is your friend. Finished matches count in your head-to-head record.', { name }) }));
+      return h('div.arc-net__h2h', { dataset: { k: 'h2h', w: String(g.w), l: String(g.l), d: String(g.d) } }, icon('users'),
+        h('span', { text: tr('You and {name} at {title}: ', { name, title: S.game.title }) }), h('b', { text: (g.d ? tr('{w} won · {l} lost · {d} drawn', { w: g.w, l: g.l, d: g.d }) : tr('{w} won · {l} lost', { w: g.w, l: g.l })) }));
+    }
+
+    /* the host picks the match length; the guest is told */
+    function bestPicker(room) {
+      if (room.role !== 'host') {
+        const b = room.best || 1;
+        return h('div.arc-net__best', { dataset: { k: 'best', best: String(b) } }, h('span', { text: b === 1 ? tr('One game') : tr('Best of {b}: first to {n} wins', { b, n: Math.ceil(b / 2) }) }));
+      }
+      return h('div.arc-net__best', { role: 'group', 'aria-label': tr('Match length'), dataset: { k: 'best', best: String(room.best) } },
+        BESTS.map(b => h('button', {
+          type: 'button', dataset: { b: String(b) }, 'aria-pressed': String(room.best === b), title: b === 1 ? tr('One game') : tr('First to {n} wins', { n: Math.ceil(b / 2) }),
+          onclick: () => { room.setBest(b); S.net.best = b; paintNet(); },
+        }, h('span', { text: b === 1 ? tr('1 game') : tr('Best of {b}', { b }) }))));
+    }
+    /* "Game 2 · best of 3 · 1–0 to you" */
+    function matchLine(N, after = false) {
+      const best = N.room?.best || N.best || 1;
+      if (best === 1) return '';
+      const M = N.match;
+      const lead = M.me === M.them ? `${M.me}–${M.them}` : M.me > M.them ? `${M.me}–${M.them} to you` : `${M.them}–${M.me} to ${N.room?.peer?.name || 'your friend'}`;
+      return after ? `Best of ${best} · ${lead}` : `Game ${N.room?.match || M.played + 1} · best of ${best}${M.played ? ` · ${lead}` : ''}`;
     }
 
     function netCard() {
       const g = S.game, N = S.net;
       const room = N?.room;
       const peer = room?.peer?.name || 'your friend';
-      const kicker = h('div.arc-card__kicker', { text: `${g.title} · Online` });
+      const kicker = h('div.arc-card__kicker', { text: tr('{title} · Online', { title: g.title }) });
       const rules = g.onlineRules ? h('div.arc-card__text', { text: g.onlineRules }) : null;
-      const toArcade = h('button.btn.btn--ghost', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: 'Arcade' }));
+      const toArcade = h('button.btn.btn--ghost', { type: 'button', onclick: () => go('games') }, icon('chevron-left'), h('span', { text: tr('Arcade') }));
       const leave = label => h('button.btn', { type: 'button', onclick: () => { netReset(); paintNet(); } }, h('span', { text: label }));
       const focus = el => setTimeout(() => { if (overlay.contains(el)) el.focus({ preventScroll: true }); }, 40);
-      const fine = () => h('div.arc-net__fine', { text: `Room ${room.code}. Names aren’t verified — anyone can pick any name.` });
-      const card = (...kids) => h('div.arc-card.arc-net', { role: 'dialog', 'aria-label': `${g.title} online`, dataset: { phase: N?.phase || 'lobby' } }, kicker, ...kids);
+      const fine = () => h('div.arc-net__fine', { text: tr('Room {code}. Names aren’t verified — anyone can pick any name.', { code: room.code }) });
+      const card = (...kids) => h('div.arc-card.arc-net', { role: 'dialog', 'aria-label': tr('{title} online', { title: g.title }), dataset: { phase: N?.phase || 'lobby' } }, kicker, ...kids);
       const phase = N?.phase || 'lobby';
 
       if (phase === 'lobby') {
-        const make = h('button.btn.btn--primary', { type: 'button', onclick: makeRoom }, icon('plus'), h('span', { text: 'Make a room' }));
+        const make = h('button.btn.btn--primary', { type: 'button', onclick: makeRoom }, icon('plus'), h('span', { text: tr('Make a room') }));
         const input = h('input.arc-net__input', {
           type: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '80',
-          placeholder: 'Their room code', 'aria-label': 'Room code from your friend',
+          placeholder: tr('Their room code'), 'aria-label': tr('Room code from your friend'),
         });
         focus(make);
         return card(
-          h('div.arc-card__title', { text: 'Play a friend online' }),
+          h('div.arc-card__title', { text: tr('Play a friend online') }),
           rules,
           h('div.arc-card__row', make),
-          h('div.arc-net__or', h('span', { text: 'or join theirs' })),
+          h('div.arc-net__or', h('span', { text: tr('or join theirs') })),
           h('form.arc-net__join', { onsubmit: e => { e.preventDefault(); joinOnline(input.value, 'lobby'); } },
-            input, h('button.btn', { type: 'submit' }, h('span', { text: 'Join' }))),
-          h('div.arc-net__note', { text: 'Rooms run on StaticOS’s live connection, a free public server: anyone with the code can join, nothing is saved, and some school or work networks block it.' }),
+            input, h('button.btn', { type: 'submit' }, h('span', { text: tr('Join') }))),
+          h('div.arc-net__note', { text: tr('Rooms run on StaticOS’s live connection, a free public server: anyone with the code can join, nothing is saved, and some school or work networks block it.') }),
           liveLine(N), h('div.arc-card__row', toArcade));
       }
       if (phase === 'hosting') {
-        const copy = h('button.btn.btn--primary', { type: 'button', onclick: () => copyInvite(room) }, icon('copy'), h('span', { text: 'Copy invite' }));
+        const copy = h('button.btn.btn--primary', { type: 'button', dataset: { act: 'copyinvite' }, onclick: () => copyInvite(room) }, icon('copy'), h('span', { text: tr('Copy invite') }));
+        const link = h('button.btn', { type: 'button', dataset: { act: 'copylink' }, onclick: () => copyLink(room) }, icon('link'), h('span', { text: tr('Copy link') }));
         focus(copy);
         return card(
-          h('div.arc-card__title', { text: 'Your room code' }),
-          h('div.arc-net__code', { 'aria-label': `Room code ${spaced(room.code)}`, dataset: { code: room.code } },
-            [...room.code].map(ch => h('span', { text: ch, 'aria-hidden': 'true' }))),
-          h('div.arc-card__text', { text: 'Send it to your friend. On their StaticOS: Static Arcade → Join a friend, then type the code.' }),
-          h('div.arc-card__row', copy, leave('Cancel')),
-          h('div.arc-net__wait', h('i.arc-spin'), h('span', { text: room.phase === 'waiting' ? 'Waiting for your friend to join…' : 'Opening the room…' })),
+          h('div.arc-card__title', { text: tr('Your room code') }),
+          /* two halves of three, easier to read out and to type */
+          h('div.arc-net__code', { 'aria-label': tr('Room code {code}', { code: spaced(room.code) }), dataset: { code: room.code } },
+            [...room.code].map((ch, i) => h('span', { text: ch, class: i === 3 ? 'is-half' : '', 'aria-hidden': 'true' }))),
+          h('div.arc-net__say', { dataset: { k: 'say' }, title: tr('The code, read out loud') }, icon('volume'), h('span', { text: sayCode(room.code) })),
+          h('div.arc-card__text', { text: tr('Send it to your friend. On their StaticOS: Static Arcade → Join a friend, then type the code — or send the link.') }),
+          h('div.arc-card__row', copy, link, leave('Cancel')),
+          inviteList(room),
+          h('div.arc-net__wait', h('i.arc-spin'), h('span', { text: room.phase === 'waiting' ? tr('Waiting for your friend to join…') : tr('Opening the room…') })),
           liveLine(N));
       }
       if (phase === 'joining') {
         const cancel = leave('Cancel');
         focus(cancel);
         return card(
-          h('div.arc-card__title', { text: `Joining ${room.code}` }),
-          h('div.arc-net__wait', h('i.arc-spin'), h('span', { text: room.phase === 'joining' ? 'Knocking on the room…' : 'Connecting…' })),
+          h('div.arc-card__title', { text: tr('Joining {code}', { code: room.code }) }),
+          h('div.arc-net__wait', h('i.arc-spin'), h('span', { text: room.phase === 'joining' ? tr('Knocking on the room…') : tr('Connecting…') })),
           h('div.arc-card__row', cancel), liveLine(N));
       }
       if (phase === 'ready') {
+        const spec = raceOf(g.id);
+        const std = spec ? h('div.arc-net__fine', { text: tr('A race: you both get the same puzzle ({standard}).', { standard: spec.standard }) }) : null;
         if (room.role === 'host') {
-          const go1 = h('button.btn.btn--primary', { type: 'button', onclick: () => room.start() }, icon('play', { fill: true }), h('span', { text: 'Start match' }));
+          const go1 = h('button.btn.btn--primary', { type: 'button', onclick: () => room.start(1) }, icon('play', { fill: true }), h('span', { text: tr('Start match') }));
           focus(go1);
           return card(
-            h('div.arc-card__title', { text: `${peer} joined!` }),
-            rules,
+            h('div.arc-card__title', { text: tr('{peer} joined!', { peer }) }),
+            rules, std,
+            bestPicker(room),
+            h2hLine(room),
             h('div.arc-card__row', go1, leave('Leave room')),
             fine());
         }
         const out = leave('Leave room');
         focus(out);
         return card(
-          h('div.arc-card__title', { text: `You’re in ${peer}’s room` }),
-          rules,
-          h('div.arc-net__wait', h('i.arc-spin'), h('span', { text: `Waiting for ${peer} to start…` })),
+          h('div.arc-card__title', { text: tr('You’re in {peer}’s room', { peer }) }),
+          rules, std,
+          bestPicker(room),
+          h2hLine(room),
+          h('div.arc-net__wait', h('i.arc-spin'), h('span', { text: tr('Waiting for {peer} to start…', { peer }) })),
           h('div.arc-card__row', out),
           fine());
       }
       if (phase === 'countdown') {
-        return h('div.arc-card.arc-net.arc-net--count', { role: 'status', 'aria-label': `Starting in ${N.cdN}`, dataset: { phase } },
-          h('div.arc-card__kicker', { text: `${g.title} · you vs ${peer}` }),
+        const ml = matchLine(N);
+        return h('div.arc-card.arc-net.arc-net--count', { role: 'status', 'aria-label': tr('Starting in {cdN}', { cdN: N.cdN }), dataset: { phase } },
+          h('div.arc-card__kicker', { text: tr('{title} · you vs {peer}', { title: g.title, peer }) }),
           h('div.arc-net__count', { text: String(Math.max(1, N.cdN)) }),
-          h('div.arc-card__text', { text: 'Get ready…' }));
+          h('div.arc-card__text', { text: ml || tr('Get ready…') }));
       }
       if (phase === 'error') {
         const [title, text] = JOIN_ERR[N.err] || JOIN_ERR.nobody;
-        const back = h('button.btn.btn--primary', { type: 'button', onclick: () => { netReset(); paintNet(); } }, h('span', { text: 'Back' }));
+        const back = h('button.btn.btn--primary', { type: 'button', onclick: () => { netReset(); paintNet(); } }, h('span', { text: tr('Back') }));
         focus(back);
         return card(h('div.arc-card__title', { text: title }), h('div.arc-card__text', { text }), h('div.arc-card__row', back, toArcade));
       }
       if (phase === 'left') {
         const gone = N.gone || {};
-        const again = h('button.btn.btn--primary', { type: 'button', onclick: makeRoom }, icon('plus'), h('span', { text: 'Make a new room' }));
+        const again = h('button.btn.btn--primary', { type: 'button', onclick: makeRoom }, icon('plus'), h('span', { text: tr('Make a new room') }));
         focus(again);
         return card(
-          h('div.arc-card__title', { text: gone.reason === 'quiet' ? `Lost touch with ${gone.who}` : `${gone.who} left the room` }),
+          h('div.arc-card__title', { text: gone.reason === 'quiet' ? tr('Lost touch with {who}', { who: gone.who }) : tr('{who} left the room', { who: gone.who }) }),
           h('div.arc-card__text', { text: gone.reason === 'quiet'
-            ? `Nothing arrived from ${gone.who} for 9 seconds — their connection may have dropped.${gone.wasPlaying ? ' The match has no result.' : ''}`
+            ? `Nothing arrived from ${gone.who} for ${Math.round(QUIET_MS / 1000)} seconds, so the room closed — their connection may have dropped.${gone.wasPlaying ? ' The match has no result.' : ''}`
             : `${gone.wasPlaying ? 'The match ended early and has no result. ' : ''}You can make a new room and send them the code again.` }),
           h('div.arc-card__row', again, toArcade));
       }
-      return card(h('div.arc-card__title', { text: 'Online' }));
+      return card(h('div.arc-card__title', { text: tr('Online') }));
     }
 
     function netResultCard() {
       const g = S.game, r = S.result, N = S.net;
       const room = N?.room;
       const peer = room?.peer?.name || 'Friend';
-      const title = r.void ? 'No result' : r.won === true ? 'You win!' : r.won === false ? `${peer} wins` : 'It’s a draw';
-      const fmtS = n => (Number.isFinite(n) ? fmtN(n) : '—');
+      const out = h('button.btn', { type: 'button', onclick: () => { netReset(); paintNet(); } }, h('span', { text: tr('Leave room') }));
+      /* a race whose friend is still going: my result, their progress, and nothing decided yet */
+      if (r.race && r.waiting) {
+        const kit = N?.kit, spec = raceOf(g.id);
+        const gone = N?.gone;
+        setTimeout(() => { if (overlay.contains(out)) out.focus({ preventScroll: true }); }, 40);
+        return h('div.arc-card.arc-res.arc-net', { role: 'dialog', 'aria-label': gone ? tr('{who} left before finishing', { who: gone.who }) : tr('Waiting for {peer} to finish', { peer }), dataset: { phase: 'result', won: gone ? 'void' : 'waiting' } },
+          h('div.arc-card__kicker', { text: tr('{title} · you vs {peer}', { title: g.title, peer }) }),
+          h('div.arc-card__title', { text: gone ? tr('No result') : kit?.mine?.done === false && spec.rank !== 'score' ? tr('Out of the race') : tr('You’re done!') }),
+          h('div.arc-res__detail', { text: `You: ${kit ? raceText(spec, kit.mine, unitOf(g.id)) : '—'}` }),
+          gone ? h('div.arc-card__text', { text: tr('{who} left before finishing, so this race has no result.', { who: gone.who }) })
+            : h('div.arc-net__wait', h('i.arc-spin'), h('span', { text: tr('Waiting for {peer} to finish…', { peer }) })),
+          h('div.arc-card__row', out));
+      }
+      const M = N?.match, best = M?.best || room?.best || 1;
+      const decided = !M || M.over;
+      const matchWon = M && best > 1 && M.over ? (M.me > M.them ? 'You win the match!' : `${peer} wins the match`) : null;
+      const title = matchWon || (r.void ? 'No result' : r.won === true ? 'You win!' : r.won === false ? `${peer} wins` : 'It’s a draw');
+      const fmtS = n => (typeof n === 'string' ? n : Number.isFinite(n) ? fmtN(n) : '—');
+      const next = decided ? (best > 1 ? 'New match' : 'Rematch') : 'Next game';
       let again;
-      if (N?.gone) again = h('button.btn', { type: 'button', disabled: true }, h('span', { text: `${N.gone.who} left` }));
-      else if (room?.wantAgain) again = h('button.btn', { type: 'button', disabled: true }, h('i.arc-spin'), h('span', { text: `Waiting for ${peer}…` }));
+      if (N?.gone) again = h('button.btn', { type: 'button', disabled: true }, h('span', { text: tr('{who} left', { who: N.gone.who }) }));
+      else if (room?.wantAgain) again = h('button.btn', { type: 'button', disabled: true }, h('i.arc-spin'), h('span', { text: tr('Waiting for {peer}…', { peer }) }));
       else again = h('button.btn.btn--primary.arc-res__again', { type: 'button', onclick: rematch },
-        icon('rotate-ccw'), h('span', { text: room?.peerAgain ? `Rematch — ${peer} is in` : 'Rematch' }));
-      const out = h('button.btn', { type: 'button', onclick: () => { netReset(); paintNet(); } }, h('span', { text: 'Leave room' }));
+        icon('rotate-ccw'), h('span', { text: room?.peerAgain ? tr('{next} — {peer} is in', { next, peer }) : next }));
       setTimeout(() => {
         if (overlay.contains(again) && !again.disabled) again.focus({ preventScroll: true });
         else if (overlay.contains(out)) out.focus({ preventScroll: true });
       }, 40);
+      /* Letter Grid: the words, the ones only one of you found marked */
+      const words = r.words ? h('div.arc-res__words', { dataset: { k: 'words' } },
+        [['You', r.words.mine], [peer, r.words.theirs]].map(([who, list]) => h('div.arc-res__wcol',
+          h('b', { text: `${who} · ${list.filter(x => x.only).length} only ${who === 'You' ? 'you' : 'they'} found` }),
+          h('p', list.length ? list.slice(0, 80).map(x => h('span', { class: x.only ? 'is-only' : '', text: x.w })) : h('span', { text: tr('No words') }))))) : null;
+      const swap = !N?.gone && SWAPS[g.id] ? h('div.arc-res__note', { dataset: { k: 'swap' } }, h('span', { text: `${next}: ${SWAPS[g.id]}` })) : null;
+      const ml = M && best > 1 ? h('div.arc-net__match', { dataset: { k: 'match', me: String(M.me), them: String(M.them), over: String(M.over) } }, h('span', { text: matchLine(N, true) })) : null;
+      const rec = decided && N?.h2h && room?.friend ? h('div.arc-net__h2h', { dataset: { k: 'h2h-after' } }, icon('users'),
+        h('span', { text: tr('Your record against {peer}: ', { peer }) }), h('b', { text: (N.h2h.d ? tr('{w} won · {l} lost · {d} drawn', { w: N.h2h.w, l: N.h2h.l, d: N.h2h.d }) : tr('{w} won · {l} lost', { w: N.h2h.w, l: N.h2h.l })) })) : null;
       return h('div.arc-card.arc-res.arc-net', {
         role: 'dialog', 'aria-label': `${title}. You ${fmtS(r.me)}, ${peer} ${fmtS(r.them)}`,
         dataset: { phase: 'result', won: r.void ? 'void' : r.won === null ? 'draw' : String(r.won) },
       },
-        h('div.arc-card__kicker', { text: `${g.title} · you vs ${peer}` }),
+        h('div.arc-card__kicker', { text: tr('{title} · you vs {peer}', { title: g.title, peer }) }),
         h('div.arc-card__title', { text: title }),
         h('div.arc-vs',
-          h('div.arc-vs__side.is-me', h('b', { text: fmtS(r.me) }), h('span', { text: 'You' })),
+          h('div.arc-vs__side.is-me', h('b', { text: fmtS(r.me) }), h('span', { text: tr('You') })),
           h('i', { text: '–', 'aria-hidden': 'true' }),
           h('div.arc-vs__side', h('b', { text: fmtS(r.them) }), h('span', { text: peer }))),
+        matchWon && !r.void ? h('div.arc-res__detail', { text: r.won === true ? tr('You won the last game.') : r.won === false ? tr('{peer} won the last game.', { peer }) : tr('The last game was a draw.') }) : null,
+        r.race ? h('div.arc-res__detail', { dataset: { k: 'race' } }, h('span', { text: tr('You: {mine}', { mine: r.mine }) }), h('br'), h('span', { text: `${peer}: ${r.theirs}` })) : null,
         r.detail ? h('div.arc-res__detail', { text: r.detail }) : null,
-        room?.peerAgain && !room?.wantAgain && !N?.gone ? h('div.arc-res__new.arc-res__new--quiet', icon('users'), h('span', { text: `${peer} wants a rematch` })) : null,
-        h('div.arc-res__note', { text: 'Online matches don’t change your best' }),
+        ml, words, rec,
+        room?.peerAgain && !room?.wantAgain && !N?.gone ? h('div.arc-res__new.arc-res__new--quiet', icon('users'), h('span', { text: `${peer} wants ${decided ? 'a rematch' : 'the next game'}` })) : null,
+        decided && room?.role === 'host' && !N?.gone ? bestPicker(room) : null,
+        swap,
+        h('div.arc-res__note', { text: tr('Online matches don’t change your best') }),
         h('div.arc-card__row', again, out),
-        h('div.arc-card__hint', { text: 'Enter asks for a rematch' }));
+        h('div.arc-card__hint', { text: `Enter asks for ${decided ? 'a rematch' : 'the next game'}` }));
     }
 
     function toggleJoinBar(open = joinBar.hidden) {
@@ -1565,7 +2649,7 @@ defineApp({
       joinStatus.className = 'arc-joinbar__status';
       if (kind === 'joining') {
         const st = S.homeRoom?.live?.() || 'idle';
-        joinStatus.append(h('i.arc-spin'), h('span', { text: st === 'offline' ? LIVE_TEXT.offline : `Joining ${code}…` }));
+        joinStatus.append(h('i.arc-spin'), h('span', { text: st === 'offline' ? LIVE_TEXT.offline : tr('Joining {code}…', { code }) }));
         return;
       }
       const [title, text] = JOIN_ERR[kind] || JOIN_ERR.nobody;
@@ -1606,7 +2690,7 @@ defineApp({
        top of it, and leaving returns to the full-screen desktop */
     function toggleFs() {
       if (document.fullscreenElement === play) document.exitFullscreen().catch(() => {});
-      else play.requestFullscreen?.().catch(err => notify({ icon: 'alert', title: 'Full screen was refused', message: err.message }));
+      else play.requestFullscreen?.().catch(err => notify({ icon: 'alert', title: tr('Full screen was refused'), message: err.message }));
       focusStage();
     }
     const onFsChange = () => {
@@ -1625,12 +2709,17 @@ defineApp({
       clear(recSlot);
       if (!S.game) return;
       if (!REC.ok) {
-        recSlot.append(h('span.arc-recnote', { title: REC.why, role: 'note', 'aria-label': `Can’t record: ${REC.why}` }, icon('info'), h('span', { text: 'Can’t record' })));
+        recSlot.append(h('span.arc-recnote', { title: REC.why, role: 'note', 'aria-label': tr('Can’t record: {why}', { why: REC.why }) }, icon('info'), h('span', { text: tr('Can’t record') })));
         return;
       }
+      if (S.status === 'offer') return;
       if (!S.rec && S.status !== 'loading' && S.status !== 'error' && S.status !== 'idle' && S.status !== 'online' && !canvasOf()) {
-        const why = 'Static Replay records games drawn on a canvas; this one is built from page elements.';
-        recSlot.append(h('span.arc-recnote', { title: why, role: 'note', 'aria-label': `Can’t record this game: ${why}` }, icon('info'), h('span', { text: 'Not recordable' })));
+        /* say why, in words anyone can reach — a tooltip alone is mouse-only */
+        const why = `Static Replay films games that are drawn as one picture (a canvas). ${S.game.title} is made of buttons and text on the page instead, so it can’t be clipped.`;
+        recSlot.append(h('button.arc-recnote', {
+          type: 'button', title: why, 'aria-label': tr('Can’t clip {title}. Why?', { title: S.game.title }), 'aria-haspopup': 'dialog', dataset: { act: 'whynoclip' },
+          onclick: () => notify({ icon: 'film', title: tr('{title} can’t be clipped', { title: S.game.title }), message: why }),
+        }, icon('info'), h('span', { text: tr('Can’t clip · why?') })));
         return;
       }
       const on = !!S.rec;
@@ -1638,10 +2727,10 @@ defineApp({
         type: 'button', class: on ? 'is-on' : '',
         disabled: !on && S.status !== 'playing',
         'aria-pressed': String(on),
-        'aria-label': on ? 'Stop recording and save the clip' : 'Record a clip (up to 30 seconds)',
-        title: on ? 'Stop and save' : 'Record a clip (up to 30 s)',
+        'aria-label': on ? tr('Stop recording and save the clip') : tr('Record a clip (up to 30 seconds)'),
+        title: on ? tr('Stop and save') : tr('Record a clip (up to 30 s)'),
         onclick: () => { if (S.rec) stopRec('user'); else startRec(); focusStage(); },
-      }, h('i.arc-rec__dot'), h('span.arc-rec__txt', { text: on ? recLabel() : 'Record' }));
+      }, h('i.arc-rec__dot'), h('span.arc-rec__txt', { text: on ? recLabel() : tr('Record') }));
       recSlot.append(btn);
     }
     const recElapsed = r => r.activeMs + (r.paused ? 0 : performance.now() - r.since);
@@ -1657,7 +2746,7 @@ defineApp({
         mr = new MediaRecorder(stream, { mimeType: REC.mime, videoBitsPerSecond: 5_000_000 });
       } catch (err) {
         stream?.getTracks().forEach(t => t.stop());
-        notify({ icon: 'alert', title: 'Recording could not start', message: err.message });
+        notify({ icon: 'alert', title: tr('Recording could not start'), message: err.message });
         return;
       }
       const rec = { mr, stream, chunks: [], game: S.game, activeMs: 0, since: performance.now(), paused: false, timer: 0, saved: false, reason: '' };
@@ -1666,7 +2755,7 @@ defineApp({
       mr.onerror = e => { console.error('[arcade] recorder error', e.error || e); };
       try { mr.start(1000); } catch (err) {
         stream.getTracks().forEach(t => t.stop());
-        notify({ icon: 'alert', title: 'Recording could not start', message: err.message });
+        notify({ icon: 'alert', title: tr('Recording could not start'), message: err.message });
         return;
       }
       S.rec = rec;
@@ -1716,7 +2805,7 @@ defineApp({
       const raw = new Blob(r.chunks, { type });
       r.chunks = [];
       if (!raw.size || r.durationMs < 400) {
-        notify({ icon: 'film', title: 'Clip not saved', message: 'That recording was too short to keep.' });
+        notify({ icon: 'film', title: tr('Clip not saved'), message: tr('That recording was too short to keep.') });
         return;
       }
       const blob = await webmWithDuration(raw, r.durationMs);
@@ -1727,16 +2816,16 @@ defineApp({
       try {
         await DB.kv('clips').set(clip.id, clip);
       } catch (err) {
-        notify({ icon: 'alert', title: 'Clip could not be saved', message: err.message });
+        notify({ icon: 'alert', title: tr('Clip could not be saved'), message: err.message });
         return;
       }
       const limit = r.reason === 'limit' ? ' (the 30 s limit)' : '';
       const where = DB.persistent ? 'Find it in Static Arcade › Clips.' : 'Storage is unavailable here, so it is kept only until you close StaticOS.';
       notify({
-        icon: 'film', title: 'Clip saved',
+        icon: 'film', title: tr('Clip saved'),
         message: `${clip.title} · ${dur(clip.durationMs)}${limit}. ${where}`,
         actions: [{
-          label: 'View clips',
+          label: tr('View clips'),
           onClick: () => {
             if (!S.dead) { win.focus?.(); go('clips'); }
             else api.openApp('arcade', { view: 'clips' });
@@ -1759,6 +2848,8 @@ defineApp({
       const onButton = !!t?.closest?.('button,a,[role="button"]');
       setTimeout(() => {
         if (S.dead || e.defaultPrevented) return;
+        /* with Options open, Esc closes them and nothing else reaches the round */
+        if (S.optsOpen) { if (k === 'Escape') closeOptions(true); return; }
         if (k === 'Enter') {
           if (S.status === 'over' && !onButton && !typing) { if (S.online) rematch(); else startRound(); }
           return;
@@ -1777,6 +2868,10 @@ defineApp({
     const onVis = () => { if (document.hidden) autoPause(); };
     document.addEventListener('visibilitychange', onVis);
     offs.push(() => document.removeEventListener('visibilitychange', onVis));
+    /* ...and so does the browser itself losing focus (another app in front), while our window is the active one */
+    const onWinBlur = () => { if (win.el.classList.contains('is-active') && S.view === 'play') autoPause(); };
+    window.addEventListener('blur', onWinBlur);
+    offs.push(() => window.removeEventListener('blur', onWinBlur));
 
     const offMute = store.sub?.('prefs.muted', () => {
       if (S.dead) return;
@@ -1795,9 +2890,27 @@ defineApp({
       if (o.join) { openJoin(o.join); return; }
       if (o.spectate) { openSpectate(o.spectate); return; }
       if (classicFromGameId(o.game)) { openClassic(classicFromGameId(o.game).id); return; }
+      if (o.game && arcadeById(o.game) && o.beat) { openBeat(o.game, o.beat); return; }
       if (o.game && arcadeById(o.game)) { launch(o.game, o.online ? 'online' : o.players); if (o.online && o.host) makeRoom(); }
-      else if (o.view === 'clips' || o.view === 'games') go(o.view);
+      else if (o.view === 'friends') { if (S.view !== 'friends') go('friends'); if (o.cup) paintFriends(o.cup); }
+      else if (TABS.includes(o.view)) go(o.view);
     });
+
+    /* a Beat-this link (#arcade=<id>&seed=…&beat=…&by=…) or a friend's challenge:
+       the same game on the same seed, behind a card that says what the link says */
+    function openBeat(id, raw) {
+      const b = CH.readBeat(raw);
+      const g = arcadeById(id);
+      if (!g) return;
+      /* a mode this version doesn't have would be a different game: not opened (no mode is the first one) */
+      const badMode = !!b?.mode && !MD.isMode(g, b.mode);
+      if (!b || !g.seeded || badMode) {
+        notify({ icon: 'alert', title: tr('That challenge link wasn’t opened'), message: !g.seeded ? tr('{title} has no shared rounds.', { title: g.title }) : badMode ? tr('It is for a {title} mode this Arcade doesn’t have.', { title: g.title }) : tr('Its round or score isn’t readable.') });
+        launch(g.id);
+        return;
+      }
+      launch(g.id, 1, null, { seed: b.seed, shared: true, mode: b.mode || MD.firstMode(g), beat: { score: b.score, by: b.by }, offer: true });
+    }
     /* ---- spectating ---- */
     /* what a watcher gets: a board game's own small snapshot, else the score so far */
     function snapshotNow() {
@@ -1832,7 +2945,7 @@ defineApp({
       joinInput.value = normalizeCode(code);
       clear(joinStatus);
       joinStatus.className = 'arc-joinbar__status';
-      joinStatus.append(icon('eye'), h('span', { text: 'Press Watch to watch this game live. You can’t play or change anything.' }));
+      joinStatus.append(icon('eye'), h('span', { text: tr('Press Watch to watch this game live. You can’t play or change anything.') }));
     }
 
     /* an invite link (#arcade=<id>&room=<CODE>) or opts.join: straight into the room */
@@ -1856,15 +2969,21 @@ defineApp({
       paintFilters();
       paintGrid();
       openClassic(classicFromGameId(opts.game).id);
+    } else if (opts?.game && arcadeById(opts.game) && opts.beat) {
+      openBeat(opts.game, opts.beat);
     } else if (opts?.game && arcadeById(opts.game)) {
       launch(opts.game, opts.online ? 'online' : opts.players);
       if (opts.online && opts.host) makeRoom();      /* { online, host }: straight to a room of your own */
     } else {
-      if (opts?.view === 'clips') S.view = 'clips';
+      if (TABS.includes(opts?.view)) S.view = opts.view;
       paintView();
       paintFilters();
-      if (S.view === 'clips') paintClips(); else paintGrid();
+      if (S.view === 'clips') paintClips();
+      else if (S.view === 'stats') paintStats();
+      else if (S.view === 'friends') paintFriends(opts?.cup || null);
+      else paintGrid();
     }
+    paintHudSize();
 
     return () => {
       if (S.dead) return;
@@ -2051,6 +3170,11 @@ function cardArt(g, W, H, C, neon, off, game) {
 
 const ART = {
   ...ART_SPORTS2,
+  ...ART_NEWGAMES1,
+  ...ART_NEWGAMES2,
+  ...ART_NEWGAMES3,
+  ...ART_NEWGAMES4,
+  ...ART_PULSERUN,
   snake(g, W, H, C, neon, off) {
     g.fillStyle = C(70, 0.12);
     for (let y = 19; y < H; y += 18) for (let x = 17; x < W; x += 18) g.fillRect(x - 1, y - 1, 2, 2);
@@ -2790,6 +3914,19 @@ const ART = {
     g.fillStyle = '#ffe066';
     for (const [r, c] of [[0, 5], [1, 3], [3, 1]]) star(g, ox + (c + 0.5) * k, oy + (r + 0.5) * k, k * 0.36);
     off();
+  },
+  /* Daily Word: four guesses closing in, coloured as the game colours them (no real day's word) */
+  dailyword(g, W, H, C, neon, off) {
+    const rows = [['SLATE', '00100'], ['CRONY', '02200'], ['PROUD', '22200'], ['PROMO', '22222']];
+    const k = 30, gap = 4, ox = (W - (5 * k + 4 * gap)) / 2, oy = (H - (4 * k + 3 * gap)) / 2;
+    g.font = '800 16px Inter,system-ui,sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    rows.forEach(([word, s], r) => [...word].forEach((ch, c) => {
+      const x = ox + c * (k + gap), y = oy + r * (k + gap);
+      const col = { 2: '#3ddc84', 1: '#f2c94c', 0: '#3a3644' }[s[c]];
+      if (r === 3) neon(12, 60, 145); else off();
+      g.fillStyle = col; rrect(g, x, y, k, k, 6); g.fill(); off();
+      g.fillStyle = s[c] === '0' ? '#e9e6f0' : '#08130b'; g.fillText(ch, x + k / 2, y + k / 2 + 1);
+    }));
   },
   solitaire: cardArt,
   spider: cardArt,

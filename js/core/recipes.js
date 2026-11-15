@@ -25,6 +25,9 @@
      fraction(n, d)           reduced { n, d }
      formatAmount({n,d}, unit)
      matches(recipe, query)   every word of the query is somewhere in the recipe
+     shoppingList([{ recipe, servings }]) -> [{ text, from }]  same item, same unit: added up
+     stepTimes(step)          -> [{ ms, text }]  the durations a step mentions
+     toText(recipe) / fromText(text)  plain text out and in
    ============================================================ */
 
 const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) [a, b] = [b, a % b]; return a || 1; };
@@ -148,6 +151,128 @@ export function matches(r, query) {
   return words.every(w => hay.includes(w));
 }
 
+/* ---------------- a shopping list from several recipes -------------
+   Each recipe's lines are scaled to the servings asked for, then lines
+   for the same thing in the same unit are added up exactly ("1/2 cup
+   milk" and "1 cup milk" are "1 1/2 cups milk"). Different units, a
+   range ("2-3 cloves") or a line with no amount are kept as they are;
+   the same unmeasured line twice ("salt to taste") is listed once.
+   -> [{ text, from:[recipe titles] }] in first-seen order */
+export function shoppingList(picks) {
+  const out = [];
+  const byKey = new Map();
+  for (const { recipe: r, servings } of picks) {
+    const to = servings > 0 ? Math.round(servings) : r.servings;
+    const k = fraction(to, r.servings);
+    for (const raw of r.ingredients) {
+      const line = to !== r.servings ? scaleLine(raw, r.servings, to) : raw;
+      const a = parseAmount(raw);
+      const first = a ? String(a.rest.split(/\s+/)[0] || '').replace(/[.,;:]+$/, '') : '';
+      const unit = a ? UNITS[first.toLowerCase()] || null : null;
+      const name = a ? (unit ? a.rest.slice(first.length) : a.rest).trim() : raw.trim();
+      const exact = !!a && !a.hi;
+      const q = exact ? times(a.lo, k) : null;          /* exact: the amount is never re-read from rounded text */
+      const key = exact ? `${unit ? unit.s : ''}|${fold(name)}` : `=${fold(line)}`;
+      const hit = byKey.get(key);
+      if (hit) {
+        if (!hit.from.includes(r.title)) hit.from.push(r.title);
+        if (exact) { hit.q = fraction(hit.q.n * q.d + q.n * hit.q.d, hit.q.d * q.d); hit.n++; }
+        continue;
+      }
+      const item = { key, q, unit, name, text: line.trim(), from: [r.title], n: 1 };
+      byKey.set(key, item);
+      out.push(item);
+    }
+  }
+  return out.map(it => {
+    if (!it.q || it.n === 1) return { text: it.text, from: it.from };
+    const plural = it.q.n > it.q.d;
+    const word = it.unit ? (plural ? it.unit.p : it.unit.s) : '';
+    const amt = formatAmount(it.q, word);
+    return { text: [amt, word, it.name].filter(Boolean).join(' '), from: it.from };
+  });
+}
+
+/* ---------------- timers in a step ---------------------------------
+   "Simmer for 10 minutes", "bake 1 1/2 hours", "rest 30 sec", "1 hour
+   30 minutes", "10-12 min" (the shorter end, so you check early), "half
+   an hour", "a minute". -> [{ ms, text }] in the order they appear,
+   1 second to 24 hours each. */
+const WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40, 'forty-five': 45, fifty: 50, sixty: 60, ninety: 90 };
+const UNIT_MS = { s: 1000, m: 60000, h: 3600000 };
+const NUMW = `(?:\\d+\\s+\\d+/\\d+|\\d+/\\d+|\\d*\\.\\d+|\\d+\\s*[${G}]|\\d+|[${G}]|${Object.keys(WORDS).sort((a, b) => b.length - a.length).join('|')})`;
+const DUR = new RegExp(`(?<![\\w/.])(?:(half\\s+an?\\s+hour)\\b|(${NUMW})(?:\\s*(?:-|–|to)\\s*(${NUMW}))?\\s*(?:-\\s*)?(seconds?|secs?|minutes?|mins?|hours?|hrs?|hr)\\b)`, 'gi');
+function wordNum(t) {
+  t = t.trim().toLowerCase();
+  if (WORDS[t] !== undefined) return fraction(WORDS[t], 1);
+  return readOne(t);
+}
+export function stepTimes(step) {
+  const out = [];
+  const s = String(step || '');
+  DUR.lastIndex = 0;
+  let m;
+  while ((m = DUR.exec(s))) {
+    let ms;
+    const unit = m[1] ? 'hour' : m[4].toLowerCase();
+    if (m[1]) ms = 1800000;
+    else {
+      const q = wordNum(m[2]);
+      if (!q) continue;
+      ms = Math.round((q.n * UNIT_MS[unit[0] === 's' ? 's' : unit[0] === 'h' ? 'h' : 'm']) / q.d);
+    }
+    /* "1 hour 30 minutes": the minutes join the hour before them */
+    const prev = out[out.length - 1];
+    if (prev && prev.unit === 'h' && /^(\s*(and|,)?\s*)$/i.test(s.slice(prev.end, m.index)) && unit[0] === 'm' && !prev.joined) {
+      prev.ms += ms; prev.text = s.slice(prev.start, m.index + m[0].length); prev.end = m.index + m[0].length; prev.joined = true;
+      continue;
+    }
+    if (ms >= 1000 && ms <= 86400000) out.push({ ms, text: m[0], start: m.index, end: m.index + m[0].length, unit: unit[0] === 'h' ? 'h' : 'x', range: !!m[3] });
+  }
+  return out.map(({ ms, text, range }) => ({ ms, text, range }));
+}
+
+/* ---------------- recipes as plain text ----------------------------
+   Out: the title, "Serves N", "Tags: …", then Ingredients (one per
+   line, "- " in front) and Steps (numbered). In: the same shape, or
+   most recipes pasted from a page or a note — headings like
+   Ingredients / Method / Directions / Instructions, bullets, "1." or
+   "Step 1:" numbering, "Serves 4", "Makes 12", "Yield: 6". */
+export function toText(r) {
+  return [r.title, `Serves ${r.servings}`, r.tags.length ? `Tags: ${r.tags.join(', ')}` : null, '',
+    'Ingredients', ...r.ingredients.map(l => `- ${l}`), '',
+    'Steps', ...r.steps.map((s, i) => `${i + 1}. ${s}`), ''].filter(x => x !== null).join('\n');
+}
+const ING_H = /^#*\s*(ingredients?|you(?:'|’)?ll need|shopping)\s*:?$/i;
+const STEP_H = /^#*\s*(steps?|method|directions?|instructions?|preparation|how to make it)\s*:?$/i;
+const OTHER_H = /^#*\s*(notes?|tips?|equipment)\s*:?$/i;
+const BULLET = /^\s*(?:[-*•·▪◦]|\[\s?\]|\(\s?\))\s+/;
+const NUMBERED = /^\s*(?:step\s*)?\d{1,2}\s*[.):]\s*/i;
+export function fromText(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n').map(s => s.replace(/\s+$/, ''));
+  const d = { title: '', servings: 4, tags: [], ingredients: [], steps: [] };
+  let sect = null, sawHead = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    let m;
+    if (!d.title && !ING_H.test(line) && !STEP_H.test(line)) { d.title = line.replace(/^#+\s*/, '').slice(0, 80); continue; }
+    if ((m = /^(?:serves|servings?|makes|yield|portions?)\s*:?\s*(\d{1,2})\b/i.exec(line))) { d.servings = Math.max(1, Math.min(99, +m[1])); continue; }
+    if ((m = /^tags?\s*:\s*(.+)$/i.exec(line))) { d.tags = m[1].split(',').map(t => t.trim()).filter(Boolean); continue; }
+    if (ING_H.test(line)) { sect = 'ing'; sawHead = true; continue; }
+    if (STEP_H.test(line)) { sect = 'steps'; sawHead = true; continue; }
+    if (OTHER_H.test(line)) { sect = 'steps'; continue; }
+    const bullet = BULLET.test(line), numbered = NUMBERED.test(line);
+    const body = line.replace(BULLET, '').replace(NUMBERED, '').trim();
+    if (!body) continue;
+    const to = sect || (numbered ? 'steps' : bullet || parseAmount(body) ? 'ing' : 'steps');
+    (to === 'ing' ? d.ingredients : d.steps).push(body);
+  }
+  if (!d.title) return { ok: false, why: 'There’s no text to read a recipe from.' };
+  if (!d.ingredients.length && !d.steps.length) return { ok: false, why: 'Only a title was found: put the ingredients and the steps on the lines after it.' };
+  return { ok: true, recipe: d, guessed: !sawHead };
+}
+
 /** Two small starters, written for StaticOS. */
 export const STARTERS = [
   {
@@ -162,4 +287,4 @@ export const STARTERS = [
   },
 ];
 
-export default { parseAmount, scaleLine, formatAmount, fraction, normRecipe, matches, STARTERS, MAX_RECIPES };
+export default { parseAmount, scaleLine, formatAmount, fraction, normRecipe, matches, shoppingList, stepTimes, toText, fromText, STARTERS, MAX_RECIPES };

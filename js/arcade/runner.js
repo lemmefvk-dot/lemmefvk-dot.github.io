@@ -7,14 +7,32 @@
 
    · Jump: Space / ↑ / W, or press the upper part of the screen. Hold
      it for a high jump, tap it for a short hop.
+   · Double jump: press jump again in the air (once a jump) for a second,
+     smaller kick. Pressed just before landing, it waits and jumps the
+     moment you land instead, as before.
    · Duck: ↓ / S, or press the lower part of the screen. In the air a
      duck drops you faster.
+   · Distance milestones: a post every 100 m beside the track, a chime
+     and a banner every 250 m, and a flag where your best run ended
+     (ctx.best, this device's own; none until there is one).
    · Score is the distance in metres. The speed ramps up with it, the
      gaps stay fair, and the sky slowly turns from day to night (and
      back) every 160 m. The three backdrop layers scroll at different
      speeds.
    · Reduced motion: the backdrop stops drifting and nothing flashes;
      the game is the same.
+   · One-button mode (ctx.oneButton, from the Arcade's options): one
+     button does both — Space (or any jump or duck key), a click or a
+     tap anywhere. Press to jump; hold for a higher jump; keep holding
+     after you land to duck under a drone. The rules are the same, so
+     the round counts as usual.
+   · Game speed (ctx.speed, 0.5–1): the whole game clock runs at that
+     rate — the scroll, the jumps and the spawns all slow together.
+   · A seed (ctx.seed, an online race): the obstacles and the gaps
+     between them come from it, so two screens get the same course; with
+     ctx.shared they also come in from the same distance (SHARED_SPAWN)
+     whatever the window's shape. Only the looks (shake, bobbing) stay
+     random.
    Test hook (el.arcadeHook): inert unless called; see the end of mount().
    ============================================================ */
 import { clamp, hsl, FONT, coarse, surface, ownsKey, sounder, looper, rr, prompt } from './kit.js';
@@ -22,8 +40,8 @@ import { clamp, hsl, FONT, coarse, surface, ownsKey, sounder, looper, rr, prompt
 const VH = 300, GROUND = 240;
 const PX = 96;                                  /* the runner's x on screen */
 const PW = 30, PH = 56, DH = 30, DW = 40;       /* standing and ducking boxes */
-const G_UP = 1500, G_DOWN = 3000, G_FAST = 7000, JUMP_V = 620;
-const PX_PER_M = 40, CYCLE_M = 160;
+const G_UP = 1500, G_DOWN = 3000, G_FAST = 7000, JUMP_V = 620, JUMP2_V = 520, JUMP2_MIN_H = 24;
+const PX_PER_M = 40, CYCLE_M = 160, POST_M = 100, MILESTONE_M = 250;
 const KINDS = {
   spike:  { w: 28, h: 36, y: 0 },
   pillar: { w: 26, h: 68, y: 0 },
@@ -32,6 +50,7 @@ const KINDS = {
 };
 
 const seeded = seed => { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; };
+const SHARED_SPAWN = 1460;                      /* world units right of the edge: wider than any usual window */
 const rnd = seeded(11);
 const STARS = Array.from({ length: 60 }, () => ({ x: rnd() * 1400, y: rnd() * 150, r: rnd() * 1.2 + 0.4 }));
 const RIDGE = Array.from({ length: 24 }, (_, i) => ({ x: i * 90, w: 110 + rnd() * 70, h: 50 + rnd() * 70 }));
@@ -42,14 +61,21 @@ export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
+    const pace = Number.isFinite(ctx.speed) ? clamp(ctx.speed, 0.5, 1) : 1;
+    const one = !!ctx.oneButton;
+    /* the course's dice: the round's seed when there is one (a race), else Math.random */
+    const course = Number.isInteger(ctx.seed) ? seeded(ctx.seed ^ 0x9e3779b9) : null;
+    const roll = () => (course ? course() : Math.random());
+    const log = [];                                 /* the course so far, for the play-tests: [kind, gap] */
     const S = {
       state: 'ready',                    /* ready | play | dying | over */
-      paused: false, manual: false, auto: true,
+      paused: false, manual: false, auto: true, btn: false,
       dist: 0, score: 0, time: 0, passed: 0,
       h: 0, vy: 0, jumpHeld: false, duckHeld: false, buffer: 0, run: 0,
       obs: [], next: 260, dieT: 0, shake: 0, lastKind: '',
-      jumps: 0,
+      jumps: 0, doubled: false, doubles: 0, mile: 0, mileT: -9,
     };
+    const BEST = Number.isFinite(ctx.best) && ctx.best > 0 ? ctx.best : null;   /* where your best run ended, for its flag */
     const sf = surface(el, 'Endless Runner', () => draw());
     /* world units: x = 0 at the left edge, VH tall, as wide as the window's shape allows */
     const view = () => {
@@ -75,7 +101,7 @@ export default {
     function pickKind() {
       const pool = ['spike', 'spike', 'pillar', 'twin'];
       if (S.score >= 12) pool.push('drone', 'drone');
-      return pool[Math.floor(Math.random() * pool.length)];
+      return pool[Math.floor(roll() * pool.length)];
     }
 
     function jump() {
@@ -83,8 +109,13 @@ export default {
       if (S.state === 'ready') { S.state = 'play'; }
       S.jumpHeld = true;
       if (grounded()) {
-        S.vy = JUMP_V; S.h = 0.01; S.jumps++;
+        S.vy = JUMP_V; S.h = 0.01; S.jumps++; S.doubled = false;
         snd.blip(420, 0.12, 'triangle', 0.8, 760);
+      } else if (!S.doubled && S.h > JUMP2_MIN_H) {
+        /* the double jump: once a jump, well clear of the ground */
+        S.vy = Math.max(S.vy, 0) + JUMP2_V; S.vy = Math.min(S.vy, JUMP2_V * 1.15);
+        S.doubled = true; S.doubles++;
+        snd.blip(560, 0.1, 'triangle', 0.7, 980);
       } else S.buffer = 0.12;
     }
     const release = () => { S.jumpHeld = false; };
@@ -98,11 +129,18 @@ export default {
     function sub(dt) {
       S.time += dt;
       if (S.state === 'ready') return;
+      /* one button: still held once you are back on the ground is a duck */
+      if (one) S.duckHeld = S.btn && grounded();
       if (S.state === 'play') {
         const v = speed();
         S.dist += v * dt;
         const m = Math.floor(S.dist / PX_PER_M);
-        if (m !== S.score) { S.score = m; ctx.onScore(m); }
+        if (m !== S.score) {
+          S.score = m; ctx.onScore(m);
+          /* a milestone every 250 m: a chime and a banner */
+          const mile = Math.floor(m / MILESTONE_M) * MILESTONE_M;
+          if (mile > S.mile) { S.mile = mile; S.mileT = S.time; snd.blip(660, 0.12, 'triangle', 0.8, 990); snd.blip(990, 0.18, 'triangle', 0.6, 1320); }
+        }
         S.run += dt * (6 + v / 80);
         if (S.buffer > 0) S.buffer -= dt;
         /* body */
@@ -111,7 +149,7 @@ export default {
           S.vy -= g * dt;
           S.h += S.vy * dt;
           if (S.h <= 0) {
-            S.h = 0; S.vy = 0;
+            S.h = 0; S.vy = 0; S.doubled = false;
             if (S.buffer > 0 && S.jumpHeld) { S.vy = JUMP_V; S.h = 0.01; S.jumps++; S.buffer = 0; }
           }
         }
@@ -125,8 +163,9 @@ export default {
         const vw = view().vw;
         if (S.auto && S.next <= 0) {
           const kind = pickKind();
-          spawn(kind, vw + 60);
-          S.next = v * 0.72 + 170 + Math.random() * 230;
+          spawn(kind, ctx.shared && course ? SHARED_SPAWN : vw + 60);
+          S.next = v * 0.72 + 170 + roll() * 230;
+          if (log.length < 200) log.push([kind, Math.round(S.next)]);
         }
         /* contact */
         const b = boxOf();
@@ -140,7 +179,7 @@ export default {
         S.vy -= G_DOWN * dt; S.h = Math.max(0, S.h + S.vy * dt); if (S.h === 0) S.vy = 0;
         if (S.dieT > 0.7) {
           S.state = 'over';
-          ctx.onEnd({ score: S.score, won: false, detail: `${S.score} m · ${S.passed} obstacle${S.passed === 1 ? '' : 's'} cleared` });
+          ctx.onEnd({ score: S.score, won: false, detail: `${S.score} m · ${S.passed} obstacle${S.passed === 1 ? '' : 's'} cleared${S.doubles ? ` · ${S.doubles} double jump${S.doubles === 1 ? '' : 's'}` : ''}${S.mile ? ` · past the ${S.mile} m milestone` : ''}` });
         }
       }
     }
@@ -150,7 +189,7 @@ export default {
       if (S.shake > 0) S.shake = Math.max(0, S.shake - dt);
     }
     const loop = looper(dt => {
-      if (!S.manual) update(dt);
+      if (!S.manual) update(dt * pace);
       draw();
       if (S.state === 'over') loop.stop();
     });
@@ -273,6 +312,26 @@ export default {
       const doff = reduced ? 0 : S.dist % 60;
       for (let x = X0 - 60 - doff; x < X1 + 60; x += 60) g.fillRect(Math.round(x) + 0, GROUND + 18, 26, 3);
       for (let x = X0 - 90 - doff * 1.5; x < X1 + 60; x += 90) g.fillRect(Math.round(x) + 30, GROUND + 38, 18, 3);
+      /* milestone posts every 100 m (in world x: where that distance is under the runner), and your best's flag */
+      const atM = m => X0 + PX + m * PX_PER_M - S.dist;
+      for (let m = Math.ceil((S.dist - PX - 60) / PX_PER_M / POST_M) * POST_M; atM(m) < X1 + 40; m += POST_M) {
+        if (m <= 0) continue;
+        const x = atM(m), big = m % MILESTONE_M === 0;
+        g.fillStyle = `rgba(${night > 0.5 ? '230,236,255' : '40,46,70'},.75)`;
+        g.fillRect(x - 1.5, GROUND - (big ? 46 : 30), 3, big ? 46 : 30);
+        g.fillStyle = big ? hsl(48, 95, 60) : hsl(205, 30, 85);
+        rr(g, x - 20, GROUND - (big ? 62 : 44), 40, 16, 4); g.fill();
+        g.fillStyle = '#10141e'; g.font = `700 10px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(`${m} m`, x, GROUND - (big ? 54 : 36));
+      }
+      if (BEST && atM(BEST) > X0 - 20 && atM(BEST) < X1 + 40) {
+        const x = atM(BEST);
+        g.fillStyle = hsl(215, 20, 85); g.fillRect(x - 1, GROUND - 70, 2, 70);
+        g.fillStyle = hsl(345, 85, 58);
+        g.beginPath(); g.moveTo(x + 1, GROUND - 70); g.lineTo(x + 26, GROUND - 62); g.lineTo(x + 1, GROUND - 54); g.closePath(); g.fill();
+        g.fillStyle = night > 0.5 ? '#fff' : '#10141e'; g.font = `700 10px ${FONT}`; g.textAlign = 'left'; g.textBaseline = 'bottom';
+        g.fillText('your best', x + 4, GROUND - 72);
+      }
       /* things */
       for (const o of S.obs) drawObstacle(g, o, X0 + o.x - (X0 < 0 ? 0 : 0));
       drawRunner(g, X0 + PX, GROUND - S.h);
@@ -280,16 +339,32 @@ export default {
       g.fillStyle = night > 0.5 ? 'rgba(255,255,255,.85)' : 'rgba(10,20,40,.8)';
       g.font = `800 20px ${FONT}`; g.textAlign = 'right'; g.textBaseline = 'top';
       g.fillText(`${S.score} m`, X1 - 14, 10);
+      /* a milestone's banner, for a moment */
+      if (S.mile && S.time - S.mileT < 1.6) {
+        g.textAlign = 'center'; g.font = `800 26px ${FONT}`;
+        g.fillStyle = `rgba(255,214,90,${clamp(1.6 - (S.time - S.mileT), 0, 1)})`;
+        g.fillText(`${S.mile} m!`, (X0 + X1) / 2, 46);
+      }
       g.restore();
       g.restore();
-      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Tap the top to jump' : 'Press Space to run', coarse() ? 'Press the bottom to duck. Hold for a higher jump.' : 'Hold to jump higher. Duck under drones with ↓.', 195, sf.h * 0.38);
+      if (S.state === 'ready') {
+        if (one) prompt(g, sf, coarse() ? 'One button: tap anywhere to jump' : 'One button: press Space, click or tap to jump', 'Hold for a higher jump · keep holding after you land to duck under drones', 195, sf.h * 0.38);
+        else prompt(g, sf, coarse() ? 'Tap the top to jump' : 'Press Space to run', coarse() ? 'Press the bottom to duck. Hold for a higher jump.' : 'Hold to jump higher. Duck under drones with ↓.', 195, sf.h * 0.38);
+      }
     }
 
     /* ------------------------------ input ------------------------------ */
+    /* one-button mode: every jump or duck key is the one button */
+    const press1 = () => { S.btn = true; jump(); };
+    const release1 = () => { S.btn = false; release(); if (one) S.duckHeld = false; };
     const onKey = e => {
       if (!ownsKey(el, e)) return;
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-      if (k === ' ' || k === 'ArrowUp' || k === 'w') {
+      if (one && (k === ' ' || k === 'ArrowUp' || k === 'w' || k === 'ArrowDown' || k === 's' || k === 'Enter')) {
+        e.preventDefault();
+        if (S.paused || e.repeat) return;
+        snd.wake(); press1();
+      } else if (k === ' ' || k === 'ArrowUp' || k === 'w') {
         e.preventDefault();
         if (S.paused || e.repeat) return;
         snd.wake(); jump();
@@ -304,7 +379,8 @@ export default {
     };
     const onKeyUp = e => {
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-      if (k === ' ' || k === 'ArrowUp' || k === 'w') release();
+      if (one) { if (k === ' ' || k === 'ArrowUp' || k === 'w' || k === 'ArrowDown' || k === 's' || k === 'Enter') release1(); }
+      else if (k === ' ' || k === 'ArrowUp' || k === 'w') release();
       else if (k === 'ArrowDown' || k === 's') S.duckHeld = false;
     };
     const held = new Map();                         /* pointerId -> 'jump' | 'duck' */
@@ -314,7 +390,8 @@ export default {
       const low = (e.clientY - r.top) / r.height > 0.62;
       try { sf.cv.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
       snd.wake();
-      if (low && S.state !== 'ready') { held.set(e.pointerId, 'duck'); S.duckHeld = true; }
+      if (one) { held.set(e.pointerId, 'one'); press1(); }
+      else if (low && S.state !== 'ready') { held.set(e.pointerId, 'duck'); S.duckHeld = true; }
       else { held.set(e.pointerId, 'jump'); jump(); }
     };
     const onUp = e => {
@@ -322,8 +399,9 @@ export default {
       held.delete(e.pointerId);
       if (w === 'duck') S.duckHeld = [...held.values()].includes('duck');
       else if (w === 'jump') release();
+      else if (w === 'one' && ![...held.values()].includes('one')) release1();
     };
-    const onBlur = () => { S.jumpHeld = false; S.duckHeld = false; held.clear(); };
+    const onBlur = () => { S.jumpHeld = false; S.duckHeld = false; S.btn = false; held.clear(); };
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
@@ -346,13 +424,14 @@ export default {
         snd.close();
         sf.destroy();
       },
-      pause() { S.paused = true; S.jumpHeld = false; S.duckHeld = false; held.clear(); loop.stop(); draw(); },
+      pause() { S.paused = true; S.jumpHeld = false; S.duckHeld = false; S.btn = false; held.clear(); loop.stop(); draw(); },
       resume() { S.paused = false; if (S.state !== 'over') loop.start(); },
       /* a read-only snapshot for automated play-tests */
       peek: () => ({
         state: S.state, paused: S.paused, score: S.score, dist: S.dist, speed: speed(), time: S.time, passed: S.passed,
         height: S.h, vy: S.vy, grounded: grounded(), ducking: S.duckHeld && grounded(), jumps: S.jumps, night: nightness(),
         runnerX: PX, obstacles: S.obs.map(o => ({ kind: o.kind, x: o.x, w: o.w, h: o.h, y: o.y })),
+        oneButton: one, pace, held: S.btn, doubled: S.doubled, doubles: S.doubles, milestone: S.mile, best: BEST, seed: course ? ctx.seed : null, course: log.slice(),
       }),
       /* test hook — nothing in the game calls it:
          manual(bool: stop the clock, step it by hand) · step(seconds) · auto(bool: spawn obstacles on its own)

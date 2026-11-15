@@ -76,6 +76,18 @@ html[data-theme="light"] .pmk__light.is-on{color:#b04a00}
 @media (prefers-reduced-motion:reduce){.pmk__tool,.pmk__stamp,.pmk__btn{transition:none}}
 body.reduce-motion .pmk *{transition:none!important}
 
+/* ---- looks + saved carvings (second row) ------------------------------ */
+.pmk__bar--looks{padding-top:var(--sp-2);padding-bottom:var(--sp-2)}
+.pmk__look{gap:var(--sp-2);font-size:var(--fs-11);color:var(--ink-2)}
+.pmk__look[hidden],.pmk__nameform[hidden]{display:none}
+.pmk__file{font-size:var(--fs-10);color:var(--ink-2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pmk__name{
+  height:30px;width:170px;padding:0 var(--sp-3);border-radius:var(--r-sm);
+  background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-0);font-size:var(--fs-11);font-family:inherit;
+}
+.pmk__err{color:var(--accent-soft);font-size:var(--fs-10)}
+.pmk__name:focus-visible{outline:2px solid #ff9a3c;outline-offset:1px}
+
 /* ---- phone --------------------------------------------------------- */
 body.is-mobile .pmk__bar{padding:var(--sp-2) var(--sp-3);gap:var(--sp-2)}
 body.is-mobile .pmk__btn span:not(.icon){display:none}

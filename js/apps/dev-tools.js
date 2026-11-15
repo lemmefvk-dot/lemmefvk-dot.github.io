@@ -1,6 +1,7 @@
 /* ============================================================
-   dev-tools.js - Dev Tools: a regex tester, a JSON viewer and a
-   password generator, in one small window.
+   dev-tools.js - Dev Tools: a regex tester, a JSON viewer, a
+   password generator, and Encode, Hash, Time and Diff tabs, in one
+   small window.
 
    Why one app: all three are the same kind of tool (paste or type,
    see the answer at once, copy it out), none had a home, and no existing
@@ -18,6 +19,20 @@
    file of several megabytes costs about what is on screen. `.json` files
    open here from Files (defineApp `exts`). Keys and values are text.
 
+   Replace previews the text with every match replaced (in the same
+   worker, under the same time limit), using the browser's own $1 /
+   $<name> / $& rules. Patterns can be saved by name; they are kept per
+   person under store('portal.dev-tools-patterns'), never the test text.
+   The cheat sheet's tokens go in where the cursor is.
+
+   JSON → CSV writes the selected array (or the whole file, if it is one)
+   into Documents and opens it in Static Sheets (dev-tools-text.js).
+
+   ENCODE, HASH, TIME, DIFF  dev-tools-text.js: Base64 and URL encoding
+   with the browser's own btoa/atob and encodeURIComponent; SHA digests
+   with crypto.subtle; Unix timestamps and ISO dates with Date; a
+   plain-text line diff (Myers). Text in and out, never markup.
+
    PASSWORDS  dev-tools-pw.js. crypto.getRandomValues with rejection
    sampling. The generated text lives in this window's memory only: it is
    never written to the store, the file system, the console or a
@@ -34,6 +49,7 @@ import { writeUnrecorded } from '../core/clipboard.js';
 import { TEXT_MAX } from '../core/fileimport.js';
 import * as J from './dev-tools-json.js';
 import * as P from './dev-tools-pw.js';
+import * as X from './dev-tools-text.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-dev-tools-css')) {
   const l = document.createElement('link');
@@ -44,10 +60,20 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-dev-tools-
 }
 
 const KEY = 'portal.dev-tools';
+const PX_KEY = 'portal.dev-tools-patterns';
+const MAX_SAVED = 50;
 const RX_LIMIT_MS = 1500;
+const RX_CHEAT = {
+  chars: [['.', 'any character but a line break'], ['\\d', 'a digit 0-9'], ['\\w', 'a letter, digit or _'], ['\\s', 'a space, tab or line break'], ['\\D', 'anything but a digit (\\W and \\S likewise)'],
+    ['[abc]', 'one of a, b or c'], ['[^abc]', 'anything but a, b or c'], ['[a-z]', 'a character from a to z'], ['\\.', 'a real dot (\\ makes a special character plain)'], ['\\p{L}', 'any letter in any script (needs the u flag)']],
+  groups: [['*', 'the thing before, 0 or more times'], ['+', '1 or more times'], ['?', '0 or 1 time'], ['{2,4}', '2 to 4 times'], ['+?', 'as few as possible (lazy)'],
+    ['^', 'start of the text (or line, with m)'], ['$', 'end of the text (or line, with m)'], ['\\b', 'the edge of a word'], ['(…)', 'a group you can refer to as $1'], ['(?:…)', 'a group that isn’t numbered'],
+    ['(?<name>…)', 'a named group'], ['a|b', 'a or b'], ['(?=…)', 'followed by … (not part of the match)'], ['(?!…)', 'not followed by …'], ['(?<=…)', 'after …'], ['\\1', 'the same text as group 1 again']],
+  replace: [['$1', 'group 1'], ['$<name>', 'a named group'], ['$&', 'the whole match'], ['$`', 'the text before the match'], ['$\'', 'the text after the match'], ['$$', 'a real $']],
+};
 const RX_FLAGS = [['g', 'Find all matches'], ['i', 'Ignore case'], ['m', 'Multiline: ^ and $ match at each line'], ['s', 'Dot matches line breaks'], ['u', 'Unicode'], ['y', 'Sticky: match only at the last position']];
 const ROW_H = 24;
-const PW_DEFAULTS = { mode: 'random', length: 20, lower: true, upper: true, digits: true, symbols: true, noLookalikes: false, words: 5, separator: 'hyphen', capitalise: false, number: false };
+const PW_DEFAULTS = { mode: 'random', length: 20, lower: true, upper: true, digits: true, symbols: true, noLookalikes: false, words: 5, separator: 'hyphen', capitalise: false, number: false, pSyl: 10, pCap: false, pDigits: true, pHyphens: true };
 
 const bitsText = b => `${b >= 100 ? Math.round(b) : (Math.round(b * 10) / 10)} bits`;
 const sizeText = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
@@ -58,8 +84,9 @@ defineApp({
   icon: 'wrench',
   g1: '#7fe0c0', g2: '#1d6b73',
   category: 'Utilities',
-  keywords: ['regex', 'regular expression', 'pattern', 'match', 'json', 'viewer', 'format', 'minify', 'prettify', 'password', 'passphrase', 'generator', 'random', 'entropy', 'developer', 'tools'],
-  desc: 'Test regular expressions, explore JSON files and make strong passwords - all on this device',
+  keywords: ['regex', 'regular expression', 'pattern', 'match', 'replace', 'json', 'viewer', 'format', 'minify', 'prettify', 'csv', 'password', 'passphrase', 'pronounceable', 'generator', 'random', 'entropy',
+    'base64', 'url encode', 'decode', 'hash', 'sha256', 'checksum', 'timestamp', 'unix time', 'epoch', 'diff', 'compare text', 'developer', 'tools'],
+  desc: 'Regex, JSON, passwords, Base64 and URL encoding, hashes, timestamps and text diffs - all on this device',
   singleton: true,
   exts: ['json'],
   win: { w: 900, h: 640, minW: 420, minH: 420 },
@@ -75,7 +102,7 @@ defineApp({
 
     const saved = (store.get(KEY) && typeof store.get(KEY) === 'object') ? store.get(KEY) : {};
     const S = {
-      tab: ['regex', 'json', 'pw'].includes(saved.tab) ? saved.tab : 'regex',
+      tab: ['regex', 'json', 'pw', 'enc', 'hash', 'time', 'diff'].includes(saved.tab) ? saved.tab : 'regex',
       pattern: typeof saved.pattern === 'string' ? saved.pattern.slice(0, 500) : '(\\w+)@(\\w+)\\.com',
       flags: typeof saved.flags === 'string' ? saved.flags.replace(/[^gimsuy]/g, '') : 'g',
       pw: { ...PW_DEFAULTS, ...(saved.pw && typeof saved.pw === 'object' ? saved.pw : {}) },
@@ -84,6 +111,15 @@ defineApp({
     function persist() {
       store.set(KEY, { tab: S.tab, pattern: S.pattern, flags: S.flags, pw: { ...S.pw } });
     }
+    /* saved regex patterns and the replacement, kept apart from the settings above */
+    const px0 = store.get(PX_KEY) && typeof store.get(PX_KEY) === 'object' ? store.get(PX_KEY) : {};
+    const PX = {
+      replace: typeof px0.replace === 'string' ? px0.replace.slice(0, 500) : '$2 at $1',
+      showReplace: px0.showReplace === true,
+      saved: (Array.isArray(px0.saved) ? px0.saved : []).filter(p => p && typeof p.source === 'string' && typeof p.name === 'string').slice(0, MAX_SAVED)
+        .map(p => ({ name: p.name.slice(0, 40), source: p.source.slice(0, 500), flags: String(p.flags || '').replace(/[^gimsuy]/g, ''), replace: typeof p.replace === 'string' ? p.replace.slice(0, 500) : null })),
+    };
+    const savePX = () => store.set(PX_KEY, { replace: PX.replace, showReplace: PX.showReplace, saved: PX.saved.map(p => ({ ...p })) });
     let persistT = 0;
     const schedulePersist = () => { clearTimeout(persistT); persistT = later(persist, 300); };
 
@@ -105,11 +141,82 @@ defineApp({
       const list = h('ol.dt__matches', { 'aria-label': 'Matches' });
       let worker = null, pending = null, seq = 0, debounce = 0;
 
+      /* replace: a preview of the text with every match replaced, $1 groups and all */
+      const rep = h('input.dt__in.mono#dt-rx-rep', { type: 'text', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Replace with', placeholder: 'e.g. $2 at $1 ($1 is group 1, $<name> a named group, $& the whole match)', value: PX.replace });
+      const repOut = h('div.dt__repout.mono', { role: 'region', 'aria-label': 'Text after replacing' });
+      const repNote = h('div.dt__note');
+      const repCopy = btn('Copy result', 'copy', async () => { try { await navigator.clipboard.writeText(repOut.textContent); repNote.textContent = 'Copied the result.'; } catch (e) { repNote.textContent = 'The browser blocked copying here.'; } });
+      const repBox = h('div.dt__repbox', { hidden: !PX.showReplace },
+        h('label.dt__lab', { for: 'dt-rx-rep', text: 'Replace with' }), rep,
+        h('div.dt__bar', h('div.dt__lab', { text: 'Result' }), h('span.dt__grow'), repNote, repCopy), repOut);
+      const repToggle = h('button.btn.btn--sm', { type: 'button', 'aria-pressed': String(PX.showReplace), 'aria-controls': 'dt-rx-repbox', 'data-act': 'replace',
+        onclick: () => { PX.showReplace = !PX.showReplace; repBox.hidden = !PX.showReplace; repToggle.setAttribute('aria-pressed', String(PX.showReplace)); repToggle.classList.toggle('is-on', PX.showReplace); savePX(); run(); } },
+      icon('repeat'), h('span', { text: 'Replace' }));
+      repBox.id = 'dt-rx-repbox';
+      repToggle.classList.toggle('is-on', PX.showReplace);
+
+      /* the cheat sheet: each token goes in where the cursor is */
+      const insert = (input, show) => {
+        /* "(…)" goes in as "()" with the cursor between, ready to type into */
+        const gap = show.indexOf('…');
+        const tok = show.replace('…', '');
+        const a = input.selectionStart ?? input.value.length, b = input.selectionEnd ?? a;
+        input.value = input.value.slice(0, a) + tok + input.value.slice(b);
+        input.focus();
+        const at = a + (gap >= 0 ? gap : tok.length);
+        input.setSelectionRange(at, at);
+        if (input === rep) { PX.replace = rep.value; savePX(); }
+        run();
+      };
+      const sheetList = (rows, input) => h('ul.dt__cheatlist', rows.map(([tok, what]) => h('li',
+        h('button.dt__tok.mono', { type: 'button', 'aria-label': `Insert ${tok}: ${what}`, title: 'Insert', onclick: () => {
+          if (input === rep && !PX.showReplace) repToggle.click();
+          insert(input, tok);
+        } }, h('span', { text: tok })), h('span', { text: what }))));
+      const cheat = h('details.dt__cheat',
+        h('summary', { text: 'Cheat sheet' }),
+        h('div.dt__cheatcols',
+          h('div', h('div.dt__lab', { text: 'Characters' }), sheetList(RX_CHEAT.chars, pat)),
+          h('div', h('div.dt__lab', { text: 'Repeats, groups and anchors' }), sheetList(RX_CHEAT.groups, pat)),
+          h('div', h('div.dt__lab', { text: 'In “Replace with”' }), sheetList(RX_CHEAT.replace, rep))),
+        h('p.dt__credit', { text: 'These are JavaScript’s own regular expressions, as the browser runs them.' }));
+
+      /* saved patterns: kept per person with the other settings, never the test text */
+      const saveName = h('input.dt__in', { type: 'text', maxlength: '40', 'aria-label': 'Name for this pattern', placeholder: 'Name this pattern', autocomplete: 'off' });
+      const savedList = h('div.dt__saved', { role: 'group', 'aria-label': 'Saved patterns' });
+      const savedMsg = h('span.dt__note', { role: 'status' });
+      function paintSaved() {
+        savedList.replaceChildren(...(PX.saved.length ? PX.saved.map((p, i) => h('span.dt__chip',
+          h('button', { type: 'button', 'data-load': p.name, title: `/${p.source}/${p.flags}${p.replace !== null ? ` → ${p.replace}` : ''}`, onclick: () => loadSaved(p) }, h('span', { text: p.name })),
+          h('button.dt__chipx', { type: 'button', 'aria-label': `Delete the saved pattern ${p.name}`, onclick: () => { PX.saved.splice(i, 1); savePX(); paintSaved(); } }, icon('x'))))
+          : [h('span.dt__fcount', { text: 'No saved patterns yet.' })]));
+      }
+      function loadSaved(p) {
+        pat.value = p.source;
+        for (const l of flagBoxes) l.firstChild.checked = p.flags.includes(l.firstChild.dataset.flag);
+        if (p.replace !== null) { rep.value = p.replace; PX.replace = p.replace; if (!PX.showReplace) repToggle.click(); }
+        savedMsg.textContent = `Loaded “${p.name}”.`;
+        savePX(); run();
+      }
+      function saveCurrent() {
+        const name = saveName.value.trim() || pat.value.slice(0, 40);
+        if (!pat.value) { savedMsg.textContent = 'Type a pattern first.'; return; }
+        const entry = { name: name.slice(0, 40), source: pat.value.slice(0, 500), flags: flags(), replace: PX.showReplace ? rep.value.slice(0, 500) : null };
+        const at = PX.saved.findIndex(p => p.name === entry.name);
+        if (at >= 0) PX.saved[at] = entry;
+        else { if (PX.saved.length >= MAX_SAVED) { savedMsg.textContent = `You can keep up to ${MAX_SAVED} patterns.`; return; } PX.saved.push(entry); }
+        savePX(); paintSaved();
+        saveName.value = '';
+        savedMsg.textContent = at >= 0 ? `Updated “${entry.name}”.` : `Saved “${entry.name}”.`;
+      }
+      listen(saveName, 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveCurrent(); } });
+      paintSaved();
+
       const flags = () => flagBoxes.map(l => l.firstChild).filter(c => c.checked).map(c => c.dataset.flag).join('');
       const killWorker = () => { if (worker) { try { worker.terminate(); } catch (e) { /* gone */ } worker = null; } };
       function say(msg, cls = '') { status.textContent = msg; status.className = 'dt__status' + (cls ? ' is-' + cls : ''); }
 
-      function paintText(plain) { hl.replaceChildren(document.createTextNode(plain)); list.replaceChildren(); }
+      function paintText(plain) { hl.replaceChildren(document.createTextNode(plain)); list.replaceChildren(); repOut.textContent = ''; repCopy.disabled = true; }
 
       function render(res, source) {
         const t = text.value;
@@ -135,6 +242,11 @@ defineApp({
         }));
         const n = ms.length;
         say(n === 0 ? 'No matches.' : `${n}${res.more ? '+' : ''} match${n === 1 ? '' : 'es'}${res.more ? ` (showing the first ${n})` : ''}.`, n ? 'ok' : '');
+        if (typeof res.replaced === 'string') {
+          repOut.textContent = res.replaced;
+          repCopy.disabled = false;
+          repNote.textContent = res.cut ? 'The result is cut at 2,000,000 characters.' : flags().includes('g') ? '' : 'Without the g flag, only the first match is replaced.';
+        } else { repOut.textContent = ''; repCopy.disabled = true; }
       }
 
       function run() {
@@ -162,7 +274,7 @@ defineApp({
             say(`Timed out after ${RX_LIMIT_MS / 1000} seconds. This pattern backtracks too much on this text (nested repeats like (a+)+ are the usual cause), so matching was stopped.`, 'bad');
           }, RX_LIMIT_MS),
         };
-        worker.postMessage({ id, source: pat.value, flags: flags(), text: text.value, max: 1000 });
+        worker.postMessage({ id, source: pat.value, flags: flags(), text: text.value, max: 1000, replace: PX.showReplace ? rep.value : null });
       }
       function onMsg(e) {
         const d = e.data;
@@ -174,14 +286,19 @@ defineApp({
       const soon = () => { clearTimeout(debounce); debounce = later(run, 120); };
       listen(pat, 'input', soon);
       listen(text, 'input', soon);
+      listen(rep, 'input', () => { PX.replace = rep.value; savePX(); soon(); });
       flagBoxes.forEach(l => listen(l.firstChild, 'change', run));
       cleanups.push(() => { clearTimeout(debounce); if (pending) clearTimeout(pending.timer); pending = null; killWorker(); });
 
       const el = h('div.dt__panel',
         h('label.dt__lab', { for: 'dt-rx-pat', text: 'Pattern' }),
         h('div.dt__patrow', h('span.dt__slash.mono', { text: '/' }), (pat.id = 'dt-rx-pat', pat), h('span.dt__slash.mono', { text: '/' }), h('div.dt__flags', { role: 'group', 'aria-label': 'Flags' }, flagBoxes)),
+        h('div.dt__bar.dt__bar--sub', repToggle, h('label.dt__findwrap.dt__savewrap', icon('bookmark'), saveName), btn('Keep pattern', 'bookmark', saveCurrent, { 'data-act': 'save-pattern' }), savedMsg),
+        savedList,
+        cheat,
         h('label.dt__lab', { for: 'dt-rx-text', text: 'Test text' }),
         (text.id = 'dt-rx-text', text),
+        repBox,
         status,
         h('div.dt__split',
           h('div.dt__col', h('div.dt__lab', { text: 'Highlighted' }), hl),
@@ -195,6 +312,7 @@ defineApp({
     const js = (() => {
       const M = { text: '', value: undefined, ok: false, err: null, name: '', path: '', dirty: false, view: 'tree', parseMs: 0, bytes: 0 };
       let expanded = new Set(['']);
+      let bCsv = null;         /* To CSV: on when an array is selected (or the file is one) */
       let R = [];
       let sel = '';            /* id of the selected row */
       let hits = [], hitAt = -1, hitSet = new Set(), taStale = false, parseT = 0, searchT = 0;
@@ -256,6 +374,7 @@ defineApp({
         detailPath.textContent = r ? J.pathOf(r) : '';
         detailVal.textContent = r ? (J.isBranch(r.value) ? (Array.isArray(r.value) ? `array, ${r.count} items` : `object, ${r.count} keys`) : `${r.type}${r.type === 'string' ? `, ${r.value.length} characters` : ''}`) : '';
         copyPathBtn.disabled = copyValBtn.disabled = !r;
+        if (bCsv) bCsv.disabled = !csvTarget();
         empty.hidden = M.ok;
         tree.hidden = !M.ok || M.view !== 'tree';
         detail.hidden = tree.hidden;
@@ -485,6 +604,32 @@ defineApp({
       const idKeys = id => id.split('/').slice(1).map(s => s.replace(/~1/g, '/').replace(/~0/g, '~'));
       function collapseAll() { expanded = new Set(['']); sel = ''; tree.scrollTop = 0; refresh(); }
 
+      /* an array (the selected one, or the whole file) as a CSV in Documents, opened in Static Sheets */
+      const csvTarget = () => {
+        const r = selRow();
+        if (r && Array.isArray(r.value)) { const keys = []; for (let x = r; x && x.parent; x = x.parent) keys.unshift(x.key); return { keys, label: J.pathOf(r) }; }
+        if (M.ok && Array.isArray(M.value)) return { keys: [], label: '$' };
+        return null;
+      };
+      function toCsv() {
+        const t = csvTarget();
+        if (!t) { say.textContent = 'Select an array in the tree (or open a file that is one): CSV needs rows.'; return; }
+        let root;
+        try { root = X.parseExact(M.text); } catch (e) { root = M.value; }
+        const res = X.toCsv(J.valueAt(root, t.keys));
+        if (!res.ok) { say.textContent = res.why; return; }
+        const dir = `${vfs.HOME}/Documents`;
+        if (!vfs.node(dir)) vfs.mkdir(dir);
+        const tail = t.keys.length ? '-' + t.keys.map(String).join('-').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40) : '';
+        const base = (M.name || 'data').replace(/\.(json|geojson|jsonc|txt)$/i, '') + tail;
+        let name = `${base}.csv`, k = 1;
+        while (vfs.node(`${dir}/${name}`)) name = `${base} ${++k}.csv`;
+        vfs.write(`${dir}/${name}`, res.csv);
+        say.textContent = `${name}: ${res.rows.toLocaleString()} rows and ${res.cols} columns from ${t.label}${res.cut ? ` (the first ${X.CSV_MAX_ROWS.toLocaleString()}; ${res.cut.toLocaleString()} more were left out)` : ''}, saved in Documents.`;
+        api.openApp('sheets', { path: `${dir}/${name}` });
+      }
+      bCsv = btn('To CSV', 'grid', toCsv, { title: 'Write the selected array (or the whole file, if it is one) as a CSV in Documents and open it in Static Sheets', 'data-act': 'to-csv' });
+
       const bFormat = btn('Format', 'list', () => format(indentArg()));
       const bMin = btn('Minify', 'minimize', () => format(0));
       const bCopy = btn('Copy text', 'copy', () => copy(M.text, 'text'));
@@ -497,6 +642,7 @@ defineApp({
         for (const b of [bFormat, bMin]) b.disabled = !M.ok;
         bCopy.disabled = bSave.disabled = bDl.disabled = !have;
         bExp.disabled = bCol.disabled = !M.ok || M.view !== 'tree';
+        bCsv.disabled = !csvTarget();
         findIn.disabled = !M.ok;
         fileName.classList.toggle('is-dirty', M.dirty);
         fileName.title = M.path || '';
@@ -507,7 +653,7 @@ defineApp({
           btn('Open file', 'folder-open', () => fileIn.click()), fileIn,
           h('div.dt__seg', { role: 'tablist', 'aria-label': 'View' }, viewBtns.tree, viewBtns.text),
           indentSel, bFormat, bMin, bCopy, bSave, bDl),
-        h('div.dt__bar.dt__bar--sub', fileName, info, h('span.dt__grow'), bExp, bCol),
+        h('div.dt__bar.dt__bar--sub', fileName, info, h('span.dt__grow'), bCsv, bExp, bCol),
         errBar,
         h('div.dt__bar.dt__bar--sub', h('label.dt__findwrap', icon('search'), findIn),
           h('button.ibtn', { type: 'button', 'aria-label': 'Previous match', onclick: () => step(-1) }, icon('arrow-up')),
@@ -564,9 +710,15 @@ defineApp({
         range('words', P.MIN_WORDS, P.MAX_WORDS, 'Words'),
         h('div.dt__checks', h('label.dt__chk', h('span', { text: 'Separator' }), sepSel), check('capitalise', 'Capitalise each word'), check('number', 'Add a number at the end')));
 
+      const pronOpts = h('div.dt__opts',
+        range('pSyl', P.MIN_SYL, P.MAX_SYL, 'Syllables'),
+        h('div.dt__checks', check('pHyphens', 'Hyphen after every two syllables'), check('pCap', 'Capital first letter'), check('pDigits', 'Two digits at the end')));
+      const pronOf = () => ({ syllables: o.pSyl, capitalise: o.pCap, digits: o.pDigits, hyphens: o.pHyphens });
+
       const modeBtns = {
         random: h('button', { type: 'button', role: 'tab', onclick: () => setMode('random'), text: 'Password' }),
         phrase: h('button', { type: 'button', role: 'tab', onclick: () => setMode('phrase'), text: 'Passphrase' }),
+        pron: h('button', { type: 'button', role: 'tab', onclick: () => setMode('pron'), text: 'Pronounceable' }),
       };
       function setMode(m) { o.mode = m; changed(); }
 
@@ -592,7 +744,14 @@ defineApp({
         const mine = ++gen;
         msg.textContent = '';
         try {
-          if (o.mode === 'phrase') {
+          if (o.mode === 'pron') {
+            const po = pronOf();
+            secret = P.generatePronounceable(po);
+            bits = P.pronounceableEntropy(po);
+            const same = P.sameLengthRandom(po);
+            meta.textContent = `About ${bitsText(bits)} of entropy (an estimate), from ${o.pSyl} syllables${o.pDigits ? ' and two digits' : ''}. ${strong(bits)} `
+              + `Letters drawn at random would give the same ${o.pSyl * 2} letters${o.pDigits ? ' and two digits' : ''} about ${bitsText(same)}: being easy to say costs the difference, because every other letter is one of five vowels.`;
+          } else if (o.mode === 'phrase') {
             if (!words) words = (await import('./dev-tools-words.js')).EFF_LONG;
             if (dead || mine !== gen) return;
             secret = P.generatePassphrase(o, words);
@@ -614,9 +773,9 @@ defineApp({
       let rt = 0;
       function changed() {
         schedulePersist();
-        modeBtns.random.classList.toggle('is-on', o.mode === 'random'); modeBtns.phrase.classList.toggle('is-on', o.mode === 'phrase');
-        modeBtns.random.setAttribute('aria-selected', String(o.mode === 'random')); modeBtns.phrase.setAttribute('aria-selected', String(o.mode === 'phrase'));
-        randomOpts.hidden = o.mode !== 'random'; phraseOpts.hidden = o.mode !== 'phrase';
+        if (!['random', 'phrase', 'pron'].includes(o.mode)) o.mode = 'random';
+        for (const [k, b] of Object.entries(modeBtns)) { b.classList.toggle('is-on', o.mode === k); b.setAttribute('aria-selected', String(o.mode === k)); }
+        randomOpts.hidden = o.mode !== 'random'; phraseOpts.hidden = o.mode !== 'phrase'; pronOpts.hidden = o.mode !== 'pron';
         clearTimeout(rt); rt = later(regenerate, 0);
       }
       note.append(
@@ -628,18 +787,233 @@ defineApp({
       cleanups.push(() => { clearTimeout(rt); gen++; secret = ''; words = null; out.textContent = ''; meta.textContent = ''; });
 
       const el = h('div.dt__panel',
-        h('div.dt__seg', { role: 'tablist', 'aria-label': 'Kind' }, modeBtns.random, modeBtns.phrase),
+        h('div.dt__seg', { role: 'tablist', 'aria-label': 'Kind' }, modeBtns.random, modeBtns.phrase, modeBtns.pron),
         h('div.dt__pwbox', out, h('div.dt__pwbtns', copyBtn, eye, regenBtn)),
-        meta, msg, randomOpts, phraseOpts, note);
+        meta, msg, randomOpts, phraseOpts, pronOpts, note);
       changed();
       return { el, regenerate };
+    })();
+
+    /* small shared pieces for the four text tabs */
+    const copier = (getText, what, note) => btn('Copy', 'copy', async () => {
+      const t = getText();
+      if (!t) return;
+      try { await navigator.clipboard.writeText(t); note.textContent = `Copied the ${what}.`; } catch (e) { note.textContent = 'The browser blocked copying here.'; }
+    });
+    const area = (label, id, ph, rows = 6) => h('textarea.dt__ta.mono', { id, spellcheck: 'false', 'aria-label': label, placeholder: ph, rows, wrap: 'soft' });
+    const seg = (label, items, cur, onpick) => {
+      const bs = items.map(([v, t]) => h('button', { type: 'button', role: 'tab', 'data-v': v, text: t, onclick: () => { for (const b of bs) { b.classList.toggle('is-on', b === bs.find(x => x.dataset.v === v)); b.setAttribute('aria-selected', String(b.dataset.v === v)); } onpick(v); } }));
+      for (const b of bs) { b.classList.toggle('is-on', b.dataset.v === cur); b.setAttribute('aria-selected', String(b.dataset.v === cur)); }
+      return h('div.dt__seg', { role: 'tablist', 'aria-label': label }, bs);
+    };
+
+    /* ====================================================================
+       ENCODE: Base64 and URL, both ways
+       ==================================================================== */
+    const enc = (() => {
+      let kind = 'b64';
+      const plain = area('Text', 'dt-enc-plain', 'Type or paste text', 6);
+      const coded = area('Encoded', 'dt-enc-coded', 'Or paste Base64 here to decode it', 6);
+      const codedLab = h('label.dt__lab', { for: 'dt-enc-coded', text: 'Base64' });
+      const urlSafe = h('input', { type: 'checkbox', 'aria-label': 'URL-safe Base64 (- and _, no = padding)' });
+      const whole = h('input', { type: 'checkbox', 'aria-label': 'A whole URL (keeps : / ? & = #)' });
+      const form = h('input', { type: 'checkbox', 'aria-label': 'Form data: a space is +' });
+      const b64Opts = h('div.dt__checks', h('label.dt__chk', urlSafe, h('span', { text: 'URL-safe alphabet (- _ and no = padding)' })));
+      const urlOpts = h('div.dt__checks', { hidden: true }, h('label.dt__chk', whole, h('span', { text: 'A whole URL (keeps : / ? & = #)' })), h('label.dt__chk', form, h('span', { text: 'Form data: a space is +' })));
+      const note = h('div.dt__status', { role: 'status', 'aria-live': 'polite' });
+      const parts = h('div.dt__urlparts');
+      let from = 'plain';
+      function go() {
+        note.className = 'dt__status';
+        if (from === 'plain') {
+          coded.value = kind === 'b64' ? X.b64Encode(plain.value, urlSafe.checked) : X.urlEncode(plain.value, { whole: whole.checked, form: form.checked });
+          note.textContent = plain.value ? `${new TextEncoder().encode(plain.value).length} bytes of UTF-8 encoded.` : '';
+        } else {
+          const r = kind === 'b64' ? X.b64Decode(coded.value) : X.urlDecode(coded.value, { whole: whole.checked, form: form.checked });
+          if (r.ok) { plain.value = r.text; note.textContent = coded.value ? 'Decoded.' : ''; }
+          else { note.textContent = r.why + (r.bytes && r.bytes.length ? ` First bytes: ${X.hexOf(r.bytes, 24)}` : ''); note.className = 'dt__status is-bad'; }
+        }
+        const u = kind === 'url' ? X.urlParts(plain.value) : null;
+        parts.replaceChildren(...(u && u.params.length ? [h('div.dt__lab', { text: 'Query parameters' }),
+          h('table.dt__table', h('tbody', u.params.map(([k, v]) => h('tr', h('th', { scope: 'row', text: k }), h('td.mono', { text: v })))))] : []));
+      }
+      listen(plain, 'input', () => { from = 'plain'; go(); });
+      listen(coded, 'input', () => { from = 'coded'; go(); });
+      for (const c of [urlSafe, whole, form]) listen(c, 'change', go);
+      const kinds = seg('Encoding', [['b64', 'Base64'], ['url', 'URL']], kind, v => {
+        kind = v; b64Opts.hidden = v !== 'b64'; urlOpts.hidden = v !== 'url';
+        codedLab.textContent = v === 'b64' ? 'Base64' : 'URL-encoded';
+        coded.placeholder = v === 'b64' ? 'Or paste Base64 here to decode it' : 'Or paste %-encoded text here to decode it';
+        from = plain.value || !coded.value ? 'plain' : 'coded'; go();
+      });
+      const el = h('div.dt__panel', { hidden: true },
+        kinds, b64Opts, urlOpts,
+        h('label.dt__lab', { for: 'dt-enc-plain', text: 'Text' }), plain,
+        h('div.dt__bar', codedLab, h('span.dt__grow'), copier(() => coded.value, 'encoded text', note), copier(() => plain.value, 'text', note)),
+        coded, note, parts,
+        h('p.dt__credit', { text: 'Uses the browser’s own btoa and atob (on the text’s UTF-8 bytes) and encodeURIComponent / encodeURI. Typing in either box updates the other.' }));
+      cleanups.push(() => { plain.value = ''; coded.value = ''; });
+      return { el };
+    })();
+
+    /* ====================================================================
+       HASH: SHA digests with crypto.subtle
+       ==================================================================== */
+    const hash = (() => {
+      const ALGS = ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'];
+      const input = area('Text to hash', 'dt-hash-in', 'Type or paste text, or choose a file', 5);
+      const fileIn = h('input.dt__native', { type: 'file', 'aria-label': 'Choose a file to hash', tabindex: '-1' });
+      const src = h('span.dt__fname', { text: 'Text' });
+      const expect = h('input.dt__in.mono', { type: 'text', spellcheck: 'false', 'aria-label': 'Compare with a hash you expect', placeholder: 'Paste a hash to check it against these' });
+      const verdict = h('div.dt__status', { role: 'status', 'aria-live': 'polite' });
+      const note = h('div.dt__status', { role: 'status' });
+      const outs = Object.fromEntries(ALGS.map(a => [a, h('code.dt__hash.mono', { 'data-alg': a })]));
+      let bytes = null, seq = 0, t = 0;
+      const subtle = globalThis.crypto && globalThis.crypto.subtle;
+      async function go() {
+        const mine = ++seq;
+        if (!subtle) { note.textContent = 'This page has no crypto.subtle (it needs a secure https page), so nothing can be hashed here.'; note.className = 'dt__status is-bad'; return; }
+        const data = bytes || new TextEncoder().encode(input.value);
+        const res = {};
+        for (const a of ALGS) res[a] = [...new Uint8Array(await subtle.digest(a, data))].map(b => b.toString(16).padStart(2, '0')).join('');
+        if (dead || mine !== seq) return;
+        for (const a of ALGS) outs[a].textContent = res[a];
+        note.textContent = `${data.byteLength.toLocaleString()} bytes${bytes ? '' : ' of UTF-8 text'}.`;
+        check(res);
+      }
+      function check(res = Object.fromEntries(ALGS.map(a => [a, outs[a].textContent]))) {
+        const want = expect.value.trim().toLowerCase().replace(/^(sha-?\d+[:= ]+)/, '').replace(/\s+/g, '');
+        for (const a of ALGS) outs[a].classList.toggle('is-match', !!want && res[a] === want);
+        if (!want) { verdict.textContent = ''; verdict.className = 'dt__status'; return; }
+        const hit = ALGS.find(a => res[a] === want);
+        verdict.textContent = hit ? `Matches the ${hit} hash.` : 'Matches none of these.';
+        verdict.className = 'dt__status ' + (hit ? 'is-ok' : 'is-bad');
+      }
+      listen(input, 'input', () => { if (bytes) { bytes = null; src.textContent = 'Text'; } clearTimeout(t); t = later(go, 120); });
+      listen(expect, 'input', () => check());
+      listen(fileIn, 'change', async () => {
+        const f = fileIn.files && fileIn.files[0];
+        fileIn.value = '';
+        if (!f) return;
+        if (f.size > 512 * 1024 * 1024) { note.textContent = 'That file is over 512 MB, more than this tab reads into memory.'; return; }
+        note.textContent = `Reading ${f.name}…`;
+        try { bytes = new Uint8Array(await f.arrayBuffer()); } catch (e) { note.textContent = 'The browser couldn’t read that file.'; return; }
+        if (dead) return;
+        src.textContent = f.name; input.value = '';
+        go();
+      });
+      cleanups.push(() => { clearTimeout(t); seq++; bytes = null; });
+      const el = h('div.dt__panel', { hidden: true },
+        h('div.dt__bar', h('label.dt__lab', { for: 'dt-hash-in', text: 'Hash of' }), src, h('span.dt__grow'), btn('Choose a file', 'folder-open', () => fileIn.click()), fileIn),
+        input, note,
+        h('dl.dt__hashes', ALGS.map(a => [h('dt', { text: a }), h('dd', outs[a], copier(() => outs[a].textContent, `${a} hash`, verdict))])),
+        h('label.dt__lab', { text: 'Check against' }), expect, verdict,
+        h('p.dt__credit', { text: 'Worked out here with the browser’s crypto.subtle.digest; nothing is sent anywhere. MD5 isn’t offered because crypto.subtle doesn’t have it. SHA-1 is here for checking old checksums: it is no longer safe against someone forging a match.' }));
+      go();
+      return { el };
+    })();
+
+    /* ====================================================================
+       TIME: Unix timestamps and dates
+       ==================================================================== */
+    const time = (() => {
+      let unit = 'auto';
+      const input = h('input.dt__in.mono#dt-time-in', { type: 'text', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'A timestamp or a date', placeholder: 'e.g. 1793988000 or 2026-11-07T14:30:00Z' });
+      const how = h('div.dt__status', { role: 'status', 'aria-live': 'polite' });
+      const rows = h('dl.dt__times');
+      const nowS = h('code.mono'), nowMs = h('code.mono');
+      const note = h('div.dt__status', { role: 'status' });
+      const show = ms => {
+        const d = new Date(ms);
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'this computer’s zone';
+        const items = [
+          ['Unix seconds', String(Math.floor(ms / 1000))], ['Unix milliseconds', String(Math.round(ms))], ['ISO 8601 (UTC)', d.toISOString()],
+          ['Your time', `${d.toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'long' })}`], ['UTC', d.toUTCString()], ['Zone used', tz], ['From now', X.relative(ms)],
+        ];
+        rows.replaceChildren(...items.flatMap(([k, v]) => [h('dt', { text: k }), h('dd', h('code.mono', { 'data-k': k, text: v }), copier(() => v, k, note))]));
+      };
+      function go() {
+        const r = X.readTime(input.value, unit);
+        how.className = 'dt__status';
+        if (!r.ok) { rows.replaceChildren(); how.textContent = r.why; if (r.why) how.className = 'dt__status is-bad'; return; }
+        how.textContent = `Read: ${r.how}.`;
+        show(r.ms);
+      }
+      listen(input, 'input', go);
+      const units = seg('Read a number as', [['auto', 'Auto'], ['s', 'Seconds'], ['ms', 'Milliseconds']], unit, v => { unit = v; go(); });
+      const tickNow = () => { const n = Date.now(); nowS.textContent = String(Math.floor(n / 1000)); nowMs.textContent = String(n); };
+      tickNow();
+      const iv = setInterval(() => { if (!el.hidden) tickNow(); }, 1000);
+      cleanups.push(() => clearInterval(iv));
+      const el = h('div.dt__panel', { hidden: true },
+        h('div.dt__bar.dt__now', h('span.dt__lab', { text: 'Now' }), nowS, h('span.dt__fcount', { text: 's' }), nowMs, h('span.dt__fcount', { text: 'ms' }),
+          btn('Use now', 'clock', () => { input.value = String(Math.floor(Date.now() / 1000)); go(); })),
+        h('label.dt__lab', { for: 'dt-time-in', text: 'Timestamp or date' }),
+        h('div.dt__bar', input, units),
+        how, rows, note,
+        h('p.dt__credit', { text: 'Dates are the browser’s own Date and Intl. A date with no zone is read in this computer’s zone, and it says so; leap seconds aren’t counted, as Unix time doesn’t count them.' }));
+      return { el };
+    })();
+
+    /* ====================================================================
+       DIFF: plain-text line diff
+       ==================================================================== */
+    const diff = (() => {
+      const a = area('Before', 'dt-diff-a', 'The older text', 8);
+      const b = area('After', 'dt-diff-b', 'The newer text', 8);
+      const icase = h('input', { type: 'checkbox' }), itrail = h('input', { type: 'checkbox' }), only = h('input', { type: 'checkbox' });
+      const sum = h('div.dt__status', { role: 'status', 'aria-live': 'polite' });
+      const out = h('div.dt__diff.mono', { role: 'region', 'aria-label': 'Differences', tabindex: '0' });
+      const note = h('div.dt__status');
+      let last = null, t = 0;
+      function go() {
+        if (!a.value && !b.value) { out.replaceChildren(); sum.textContent = 'Paste two texts to compare them line by line.'; last = null; return; }
+        const r = X.diffLines(a.value, b.value, { ignoreCase: icase.checked, ignoreTrailing: itrail.checked });
+        if (!r.ok) { out.replaceChildren(); sum.textContent = r.why; sum.className = 'dt__status is-bad'; last = null; return; }
+        sum.className = 'dt__status';
+        last = r;
+        sum.textContent = !r.added && !r.removed ? 'No differences.' : `${r.removed} ${r.removed === 1 ? 'line' : 'lines'} removed, ${r.added} added, ${r.same} unchanged.`;
+        const keep = new Array(r.ops.length).fill(!only.checked);
+        if (only.checked) r.ops.forEach((o, i) => { if (o.t !== ' ') for (let j = Math.max(0, i - 3); j <= Math.min(r.ops.length - 1, i + 3); j++) keep[j] = true; });
+        const kids = [];
+        let gap = 0;
+        const flush = () => { if (gap) { kids.push(h('div.dt__dl.is-gap', { text: `… ${gap} unchanged ${gap === 1 ? 'line' : 'lines'}` })); gap = 0; } };
+        const MAXL = 5000;
+        for (let i = 0; i < r.ops.length && kids.length < MAXL; i++) {
+          const o = r.ops[i];
+          if (!keep[i]) { gap++; continue; }
+          flush();
+          kids.push(h('div.dt__dl', { class: o.t === '+' ? 'is-add' : o.t === '-' ? 'is-del' : '', 'data-t': o.t },
+            h('span.dt__dn', { 'aria-hidden': 'true', text: o.a >= 0 ? String(o.a + 1) : '' }), h('span.dt__dn', { 'aria-hidden': 'true', text: o.b >= 0 ? String(o.b + 1) : '' }),
+            h('span.dt__dm', { text: o.t === '+' ? '+' : o.t === '-' ? '−' : ' ', 'aria-label': o.t === '+' ? 'added' : o.t === '-' ? 'removed' : null }), h('span.dt__dt', { text: o.text })));
+        }
+        flush();
+        if (kids.length >= MAXL) kids.push(h('div.dt__dl.is-gap', { text: `Showing the first ${MAXL.toLocaleString()} lines. Copy as a unified diff for all of it.` }));
+        out.replaceChildren(...kids);
+      }
+      const soon = () => { clearTimeout(t); t = later(go, 200); };
+      listen(a, 'input', soon); listen(b, 'input', soon);
+      for (const c of [icase, itrail, only]) listen(c, 'change', go);
+      cleanups.push(() => { clearTimeout(t); last = null; });
+      const swap = btn('Swap', 'repeat', () => { const x = a.value; a.value = b.value; b.value = x; go(); });
+      const el = h('div.dt__panel', { hidden: true },
+        h('div.dt__split',
+          h('div.dt__col', h('label.dt__lab', { for: 'dt-diff-a', text: 'Before' }), a),
+          h('div.dt__col', h('label.dt__lab', { for: 'dt-diff-b', text: 'After' }), b)),
+        h('div.dt__bar',
+          h('label.dt__chk', icase, h('span', { text: 'Ignore case' })), h('label.dt__chk', itrail, h('span', { text: 'Ignore spaces at line ends' })), h('label.dt__chk', only, h('span', { text: 'Only changes (3 lines around)' })),
+          h('span.dt__grow'), swap, copier(() => (last && (last.added || last.removed) ? X.unified(last.ops) : ''), 'unified diff', note)),
+        sum, note, out,
+        h('p.dt__credit', { text: 'Compares whole lines, as diff and git do (Myers’ algorithm). The text is shown as text; nothing is sent anywhere.' }));
+      go();
+      return { el };
     })();
 
     /* ====================================================================
        frame
        ==================================================================== */
-    const panels = { regex: rx.el, json: js.el, pw: pw.el };
-    const TABS = [['regex', 'Regex', 'search'], ['json', 'JSON', 'file-text'], ['pw', 'Passwords', 'lock']];
+    const panels = { regex: rx.el, json: js.el, pw: pw.el, enc: enc.el, hash: hash.el, time: time.el, diff: diff.el };
+    const TABS = [['regex', 'Regex', 'search'], ['json', 'JSON', 'file-text'], ['pw', 'Passwords', 'lock'], ['enc', 'Encode', 'code'], ['hash', 'Hash', 'shield'], ['time', 'Time', 'clock'], ['diff', 'Diff', 'layers']];
     const tabBtns = {};
     const tabBar = h('div.dt__tabs', { role: 'tablist', 'aria-label': 'Tools' });
     function showTab(id) {
@@ -663,7 +1037,7 @@ defineApp({
       if (next) { e.preventDefault(); showTab(next); tabBtns[next].focus(); }
     });
 
-    root.appendChild(h('div.app.app--col', h('div.dt', tabBar, h('div.dt__panels', panels.regex, panels.json, panels.pw))));
+    root.appendChild(h('div.app.app--col', h('div.dt', tabBar, h('div.dt__panels', ...Object.values(panels)))));
 
     const openWith = o => {
       if (o && o.path) { showTab('json'); js.openPath(o.path); }

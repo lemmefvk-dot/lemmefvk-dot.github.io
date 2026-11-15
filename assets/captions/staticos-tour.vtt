@@ -1,0 +1,66 @@
+WEBVTT
+
+NOTE
+Captions for staticos-tour.mp4. The spoken lines were transcribed with whisper.cpp
+(base.en model, speech-detection on) and tidied by reading; the cue times follow where
+each word starts in the audio and can be a second out.
+
+00:00:01.490 --> 00:00:04.300
+This is StaticOS, a whole computer
+
+00:00:04.450 --> 00:00:06.000
+running right in your browser.
+
+00:00:06.050 --> 00:00:07.700
+It's a real desktop.
+
+00:00:08.180 --> 00:00:10.100
+Open apps, drag windows around,
+
+00:00:10.130 --> 00:00:12.700
+and use the dock, all in one tab.
+
+00:00:13.970 --> 00:00:16.400
+Static Play has hundreds of games.
+
+00:00:16.370 --> 00:00:18.800
+Press Play, and it just runs.
+
+00:00:18.850 --> 00:00:20.300
+Nothing to download.
+
+00:00:23.460 --> 00:00:25.100
+There are over 60 apps,
+
+00:00:25.110 --> 00:00:26.600
+and the launcher keeps every one
+
+00:00:26.620 --> 00:00:28.400
+of them a quick search away.
+
+00:00:29.510 --> 00:00:32.300
+In Static Forge, you describe a game,
+
+00:00:32.350 --> 00:00:34.000
+and AI builds it for you.
+
+00:00:34.670 --> 00:00:36.700
+Then jump into Static Studio
+
+00:00:36.720 --> 00:00:38.200
+and edit every object
+
+00:00:38.250 --> 00:00:39.900
+right down to the code.
+
+00:00:41.990 --> 00:00:43.600
+There's even a console-style hub
+
+00:00:43.650 --> 00:00:44.900
+for cloud gaming.
+
+00:00:48.200 --> 00:00:50.900
+StaticOS, open it in any browser
+
+00:00:50.930 --> 00:00:54.000
+at staticos.surge.sh.

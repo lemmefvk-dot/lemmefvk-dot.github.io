@@ -4,8 +4,10 @@
    Three ways in, in the order a learner needs them:
      Learn   the characters of one stage, each with its pattern; click to hear it
      Copy    hear a character (or a short group) and type what you heard
-     Send    be shown a character and key it with Space (or by tapping the
-             pad); how long each press and gap was decides what you sent
+     Send    be shown a character, or a group of 3 or 5, and key it with
+             Space (or by tapping the pad); how long each press and gap
+             was decides what you sent. In a group, a pause of 2 units
+             ends a letter and 5 units of silence ends the group.
 
    The stages (js/drills/morse-core.js) start with the shortest letters
    and end with the digits. A letter counts as known once at least 4 of
@@ -21,7 +23,7 @@ import * as C from './morse-core.js';
 import { addRecent, recentWeight, isKnown, pickWeighted } from './sched.js';
 
 const KEY = 'portal.drillsMorse';
-const DEFAULT = { v: 1, chars: {}, p: { mode: 'learn', stage: 0, wpm: C.WPM.def, freq: C.FREQ.def, sound: true, light: true, group: 1, hints: true } };
+const DEFAULT = { v: 1, chars: {}, p: { mode: 'learn', stage: 0, wpm: C.WPM.def, freq: C.FREQ.def, sound: true, light: true, group: 1, sendGroup: 1, hints: true } };
 const now = () => performance.now();
 const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
 const dots = pat => [...pat].map(c => (c === '.' ? '•' : '—')).join(' ');
@@ -35,7 +37,7 @@ function normalize(raw) {
     stage: clamp(q.stage, 0, C.STAGES.length - 1, 0) | 0,
     wpm: Math.round(clamp(q.wpm, C.WPM.min, C.WPM.max, C.WPM.def)),
     freq: Math.round(clamp(q.freq, C.FREQ.min, C.FREQ.max, C.FREQ.def)),
-    sound: q.sound !== false, light: q.light !== false, group: [1, 3, 5].includes(q.group) ? q.group : 1, hints: q.hints !== false,
+    sound: q.sound !== false, light: q.light !== false, group: [1, 3, 5].includes(q.group) ? q.group : 1, sendGroup: [1, 3, 5].includes(q.sendGroup) ? q.sendGroup : 1, hints: q.hints !== false,
   };
   const chars = {};
   for (const ch of C.ALL_CHARS) {
@@ -147,7 +149,7 @@ export function mountMorse(host, ctx) {
     return pickWeighted(chars, ch => recentWeight(rec(ch)[p.mode === 'copy' ? 'c' : 's']), Math.random, avoid);
   };
   function newTarget(fresh) {
-    const n = p.mode === 'copy' ? p.group : 1;
+    const n = p.mode === 'copy' ? p.group : p.sendGroup;
     let target = '';
     let last = S.run && S.run.target ? S.run.target.slice(-1) : undefined;
     for (let i = 0; i < n; i++) { last = pickChar(last); target += last; }
@@ -207,14 +209,18 @@ export function mountMorse(host, ctx) {
       onkeydown: e => { if (e.key === ' ') { e.preventDefault(); if (!e.repeat) keyDown(); } },
       onkeyup: e => { if (e.key === ' ') { e.preventDefault(); keyUp(); } } }, 'Tap here, or press Space');
     queueMicrotask(() => { if (!S.dead && document.contains(pad)) pad.focus(); });
+    const group = R.target.length > 1;
     return h('div.dr-card', h('h3.dr-h', { text: `Send: stage ${C.STAGES[p.stage].id}` }),
-      h('p.dr-sub', { text: `Key the letter below at ${p.wpm} wpm: a press shorter than ${Math.round(2 * unit())} ms is a dit, longer is a dah, and a pause of ${Math.round(2 * unit())} ms ends the letter.` }),
+      h('p.dr-sub', { text: group
+        ? `Key the ${R.target.length} letters below at ${p.wpm} wpm: a press shorter than ${Math.round(2 * unit())} ms is a dit, longer is a dah; a pause of ${Math.round(2 * unit())} ms ends a letter, and ${Math.round(5 * unit())} ms of silence ends the group.`
+        : `Key the letter below at ${p.wpm} wpm: a press shorter than ${Math.round(2 * unit())} ms is a dit, longer is a dah, and a pause of ${Math.round(2 * unit())} ms ends the letter.` }),
       h('div.dr-stagebox', lamp, h('div.dr-big', { dataset: { fk: 'send-target' }, text: R.target }),
-        h('div.dr-pat', { dataset: { fk: 'send-pattern' }, text: p.hints ? dots(C.MORSE[R.target]) : '' }),
+        h('div.dr-pat', { dataset: { fk: 'send-pattern' }, text: p.hints ? [...R.target].map(ch => dots(C.MORSE[ch])).join('   ') : '' }),
         h('div.dr-pat', { dataset: { fk: 'send-sent' }, 'aria-label': 'What you have keyed so far' })),
       pad,
       h('div.dr-row', h('label.dr-set__c', h('input', { type: 'checkbox', checked: p.hints, dataset: { fk: 'send-hints' }, onchange: e => { p.hints = e.target.checked; save(); paint(); } }), h('span', { text: 'Show the dits and dahs' })),
-        h('button.btn', { type: 'button', dataset: { fk: 'send-hear' }, onclick: () => playText(R.target) }, icon('play'), h('span', { text: 'Hear it' }))),
+        h('button.btn', { type: 'button', dataset: { fk: 'send-hear' }, onclick: () => playText(R.target.split('').join(' ')) }, icon('play'), h('span', { text: 'Hear it' })),
+        h('small.dim', { text: 'Group' }), ...[1, 3, 5].map(n => h('button.dr-chip', { type: 'button', class: p.sendGroup === n ? 'is-on' : '', 'aria-pressed': p.sendGroup === n ? 'true' : 'false', dataset: { fk: `send-group-${n}` }, onclick: () => { p.sendGroup = n; save(); stopAll(); newTarget(true); } }, String(n)))),
       resultBox(), h('small.dim', { dataset: { fk: 'morse-tally' }, text: tally() }));
   }
   function keyDown() {
@@ -238,8 +244,8 @@ export function mountMorse(host, ctx) {
     const sym = C.decodePresses(S.presses, unit()).symbols;
     const el = root.querySelector('[data-fk="send-sent"]');
     if (el) el.textContent = sym;
-    /* the letter is over once the silence is longer than a gap inside a letter */
-    S.idle = later(() => judgeSend(), 2 * unit() + 1);
+    /* the letter is over once the silence is longer than a gap inside a letter; a group, once it is as long as a word gap */
+    S.idle = later(() => judgeSend(), (R.target.length > 1 ? 5 : 2) * unit() + 1);
   }
   function judgeSend() {
     const R = S.run;
@@ -248,6 +254,19 @@ export function mountMorse(host, ctx) {
     const { symbols, text } = C.decodePresses(S.presses, unit());
     const u = unit();
     const sent = S.presses.map(x => `${C.classifyPress(x.up - x.down, u) === '.' ? 'dit' : 'dah'} ${((x.up - x.down) / u).toFixed(1)}`).join(', ');
+    if (R.target.length > 1) {
+      /* a group: each letter is judged where it falls, and the group is right when all of them are */
+      const got = text.replace(/ /g, '');
+      [...R.target].forEach((ch, i) => note(ch, 's', got[i] === ch));
+      const all = got === R.target;
+      R.n++; if (all) R.ok++;
+      const pats = [...R.target].map(ch => `${ch} = ${dots(C.MORSE[ch])}`).join('   ');
+      setFb(all ? 'is-ok' : 'is-bad', all ? `Right: you sent ${R.target}. ${pats}`
+        : `You sent ${dots(symbols) || 'nothing'}, which reads ${got || 'nothing'}; the group was ${R.target}. ${pats}. ${got.length < R.target.length ? 'Leave a gap of about 3 dits between letters.' : got.length > R.target.length ? 'A pause inside a letter was long enough to end it.' : ''}`.trim());
+      const t = root.querySelector('[data-fk="morse-tally"]'); if (t) t.textContent = tally();
+      later(() => { if (S.run === R) newTarget(); }, all ? 1000 : 3000);
+      return;
+    }
     const ok = symbols === C.MORSE[R.target];
     note(R.target, 's', ok);
     R.n++; if (ok) R.ok++;

@@ -162,3 +162,32 @@ body.is-mobile .pkey__name { font-size: calc(9px * var(--fs-k,1)); }
 .piano__midilast { font-size: var(--fs-10); color: var(--ink-1); min-width: 96px; }
 .piano__pedal { font-size: calc(9px * var(--fs-k,1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 2px 6px; border-radius: var(--r-pill); background: var(--fill-2); color: var(--ink-3); }
 .piano__pedal.is-on { background: var(--accent); color: var(--accent-ink, #2a0310); }
+
+/* ---- drawer: Learn, Chords, Takes, MIDI files, Duet ---- */
+.piano__tabs { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-2) var(--sp-5); border-bottom: 1px solid var(--line-0); }
+.piano__tabs .piano__segbtn { background: var(--fill-1); border: 1px solid var(--line-1); }
+.piano__drawer { padding: var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--line-0); display: flex; flex-direction: column; gap: var(--sp-2); }
+.piano__drawer[hidden] { display: none; }
+.piano__pane { display: flex; flex-direction: column; gap: var(--sp-2); }
+.piano__row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); }
+.piano__lab { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-11); color: var(--ink-2); }
+.piano__tuneinfo { font-size: var(--fs-11); color: var(--ink-3); line-height: 1.4; }
+.piano__learnstat { font-size: var(--fs-12); color: var(--ink-0); min-height: 18px; }
+.piano__msg { font-size: var(--fs-11); color: var(--ink-1); min-height: 14px; }
+.piano__err { color: var(--danger, #ff8c9f); }
+.piano__roomstat { margin-left: auto; color: var(--accent-soft); }
+.piano__code { font-family: var(--font-mono, var(--mono)); font-size: calc(18px * var(--fs-k,1)); letter-spacing: .3em; font-weight: 700; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); background: var(--fill-1); width: fit-content; }
+.piano__takename { min-width: 150px; }
+
+/* ---- falling notes ---- */
+.piano__lane { flex: 0 0 auto; height: 120px; border-radius: var(--r-md); background: var(--fill-0); border: 1px solid var(--line-1); overflow: hidden; }
+.piano__lane[hidden] { display: none; }
+.piano__lanecv { display: block; width: 100%; height: 100%; }
+
+/* ---- learn target, wrong key, scale marks, a friend's notes ---- */
+.pkey.is-target { box-shadow: 0 0 0 3px var(--accent), 0 0 14px var(--accent); z-index: 3; }
+.pkey.is-wrong { background: linear-gradient(180deg, #ff8c9f, #e0344f) !important; }
+.pkey.is-peer { background: linear-gradient(180deg, #7fe3c4, #1fa682) !important; color: #052a20; }
+.pkey.in-scale::after { content: ''; position: absolute; top: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: .85; }
+.pkey--white.in-scale::after { top: auto; bottom: 34px; }
+.pkey.is-root::after { width: 10px; height: 10px; background: transparent; border: 2px solid var(--accent); opacity: 1; }

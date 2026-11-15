@@ -10,6 +10,14 @@
    · Slice a bomb and the round is over at once. Let bombs fall.
    · The waves get bigger and a bit more crowded with bombs as the
      score climbs.
+   · Modes (ctx.mode, each with its own best):
+       classic  as above: three misses or one bomb end it
+       zen      90 seconds, no bombs, misses don't count
+       arcade   60 seconds; misses don't count, a bomb costs 10 points
+                (the round goes on), and now and then a special fruit:
+                  frenzy (gold)  3 s of fruit thrown in from the sides
+                  freeze (ice)   4 s of the fruit in slow motion
+                  double (pink)  5 s of double points
 
    Mouse or touch: press and drag to leave a blade trail.
    Keyboard: arrows move a slice cursor. Hold Space (or Enter) while
@@ -31,13 +39,23 @@ const FRUITS = [
 ];
 const MAX_MISS = 3;
 const COMBO_GAP = 0.5;
+const LIMITS = { zen: 90, arcade: 60 };                   /* seconds; Classic has no clock */
+const SPECIALS = {
+  frenzy: { hue: 48, secs: 3, label: 'Frenzy!' },
+  freeze: { hue: 195, secs: 4, label: 'Freeze!' },
+  double: { hue: 320, secs: 5, label: 'Double points!' },
+};
+const BOMB_COST = 10;
 
 export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
+    const pace = Number.isFinite(ctx.speed) ? clamp(ctx.speed, 0.5, 1) : 1;   /* the Arcade's game speed: the whole clock runs at this rate */
     const snd = sounder(ctx);
+    const MODE = LIMITS[ctx.mode] ? ctx.mode : 'classic', LIMIT = LIMITS[MODE] || 0;
     const S = {
       state: 'ready',                    /* ready | play | dying | over */
+      left: LIMIT, bombsHit: 0, specials: 0, frenzy: 0, frenzyT: 0, freeze: 0, double: 0, flash: 0,
       paused: false, manual: false, auto: true,
       score: 0, misses: 0, sliced: 0, time: 0, nextId: 1,
       items: [], halves: [], parts: [], pops: [], queue: [], waveT: 0.6,
@@ -52,32 +70,39 @@ export default {
     const radius = () => clamp(Math.min(sf.w, sf.h) * 0.075, 24, 48);
 
     /* ------------------------------ spawning ------------------------------ */
-    function make(kind, type, x, y, vx, vy, hold = false) {
+    function make(kind, type, x, y, vx, vy, hold = false, special = null) {
       const it = {
-        id: S.nextId++, kind, type, x, y, vx, vy, r: radius(), hold,
+        id: S.nextId++, kind, type, x, y, vx, vy, r: radius(), hold, special,
         rot: Math.random() * 6, vr: (Math.random() - 0.5) * 5, done: false,
       };
       S.items.push(it);
       return it;
     }
-    function launch(kind) {
+    function launch(kind, special = null) {
       const g = gravity(), r = radius();
       const x = sf.w * (0.14 + 0.72 * Math.random());
       const apex = sf.h * (0.5 + 0.38 * Math.random());
       const vy = -Math.sqrt(2 * g * apex);
       const vx = (sf.w / 2 - x) * (0.2 + 0.3 * Math.random());
-      make(kind, Math.floor(Math.random() * FRUITS.length), x, sf.h + r, vx, vy);
+      make(kind, Math.floor(Math.random() * FRUITS.length), x, sf.h + r, vx, vy, false, special);
       snd.blip(240, 0.08, 'sine', 0.4, 420);
+    }
+    /* Frenzy: fruit thrown in low from the left and right edges */
+    function sideThrow() {
+      const g = gravity(), r = radius(), left = Math.random() < 0.5;
+      const y = sf.h * (0.55 + 0.3 * Math.random());
+      make('fruit', Math.floor(Math.random() * FRUITS.length), left ? -r : sf.w + r, y, (left ? 1 : -1) * sf.w * (0.55 + 0.3 * Math.random()), -Math.sqrt(2 * g * sf.h * 0.3));
     }
     function wave() {
       const lvl = S.score / 100;
       const n = clamp(1 + Math.floor(lvl * 1.2 + Math.random() * 2.2), 1, 6);
-      const pBomb = Math.min(0.26, 0.09 + lvl * 0.02);
-      let bombs = 0;
+      const pBomb = MODE === 'zen' ? 0 : Math.min(0.26, 0.09 + lvl * 0.02);
+      let bombs = 0, special = MODE === 'arcade' && Math.random() < 0.22 ? Object.keys(SPECIALS)[Math.floor(Math.random() * 3)] : null;
       for (let i = 0; i < n; i++) {
         const bomb = Math.random() < pBomb && bombs < (n >= 4 ? 2 : 1) && (n > 1 || Math.random() < 0.5);
         if (bomb) bombs++;
-        S.queue.push({ t: i * 0.13, kind: bomb ? 'bomb' : 'fruit' });
+        S.queue.push({ t: i * 0.13, kind: bomb ? 'bomb' : 'fruit', special: bomb ? null : special });
+        if (!bomb) special = null;
       }
       S.waveT = Math.max(0.85, 1.9 - lvl * 0.12) + n * 0.1;
     }
@@ -94,14 +119,21 @@ export default {
       for (const it of S.items) {
         if (it.done) continue;
         if (segDist(it.x, it.y, ax, ay, bx, by) > it.r * 0.95) continue;
-        if (it.kind === 'bomb') { explode(it); return; }
+        if (it.kind === 'bomb') { if (MODE === 'arcade') { bombPenalty(it); continue; } explode(it); return; }
         sliceFruit(it, bx - ax, by - ay);
         if (S.state !== 'play') return;
       }
     }
     function sliceFruit(it, dx, dy) {
       it.done = true; S.sliced++;
-      S.score += 10; ctx.onScore(S.score);
+      const k = S.double > 0 ? 2 : 1;
+      S.score += 10 * k; ctx.onScore(S.score);
+      if (it.special) {
+        const sp = SPECIALS[it.special];
+        S[it.special] = sp.secs; S.specials++;
+        S.pops.push({ text: sp.label, x: clamp(it.x, 90, sf.w - 90), y: it.y - it.r - 44, t: 1.2, hue: sp.hue });
+        snd.blip(880, 0.2, 'triangle', 0.9, 1760);
+      }
       const f = FRUITS[it.type], ang = Math.atan2(dy, dx);
       for (const s of [-1, 1]) {
         S.halves.push({
@@ -114,14 +146,14 @@ export default {
         const a = Math.random() * 6.28, v = 80 + Math.random() * 220;
         S.parts.push({ x: it.x, y: it.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.45 + Math.random() * 0.4, hue: f.flesh[0] });
       }
-      S.pops.push({ text: '+10', x: it.x, y: it.y - it.r, t: 0.7, hue: f.flesh[0] });
+      S.pops.push({ text: `+${10 * k}`, x: it.x, y: it.y - it.r, t: 0.7, hue: f.flesh[0] });
       snd.blip(520 + Math.min(6, S.combo ? S.combo.n : 0) * 80, 0.07, 'triangle', 0.8, 900);
       /* combo bookkeeping: slices within half a second of each other while the blade is down */
       if (S.combo && S.time - S.combo.t <= COMBO_GAP) { S.combo.n++; S.combo.t = S.time; }
       else { finishCombo(); S.combo = { n: 1, t: S.time }; }
       S.combo.x = it.x; S.combo.y = it.y;
       if (S.combo.n >= 2) {
-        const n = S.combo.n, bonus = 10 * n * (n - 1) / 2, prev = S.combo.paid || 0;
+        const n = S.combo.n, bonus = 10 * n * (n - 1) / 2 * k, prev = S.combo.paid || 0;
         S.score += bonus - prev; S.combo.paid = bonus;
         ctx.onScore(S.score);
         S.pops = S.pops.filter(p => !p.combo);
@@ -130,6 +162,14 @@ export default {
       }
     }
     function finishCombo() { S.combo = null; }
+    /* Arcade: a bomb costs points, not the round */
+    function bombPenalty(it) {
+      it.done = true; S.bombsHit++;
+      S.score = Math.max(0, S.score - BOMB_COST); ctx.onScore(S.score);
+      S.pops.push({ text: `−${BOMB_COST}`, x: it.x, y: it.y - it.r, t: 0.9, hue: 0 });
+      S.flash = reduced ? 0 : 0.25;
+      snd.blip(140, 0.3, 'sawtooth', 0.9, 50);
+    }
     function explode(it) {
       it.done = true; S.bombAt = { x: it.x, y: it.y };
       S.state = 'dying'; S.dieT = 0; S.blade = false;
@@ -140,6 +180,7 @@ export default {
       snd.blip(120, 0.6, 'sawtooth', 1, 30);
     }
     function miss(it) {
+      if (MODE !== 'classic') return;                  /* only Classic counts misses */
       S.misses++;
       S.pops.push({ text: '✕', x: clamp(it.x, 20, sf.w - 20), y: sf.h - 40, t: 0.8, hue: 0 });
       snd.blip(180, 0.15, 'triangle', 0.6, 90);
@@ -147,6 +188,8 @@ export default {
     }
     function finish() {
       S.state = 'over';
+      if (MODE === 'zen') { ctx.onEnd({ score: S.score, won: false, detail: `Zen · ${S.sliced} fruit sliced in ${LIMIT} s` }); return; }
+      if (MODE === 'arcade') { ctx.onEnd({ score: S.score, won: false, detail: `Arcade · ${S.sliced} fruit sliced in ${LIMIT} s · ${S.bombsHit} bomb${S.bombsHit === 1 ? '' : 's'} hit · ${S.specials} special${S.specials === 1 ? '' : 's'}` }); return; }
       const why = S.bombAt ? 'Sliced a bomb' : `${MAX_MISS} misses`;
       ctx.onEnd({ score: S.score, won: false, detail: `${why} · ${S.sliced} fruit sliced` });
     }
@@ -182,14 +225,22 @@ export default {
           if (S.waveT <= 0) wave();
         }
         for (const q of S.queue) q.t -= dt;
-        for (const q of S.queue.filter(q => q.t <= 0)) launch(q.kind);
+        for (const q of S.queue.filter(q => q.t <= 0)) launch(q.kind, q.special);
         S.queue = S.queue.filter(q => q.t > 0);
+        /* the clock (Zen and Arcade) and what the specials are doing */
+        if (LIMIT) { S.left = Math.max(0, S.left - dt); if (S.left <= 0) { S.state = 'dying'; S.dieT = 0; S.blade = false; S.bombAt = null; } }
+        if (S.frenzy > 0) { S.frenzy -= dt; S.frenzyT -= dt; if (S.frenzyT <= 0 && S.auto) { S.frenzyT = 0.14; sideThrow(); } }
+        if (S.double > 0) S.double -= dt;
       }
+      if (S.freeze > 0) S.freeze -= dt;
+      if (S.flash > 0) S.flash -= dt;
+      /* Freeze: the fruit in the air moves at under half speed */
+      const fdt = S.freeze > 0 ? dt * 0.45 : dt;
       if (S.state === 'play' || S.state === 'dying') {
         for (const it of S.items) {
           if (it.hold) continue;
-          it.vy += g * dt; it.x += it.vx * dt; it.y += it.vy * dt; it.rot += it.vr * dt;
-          if (!it.done && it.vy > 0 && it.y - it.r > sf.h) {
+          it.vy += g * fdt; it.x += it.vx * fdt; it.y += it.vy * fdt; it.rot += it.vr * fdt;
+          if (!it.done && ((it.vy > 0 && it.y - it.r > sf.h) || it.x < -it.r * 3 || it.x > sf.w + it.r * 3)) {
             it.done = true;
             if (it.kind === 'fruit' && S.state === 'play') miss(it);
           }
@@ -204,10 +255,10 @@ export default {
       S.pops = S.pops.filter(p => p.t > 0);
       const horizon = reduced ? 0.12 : 0.28;
       S.trail = S.trail.filter(p => S.time - p.t < horizon);
-      if (S.state === 'dying') { S.dieT += dt; if (S.dieT > (S.bombAt ? 0.9 : 0.6)) finish(); }
+      if (S.state === 'dying') { S.dieT += dt; if (S.dieT > (S.bombAt ? 0.9 : LIMIT ? 0.4 : 0.6)) finish(); }
     }
     const loop = looper(dt => {
-      if (!S.manual) update(dt);
+      if (!S.manual) update(dt * pace);
       draw();
       if (S.state === 'over' && !S.halves.length && !S.parts.length) loop.stop();
     });
@@ -262,7 +313,15 @@ export default {
       g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(0, H - 8, W, 8);
 
       for (const h of S.halves) halfBody(g, h);
-      for (const it of S.items) { if (it.done) continue; (it.kind === 'bomb' ? bombBody : fruitBody)(g, it); }
+      for (const it of S.items) {
+        if (it.done) continue;
+        if (it.special) {                         /* a special fruit: a ring in its colour */
+          const sp = SPECIALS[it.special], pul = reduced ? 1 : 1 + 0.08 * Math.sin(S.time * 10);
+          g.strokeStyle = hsl(sp.hue, 100, 70, 0.9); g.lineWidth = 4;
+          g.beginPath(); g.arc(it.x, it.y, it.r * 1.25 * pul, 0, 7); g.stroke();
+        }
+        (it.kind === 'bomb' ? bombBody : fruitBody)(g, it);
+      }
       for (const p of S.parts) { g.fillStyle = hsl(p.hue, 90, 60, clamp(p.life * 2.2, 0, 1)); g.beginPath(); g.arc(p.x, p.y, 3, 0, 7); g.fill(); }
 
       /* the blade trail */
@@ -284,14 +343,28 @@ export default {
       }
       g.font = `800 ${Math.round(clamp(W * 0.04, 15, 24))}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
       for (const p of S.pops) { g.fillStyle = hsl(p.hue, 100, 78, clamp(p.t * 2, 0, 1)); g.fillText(p.text, p.x, p.y); }
-      /* misses */
-      for (let i = 0; i < MAX_MISS; i++) {
+      /* the clock (Zen, Arcade) and what is running */
+      if (LIMIT) {
+        g.textAlign = 'left'; g.fillStyle = S.left < 10 ? hsl(0, 90, 70) : 'rgba(255,255,255,.9)';
+        g.font = `800 ${Math.round(clamp(W * 0.04, 15, 24))}px ${FONT}`;
+        g.fillText(`${Math.ceil(S.left)} s`, 16, 24);
+        let x = 16;
+        g.font = `700 12px ${FONT}`;
+        for (const k of Object.keys(SPECIALS)) if (S[k] > 0) { g.fillStyle = hsl(SPECIALS[k].hue, 100, 72); g.fillText(SPECIALS[k].label.replace('!', ''), x, 50); x += g.measureText(SPECIALS[k].label).width + 12; }
+        g.textAlign = 'center';
+        g.font = `800 ${Math.round(clamp(W * 0.04, 15, 24))}px ${FONT}`;
+      }
+      if (S.flash > 0) { g.fillStyle = `rgba(255,80,60,${S.flash})`; g.fillRect(0, 0, W, H); }
+      /* misses (Classic) */
+      for (let i = 0; i < (MODE === 'classic' ? MAX_MISS : 0); i++) {
         g.strokeStyle = i < S.misses ? hsl(0, 85, 60) : 'rgba(255,255,255,.28)'; g.lineWidth = 4; g.lineCap = 'round';
         const x = W - 22 - i * 26, y = 22;
         g.beginPath(); g.moveTo(x - 7, y - 7); g.lineTo(x + 7, y + 7); g.moveTo(x + 7, y - 7); g.lineTo(x - 7, y + 7); g.stroke();
       }
       if (S.state === 'dying' && S.bombAt && !reduced) { g.fillStyle = `rgba(255,240,210,${Math.max(0, 0.55 - S.dieT)})`; g.fillRect(0, 0, W, H); }
-      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Swipe to slice' : 'Drag across the fruit to slice it', coarse() ? 'Skip the bombs. Three misses and you are out.' : 'Or use the arrows and Space. Skip the bombs. Three misses end it.', 330, H * 0.5);
+      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Swipe to slice' : 'Drag across the fruit to slice it',
+        MODE === 'zen' ? 'Zen: 90 seconds, no bombs, no misses' : MODE === 'arcade' ? 'Arcade: 60 seconds. A bomb costs 10; glowing fruit does something'
+          : coarse() ? 'Skip the bombs. Three misses and you are out.' : 'Or use the arrows and Space. Skip the bombs. Three misses end it.', 330, H * 0.5);
     }
 
     /* ------------------------------ input ------------------------------ */
@@ -380,9 +453,10 @@ export default {
       resume() { S.paused = false; if (S.state !== 'over') loop.start(); },
       /* a read-only snapshot for automated play-tests; positions are in canvas pixels */
       peek: () => ({
-        state: S.state, paused: S.paused, score: S.score, misses: S.misses, sliced: S.sliced, time: S.time, combo: S.combo ? S.combo.n : 0,
-        cursor: { ...S.cursor }, w: sf.w, h: sf.h,
-        items: S.items.filter(i => !i.done).map(i => ({ id: i.id, kind: i.kind, type: i.type, x: i.x, y: i.y, r: i.r })),
+        state: S.state, paused: S.paused, score: S.score, misses: S.misses, sliced: S.sliced, time: S.time, pace, combo: S.combo ? S.combo.n : 0,
+        cursor: { ...S.cursor }, w: sf.w, h: sf.h, mode: MODE, left: S.left, bombsHit: S.bombsHit, specials: S.specials,
+        frenzy: Math.max(0, S.frenzy), freeze: Math.max(0, S.freeze), double: Math.max(0, S.double),
+        items: S.items.filter(i => !i.done).map(i => ({ id: i.id, kind: i.kind, type: i.type, x: i.x, y: i.y, r: i.r, special: i.special, vx: i.vx, vy: i.vy })),
         halves: S.halves.length,
       }),
       /* test hook — nothing in the game calls it:
@@ -394,7 +468,7 @@ export default {
         if (cmd === 'step') { for (let t = 0; t < arg; t += 1 / 60) update(1 / 60); }
         else if (cmd === 'manual') S.manual = !!arg;
         else if (cmd === 'auto') S.auto = !!arg;
-        else if (cmd === 'place') out = make(arg.kind, arg.type ?? 0, sf.w * arg.fx, sf.h * arg.fy, 0, arg.vy || 0, arg.hold !== false).id;
+        else if (cmd === 'place') out = make(arg.kind, arg.type ?? 0, sf.w * arg.fx, sf.h * arg.fy, 0, arg.vy || 0, arg.hold !== false, arg.special || null).id;
         else if (cmd === 'clear') { S.items = []; S.queue = []; }
         draw();
         return out;

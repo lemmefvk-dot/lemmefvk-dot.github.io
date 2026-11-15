@@ -385,3 +385,24 @@ body.reduce-motion .mp-art__img { opacity: 1; }
   .mp-tile:hover { transform: none; }
   .mp-art__img { opacity: 1; }
 }
+
+/* ---------------- section counts, friends beside games ---------------- */
+.mp-side__n { margin-left: auto; font-size: var(--fs-10); font-weight: 650; font-variant-numeric: tabular-nums; color: var(--ink-3); }
+.mp-side__n.is-zero { color: var(--ink-4); }
+.mp-side__dot + .mp-side__n, .mp-side__n + .mp-side__dot { margin-left: 6px; }
+@container mpw (max-width: 640px) {
+  body:not(.is-mobile) .mp-side .mp-side__n { display: none; }
+}
+.mp-tile__fr { margin: 0; font-size: var(--fs-10); line-height: 1.4; color: var(--ink-3); overflow-wrap: anywhere; }
+.mp-invite { flex: 0 0 auto; }
+.mp-now { margin-top: var(--sp-4); }
+.mp-now__fr { margin: 0 0 var(--sp-3); font-size: var(--fs-11); color: var(--ink-2); line-height: 1.45; }
+.mp-now__row { display: flex; gap: var(--sp-2); overflow-x: auto; padding-bottom: var(--sp-2); scrollbar-width: thin; }
+.mp-now__b {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 7px 12px;
+  border-radius: 999px; border: 1px solid var(--line-1); background: var(--fill-0); color: var(--ink-1);
+  font: 600 var(--fs-11)/1 var(--font); cursor: pointer;
+}
+.mp-now__b:hover { background: var(--fill-1); color: var(--ink-0); }
+.mp-now__b .icon { width: 13px; height: 13px; }
+.mp-needs { margin-top: var(--sp-4); }

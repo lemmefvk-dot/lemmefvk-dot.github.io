@@ -6,6 +6,7 @@
    Saved in store('portal.timetable') as
      { v: 1,
        rotate:  { on, thisWeek: 'A'|'B', anchor: 'YYYY-MM-DD' },
+       remind:  null | minutes before each class (0 = as it starts),
        classes: [{ id, subject, room, day, start, end, week }] }
    day is 0–6 as Date#getDay (0 = Sunday); start and end are 'HH:MM'
    on a 24-hour clock whatever the display setting is, and a class
@@ -20,10 +21,30 @@
    Times are this computer's local time, built from the local year,
    month and day, so daylight-saving changes are handled by the
    browser. Nothing is invented: with no classes there is no "next".
+
+   "Next class" reminders are not a second clock: with `remind` set,
+   every write (and each new day, from init()) hands each class's
+   coming days to js/core/automations.js (syncSourceReminders(
+   'study-timetable', …)), the engine homework uses — a 'dates'
+   reminder per class, listing the days it really meets in the next
+   REMIND_DAYS (so an A-week class is not announced in a B week).
+   Like the others they only go off while StaticOS is open.
+
+   Free periods and doubles (dayShape): on a day, a gap of FREE_MIN
+   minutes or more between one class ending and the next starting is a
+   free period; the same subject twice with at most DOUBLE_GAP minutes
+   between is a double lesson.
    ============================================================ */
 import { store } from './store.js';
+import { bus } from './bus.js';
+import * as AM from './automations.js';
 
 export const KEY = 'portal.timetable';
+export const SRC = 'study-timetable';
+export const REMIND = [[null, 'No reminders'], [0, 'When it starts'], [5, '5 minutes before'], [10, '10 minutes before'], [15, '15 minutes before'], [30, '30 minutes before']];
+export const REMIND_DAYS = 21;
+export const FREE_MIN = 20;
+export const DOUBLE_GAP = 10;
 export const MAX_CLASSES = 300;
 export const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 /* the order a school week is shown in */
@@ -65,10 +86,11 @@ export function normalize(raw) {
     if (!n || seen.has(n.id) || classes.length >= MAX_CLASSES) continue;
     seen.add(n.id); classes.push(n);
   }
-  return { v: 1, rotate: { on: r.on === true, thisWeek: r.thisWeek === 'B' ? 'B' : 'A', anchor }, classes };
+  const remind = REMIND.some(([m]) => m !== null && m === o.remind) ? o.remind : null;
+  return { v: 1, rotate: { on: r.on === true, thisWeek: r.thisWeek === 'B' ? 'B' : 'A', anchor }, remind, classes };
 }
 export const read = () => normalize(store.get(KEY));
-export const write = data => { const out = JSON.parse(JSON.stringify(normalize(data))); store.set(KEY, out); return out; };
+export const write = data => { const out = JSON.parse(JSON.stringify(normalize(data))); store.set(KEY, out); syncReminders(out); return out; };
 
 /** Problems with a class draft. -> [{ at, text }] */
 export function issues(d) {
@@ -151,4 +173,57 @@ export function colorFor(subject, classes) {
   return `hsl(${hsh % 360} 60% 55%)`;
 }
 
-export default { KEY, DAYS, WEEK_ORDER, read, write, normalize, issues, weekOf, setThisWeek, onDay, status, dayWord, span, colorFor, mondayOf, ymd, parseDay, validTime, minutes, uid };
+/* ---------- free periods and double lessons ---------- */
+/**
+ * A day's classes in order, with the gaps: [{ kind: 'class', c, double? } | { kind: 'free', start, end, mins }].
+ * `double` is 'first' or 'second' on the two halves of a double lesson.
+ */
+export function dayShape(list) {
+  const sorted = [...list].sort((a, b) => a.start.localeCompare(b.start) || a.subject.localeCompare(b.subject));
+  const out = [];
+  let lastEnd = null;
+  for (const [i, c] of sorted.entries()) {
+    if (lastEnd !== null && minutes(c.start) - minutes(lastEnd) >= FREE_MIN) out.push({ kind: 'free', start: lastEnd, end: c.start, mins: minutes(c.start) - minutes(lastEnd) });
+    const prev = sorted[i - 1];
+    const dbl = prev && prev.subject.toLowerCase() === c.subject.toLowerCase() && minutes(c.start) >= minutes(prev.end) && minutes(c.start) - minutes(prev.end) <= DOUBLE_GAP;
+    if (dbl) { const p = out[out.length - 1]; if (p && p.kind === 'class' && !p.double) p.double = 'first'; out.push({ kind: 'class', c, double: 'second' }); }
+    else out.push({ kind: 'class', c });
+    if (lastEnd === null || minutes(c.end) > minutes(lastEnd)) lastEnd = c.end;
+  }
+  return out;
+}
+
+/* ---------- "next class" reminders ---------- */
+const pad2 = n => String(n).padStart(2, '0');
+const clockText = t => { const [h, m] = t.split(':').map(Number); return store.get('prefs.h24') ? `${pad2(h)}:${pad2(m)}` : `${h % 12 || 12}:${pad2(m)} ${h >= 12 ? 'PM' : 'AM'}`; };
+export const remindLabel = m => (REMIND.find(([v]) => v === m) || REMIND[0])[1];
+/** The reminders the timetable wants, in the shape automations.js takes: one per class, on the days it meets. */
+export function remindersFor(data = read(), now = Date.now()) {
+  if (data.remind === null || data.remind === undefined) return [];
+  const t = new Date(now);
+  const days = new Map();
+  for (let i = 0; i < REMIND_DAYS; i++) for (const c of onDay(ymd(addDays(t, i)), data)) { if (!days.has(c.id)) days.set(c.id, []); days.get(c.id).push(c.on); }
+  const out = [];
+  for (const c of data.classes) {
+    const on = days.get(c.id);
+    if (!on || !on.length) continue;
+    const at = Math.max(0, minutes(c.start) - data.remind);
+    out.push({ ref: c.id, text: `Next class: ${c.subject}`, sub: `${clockText(c.start)} – ${clockText(c.end)}${c.room ? ` · Room ${c.room}` : ''}`,
+      time: `${pad2(Math.floor(at / 60))}:${pad2(at % 60)}`, repeat: 'dates', on, date: on[0] });
+  }
+  return out;
+}
+/** Hand them to the engine (none when reminders are off). -> { [classId]: 'set' | 'passed' | 'full' } */
+export function syncReminders(data = read(), now = Date.now()) {
+  try { return AM.syncSourceReminders(SRC, remindersFor(data, now), now); }
+  catch (err) { console.error('[timetable] reminders', err); return {}; }
+}
+/** With Static Study closed: the coming days are topped up once at start and on each new day. */
+let lastDay = '';
+export function init() {
+  const tick = () => { const d = ymd(new Date()); if (d !== lastDay) { lastDay = d; syncReminders(); } };
+  tick();
+  bus.on('tick:5s', tick);
+}
+
+export default { KEY, SRC, DAYS, WEEK_ORDER, REMIND, read, write, normalize, issues, weekOf, setThisWeek, onDay, status, dayWord, span, colorFor, mondayOf, ymd, parseDay, validTime, minutes, uid, dayShape, remindersFor, syncReminders, init };

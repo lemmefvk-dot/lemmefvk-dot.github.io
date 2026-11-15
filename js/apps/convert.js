@@ -17,7 +17,17 @@
    and cached in the store with the API's own "as of" date. When the
    network is unavailable we fall back to the cached rates and say so,
    or show an honest error if we have never fetched any. A rate is
-   never invented — only currencies the API returned are offered.
+   never invented — only currencies the API returned are offered. The
+   rate and its date sit right under the result.
+
+   Factors are exact by definition or taken from NIST Special
+   Publication 811 (2008), Appendix B, and the SI Brochure (BIPM, 9th
+   edition, 2019) — each table says which. Cooking converts cups and
+   spoons to grams as if the food were water (1 mL weighs 1 g), and
+   says so: that only holds for water-like liquids.
+
+   Also: favourite conversions (a star), the last 10 conversions,
+   and a choice of significant figures for every result shown.
 
    House style mirrors calculator.js / lens.js: a header comment, a
    self-injected stylesheet guarded by a link id, defineApp() with a
@@ -148,10 +158,112 @@ const CATS = {
     ['′', 'Arcminute', 1 / 60],
     ['″', 'Arcsecond', 1 / 3600],
   ]),
+  /* Energy, in joules. The electronvolt is exact since the 2019 SI (e is
+     1.602176634e-19 C exactly); the thermochemical calorie (4.184 J), the
+     International Table BTU (1055.05585262 J) and the US therm (1.054804e8 J)
+     are exact by definition (NIST SP 811, B.8); a foot-pound force is
+     0.3048 m × 4.4482216152605 N. */
+  energy: lin('Energy', 'battery', 'J', [
+    ['J', 'Joule', 1],
+    ['kJ', 'Kilojoule', 1e3],
+    ['MJ', 'Megajoule', 1e6],
+    ['cal', 'Calorie (thermochemical)', 4.184],
+    ['kcal', 'Kilocalorie (food Calorie)', 4184],
+    ['Wh', 'Watt-hour', 3600],
+    ['kWh', 'Kilowatt-hour', 3.6e6],
+    ['eV', 'Electronvolt', 1.602176634e-19],
+    ['BTU', 'British thermal unit (IT)', 1055.05585262],
+    ['ft·lbf', 'Foot-pound force', 0.3048 * 4.4482216152605],
+    ['erg', 'Erg', 1e-7],
+    ['thm', 'Therm (US)', 1.054804e8],
+  ]),
+  /* Power, in watts. Mechanical horsepower is 550 ft·lbf/s and metric
+     horsepower 75 kgf·m/s (75 × 9.80665 W), both exact (NIST SP 811, B.8). */
+  power: lin('Power', 'zap', 'W', [
+    ['mW', 'Milliwatt', 1e-3],
+    ['W', 'Watt', 1],
+    ['kW', 'Kilowatt', 1e3],
+    ['MW', 'Megawatt', 1e6],
+    ['GW', 'Gigawatt', 1e9],
+    ['hp', 'Horsepower (550 ft·lbf/s)', 550 * 0.3048 * 4.4482216152605],
+    ['PS', 'Metric horsepower', 75 * 9.80665],
+    ['BTU/h', 'BTU (IT) per hour', 1055.05585262 / 3600],
+    ['kcal/h', 'Kilocalorie per hour', 4184 / 3600],
+    ['ft·lbf/s', 'Foot-pound force per second', 0.3048 * 4.4482216152605],
+  ]),
+  /* Pressure, in pascals. The standard atmosphere is 101325 Pa exactly and the
+     torr 1/760 of it; a psi is 4.4482216152605 N on 0.0254² m²; the conventional
+     millimetre of mercury is 13.5951 g/cm³ × 1 mm × 9.80665 m/s² = 133.322387415 Pa
+     and its inch 25.4 times that (NIST SP 811, B.8). */
+  pressure: lin('Pressure', 'wind', 'Pa', [
+    ['Pa', 'Pascal', 1],
+    ['hPa', 'Hectopascal', 100],
+    ['kPa', 'Kilopascal', 1e3],
+    ['MPa', 'Megapascal', 1e6],
+    ['bar', 'Bar', 1e5],
+    ['mbar', 'Millibar', 100],
+    ['atm', 'Standard atmosphere', 101325],
+    ['psi', 'Pound-force per square inch', 4.4482216152605 / (0.0254 * 0.0254)],
+    ['mmHg', 'Millimetre of mercury', 133.322387415],
+    ['inHg', 'Inch of mercury', 25.4 * 133.322387415],
+    ['Torr', 'Torr', 101325 / 760],
+  ]),
+  /* Force, in newtons. The pound-force is 0.45359237 kg × 9.80665 m/s² =
+     4.4482216152605 N and the kilogram-force 9.80665 N, both exact; the poundal
+     is 1 lb·ft/s² = 0.45359237 × 0.3048 N (NIST SP 811, B.8). */
+  force: lin('Force', 'arrow-right', 'N', [
+    ['mN', 'Millinewton', 1e-3],
+    ['N', 'Newton', 1],
+    ['kN', 'Kilonewton', 1e3],
+    ['MN', 'Meganewton', 1e6],
+    ['dyn', 'Dyne', 1e-5],
+    ['lbf', 'Pound-force', 4.4482216152605],
+    ['ozf', 'Ounce-force', 4.4482216152605 / 16],
+    ['kgf', 'Kilogram-force', 9.80665],
+    ['pdl', 'Poundal', 0.45359237 * 0.3048],
+  ]),
+  /* Frequency, in hertz (one per second). A revolution or beat per minute is
+     1/60 Hz; an angular speed of 2π rad/s is one turn a second, 1 Hz. */
+  frequency: lin('Frequency', 'activity', 'Hz', [
+    ['mHz', 'Millihertz', 1e-3],
+    ['Hz', 'Hertz', 1],
+    ['kHz', 'Kilohertz', 1e3],
+    ['MHz', 'Megahertz', 1e6],
+    ['GHz', 'Gigahertz', 1e9],
+    ['rpm', 'Revolutions per minute', 1 / 60],
+    ['bpm', 'Beats per minute', 1 / 60],
+    ['rad/s', 'Radians per second (angular)', 1 / (2 * Math.PI)],
+  ]),
+  /* Cooking, in millilitres — and grams of WATER, taking 1 mL to weigh 1 g
+     (water is 0.9982 g/mL at 20 °C, so this is right to about 0.2%). US cups
+     and spoons are fractions of the US gallon of 231 in³ (NIST SP 811, B.8);
+     metric ones are 250, 15 and 5 mL. */
+  cooking: {
+    ...lin('Cooking', 'coffee', 'mL', [
+      ['cup', 'Cup (US)', 236.5882365],
+      ['cup 250', 'Cup (metric, 250 mL)', 250],
+      ['tbsp', 'Tablespoon (US)', 14.78676478125],
+      ['tbsp 15', 'Tablespoon (metric, 15 mL)', 15],
+      ['tsp', 'Teaspoon (US)', 4.92892159375],
+      ['tsp 5', 'Teaspoon (metric, 5 mL)', 5],
+      ['fl oz', 'Fluid ounce (US)', 29.5735295625],
+      ['pt', 'Pint (US)', 473.176473],
+      ['mL', 'Millilitre', 1],
+      ['L', 'Litre', 1000],
+      ['g', 'Gram of water', 1],
+      ['kg', 'Kilogram of water', 1000],
+      ['oz', 'Ounce (weight) of water', 28.349523125],
+      ['lb', 'Pound of water', 453.59237],
+    ]),
+    note: 'Cups and spoons to grams only hold for water and liquids like it (milk, juice, stock): 1 mL is taken to weigh 1 g. Flour, sugar, butter and oil weigh different amounts per cup.',
+  },
   currency: { name: 'Currency', icon: 'globe', kind: 'fx', base: 'USD', units: [] },
 };
 
-const CAT_ORDER = ['length', 'mass', 'temperature', 'area', 'volume', 'speed', 'time', 'data', 'angle', 'currency'];
+const CAT_ORDER = ['length', 'mass', 'temperature', 'area', 'volume', 'speed', 'time', 'data', 'angle',
+  'energy', 'power', 'pressure', 'force', 'frequency', 'cooking', 'currency'];
+const SIG_CHOICES = [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15];       /* 0: automatic (up to 10) */
+const MAX_FAVS = 20, MAX_RECENT = 10;
 
 /* Common currency names — shown when the API returns that code. Codes we do
    not have a name for still appear, labelled by their ISO code alone. */
@@ -189,11 +301,20 @@ function group(s) {
   return (neg ? '-' : '') + gi + (dec !== undefined ? '.' + dec : '');
 }
 
-/** at most 10 significant digits; exponent only when it truly overflows */
-function fmtOut(n) {
+/** at most 10 significant digits; exponent only when it truly overflows.
+    sig (1–15) rounds to that many significant figures instead and keeps the
+    zeros that count: 1 m at 3 s.f. is 3.28 ft, 2 at 3 s.f. is 2.00. */
+function fmtOut(n, sig = 0) {
   if (!Number.isFinite(n)) return '—';
-  if (n === 0) return '0';
   const abs = Math.abs(n);
+  if (sig) {
+    if (n === 0) return sig > 1 ? '0.' + '0'.repeat(sig - 1) : '0';
+    const p = n.toPrecision(sig);
+    if (!/e/.test(p)) return group(p);
+    if (abs < 1e-6 || abs >= 1e15) return p.replace(/e\+?/, 'e');
+    return group(String(Number(p)));                 /* 12345 at 3 s.f. reads 12,300 */
+  }
+  if (n === 0) return '0';
   if (abs < 1e-9 || abs >= 1e15) return n.toExponential(6).replace(/(\.\d*?)0+e/, '$1e').replace(/\.e/, 'e');
   return group(String(Number(n.toPrecision(10))));
 }
@@ -233,6 +354,8 @@ const DEFAULTS = {
   length: ['km', 'mi'], mass: ['kg', 'lb'], temperature: ['°C', '°F'],
   area: ['m²', 'ft²'], volume: ['L', 'gal'], speed: ['km/h', 'mph'],
   time: ['h', 'min'], data: ['GB', 'MiB'], angle: ['°', 'rad'], currency: ['USD', 'EUR'],
+  energy: ['kcal', 'kJ'], power: ['hp', 'kW'], pressure: ['psi', 'kPa'], force: ['lbf', 'N'],
+  frequency: ['rpm', 'Hz'], cooking: ['cup', 'mL'],
 };
 
 defineApp({
@@ -244,8 +367,10 @@ defineApp({
   keywords: ['unit', 'units', 'convert', 'converter', 'measure', 'metric', 'imperial',
     'length', 'distance', 'mass', 'weight', 'temperature', 'celsius', 'fahrenheit', 'kelvin',
     'area', 'volume', 'litre', 'gallon', 'speed', 'time', 'data', 'bytes', 'angle',
-    'currency', 'exchange rate', 'money', 'usd', 'eur'],
-  desc: 'Convert length, mass, temperature, data, currency and more',
+    'currency', 'exchange rate', 'money', 'usd', 'eur', 'energy', 'joule', 'calorie', 'kwh', 'power',
+    'watt', 'horsepower', 'pressure', 'psi', 'bar', 'force', 'newton', 'frequency', 'hertz', 'rpm',
+    'cooking', 'cups', 'tablespoon', 'grams', 'significant figures'],
+  desc: 'Convert length, mass, temperature, energy, pressure, cooking measures, currency and more',
   singleton: true,
   win: { w: 600, h: 600, minW: 360, minH: 440 },
 
@@ -258,20 +383,27 @@ defineApp({
 
     /* ------- persisted state ------- */
     const saved = store.get(KEY) || {};
+    const conv = x => x && typeof x === 'object' && CATS[x.cat] && typeof x.from === 'string' && typeof x.to === 'string';
     const S = {
       catId: CATS[saved.catId] ? saved.catId : 'length',
       pick: { ...(saved.pick || {}) },          /* catId -> [fromSym, toSym] */
       fromStr: typeof saved.fromStr === 'string' ? saved.fromStr : '1',
       fx: saved.fx && saved.fx.rates ? saved.fx : null,
+      /* significant figures for every result shown (0: automatic) */
+      sig: SIG_CHOICES.includes(saved.sig) ? saved.sig : 0,
+      /* favourites: [{ cat, from, to }]; recent: the last conversions made, newest first */
+      favs: Array.isArray(saved.favs) ? saved.favs.filter(conv).slice(0, MAX_FAVS) : [],
+      recent: Array.isArray(saved.recent) ? saved.recent.filter(r => conv(r) && typeof r.value === 'string' && typeof r.result === 'string').slice(0, MAX_RECENT) : [],
       fxLoading: false,
       fxError: '',
       ac: null,
       dead: false,
     };
     const persist = () => {
-      try { store.set(KEY, { catId: S.catId, pick: { ...S.pick }, fromStr: S.fromStr, fx: S.fx }); }
+      try { store.set(KEY, { catId: S.catId, pick: { ...S.pick }, fromStr: S.fromStr, fx: S.fx, sig: S.sig, favs: S.favs.slice(), recent: S.recent.slice() }); }
       catch (e) { /* private mode / quota — the app still runs */ }
     };
+    const out = n => fmtOut(n, S.sig);
 
     /* ------- shell ------- */
     const sideEl = h('aside.app__side.cv__side', { role: 'tablist', 'aria-label': 'Categories' });
@@ -339,18 +471,18 @@ defineApp({
       }
 
       const p = pickOf();
-      const fromSel = unitSelect(p.list, p.from.sym, sym => { S.pick[S.catId][0] = sym; persist(); recompute('from'); });
-      const toSel = unitSelect(p.list, p.to.sym, sym => { S.pick[S.catId][1] = sym; persist(); recompute('to'); });
+      const fromSel = unitSelect(p.list, p.from.sym, sym => { S.pick[S.catId][0] = sym; persist(); recompute('from'); noteLater(); });
+      const toSel = unitSelect(p.list, p.to.sym, sym => { S.pick[S.catId][1] = sym; persist(); recompute('to'); noteLater(); });
 
       const fromIn = h('input.cv__in', {
         type: 'text', inputmode: 'decimal', autocomplete: 'off', spellcheck: 'false',
         'aria-label': 'Value to convert from', value: S.fromStr,
-        oninput: () => { S.fromStr = fromIn.value; persist(); recompute('from'); },
+        oninput: () => { S.fromStr = fromIn.value; persist(); recompute('from'); noteLater(); },
       });
       const toIn = h('input.cv__in', {
         type: 'text', inputmode: 'decimal', autocomplete: 'off', spellcheck: 'false',
         'aria-label': 'Converted value (editable)',
-        oninput: () => { onReverse(toIn.value); },
+        oninput: () => { onReverse(toIn.value); noteLater(); },
       });
 
       const swap = h('button.cv__swap.tip', {
@@ -369,15 +501,107 @@ defineApp({
 
       const rateEl = h('div.cv__rate', { 'aria-live': 'polite' });
       const copyBtn = h('button.btn.btn--sm.cv__copy', { type: 'button', onclick: copyResult }, icon('copy'), h('span', { text: 'Copy result' }));
+      const favBtn = h('button.btn.btn--sm.cv__fav', { type: 'button', onclick: toggleFav });
+      const sigSel = h('select.select.cv__sig', { 'aria-label': 'Significant figures', title: 'Significant figures for every result',
+        onchange: e => { S.sig = Number(e.target.value) || 0; persist(); recompute('from'); } },
+        ...SIG_CHOICES.map(n => h('option', { value: String(n), text: n ? `${n} s.f.` : 'Auto s.f.', selected: n === S.sig })));
       const allEl = h('div.cv__all');
+      const favsEl = h('div.cv__favs', { role: 'list', 'aria-label': 'Favourite conversions' });
+      const recentEl = h('div.cv__recent');
 
-      bodyEl.append(io, h('div.cv__detail', rateEl, copyBtn),
-        h('div.cv__alltitle', { text: 'In every unit' }), allEl);
+      bodyEl.append(...[favsEl, io, h('div.cv__detail', rateEl, h('div.cv__acts', sigSel, favBtn, copyBtn)),
+        cat().note ? h('p.cv__note', { role: 'note', text: cat().note }) : null,
+        h('div.cv__alltitle', { text: 'In every unit' }), allEl, recentEl].filter(Boolean));
 
-      R = { fromSel, toSel, fromIn, toIn, rateEl, allEl, copyBtn };
+      R = { fromSel, toSel, fromIn, toIn, rateEl, allEl, copyBtn, favBtn, favsEl, recentEl };
       paintStatus();
       recompute('from');
+      paintFavs();
+      paintRecent();
       fitNarrow();
+    }
+
+    /* ------- favourites: a star on the current pair of units ------- */
+    const sameConv = (a, b) => a.cat === b.cat && a.from === b.from && a.to === b.to;
+    const unitName = (catId, sym) => (unitsOf(CATS[catId], S.fx).find(u => u.sym === sym) || { sym }).sym;
+    function currentConv() { const { from, to } = currentPick(); return from && to ? { cat: S.catId, from: from.sym, to: to.sym } : null; }
+    function toggleFav() {
+      const c = currentConv();
+      if (!c) return;
+      const i = S.favs.findIndex(f => sameConv(f, c));
+      if (i >= 0) S.favs.splice(i, 1);
+      else {
+        if (S.favs.length >= MAX_FAVS) { api.notify({ app: 'Static Convert', icon: 'star', title: 'That’s a lot of favourites', message: `Up to ${MAX_FAVS} fit. Take one off first.`, timeout: 3000 }); return; }
+        S.favs.push(c);
+      }
+      persist();
+      paintFavs();
+    }
+    /** open a saved conversion: its category, its units, and a value if it has one */
+    function goTo(c, value) {
+      if (!CATS[c.cat]) return;
+      if (CATS[c.cat].kind === 'fx' && !S.fx) { S.catId = c.cat; S.pick[c.cat] = [c.from, c.to]; persist(); renderCategory(); fetchFx(false); return; }
+      const list = unitsOf(CATS[c.cat], S.fx);
+      if (!list.some(u => u.sym === c.from) || !list.some(u => u.sym === c.to)) {
+        api.notify({ app: 'Static Convert', icon: 'alert', title: 'Can’t open that one', message: 'One of its units isn’t on the list any more.', timeout: 3000 });
+        return;
+      }
+      S.catId = c.cat;
+      S.pick[c.cat] = [c.from, c.to];
+      if (value !== undefined) S.fromStr = value;
+      persist();
+      renderCategory();
+    }
+    function paintFavs() {
+      if (!R) return;
+      const c = currentConv();
+      const on = !!c && S.favs.some(f => sameConv(f, c));
+      clear(R.favBtn);
+      R.favBtn.append(icon('star'), h('span', { text: on ? 'Favourite' : 'Add to favourites' }));
+      R.favBtn.classList.toggle('is-on', on);
+      R.favBtn.setAttribute('aria-pressed', String(on));
+      clear(R.favsEl);
+      R.favsEl.hidden = !S.favs.length;
+      for (const f of S.favs) {
+        const here = c && sameConv(f, c);
+        R.favsEl.appendChild(h('span.cv__favchip', { role: 'listitem', class: here ? 'is-on' : '' },
+          h('button.cv__favgo', { type: 'button', 'aria-label': `Open ${f.from} to ${f.to} (${CATS[f.cat].name})`, title: CATS[f.cat].name, onclick: () => goTo(f) },
+            icon(CATS[f.cat].icon), h('span', { text: `${unitName(f.cat, f.from)} → ${unitName(f.cat, f.to)}` })),
+          h('button.cv__favx', { type: 'button', 'aria-label': `Remove ${f.from} to ${f.to} from favourites`,
+            onclick: () => { S.favs = S.favs.filter(x => !sameConv(x, f)); persist(); paintFavs(); } }, icon('x'))));
+      }
+    }
+
+    /* ------- the last 10 conversions -------
+       Noted once the typing stops (or on Copy), so 1, 12, 120 is one entry,
+       not three; the same pair of units again replaces its older entry. */
+    let noteT = 0;
+    function noteLater() { clearTimeout(noteT); noteT = setTimeout(() => { noteT = 0; noteNow(); }, 1500); }
+    function noteNow() {
+      if (S.dead || !R) return;
+      const { from, to } = currentPick();
+      const x = parseVal(S.fromStr);
+      const y = convert(cat(), from, to, x);
+      if (!from || !to || !Number.isFinite(y)) return;
+      const r = { cat: S.catId, from: from.sym, to: to.sym, value: fmtRaw(x), result: out(y), at: Date.now() };
+      const top = S.recent[0];
+      if (top && sameConv(top, r) && top.value === r.value && top.result === r.result) return;
+      S.recent = [r, ...S.recent.filter(o => !(sameConv(o, r) && o.value === r.value))].slice(0, MAX_RECENT);
+      persist();
+      paintRecent();
+    }
+    function paintRecent() {
+      if (!R) return;
+      clear(R.recentEl);
+      if (!S.recent.length) return;
+      R.recentEl.append(
+        h('div.cv__rhead', h('span.cv__alltitle', { text: 'Recent' }),
+          h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => { S.recent = []; persist(); paintRecent(); } }, h('span', { text: 'Clear' }))),
+        h('div.cv__rlist', { role: 'list', 'aria-label': 'Recent conversions' }, ...S.recent.map(r => h('button.cv__rrow', {
+          type: 'button', role: 'listitem', 'aria-label': `${r.value} ${r.from} is ${r.result} ${r.to}. Open it`,
+          onclick: () => goTo(r, r.value),
+        }, icon(CATS[r.cat].icon), h('span', { text: `${group(r.value)} ${r.from}` }), h('span.cv__rto', { text: `= ${r.result} ${r.to}` }),
+          h('small', { text: fmt && fmt.fmtAgo ? fmt.fmtAgo(new Date(r.at).toISOString()) : '' })))));
     }
 
     function unitSelect(list, value, onchange) {
@@ -403,11 +627,12 @@ defineApp({
       const x = parseVal(S.fromStr);
       const result = convert(cat(), from, to, x);
       if (side !== 'to-typing') {
-        R.toIn.value = Number.isFinite(result) ? fmtOut(result) : (S.fromStr.trim() ? '' : '');
+        R.toIn.value = Number.isFinite(result) ? out(result) : (S.fromStr.trim() ? '' : '');
       }
       paintRate(from, to, x, result);
       paintAll(list, from, x);
       R.copyBtn.toggleAttribute('disabled', !Number.isFinite(result));
+      paintFavs();                                   /* the star follows the units */
     }
 
     /** the To field was edited: solve backwards for the From value. */
@@ -437,6 +662,11 @@ defineApp({
       if (Number.isFinite(one) && one !== 0) {
         R.rateEl.append(h('span.cv__rdim', { text: '  ·  1 ' + to.sym + ' = ' + fmtOut(1 / one) + ' ' + from.sym }));
       }
+      /* a rate is only as good as its date: it sits by the result, with where it came from */
+      if (c.kind === 'fx' && S.fx) {
+        R.rateEl.append(h('div.cv__rdate', { dataset: { fk: 'fx-date' } },
+          icon('calendar'), h('span', { text: `Rate as of ${asOf()}, from open.er-api.com${S.fxError ? ' (saved copy — could not refresh)' : ''}` })));
+      }
     }
 
     function paintAll(list, from, x) {
@@ -460,7 +690,7 @@ defineApp({
           onclick: () => { S.pick[S.catId][1] = u.sym; if (R) R.toSel.value = u.sym; persist(); recompute('from'); },
         },
           h('span.cv__aname', h('b', { text: u.sym }), h('small', { text: u.name })),
-          h('span.cv__aval', { text: Number.isFinite(v) ? fmtOut(v) : '—' })));
+          h('span.cv__aval', { text: Number.isFinite(v) ? out(v) : '—' })));
       }
     }
 
@@ -475,6 +705,7 @@ defineApp({
       if (Number.isFinite(carry)) { S.fromStr = fmtRaw(carry); if (R) R.fromIn.value = S.fromStr; }
       persist();
       recompute('from');
+      noteLater();
       if (R && !reduce()) R.fromSel.closest('.cv__io')?.querySelector('.cv__swap')
         ?.animate?.([{ transform: 'rotate(0deg)' }, { transform: 'rotate(180deg)' }], { duration: 260, easing: 'ease-out' });
     }
@@ -484,7 +715,9 @@ defineApp({
       const { from, to } = currentPick();
       const result = convert(cat(), from, to, parseVal(S.fromStr));
       if (!Number.isFinite(result)) return;
-      const text = fmtRaw(result);
+      /* with significant figures chosen, the copy is the rounded figure shown */
+      const text = S.sig ? out(result).replace(/,/g, '') : fmtRaw(result);
+      clearTimeout(noteT); noteT = 0; noteNow();
       try {
         await navigator.clipboard.writeText(text);
         api.notify({ app: 'Static Convert', icon: 'copy', title: 'Copied', message: `${text} ${to.sym}`, timeout: 2200 });
@@ -595,8 +828,17 @@ defineApp({
     /* ------- open at a given conversion -------
        opts { cat, from, to, value } — Spotlight's "Open in Static Convert"
        passes the conversion it just answered. Units are checked against
-       this app's own list; anything it doesn't have is ignored. */
+       this app's own list; anything it doesn't have is ignored.
+       opts { value } alone (Calculator's Convert) keeps the category and
+       units and only puts that number in the From field. */
     function applyOpts(o) {
+      if (o && typeof o === 'object' && o.cat === undefined && o.value !== undefined && o.value !== null) {
+        const v = parseVal(o.value);
+        if (!Number.isFinite(v)) return false;
+        S.fromStr = fmtRaw(v);
+        persist();
+        return true;
+      }
       if (!o || typeof o !== 'object' || !CATS[o.cat] || CATS[o.cat].kind === 'fx') return false;
       const list = unitsOf(CATS[o.cat], S.fx);
       if (!list.some(u => u.sym === o.from) || !list.some(u => u.sym === o.to)) return false;
@@ -618,6 +860,7 @@ defineApp({
     /* ------- teardown ------- */
     return () => {
       S.dead = true;
+      clearTimeout(noteT);
       try { S.ac?.abort(); } catch (e) { /* already settled */ }
       try { ro?.disconnect(); } catch (e) { /* never observed */ }
       ro = null;

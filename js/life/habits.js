@@ -16,10 +16,11 @@ const longDay = key => new Date(+key.slice(0, 4), +key.slice(5, 7) - 1, +key.sli
   .toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const SPAN = 14;
+const HEAT_WEEKS = 12;
 
 export function mountHabits(el, ctx) {
   const { h, icon, confirm } = ctx.api;
-  const S = { editing: null, draftDays: [], name: '', error: '', remindOpen: null, focus: '', dead: false };
+  const S = { editing: null, draftDays: [], name: '', error: '', remindOpen: null, focus: '', dead: false, heatOpen: new Set() };
   let today = H.dayKey();
 
   const habits = () => (read().habits || []).map(H.normHabit).filter(Boolean);
@@ -91,6 +92,33 @@ export function mountHabits(el, ctx) {
 
   const tick = (id, key) => { replace(id, x => H.toggleDay(x, key, today)); S.focus = `[data-habit="${id}"] [data-day="${key}"]`; render(); };
 
+  /* ---------------- the 12-week heatmap ----------------
+     Columns are weeks (Sunday at the top), drawn from real ticks only. A
+     cell's shade is the share of that day's scheduled habits that were
+     ticked; a day with nothing scheduled is left blank, and so is today
+     until it is ticked. The picture has a sentence for screen readers and
+     each cell names its day in a tooltip. */
+  const level = c => (!c.sched ? '' : c.done === c.sched ? '4' : c.done === 0 ? '0' : c.done * 3 <= c.sched ? '1' : c.done * 3 <= c.sched * 2 ? '2' : '3');
+  function heat(list, label) {
+    const m = H.heatmap(list, today, HEAT_WEEKS);
+    const pct = m.sched ? Math.round((m.done * 100) / m.sched) : null;
+    const summary = m.sched
+      ? `${label}, last ${HEAT_WEEKS} weeks: ${m.done} of ${plural(m.sched, list.length > 1 ? 'scheduled habit-day' : 'scheduled day')} ticked (${pct}%).`
+      : `${label}, last ${HEAT_WEEKS} weeks: no scheduled days yet.`;
+    const months = m.weeks.map((w, i) => {
+      const first = w.find(c => c.key.slice(8) === '01') || (i === 0 ? w[0] : null);
+      return h('span', { text: first ? new Date(+first.key.slice(0, 4), +first.key.slice(5, 7) - 1, 1, 12).toLocaleDateString(undefined, { month: 'short' }) : '' });
+    });
+    return h('figure.life-heat', { 'data-heat': list.length > 1 ? 'all' : list[0].id },
+      h('div.life-heat__months', { 'aria-hidden': 'true' }, months),
+      h('div.life-heat__grid', { role: 'img', 'aria-label': summary },
+        m.weeks.map(w => h('div.life-heat__wk', w.map(c => h('span.life-heat__c', {
+          'data-key': c.key, 'data-l': c.future ? 'f' : level(c),
+          title: c.future ? '' : `${longDay(c.key)}: ${c.sched ? `${c.done} of ${c.sched} ticked` : c.key === today && !c.done ? 'still open' : 'nothing scheduled'}`,
+        }))))),
+      h('figcaption.life-note', { text: summary }));
+  }
+
   /* ---------------- drawing ---------------- */
   function dayButton(habit, d) {
     const label = `${longDay(d.key)}${d.scheduled ? '' : ', not scheduled'}: ${d.done ? 'done' : 'not done'}`;
@@ -120,7 +148,15 @@ export function mountHabits(el, ctx) {
           h('button.ibtn', { type: 'button', 'aria-label': `Delete ${habit.name}`, onclick: () => remove(habit) }, icon('trash')))),
       h('div.life-days', { role: 'group', 'aria-label': `Last ${SPAN} days of ${habit.name}` }, H.week(habit, today, SPAN).map(d => dayButton(habit, d))),
       st.extras ? h('small.life-note', { text: `${plural(st.extras, 'extra tick')} on days it isn’t scheduled; they don’t change the streak.` }) : null,
-      rem ? reminderRow(habit) : null);
+      rem ? reminderRow(habit) : null,
+      h('details.life-heatbox', { open: S.heatOpen.has(habit.id),
+        ontoggle: e => {
+          const box = e.currentTarget;
+          if (box.open) { S.heatOpen.add(habit.id); if (!box.querySelector('.life-heat')) box.append(heat([habit], habit.name)); }
+          else S.heatOpen.delete(habit.id);
+        } },
+        h('summary', { text: `Last ${HEAT_WEEKS} weeks` }),
+        S.heatOpen.has(habit.id) ? heat([habit], habit.name) : null));
   }
 
   function reminderRow(habit) {
@@ -155,6 +191,10 @@ export function mountHabits(el, ctx) {
     el.replaceChildren(
       h('div.life-head', h('div', h('h2', { text: 'Habits' }), h('small', { text: `Today is ${longDay(today)}` }))),
       form(),
+      list.length ? h('section.life-card.life-heatall', { 'aria-label': `All habits, last ${HEAT_WEEKS} weeks` },
+        h('div.life-heatall__head', h('b', { text: `All habits, last ${HEAT_WEEKS} weeks` }),
+          h('span.life-heat__key', { 'aria-hidden': 'true' }, h('small', { text: 'Fewer ticked' }), ['0', '1', '2', '3', '4'].map(l => h('span.life-heat__c', { 'data-l': l })), h('small', { text: 'All ticked' }))),
+        heat(list, 'All habits')) : null,
       list.length
         ? h('div.life-list', list.map(card))
         : h('div.empty', icon('repeat'), h('b', { text: 'No habits yet' }), h('small', { text: 'Add one above. Pick weekdays, or leave them all off for every day.' })),

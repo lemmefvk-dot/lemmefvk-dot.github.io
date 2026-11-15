@@ -351,6 +351,26 @@ export class Position {
     return true;
   }
 
+  /* pass (the level-4 search's null-move test): nothing moves, the other
+     side is to play. The 50-move count restarts, so no repetition is ever
+     counted across a pass. */
+  makeNull() {
+    this.st.push(0, 0, this.castle, this.ep, this.half, this.lo, this.hi);
+    let lo = this.lo, hi = this.hi;
+    if (this.ep >= 0) { lo ^= Z.e.lo[this.ep & 7]; hi ^= Z.e.hi[this.ep & 7]; }
+    this.ep = -1;
+    this.half = 0;
+    this.turn = -this.turn;
+    lo ^= Z.s.lo[0]; hi ^= Z.s.hi[0];
+    this.lo = lo; this.hi = hi;
+  }
+  unmakeNull() {
+    const st = this.st;
+    const hi = st.pop(), lo = st.pop(), half = st.pop(), ep = st.pop(), castle = st.pop();
+    st.pop(); st.pop();
+    this.turn = -this.turn; this.castle = castle; this.ep = ep; this.half = half; this.lo = lo; this.hi = hi;
+  }
+
   unmake() {
     const st = this.st, b = this.b;
     const hi = st.pop(), lo = st.pop(), half = st.pop(), ep = st.pop(), castle = st.pop(), cap = st.pop(), m = st.pop();
@@ -525,6 +545,66 @@ export function evaluate(pos) {
   return Math.round(score) * pos.turn;
 }
 
+/* Level 4's extra terms, White minus Black: passed pawns (more the
+   further on), doubled and isolated pawns, the bishop pair, and rooks on
+   open or half-open files. Small, well-known chess knowledge. */
+const PASSED = [0, 8, 12, 22, 38, 62, 100, 0];
+function structure(pos) {
+  const b = pos.b;
+  const pf = [new Int8Array(8), new Int8Array(8)];          /* pawns per file: [white, black] */
+  const front = [new Int8Array(8).fill(-1), new Int8Array(8).fill(8)];  /* white's most advanced rank, black's */
+  const back = [new Int8Array(8).fill(8), new Int8Array(8).fill(-1)];   /* white's rearmost, black's */
+  let bw = 0, bb = 0;
+  const rooks = [];
+  for (let sq = 0; sq < 128; sq++) {
+    if (sq & 0x88) { sq += 7; continue; }
+    const p = b[sq];
+    if (!p) continue;
+    const f = sq & 7, r = sq >> 4;
+    if (p === PAWN) { pf[0][f]++; if (r > front[0][f]) front[0][f] = r; if (r < back[0][f]) back[0][f] = r; }
+    else if (p === -PAWN) { pf[1][f]++; if (r < front[1][f]) front[1][f] = r; if (r > back[1][f]) back[1][f] = r; }
+    else if (p === BISHOP) bw++;
+    else if (p === -BISHOP) bb++;
+    else if (p === ROOK || p === -ROOK) rooks.push(sq);
+  }
+  let s = 0;
+  for (let f = 0; f < 8; f++) {
+    for (let side = 0; side < 2; side++) {
+      const n = pf[side][f];
+      if (!n) continue;
+      const sign = side ? -1 : 1;
+      if (n > 1) s -= sign * 12 * (n - 1);
+      if (!(f > 0 && pf[side][f - 1]) && !(f < 7 && pf[side][f + 1])) s -= sign * 14 * n;
+      /* passed: no enemy pawn ahead on this file or the two beside it */
+      const r = front[side][f], other = side ? 0 : 1;
+      let free = true;
+      for (let df = -1; df <= 1 && free; df++) {
+        const ff = f + df;
+        if (ff < 0 || ff > 7 || !pf[other][ff]) continue;
+        free = side ? !(back[other][ff] < r) : !(back[other][ff] > r);
+      }
+      if (free) s += sign * PASSED[side ? 7 - r : r];
+    }
+  }
+  if (bw >= 2) s += 30;
+  if (bb >= 2) s -= 30;
+  for (const sq of rooks) {
+    const f = sq & 7, white = b[sq] > 0, own = pf[white ? 0 : 1][f], their = pf[white ? 1 : 0][f];
+    if (!own) s += (white ? 1 : -1) * (their ? 10 : 22);
+  }
+  return s;
+}
+/** level 4's evaluation: the same as evaluate(), and structure() */
+export function evaluateRich(pos) { return evaluate(pos) + structure(pos) * pos.turn; }
+const hasPieces = (pos, us) => {
+  for (let sq = 0; sq < 128; sq++) {
+    if (sq & 0x88) { sq += 7; continue; }
+    const t = pos.b[sq] * us;
+    if (t > PAWN && t < KING) return true;
+  }
+  return false;
+};
+
 const MATE = 100000;
 const INF = 1e9;
 class Stop extends Error {}
@@ -539,6 +619,10 @@ export function think(pos, opts = {}) {
   const noise = Math.max(0, opts.noise || 0);
   const rnd = typeof opts.rnd === 'function' ? opts.rnd : Math.random;
   const nodeCap = opts.nodes || Infinity;
+  /* level 4: a richer evaluation, null-move pruning, late-move reductions
+     and principal-variation search — the same time limit decides the depth */
+  const strong = !!opts.strong;
+  const evalFn = strong ? evaluateRich : evaluate;
   const clock = typeof performance !== 'undefined' ? () => performance.now() : () => Date.now();
   const t0 = clock();
   const deadline = t0 + timeMs;
@@ -580,7 +664,7 @@ export function think(pos, opts = {}) {
 
   function quiesce(alpha, beta, ply) {
     tick();
-    const stand = evaluate(pos);
+    const stand = evalFn(pos);
     if (stand >= beta) return stand;
     if (stand > alpha) alpha = stand;
     if (ply > 40) return stand;
@@ -595,7 +679,7 @@ export function think(pos, opts = {}) {
     return alpha;
   }
 
-  function search(depth, alpha, beta, ply) {
+  function search(depth, alpha, beta, ply, nullOk = true) {
     tick();
     timeUp();
     const key = pos.key();
@@ -616,14 +700,34 @@ export function think(pos, opts = {}) {
         if (e.flag === 2 && e.score <= alpha) return e.score;
       }
     }
+    /* null move: if passing still holds beta, a real move will too (not in
+       check, not twice running, not with only pawns — zugzwang lives there) */
+    if (strong && nullOk && !check && depth >= 3 && ply > 0 && beta < MATE - 1000 && hasPieces(pos, pos.turn) && evalFn(pos) >= beta) {
+      pos.makeNull();
+      path.push(key);
+      let s;
+      try { s = -search(depth - 3, -beta, -beta + 1, ply + 1, false); } finally { path.pop(); pos.unmakeNull(); }
+      if (s >= beta) return beta;
+    }
     const a0 = alpha;
+    const kl = killers[ply];
     let best = -INF, bestMove = 0, legal = 0;
     for (const m of order(pos.gen([]), ttMove, ply)) {
       if (!pos.make(m)) continue;
       legal++;
       path.push(key);
       let s;
-      try { s = -search(depth - 1, -beta, -alpha, ply + 1); } finally { path.pop(); pos.unmake(); }
+      try {
+        if (!strong || legal === 1) s = -search(depth - 1, -beta, -alpha, ply + 1);
+        else {
+          /* the rest with a null window first; late quiet moves a ply or two shallower */
+          const quiet = !(mFlags(m) & (F_CAPTURE | F_PROMO)) && !check && m !== kl?.[0] && m !== kl?.[1] && !pos.inCheck();
+          const r = quiet && depth >= 3 && legal > 3 ? (legal > 9 && depth >= 5 ? 2 : 1) : 0;
+          s = -search(depth - 1 - r, -alpha - 1, -alpha, ply + 1);
+          if (s > alpha && r) s = -search(depth - 1, -alpha - 1, -alpha, ply + 1);
+          if (s > alpha && s < beta) s = -search(depth - 1, -beta, -alpha, ply + 1);
+        }
+      } finally { path.pop(); pos.unmake(); }
       if (s > best) { best = s; bestMove = m; }
       if (s > alpha) alpha = s;
       if (alpha >= beta) {
@@ -654,7 +758,12 @@ export function think(pos, opts = {}) {
         pos.make(m);
         path.push(rootKey);
         let s;
-        try { s = -search(depth - 1, -INF, noise ? INF : -alpha, 1); } finally { path.pop(); pos.unmake(); }
+        try {
+          if (strong && scored.length && !noise) {
+            s = -search(depth - 1, -alpha - 1, -alpha, 1);
+            if (s > alpha) s = -search(depth - 1, -INF, -alpha, 1);
+          } else s = -search(depth - 1, -INF, noise ? INF : -alpha, 1);
+        } finally { path.pop(); pos.unmake(); }
         scored.push({ m, s });
         if (s > alpha) alpha = s;
       }
@@ -681,11 +790,203 @@ export function think(pos, opts = {}) {
   return { move: bestMove, uci: uci(bestMove), score: bestScore, depth: done, nodes, ms: Math.round(clock() - t0) };
 }
 
-/** the three computer levels (the same everywhere: worker, fallback, tests) */
+/** the computer levels (the same everywhere: worker, fallback, tests).
+    Expert (4) thinks at most 3 s a move, on any machine: the search stops
+    on the clock, so a slower computer looks less deep rather than longer
+    (tests/suites/boardcards-chess.mjs measures it, with the CPU slowed 4×
+    as on a school Chromebook). */
 export const LEVELS = {
   1: { name: 'Easy', maxDepth: 1, timeMs: 400, noise: 120 },
   2: { name: 'Medium', maxDepth: 3, timeMs: 1000, noise: 25 },
   3: { name: 'Hard', maxDepth: 64, timeMs: 2200, noise: 0 },
+  4: { name: 'Expert', maxDepth: 64, timeMs: 3000, noise: 0, strong: true },
 };
 
-export default { Position, perft, think, evaluate, START_FEN, KIWIPETE, LEVELS, uci, sqName, sqOf };
+/* ============================== solving ============================== */
+/** after the attacker's move, with the defender to move: does every defence
+    lose to a mate within `left` more attacker moves? (stalemate is no mate) */
+function hasLegal(pos) {
+  for (const m of pos.gen([])) if (pos.make(m)) { pos.unmake(); return true; }
+  return false;
+}
+function forced(pos, left) {
+  if (left <= 0) return pos.inCheck() && !hasLegal(pos);
+  const replies = pos.legalMoves();
+  if (!replies.length) return pos.inCheck();
+  for (const r of replies) {
+    pos.make(r);
+    let mates = false;
+    for (const m of pos.legalMoves()) {
+      pos.make(m);
+      mates = forced(pos, left - 1);
+      pos.unmake();
+      if (mates) break;
+    }
+    pos.unmake();
+    if (!mates) return false;
+  }
+  return true;
+}
+/** the moves that force mate in n moves or fewer for the side to move ([] if none) */
+export function mateKeys(pos, n) {
+  const keys = [];
+  for (const m of pos.legalMoves()) {
+    pos.make(m);
+    const ok = forced(pos, n - 1);
+    pos.unmake();
+    if (ok) keys.push(m);
+  }
+  return keys;
+}
+/** is the side to move mated? */
+export const isMate = pos => pos.inCheck() && !pos.legalMoves().length;
+/** with the defender to move: is there still a forced mate within `left` attacker moves? */
+export const stillMates = (pos, left) => forced(pos, left);
+
+/** Can `color` ever deliver mate with what it has left? Used when a clock
+    runs out: a flag is a loss only if the other side could still mate —
+    a bare king can't, nor a lone bishop or knight against a bare king. */
+export function hasMatingMaterial(pos, color) {
+  let minors = 0, theirs = 0;
+  for (let sq = 0; sq < 128; sq++) {
+    if (sq & 0x88) { sq += 7; continue; }
+    const p = pos.b[sq];
+    if (!p || Math.abs(p) === KING) continue;
+    if (Math.sign(p) !== color) { theirs++; continue; }
+    const t = Math.abs(p);
+    if (t === PAWN || t === ROOK || t === QUEEN) return true;
+    minors++;
+  }
+  if (minors >= 2) return true;
+  return minors === 1 && theirs > 0;
+}
+
+/* ============================== notation ============================== */
+const SAN_RE = /^([NBRQK])?([a-h])?([1-8])?x?([a-h][1-8])(?:=?([NBRQ]))?$/;
+/** A move given in SAN (as people write it: "Nf3", "exd5", "O-O", "e8=Q",
+    "0-0", "Ngf3", with or without + # ! ?), only if it is legal here; else 0. */
+export function parseSan(pos, text) {
+  let s = String(text || '').trim().replace(/[+#!?]+$/g, '').replace(/^0-0-0$/, 'O-O-O').replace(/^0-0$/, 'O-O');
+  if (!s) return 0;
+  const legal = pos.legalMoves();
+  if (s === 'O-O' || s === 'O-O-O') {
+    const long = s === 'O-O-O';
+    return legal.find(m => (mFlags(m) & F_CASTLE) && (mTo(m) < mFrom(m)) === long) || 0;
+  }
+  const ma = SAN_RE.exec(s);
+  if (!ma) return 0;
+  const type = ma[1] ? SAN_LETTER.indexOf(ma[1]) : PAWN;
+  const fromFile = ma[2] ? ma[2].charCodeAt(0) - 97 : -1, fromRank = ma[3] ? Number(ma[3]) - 1 : -1;
+  const to = sqOf(ma[4]), promo = ma[5] ? SAN_LETTER.indexOf(ma[5]) : 0;
+  const hits = legal.filter(m => {
+    const from = mFrom(m);
+    if (mTo(m) !== to || Math.abs(pos.b[from]) !== type || (mFlags(m) & F_CASTLE)) return false;
+    if (fromFile >= 0 && (from & 7) !== fromFile) return false;
+    if (fromRank >= 0 && (from >> 4) !== fromRank) return false;
+    if (mFlags(m) & F_PROMO) return mPromo(m) === promo;
+    return !promo;
+  });
+  return hits.length === 1 ? hits[0] : 0;
+}
+
+/* ============================== PGN ============================== */
+/* The Seven Tag Roster comes first, in its order; any other tags after it. */
+const ROSTER = ['Event', 'Site', 'Date', 'Round', 'White', 'Black', 'Result'];
+const RESULTS = ['1-0', '0-1', '1/2-1/2', '*'];
+const tagValue = v => String(v ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ');
+/** PGN's date: 2026.11.07 */
+export const pgnDate = (d = new Date()) => `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * A game as standard PGN (export format): tags, a blank line, the moves
+ * numbered and wrapped under 80 columns, the result at the end.
+ *   toPgn({ tags: { Event, …, Result }, fen?: the start (if not the usual),
+ *           sans: ['e4', 'e5', …] })
+ */
+export function toPgn({ tags = {}, fen = null, sans = [] } = {}) {
+  const t = { ...tags };
+  const result = RESULTS.includes(t.Result) ? t.Result : '*';
+  t.Result = result;
+  for (const k of ROSTER) if (t[k] === undefined || t[k] === '') t[k] = k === 'Date' ? '????.??.??' : k === 'Result' ? '*' : '?';
+  const start = fen && fen.trim() !== START_FEN ? fen.trim() : null;
+  delete t.SetUp; delete t.FEN;
+  if (start) { t.SetUp = '1'; t.FEN = start; }
+  const names = [...ROSTER, ...Object.keys(t).filter(k => !ROSTER.includes(k) && /^[A-Za-z0-9_]+$/.test(k))];
+  const head = names.map(k => `[${k} "${tagValue(t[k])}"]`).join('\n');
+  /* the move numbers follow the start position: Black to move begins "12..." */
+  let n = 1, black = false;
+  if (start) { const p = start.split(/\s+/); black = p[1] === 'b'; n = Math.max(1, parseInt(p[5], 10) || 1); }
+  const tokens = [];
+  sans.forEach((san, i) => {
+    if (!black) tokens.push(`${n}.`);
+    else if (i === 0) tokens.push(`${n}...`);
+    tokens.push(san);
+    if (black) n++;
+    black = !black;
+  });
+  tokens.push(result);
+  const lines = [];
+  let line = '';
+  for (const tok of tokens) {
+    if (line && line.length + 1 + tok.length > 79) { lines.push(line); line = tok; } else line = line ? `${line} ${tok}` : tok;
+  }
+  if (line) lines.push(line);
+  return `${head}\n\n${lines.join('\n')}\n`;
+}
+
+/**
+ * Read the first game of a PGN text. Comments ({…} and ;…), variations
+ * ((…), even nested), numeric annotations ($1) and !? marks are skipped.
+ * -> { tags, fen (start), sans, uci, result }
+ * Throws an Error with a plain message when it can't be read.
+ */
+export function parsePgn(text) {
+  const src = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  if (src.length > 400000) throw new Error('That PGN is too long to read here.');
+  const tags = {};
+  let i = 0;
+  const skipWs = () => { while (i < src.length && /\s/.test(src[i])) i++; };
+  skipWs();
+  while (src[i] === '[') {
+    const end = src.indexOf('\n', i);
+    const line = src.slice(i, end < 0 ? src.length : end);
+    const m = /^\[\s*([A-Za-z0-9_]+)\s+"((?:[^"\\]|\\.)*)"\s*\]/.exec(line);
+    if (m) tags[m[1]] = m[2].replace(/\\(.)/g, '$1');
+    i = end < 0 ? src.length : end + 1;
+    skipWs();
+  }
+  /* the move text runs to the result, or to the next game's tags */
+  let body = '', depth = 0;
+  for (; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '{') { const e = src.indexOf('}', i); i = e < 0 ? src.length : e; body += ' '; continue; }
+    if (ch === ';') { const e = src.indexOf('\n', i); i = e < 0 ? src.length : e; body += ' '; continue; }
+    if (ch === '(') { depth++; continue; }
+    if (ch === ')') { depth = Math.max(0, depth - 1); body += ' '; continue; }
+    if (depth) continue;
+    if (ch === '[' && /\n\s*$/.test(src.slice(Math.max(0, i - 2), i))) break;
+    body += ch;
+  }
+  const fen = tags.FEN && (tags.SetUp === '1' || tags.SetUp === undefined) ? tags.FEN.trim() : START_FEN;
+  let pos;
+  try { pos = new Position(fen); } catch (err) { throw new Error(`The start position (FEN) can't be read: ${err.message}.`); }
+  const sans = [], ucis = [];
+  let result = RESULTS.includes(tags.Result) ? tags.Result : '*';
+  const toks = body.replace(/\$\d+/g, ' ').replace(/(\d+)\.(\.\.)?/g, ' ').split(/\s+/).filter(Boolean);
+  for (const tok of toks) {
+    if (RESULTS.includes(tok)) { result = tok; break; }
+    if (/^[!?]+$/.test(tok)) continue;
+    const m = parseSan(pos, tok);
+    if (!m) {
+      const n = Math.ceil((sans.length + 1) / 2);
+      throw new Error(`Move ${n} (${tok}) isn't a legal move in that position.`);
+    }
+    sans.push(pos.san(m));
+    ucis.push(uci(m));
+    pos.make(m);
+  }
+  if (!sans.length && !tags.FEN && !Object.keys(tags).length) throw new Error('No chess game was found in that text.');
+  return { tags, fen, sans, uci: ucis, result };
+}
+
+export default { Position, perft, think, evaluate, START_FEN, KIWIPETE, LEVELS, uci, sqName, sqOf, parseSan, toPgn, parsePgn, mateKeys, isMate, hasMatingMaterial };

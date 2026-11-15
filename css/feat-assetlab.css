@@ -586,3 +586,65 @@ body.reduce-motion .al-sw:hover,body.reduce-motion .al-tool:active,body.reduce-m
 .al-onionbox .al-select{height:26px;max-width:132px}
 .al-onionbox .al-range{width:72px}
 .al-onionop__v{font-size:var(--fs-10);color:var(--ink-2);min-width:30px;font-variant-numeric:tabular-nums}
+
+/* ============================================================
+   Edit tools, tags, tile preview, palettes, import step, jingle
+   ============================================================ */
+.al-pal{grid-template-columns:repeat(var(--cols,8),1fr)}
+.al-palsel{width:100%;height:28px}
+.al-palcredit{margin:0}
+.al-ebs{display:flex;flex-wrap:wrap;gap:6px}
+.al-eb{gap:6px}
+.al-eb .icon{width:14px;height:14px}
+.al-reprow{display:flex;gap:6px;align-items:center}
+.al-reprow .al-select{flex:1;min-width:0;height:28px}
+.al-snap{align-self:flex-start}
+.al-check{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-11);color:var(--ink-1)}
+
+.al-tagquick{display:flex;gap:5px;flex-wrap:wrap}
+.al-chipbtn{height:22px;padding:0 10px;border-radius:99px;font-size:var(--fs-11);font-weight:600;color:var(--ink-1);background:var(--fill-1);border:1px solid var(--line-1)}
+.al-chipbtn:hover{background:var(--fill-2)}
+.al-tagform{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.al-tagname{width:84px;height:28px}
+.al-tagform .al-num{width:48px}
+.al-taglist{display:flex;flex-direction:column;gap:5px}
+.al-tag{display:flex;align-items:center;gap:4px}
+.al-tag__b{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;padding:5px 9px;border-radius:var(--r-sm);text-align:left;background:var(--fill-0);box-shadow:inset 0 0 0 1px var(--line-1)}
+.al-tag__b b{font-size:var(--fs-12);color:var(--ink-0)}
+.al-tag__b small{font-size:var(--fs-10);color:var(--ink-3)}
+.al-tag__b.is-on{box-shadow:inset 0 0 0 2px var(--accent)}
+.al-fr.has-tag::after{content:"";position:absolute;left:5px;right:5px;top:2px;height:3px;border-radius:2px;background:var(--accent-soft)}
+.al-fr.is-over{box-shadow:0 0 0 2px var(--accent-soft)}
+.al-fr__tag{position:absolute;left:3px;bottom:3px;max-width:30px;overflow:hidden;font:600 8px/12px var(--font-mono,var(--mono));color:#fff;background:rgba(0,0,0,.6);border-radius:4px;padding:0 3px}
+
+.al-tilebtn.is-on{color:var(--accent-ink);background:var(--accent)}
+.al-sec.is-tile .al-pv__box{height:150px}
+
+.al-imp{max-width:520px}
+.al-imp__file{display:flex;align-items:center;gap:var(--sp-4)}
+.al-imp__file small{display:block;color:var(--ink-3);font-size:var(--fs-11)}
+.al-imp__box{display:grid;place-items:center;width:104px;height:104px;border-radius:var(--r-sm);overflow:hidden;flex:none}
+.al-imp__prev{image-rendering:pixelated;max-width:96px;max-height:96px}
+.al-imp__cells{align-items:center}
+.al-imp__sum{font-size:var(--fs-12);color:var(--ink-1)}
+.al-imp__sum[data-kind="err"]{color:#fca5a5}
+
+.al-tweak{display:flex;flex-direction:column;gap:var(--sp-3);margin-top:var(--sp-5)}
+.al-mixsel{width:100%;height:28px}
+.al-mixrow{display:flex;align-items:center;gap:var(--sp-3)}
+
+.al-jg{overflow:auto}
+.al-jmain{display:flex;flex-direction:column;gap:var(--sp-4);padding:var(--sp-5);max-width:1000px;margin:0 auto}
+.al-jbar{display:flex;flex-wrap:wrap;gap:var(--sp-5);align-items:flex-end}
+.al-jf{display:flex;flex-direction:column;gap:5px;font-size:var(--fs-10);font-weight:650;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3)}
+.al-jgridwrap{overflow-x:auto;padding-bottom:4px}
+.al-jgrid{display:flex;flex-direction:column;gap:3px;min-width:560px}
+.al-jrow{display:flex;gap:3px;align-items:center}
+.al-jname{flex:none;width:34px;font:600 var(--fs-10)/1 var(--font-mono,var(--mono));color:var(--ink-3)}
+.al-jcell{flex:1;min-width:0;height:28px;border-radius:5px;background:var(--fill-1);box-shadow:inset 0 0 0 1px var(--line-1);transition:background var(--t-fast)}
+.al-jcell.is-beat{background:var(--fill-2)}
+.al-jcell:hover{box-shadow:inset 0 0 0 1px var(--line-2)}
+.al-jcell.is-on{background:linear-gradient(180deg,var(--accent-soft),var(--accent));box-shadow:0 4px 10px -6px rgba(var(--accent-rgb)/.8)}
+.al-jcell.is-now{outline:2px solid #fff;outline-offset:-2px}
+.al-jcell:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.al-jfoot{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap}

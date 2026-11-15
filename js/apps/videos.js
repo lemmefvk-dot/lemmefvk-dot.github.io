@@ -41,6 +41,8 @@
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import * as media from '../core/media.js';
+import { appLevel } from '../core/appearance.js';
+import * as SUB from '../videos/subtitles.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-videos-css')) {
   const l = document.createElement('link');
@@ -55,9 +57,24 @@ const FIRST_DIRS = ['Videos', 'Downloads'];
 const POSTER_MAX = 480;               /* longest side of a card frame, px */
 const POSTER_TIMEOUT = 15000;
 const IDLE_MS = 2600;
-const ACCEPT = 'video/*,.mp4,.webm,.mov,.m4v,.ogv,.mkv';
+const ACCEPT = 'video/*,.mp4,.webm,.mov,.m4v,.ogv,.mkv,.srt,.vtt';
 /* what a file's extension implies, for when no MIME type was recorded */
 const EXT_MIME = { mp4: 'video/mp4', m4v: 'video/x-m4v', webm: 'video/webm', mov: 'video/quicktime', ogv: 'video/ogg', mkv: 'video/x-matroska' };
+
+const PROGRESS_KEY = 'portal.videos.progress';   /* { fileKey: { t, d, at, done } } — where each video was stopped */
+const PROGRESS_MAX = 300;
+const SUB_SIZES = [70, 85, 100, 125, 150, 200];
+const RESUME_EDGE = 3;                /* s: nearer the start or the end than this, nothing is remembered */
+const SORTS = [['new', 'Newest first'], ['old', 'Oldest first'], ['name', 'Name'], ['big', 'Biggest'], ['long', 'Longest']];
+const FRAME_FALLBACK = 1 / 30;        /* when the browser can't say how many frames per second a file has */
+
+/** Will this browser play the file? '' = no, 'maybe'/'probably' = yes. Judged from the type the file came with, else its extension. */
+export function playVerdict(name, type = '') {
+  const ext = String(name).includes('.') ? String(name).split('.').pop().toLowerCase() : '';
+  const mime = String(type || '').trim() || EXT_MIME[ext] || '';
+  if (!mime) return 'maybe';
+  try { return document.createElement('video').canPlayType(mime); } catch (e) { return 'maybe'; }
+}
 
 /* ---------- session cache: real frames + what the file told us ----------
    key -> { src, w, h, dur } | { error: 'nodata'|'missing'|'timeout'|'novideo'|1..4, msg } */
@@ -104,6 +121,12 @@ function once(el, evt, ms = POSTER_TIMEOUT) {
    that happens it is fetched whole and played from memory instead. */
 const seekableOk = v => v.seekable.length > 0 && v.seekable.end(v.seekable.length - 1) > 0;
 const isAsset = n => String(n?.content || '').startsWith(media.ASSET);
+/* StaticOS's own videos come with captions (assets/captions/*.vtt); other files have none */
+export const CAPTIONS = {
+  'staticos-asset:staticos-tour.mp4': 'assets/captions/staticos-tour.vtt',
+  'staticos-asset:staticos-halloween.mp4': 'assets/captions/staticos-halloween.vtt',
+  'staticos-asset:staticos-bubbles.mp4': 'assets/captions/staticos-bubbles.vtt',
+};
 
 /* A recording straight out of MediaRecorder has no length in its header
    (duration = Infinity). Seeking far past the end makes the browser read
@@ -154,6 +177,13 @@ defineApp({
     ['P', 'Picture in picture'],
     ['I', 'Video information'],
     ['Shift+N / Shift+P', 'Next / previous video'],
+    [', / .', 'Back / forward one frame (paused)'],
+    ['A', 'A-B loop: mark A, then B, then clear'],
+    ['S', 'Save this frame as a picture'],
+    ['C', 'Subtitles on / off'],
+    ['G / H', 'Subtitles earlier / later'],
+    ['D', 'Dim the room'],
+    ['Q', 'Add to the queue'],
     ['Esc', 'Back to the library'],
   ],
 
@@ -175,6 +205,14 @@ defineApp({
       seq: 0,                 /* bumps on every load; stale async results check it */
       scrub: null,            /* { was, t } while dragging the seek bar */
       importing: null,        /* { done, total } */
+      sort: 'new', show: 'all',   /* library: order, and All | Not watched | In progress */
+      queue: [],              /* paths to play next, in order (this session only) */
+      sub: null,              /* { name, cues, from } — the subtitles on this video */
+      subOn: true, subSize: Number(store.get('portal.videos.subSize', 100)) || 100, subDelay: 0,
+      ab: null,               /* { a, b } while an A-B loop is set; b is null until marked */
+      dim: false,
+      frame: 0,               /* measured seconds per frame (0 = not measured) */
+      progressAt: 0,          /* when the playing position was last saved */
       session: null,          /* our MediaMetadata while we own the media session */
       lastSec: -1,
       dead: false,
@@ -185,6 +223,19 @@ defineApp({
     const osVol = () => fmt.clamp(Number(store.get('prefs.volume', 62)) || 0, 0, 100);
     const osMuted = () => store.get('prefs.muted', false) === true;
     const reduced = () => !!store.get('prefs.reduceMotion') || matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    /* ---- where each video was stopped (resume, "Not watched", "In progress") ---- */
+    const progressAll = () => { const v = store.get(PROGRESS_KEY, {}); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; };
+    const progressOf = node => (node ? progressAll()[keyOf(node)] || null : null);
+    function writeProgress(node, rec) {
+      const all = { ...progressAll() };
+      if (rec) all[keyOf(node)] = rec; else delete all[keyOf(node)];
+      const keys = Object.keys(all);
+      if (keys.length > PROGRESS_MAX) keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, keys.length - PROGRESS_MAX).forEach(k => delete all[k]);
+      store.set(PROGRESS_KEY, all);
+    }
+    /* 'new' = never watched, 'part' = stopped part way, 'done' = watched to the end */
+    const watchState = node => { const r = progressOf(node); return !r ? 'new' : r.done ? 'done' : r.t > 5 ? 'part' : 'new'; };
 
     /* ================================================================
        posters — a real frame per file, two decoders at a time
@@ -336,7 +387,8 @@ defineApp({
     const liveRegion = h('div.sr', { 'aria-live': 'polite', 'aria-atomic': 'true' });
     const libBar = h('div.app__bar.vid-libbar');
     const libBody = h('div.app__content.vid-lib__body');
-    const libEl = h('section.vid-lib', { 'aria-label': 'Video library' }, libBar, libBody);
+    const libTools = h('div.vid-libtools');
+    const libEl = h('section.vid-lib', { 'aria-label': 'Video library' }, libBar, libTools, libBody);
     const dropEl = h('div.vid-drop', { 'aria-hidden': 'true' },
       h('div.vid-drop__card', icon('upload'), h('b', { text: 'Drop to import' }), h('small', { text: 'Videos are copied into ~/Videos' })));
     const dialogHost = h('div.vid-dialoghost');
@@ -357,7 +409,30 @@ defineApp({
     const filterBox = h('label.field.vid-filter', icon('search'), filterIn);
     const countEl = h('span.vid-libbar__count');
     const importBtn = h('button.btn.btn--sm.btn--primary', { type: 'button', onclick: pickFiles }, icon('upload'), h('span', { text: 'Import' }));
-    libBar.append(h('div.app__title', { text: 'Library' }), countEl, h('div.grow'), filterBox, importBtn);
+    const movieBtn = h('button.btn.btn--sm', { type: 'button', title: 'Join clips, add titles and music', onclick: () => openMovie() }, icon('film'), h('span', { text: 'Make a movie' }));
+    libBar.append(h('div.app__title', { text: 'Library' }), countEl, h('div.grow'), filterBox, movieBtn, importBtn);
+
+    /* a second row: which videos, and in what order */
+    const showBtns = [['all', 'All'], ['new', 'Not watched'], ['part', 'In progress']].map(([v, label]) => h('button.vid-chip', {
+      type: 'button', role: 'radio', dataset: { show: v }, onclick: () => { S.show = v; paintLibraryBody(); },
+    }, h('span', { text: label }), h('small')));
+    const sortSel = h('select.select.vid-sort', { 'aria-label': 'Sort videos', onchange: e => { S.sort = e.target.value; paintLibraryBody(); } },
+      SORTS.map(([v, label]) => h('option', { value: v, text: label })));
+    libTools.append(h('div.vid-chips', { role: 'radiogroup', 'aria-label': 'Show' }, showBtns), h('div.grow'), h('label.vid-sortlbl', h('span', { text: 'Sort' }), sortSel));
+
+    const sortItems = items => {
+      const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+      const when = v => new Date(v.node.mtime).getTime() || 0;
+      const len = v => posters.get(keyOf(v.node))?.dur || 0;
+      const by = {
+        new: (a, b) => when(b) - when(a),
+        old: (a, b) => when(a) - when(b),
+        name: (a, b) => coll.compare(a.node.name, b.node.name),
+        big: (a, b) => (b.node.size || 0) - (a.node.size || 0),
+        long: (a, b) => len(b) - len(a),
+      }[S.sort] || (() => 0);
+      return [...items].sort((a, b) => by(a, b) || coll.compare(a.node.name, b.node.name));
+    };
 
     function paintLibraryBody() {
       const groups = scan();
@@ -369,8 +444,19 @@ defineApp({
       importBtn.disabled = !!S.importing;
 
       const q = S.filter;
-      const shown = groups.map(g => ({ ...g, items: q ? g.items.filter(v => v.node.name.toLowerCase().includes(q)) : g.items }))
-        .filter(g => g.items.length);
+      const counts = { all: all.length, new: 0, part: 0 };
+      for (const v of all) { const w = watchState(v.node); if (w === 'new') counts.new++; else if (w === 'part') counts.part++; }
+      for (const b of showBtns) {
+        const on = b.dataset.show === S.show;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-checked', String(on));
+        b.lastChild.textContent = String(counts[b.dataset.show]);
+      }
+      sortSel.value = S.sort;
+      libTools.hidden = !all.length;
+      const keep = v => (!q || v.node.name.toLowerCase().includes(q) || vfs.baseName(v.dir).toLowerCase().includes(q))
+        && (S.show === 'all' || watchState(v.node) === S.show);
+      const shown = groups.map(g => ({ ...g, items: sortItems(g.items.filter(keep)) })).filter(g => g.items.length);
       clear(libBody);
 
       if (!all.length) {
@@ -382,11 +468,13 @@ defineApp({
         return;
       }
       if (!shown.length) {
+        const why = q ? `No video or folder name contains “${S.filter}”${S.show === 'all' ? '' : ' among these'}.`
+          : S.show === 'new' ? 'You have started every video in here.' : 'No video is stopped part way.';
         libBody.append(h('div.empty',
           icon('search'),
           h('b', { text: 'No matching videos' }),
-          h('small', { text: `No video name contains “${S.filter}”.` }),
-          h('button.btn.btn--sm', { type: 'button', onclick: () => { filterIn.value = ''; S.filter = ''; paintLibraryBody(); filterIn.focus(); } }, h('span', { text: 'Clear filter' }))));
+          h('small', { text: why }),
+          h('button.btn.btn--sm', { type: 'button', onclick: () => { filterIn.value = ''; S.filter = ''; S.show = 'all'; paintLibraryBody(); filterIn.focus(); } }, h('span', { text: 'Show everything' }))));
         return;
       }
 
@@ -454,11 +542,14 @@ defineApp({
           main.setAttribute('aria-label', `${node.name}: ${text}. Open for details`);
           return;
         }
+        const seen = progressOf(node), ws = watchState(node);
         art.append(
           h('img.vid-card__img', { src: info.src, alt: '', draggable: 'false', width: String(info.w), height: String(info.h) }),
           h('span.vid-card__play', { 'aria-hidden': 'true' }, icon('play', { fill: true })),
-          h('span.vid-card__dur.mono', { text: fmtLen(info.dur) }));
-        meta.textContent = `${size} · ${info.w}×${info.h}`;
+          h('span.vid-card__dur.mono', { text: fmtLen(info.dur) }),
+          ws === 'done' ? h('span.vid-card__seen', { text: 'Watched' }) : null,
+          ws === 'part' && seen.d > 0 ? h('span.vid-card__prog', { 'aria-hidden': 'true' }, h('i', { style: { width: `${Math.min(100, seen.t / seen.d * 100).toFixed(1)}%` } })) : null);
+        meta.textContent = `${size} · ${info.w}×${info.h}${ws === 'part' ? ` · stopped at ${fmtTime(seen.t, seen.d)}` : ''}`;
         main.setAttribute('aria-label', `Play ${node.name}, ${fmtLen(info.dur)}, ${info.w} by ${info.h}, ${size}`);
       };
 
@@ -478,8 +569,11 @@ defineApp({
       const playing = S.view === 'player' && S.path === path;
       api.menu([
         playing ? null : { label: 'Play', icon: 'play', onClick: () => openPath(path) },
+        media.isMedia(n) && !playing ? { label: S.queue.includes(path) ? 'Remove from the queue' : 'Add to the queue', icon: 'list', onClick: () => toggleQueue(path) } : null,
         { label: 'Rename…', icon: 'edit-3', onClick: () => rename(path) },
         { label: 'Trim…', icon: 'crop', disabled: !media.isMedia(n), onClick: () => openTrim(path) },
+        api.getApp('recorder') && media.isMedia(n) ? { label: 'Caption or make a GIF in Recorder…', icon: 'type', onClick: () => api.openApp('recorder', { path }) } : null,
+        { label: 'Add to a movie…', icon: 'film', disabled: !media.isMedia(n), onClick: () => openMovie(path) },
         { label: 'Download', icon: 'download', disabled: !media.isMedia(n), onClick: () => download(path) },
         { label: 'Show in Files', icon: 'folder-open', onClick: () => api.openApp('files', { path: vfs.parentPath(path) }) },
         /* with a friend: play it in sync (Watch Together), or hand it over (Static Drop) */
@@ -605,15 +699,31 @@ defineApp({
 
     /* ---- import ---- */
     async function importFiles(files) {
-      const vids = files.filter(f => media.kindOf(f.type) === 'video' || media.kindOf(f.name) === 'video');
-      const skipped = files.length - vids.length;
-      if (!vids.length) {
-        if (files.length) api.notify({ app: 'Videos', icon: 'film', title: 'Nothing imported', message: `${files.length === 1 ? 'That file isn’t' : 'None of those files are'} a video.` });
+      const subFiles = files.filter(f => SUB.isSubName(f.name));
+      const vids = files.filter(f => !SUB.isSubName(f.name) && (media.kindOf(f.type) === 'video' || media.kindOf(f.name) === 'video'));
+      const skipped = files.length - vids.length - subFiles.length;
+      if (!vids.length && !subFiles.length) {
+        if (files.length) api.notify({ app: 'Videos', icon: 'film', title: 'Nothing imported', message: `${files.length === 1 ? 'That file isn’t' : 'None of those files are'} a video or a subtitle file.` });
         return;
       }
       const dir = `${HOME}/Videos`;
       const saved = [];
       const failed = [];
+      /* subtitle files go in as text beside the videos, where Videos looks for them */
+      let subsSaved = 0;
+      for (const f of subFiles) {
+        try {
+          const text = await f.text();
+          let name = f.name, i = 2;
+          while (vfs.node(`${dir}/${name}`)) name = `${stemOf(f.name)} ${i++}.${extOf(f.name)}`;
+          if (!vfs.node(dir)) vfs.mkdir(dir);
+          vfs.write(`${dir}/${name}`, text);
+          subsSaved++;
+        } catch (e) { failed.push(`${f.name}: ${e?.message || e}`); }
+        if (S.dead) return;
+      }
+      /* say it now, not when playing fails: which of these will this browser not play? */
+      const cannot = vids.filter(f => playVerdict(f.name, f.type) === '').map(f => f.name);
       S.importing = { done: 0, total: vids.length };
       if (S.view === 'library') paintLibraryBody();
       for (const f of vids) {
@@ -632,12 +742,23 @@ defineApp({
       if (failed.length) {
         api.notify({ app: 'Videos', icon: 'alert', title: `${failed.length} video${failed.length === 1 ? '' : 's'} not imported`, message: failed.join('\n'), timeout: 12000 });
       }
-      if (saved.length === 1 && !skipped && !failed.length) { openPath(saved[0]); return; }
-      if (saved.length) {
+      if (cannot.length) {
+        const ext = [...new Set(cannot.map(n => (extOf(n) || 'file').toUpperCase()))].join(', ');
+        api.notify({
+          app: 'Videos', icon: 'alert', timeout: 14000,
+          title: cannot.length === 1 ? 'This browser may not play that video' : `This browser may not play ${cannot.length} of those videos`,
+          message: `${cannot.join(', ')} — this browser says it can’t play ${ext} files. They are saved in ~/Videos, but they will likely show an error. MP4 (H.264) and WebM play almost everywhere; convert it, or download it and open it in a desktop player.`,
+        });
+      }
+      if (saved.length === 1 && !skipped && !failed.length && !cannot.length && !subsSaved) { openPath(saved[0]); return; }
+      if (saved.length || subsSaved) {
+        const bits = [];
+        if (saved.length) bits.push(`${saved.length} video${saved.length === 1 ? '' : 's'}`);
+        if (subsSaved) bits.push(`${subsSaved} subtitle file${subsSaved === 1 ? '' : 's'}`);
         api.notify({
           app: 'Videos', icon: 'film',
-          title: `Imported ${saved.length} video${saved.length === 1 ? '' : 's'}`,
-          message: `Saved to ~/Videos${skipped ? ` · skipped ${skipped} file${skipped === 1 ? '' : 's'} that ${skipped === 1 ? 'isn’t a video' : 'aren’t videos'}` : ''}.`,
+          title: `Imported ${bits.join(' and ')}`,
+          message: `Saved to ~/Videos${skipped ? ` · skipped ${skipped} file${skipped === 1 ? '' : 's'} that ${skipped === 1 ? 'isn’t a video' : 'aren’t videos'}` : ''}${subsSaved ? ' · a subtitle file with the same name as a video plays with it' : ''}.`,
         });
       }
     }
@@ -692,9 +813,16 @@ defineApp({
       E.info = ctlBtn('', 'Info (I)', 'Video info', icon('info'), () => togglePop('info', E.info), { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' }, true);
       E.pip = ctlBtn('', 'Picture in picture (P)', 'Picture in picture', icon('picture-in-picture'), () => togglePip());
       E.fs = ctlBtn('', 'Fullscreen (F)', 'Fullscreen', icon('maximize'), () => toggleFs());
+      /* captions: only for a video that has them (StaticOS's own) — Settings › Accessibility turns them on by default */
+      E.cc = ctlBtn('.vid-cc', 'Captions', 'Captions', icon('captions'), () => setCaptions(!S.cc), { hidden: true, 'aria-pressed': 'false' });
+      /* subtitles from a .srt/.vtt file; the queue; the file's own audio and subtitle tracks (only when it has several) */
+      E.subs = ctlBtn('.vid-subsbtn', 'Subtitles (C)', 'Subtitles', icon('captions'), () => togglePop('subs', E.subs), { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' }, true);
+      E.tracks = ctlBtn('.vid-tracksbtn', 'Audio and subtitle tracks', 'Audio and subtitle tracks', icon('layers'), () => togglePop('tracks', E.tracks), { hidden: true, 'aria-haspopup': 'dialog', 'aria-expanded': 'false' }, true);
+      E.queueBtn = ctlBtn('.vid-queuebtn', 'Queue (Q)', 'Play queue', [icon('list'), h('span.vid-btn__badge')], () => togglePop('queue', E.queueBtn), { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' }, true);
 
       /* seek bar: buffered ranges under the played part, a thumb, a hover time */
       E.buf = h('span.vid-seek__buf');
+      E.ab = h('span.vid-seek__ab', { hidden: true });
       E.fill = h('span.vid-seek__fill');
       E.thumb = h('span.vid-seek__thumb');
       E.hover = h('span.vid-seek__hover');
@@ -705,16 +833,16 @@ defineApp({
           if (e.key === 'PageUp') { e.preventDefault(); e.stopPropagation(); seekBy(10); }
           else if (e.key === 'PageDown') { e.preventDefault(); e.stopPropagation(); seekBy(-10); }
         },
-      }, h('span.vid-seek__rail', E.buf, E.hover, E.fill, E.thumb), E.tip);
+      }, h('span.vid-seek__rail', E.buf, E.ab, E.hover, E.fill, E.thumb), E.tip);
 
       E.bar = h('div.vid-bar',
         E.play, E.back, E.fwd, E.volWrap, E.time, h('span.grow'),
-        E.settings, E.info, E.pip, E.fs);
+        E.queueBtn, E.tracks, E.subs, E.cc, E.settings, E.info, E.pip, E.fs);
       E.pop = h('div.vid-pop', { hidden: true });
       E.ctrls = h('div.vid-ctrls', E.seek, E.bar);
 
       E.big = h('button.vid-big', { type: 'button', 'aria-label': 'Play', onclick: e => { e.stopPropagation(); toggle(); E.stage.focus({ preventScroll: true }); } }, icon('play', { fill: true }));
-      E.next = h('button.vid-next', { type: 'button', hidden: true, onclick: e => { e.stopPropagation(); step(1); } });
+      E.next = h('button.vid-next', { type: 'button', hidden: true, onclick: e => { e.stopPropagation(); const nx = nextItem(); if (nx && nx.queued) advanceQueue(); else if (nx) openPath(nx.path); } });
       E.center = h('div.vid-center', E.big, E.next);
       E.spin = h('div.vid-busy', { 'aria-hidden': 'true' }, h('i.vid-spin'));
       E.flash = h('div.vid-flash', { 'aria-hidden': 'true' });
@@ -727,8 +855,11 @@ defineApp({
       E.titleSub = h('small.trunc');
       E.top = h('div.vid-top', h('div.vid-top__text', E.titleText, E.titleSub));
 
+      E.subText = h('span');
+      E.subLayer = h('div.vid-subs', { hidden: true, 'aria-hidden': 'true' }, E.subText);   /* the subtitle on the picture */
+      E.resume = h('div.vid-resume', { hidden: true, role: 'status' });
       E.stage = h('div.vid-stage.is-paused.is-loading', { tabindex: '-1' },
-        video, E.pipNote, E.center, E.spin, E.flash, E.msg, E.top, E.ctrls, E.pop);
+        video, E.subLayer, E.resume, E.pipNote, E.center, E.spin, E.flash, E.msg, E.top, E.ctrls, E.pop);
       /* on a phone the video sits at the top and this column follows it:
          title, what the file really is, actions, the other videos */
       E.below = h('div.vid-below');
@@ -769,6 +900,7 @@ defineApp({
       S.err = null;
       S.ended = false;
       S.lastSec = -1;
+      S.sub = null;
       closePop();
       libEl.hidden = true;
       P.el.hidden = false;
@@ -787,6 +919,9 @@ defineApp({
       if (seq !== S.seq || S.dead) return;
       if (!url) { showError('missing'); return; }
       video.src = url;
+      attachCaptions(n);
+      findSubs(path);
+      paintTracksBtn();
       video.loop = S.loop;
       applyAudio();
       video.load();
@@ -823,12 +958,48 @@ defineApp({
       }
       if (!video.videoWidth) say(`${n.name} has sound but no picture.`);
       stage.classList.remove('is-loading');
+      /* back to where it was stopped */
+      const seen = progressOf(n);
+      if (seen && !seen.done && dur() && seen.t >= RESUME_EDGE && seen.t < dur() - RESUME_EDGE) {
+        video.currentTime = seen.t;
+        showResume(seen.t);
+      }
+      paintTracksBtn();
       paintAll();
+      paintRoom();
       play();
     }
 
+    /* ---- captions ---- */
+    function setCaptions(on) {
+      S.cc = !!on;
+      const tr = video.querySelector('track');
+      if (tr && tr.track) tr.track.mode = S.cc ? 'showing' : 'hidden';
+      P.cc?.setAttribute('aria-pressed', String(S.cc));
+      if (P.cc) P.cc.dataset.tip = S.cc ? 'Captions on' : 'Captions off';
+      say(S.cc ? 'Captions on' : 'Captions off');
+    }
+    function attachCaptions(n) {
+      video.querySelectorAll('track').forEach(t => t.remove());
+      const src = CAPTIONS[String(n?.content || '')];
+      if (P.cc) P.cc.hidden = !src;
+      if (!src) return;
+      const tr = h('track', { kind: 'captions', srclang: 'en', label: 'English', src });
+      video.appendChild(tr);
+      S.cc = !!store.get('prefs.videoCaptions');
+      tr.track.mode = S.cc ? 'showing' : 'hidden';
+      P.cc.setAttribute('aria-pressed', String(S.cc));
+      P.cc.dataset.tip = S.cc ? 'Captions on' : 'Captions off';
+    }
+
     function releaseVideo() {
+      saveProgress();
       S.seq++;
+      S.ab = null;
+      S.frame = 0;
+      P.resume.hidden = true;
+      clearTimeout(T.resume);
+      if (P.ab) P.ab.hidden = true;
       try { video.pause(); } catch (e) {}
       if (video.hasAttribute('src')) {
         video.removeAttribute('src');
@@ -897,20 +1068,16 @@ defineApp({
       paintBig();
     }
     function step(dir) {
+      if (dir > 0 && S.queue.some(p => p !== S.path && mediaNode(p))) { advanceQueue(); return; }
       const list = flatList().filter(v => media.isMedia(v.node));
       const i = list.findIndex(v => v.path === S.path);
       const next = list[(i < 0 ? 0 : i + dir + list.length) % list.length];
       if (next && next.path !== S.path) openPath(next.path);
     }
-    const nextItem = () => {
-      const list = flatList().filter(v => media.isMedia(v.node));
-      const i = list.findIndex(v => v.path === S.path);
-      return list.length > 1 && i >= 0 ? list[(i + 1) % list.length] : null;
-    };
 
     /* ---- volume: prefs.volume is the level, prefs.muted the system mute ---- */
     function applyAudio() {
-      video.volume = osVol() / 100;
+      video.volume = osVol() / 100 * appLevel('videos');   /* the mixer's level for Videos (Settings > Sound) */
       video.muted = S.muted || osMuted();
       paintVol();
     }
@@ -949,7 +1116,7 @@ defineApp({
     listen(video, 'volumechange', () => {
       const want = S.muted || osMuted();
       if (video.muted !== want) video.muted = want;
-      if (Math.abs(video.volume - osVol() / 100) > 0.001) video.volume = osVol() / 100;
+      if (Math.abs(video.volume - osVol() / 100 * appLevel('videos')) > 0.001) video.volume = osVol() / 100 * appLevel('videos');
       paintVol();
     });
 
@@ -1029,19 +1196,25 @@ defineApp({
     /* ---- video events ---- */
     const loopPaint = () => {
       T.raf = 0;
+      holdAB();
       paintTime();
       if (!video.paused && !S.dead) T.raf = requestAnimationFrame(loopPaint);
     };
     listen(video, 'play', () => { S.ended = false; paintAll(); wake(); claimSession(); });
     listen(video, 'playing', () => {
+      watchFrames();
       stage.classList.remove('is-waiting', 'is-loading');
       if (!T.raf) T.raf = requestAnimationFrame(loopPaint);
     });
-    listen(video, 'pause', () => { paintAll(); wake(); });
+    listen(video, 'pause', () => { saveProgress(); paintAll(); wake(); });
     listen(video, 'waiting', () => stage.classList.add('is-waiting'));
     listen(video, 'canplay', () => stage.classList.remove('is-waiting'));
     listen(video, 'seeked', () => { stage.classList.remove('is-waiting'); paintAll(); });
-    listen(video, 'timeupdate', () => paintTime());
+    listen(video, 'timeupdate', () => {
+      paintTime();
+      holdAB();
+      if (!video.paused && Date.now() - S.progressAt > 4000) { S.progressAt = Date.now(); saveProgress(); }
+    });
     listen(video, 'progress', () => paintBuffered());
     listen(video, 'durationchange', () => paintTime(true));
     listen(video, 'loadeddata', () => { paintBuffered(); paintPip(); });
@@ -1051,11 +1224,284 @@ defineApp({
     });
     listen(video, 'durationchange', () => paintBelowMeta());
     listen(video, 'ratechange', () => paintRate());
-    listen(video, 'ended', () => { S.ended = true; paintAll(); wake(); });
+    listen(video, 'ended', () => {
+      S.ended = true;
+      saveProgress();
+      paintAll();
+      wake();
+      if (!S.loop && S.queue.some(p => p !== S.path && mediaNode(p))) advanceQueue();     /* the queue plays on by itself */
+    });
     listen(video, 'error', () => {
       if (!video.getAttribute('src') || S.err) return;
       showError(video.error?.code || 4, video.error?.message || '');
     });
+
+    /* ================================================================
+       subtitles — a .srt/.vtt beside the video, or picked by hand
+       ================================================================ */
+    const subInput = h('input.sr', {
+      type: 'file', accept: '.srt,.vtt,text/vtt,application/x-subrip', tabindex: '-1', 'aria-hidden': 'true',
+      onchange: async e => {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!f) return;
+        let text = '';
+        try { text = await f.text(); } catch (err) { flash('That file couldn’t be read', 'alert'); return; }
+        if (!SUB.isSubName(f.name)) { flash('Choose a .srt or .vtt file', 'alert'); return; }
+        loadSubs(f.name, text, 'picked');
+      },
+    });
+    app.appendChild(subInput);
+
+    function paintSubs() {
+      const cue = S.sub && S.subOn ? SUB.cueAt(S.sub.cues, video.currentTime || 0, S.subDelay) : null;
+      const text = cue ? cue.text : '';
+      if (P.subText.textContent !== text) P.subText.textContent = text;
+      P.subLayer.hidden = !text;
+      P.subLayer.style.setProperty('--subk', String(S.subSize / 100));
+      P.subs.classList.toggle('is-on', !!S.sub && S.subOn);
+      P.subs.setAttribute('aria-pressed', String(!!S.sub && S.subOn));
+    }
+    function loadSubs(name, text, from, quiet) {
+      const cues = SUB.parseSubs(text);
+      if (!cues.length) { if (!quiet) flash(`No subtitles could be read from ${name}`, 'alert'); return false; }
+      S.sub = { name, cues, from };
+      S.subOn = true;
+      S.subDelay = 0;
+      paintSubs();
+      if (S.pop === 'subs') paintPop();
+      if (!quiet) flash(`Subtitles: ${name}`, 'captions');
+      return true;
+    }
+    /* a subtitle file next to the video is used without being asked */
+    function findSubs(path) {
+      S.sub = null;
+      S.subDelay = 0;
+      const found = SUB.besideVideo(vfs, path);
+      S.subFiles = found;
+      for (const f of found) if (loadSubs(f.node.name, f.node.content, 'beside', true)) break;
+      paintSubs();
+    }
+    function toggleSubs() {
+      if (!S.sub) { subInput.click(); return; }
+      S.subOn = !S.subOn;
+      paintSubs();
+      if (S.pop === 'subs') paintPop();
+      flash(S.subOn ? 'Subtitles on' : 'Subtitles off', 'captions');
+    }
+    function setSubSize(pct) {
+      S.subSize = fmt.clamp(pct, 50, 300);
+      store.set('portal.videos.subSize', S.subSize);
+      paintSubs();
+      syncSubsPop();
+    }
+    function setSubDelay(sec) {
+      S.subDelay = Math.round(fmt.clamp(sec, -120, 120) * 10) / 10;
+      paintSubs();
+      syncSubsPop();
+    }
+    const delayText = d => `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d).toFixed(1)} s`;
+    function saveVtt() {
+      if (!S.sub || !S.path) return;
+      const dir = vfs.parentPath(S.path);
+      const stem = stemOf(vfs.baseName(S.path));
+      let name = `${stem}.vtt`, i = 2;
+      while (vfs.node(`${dir}/${name}`)) name = `${stem} ${i++}.vtt`;
+      vfs.write(`${dir}/${name}`, SUB.toVtt(S.sub.cues, S.subDelay));
+      flash(`Saved ${name}`, 'save');
+      api.notify({ app: 'Videos', icon: 'captions', title: 'Subtitles saved as WebVTT', message: `${name}${S.subDelay ? ` (with the ${delayText(S.subDelay)} delay built in)` : ''} is next to the video.` });
+    }
+    let subsUi = null;
+    function syncSubsPop() {
+      if (!subsUi || S.pop !== 'subs') return;
+      subsUi.size.textContent = `${S.subSize}%`;
+      subsUi.delay.textContent = delayText(S.subDelay);
+    }
+
+    /* ================================================================
+       the file's own tracks — only offered when there is a choice
+       ================================================================ */
+    const audioTracks = () => { const l = video.audioTracks; return l && l.length > 1 ? Array.from({ length: l.length }, (_, i) => l[i]) : []; };
+    const ownTrack = t => [...video.querySelectorAll('track')].some(el => el.track === t);
+    const textTracks = () => Array.from(video.textTracks || []).filter(t => (t.kind === 'subtitles' || t.kind === 'captions') && !ownTrack(t));
+    const trackName = (t, i, what) => [t.label, t.language && t.language !== 'und' ? `(${t.language})` : ''].filter(Boolean).join(' ') || `${what} ${i + 1}`;
+    function paintTracksBtn() {
+      const show = audioTracks().length > 1 || textTracks().length > 0;
+      P.tracks.hidden = !show;
+      if (!show && S.pop === 'tracks') closePop();
+    }
+    for (const list of [video.audioTracks, video.textTracks]) {
+      if (list && list.addEventListener) { listen(list, 'addtrack', paintTracksBtn); listen(list, 'removetrack', paintTracksBtn); }
+    }
+
+    /* ================================================================
+       the queue, and the next video in the folder
+       ================================================================ */
+    const mediaNode = p => { const n = vfs.node(p); return n && n.type === 'file' && media.isMedia(n) ? n : null; };
+    function toggleQueue(path) {
+      const i = S.queue.indexOf(path);
+      if (i >= 0) S.queue.splice(i, 1); else S.queue.push(path);
+      paintQueueBtn();
+      if (S.pop === 'queue') paintPop();
+      flash(i >= 0 ? 'Removed from the queue' : `Queued (${S.queue.length})`, 'list');
+    }
+    function paintQueueBtn() {
+      S.queue = S.queue.filter(mediaNode);
+      const n = S.queue.length;
+      P.queueBtn.lastChild.textContent = n ? String(n) : '';
+      P.queueBtn.classList.toggle('is-on', n > 0);
+      paintBig();
+    }
+    /* what plays next: the queue first, else the next video in this folder (no wrap) */
+    function nextItem() {
+      const q = S.queue.find(p => p !== S.path && mediaNode(p));
+      if (q) return { path: q, node: vfs.node(q), queued: true };
+      const dir = S.path ? vfs.parentPath(S.path) : null;
+      const list = dir ? vfs.ls(dir).filter(n => n.type === 'file' && media.isMedia(n) && (n.kind === 'video' || media.kindOf(n.name) === 'video')) : [];
+      const i = list.findIndex(n => n === S.node);
+      const nx = i >= 0 ? list[i + 1] : null;
+      return nx ? { path: `${dir}/${nx.name}`, node: nx, queued: false } : null;
+    }
+    function advanceQueue() {
+      const q = S.queue.find(p => p !== S.path && mediaNode(p));
+      S.queue = S.queue.filter(p => p !== q);
+      paintQueueBtn();
+      if (q) openPath(q);
+    }
+
+    /* ================================================================
+       where you stopped
+       ================================================================ */
+    function saveProgress() {
+      const n = S.node;
+      if (!n || S.err || !loaded() || !media.isMedia(n)) return;
+      const d = dur();
+      if (!d) return;
+      const t = video.currentTime || 0;
+      if (video.ended || S.ended || t >= d - RESUME_EDGE) { writeProgress(n, { t: 0, d, at: Date.now(), done: true }); return; }
+      if (t < RESUME_EDGE) return;
+      writeProgress(n, { t: Math.round(t * 10) / 10, d, at: Date.now(), done: false });
+    }
+    function showResume(t) {
+      clear(P.resume);
+      P.resume.append(h('span', { text: `Resumed at ${fmtTime(t, dur())}` }),
+        h('button.btn.btn--sm', { type: 'button', onclick: () => { seekTo(0); P.resume.hidden = true; writeProgress(S.node, null); } }, h('span', { text: 'Start over' })));
+      P.resume.hidden = false;
+      say(`Resumed at ${fmtTime(t, dur())}`);
+      clearTimeout(T.resume);
+      T.resume = setTimeout(() => { P.resume.hidden = true; }, 7000);
+    }
+
+    /* ================================================================
+       A-B loop, single frames, a frame as a picture
+       ================================================================ */
+    function paintAB() {
+      const ab = S.ab, d = dur();
+      P.ab.hidden = !ab || !d;
+      if (ab && d) {
+        const a = fmt.clamp(ab.a / d, 0, 1), b = ab.b == null ? a : fmt.clamp(ab.b / d, 0, 1);
+        P.ab.style.left = `${(a * 100).toFixed(2)}%`;
+        P.ab.style.width = ab.b == null ? '3px' : `${((b - a) * 100).toFixed(2)}%`;
+      }
+      P.settings.classList.toggle('is-on', S.rate !== 1 || S.loop || !!S.ab);
+      if (S.pop === 'settings') syncPop();
+    }
+    function cycleAB() {
+      const d = dur();
+      if (!d || S.err) return;
+      const t = video.currentTime || 0;
+      if (!S.ab) { S.ab = { a: t, b: null }; flash(`A at ${fmtTime(t, d)} — press A again to mark B`, 'repeat'); }
+      else if (S.ab.b == null) {
+        if (t < S.ab.a + 0.3) { flash('Move on a little, then mark B', 'alert'); return; }
+        S.ab.b = t;
+        flash(`Looping ${fmtTime(S.ab.a, d)} to ${fmtTime(t, d)}`, 'repeat');
+      } else { S.ab = null; flash('A-B loop cleared', 'repeat'); }
+      paintAB();
+    }
+    function holdAB() {
+      const ab = S.ab;
+      if (ab && ab.b != null && !S.scrub && (video.currentTime >= ab.b || video.currentTime < ab.a - 0.05)) {
+        video.currentTime = ab.a;
+      }
+    }
+    /* A file doesn't tell a page its frame rate. While it plays, the gaps between
+       shown frames are timed; until then a step is 1/30 s and the message says so. */
+    function watchFrames() {
+      if (typeof video.requestVideoFrameCallback !== 'function' || S.frame) return;
+      let prev = -1, n = 0, best = Infinity;
+      const cb = (_now, meta) => {
+        if (S.dead || S.frame) return;
+        if (prev >= 0 && meta.mediaTime > prev) {
+          const dt = meta.mediaTime - prev;
+          if (dt < 0.2) { best = Math.min(best, dt); n++; }
+        }
+        prev = meta.mediaTime;
+        if (n >= 8) S.frame = best; else video.requestVideoFrameCallback(cb);
+      };
+      video.requestVideoFrameCallback(cb);
+    }
+    function stepFrame(dir) {
+      const d = dur();
+      if (!d || S.err || !loaded()) return;
+      video.pause();
+      const fd = S.frame || FRAME_FALLBACK;
+      const k = Math.round((video.currentTime || 0) / fd);
+      seekTo(Math.max(0, (k + dir) * fd + fd * 0.1));
+      flash(S.frame ? `${dir > 0 ? '+' : '−'}1 frame (${Math.round(1 / fd * 100) / 100} fps)` : `${dir > 0 ? '+' : '−'}1/30 s (this file’s frame rate isn’t known yet)`, dir > 0 ? 'chevron-right' : 'chevron-left');
+    }
+    async function saveFrame() {
+      if (S.err || !loaded() || !video.videoWidth || !S.node) { flash('There is no picture to save yet', 'alert'); return; }
+      const c = document.createElement('canvas');
+      c.width = video.videoWidth;
+      c.height = video.videoHeight;
+      try { c.getContext('2d').drawImage(video, 0, 0, c.width, c.height); } catch (e) { flash('This frame can’t be read', 'alert'); return; }
+      const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+      if (!blob || S.dead) { flash('This frame couldn’t be saved', 'alert'); return; }
+      const sec = Math.floor(video.currentTime || 0);
+      const name = `${stemOf(S.node.name)} at ${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}s.png`;
+      try {
+        const out = await media.save(`${HOME}/Pictures`, name, blob);
+        flash('Saved to Pictures', 'camera');
+        api.notify({ app: 'Videos', icon: 'camera', title: 'Frame saved', message: `${vfs.baseName(out.path)} · ${c.width}×${c.height}`,
+          actions: [{ label: 'Show in Files', onClick: () => api.openApp('files', { path: vfs.parentPath(out.path) }) }] });
+      } catch (e) { flash(`Couldn’t save the frame: ${e?.message || e}`, 'alert'); }
+    }
+
+    /* ================================================================
+       dim the room: everything outside the player goes dark
+       ================================================================ */
+    const room = h('div.vid-room', { 'aria-hidden': 'true' });
+    function paintRoom() {
+      const on = S.dim && S.view === 'player' && !win.el.classList.contains('is-min') && win.el.style.visibility !== 'hidden';
+      app.classList.toggle('is-dim', S.dim && S.view === 'player');
+      const layer = win.el.parentElement;
+      if (on && layer) {
+        if (room.parentElement !== layer) layer.appendChild(room);
+        const z = parseInt(win.el.style.zIndex, 10);
+        room.style.zIndex = String(Number.isFinite(z) ? Math.max(0, z - 1) : 0);
+      } else room.remove();
+    }
+    function setDim(on) {
+      S.dim = !!on;
+      paintRoom();
+      if (S.pop === 'settings') syncPop();
+      flash(S.dim ? 'Room dimmed' : 'Room lit', 'moon');
+    }
+    const roomWatch = new MutationObserver(() => paintRoom());
+    roomWatch.observe(win.el, { attributes: true, attributeFilter: ['style', 'class'] });
+    offs.push(() => { roomWatch.disconnect(); room.remove(); });
+
+    /* ================================================================
+       the movie maker (js/videos/clipeditor.js) lays a panel over this window
+       ================================================================ */
+    let movie = null;
+    async function openMovie(first) {
+      if (movie) return;
+      try { if (loaded()) video.pause(); } catch (e) { /* nothing playing */ }
+      const mod = await import('../videos/clipeditor.js');
+      if (S.dead || movie) return;
+      movie = mod.openClipEditor({ api, host: app, first, onOpenFile: p => openPath(p), onClose: () => { movie = null; } });
+    }
 
     /* ---- honest errors ---- */
     function showError(kind, detailMsg = '') {
@@ -1148,7 +1594,7 @@ defineApp({
       P.next.hidden = !nx;
       if (nx) {
         clear(P.next);
-        P.next.append(h('span.vid-next__k', { text: 'Up next' }), h('span.vid-next__n.trunc', { text: nx.node.name }), icon('chevron-right'));
+        P.next.append(h('span.vid-next__k', { text: nx.queued ? 'Next in your queue' : 'Up next' }), h('span.vid-next__n.trunc', { text: nx.node.name }), icon('chevron-right'));
         P.next.setAttribute('aria-label', `Play next: ${nx.node.name}`);
       }
     }
@@ -1160,6 +1606,7 @@ defineApp({
       P.fill.style.width = `${(f * 100).toFixed(3)}%`;
       P.thumb.style.left = `${(f * 100).toFixed(3)}%`;
       P.time.textContent = d ? `${fmtTime(t, d)} / ${fmtTime(d, d)}` : (S.err ? '' : '–:–– / –:––');
+      paintSubs();
       const sec = Math.floor(t * 10);
       if (force || sec !== S.lastSec) {
         S.lastSec = sec;
@@ -1199,7 +1646,7 @@ defineApp({
 
     function paintRate() {
       P.rateBadge.textContent = S.rate === 1 ? '' : `${S.rate}×`;
-      P.settings.classList.toggle('is-on', S.rate !== 1 || S.loop);
+      P.settings.classList.toggle('is-on', S.rate !== 1 || S.loop || !!S.ab);
     }
 
     function paintFs() {
@@ -1311,7 +1758,7 @@ defineApp({
       if (S.pop === kind) { closePop(true); return; }
       S.pop = kind;
       popAnchor = anchor;
-      for (const b of [P.settings, P.info]) b.setAttribute('aria-expanded', String(b === anchor));
+      for (const b of [P.settings, P.info, P.subs, P.tracks, P.queueBtn]) b.setAttribute('aria-expanded', String(b === anchor));
       paintPop();
       P.pop.hidden = false;
       wake();
@@ -1325,7 +1772,7 @@ defineApp({
       S.pop = null;
       P.pop.hidden = true;
       clear(P.pop);
-      for (const b of [P.settings, P.info]) b.setAttribute('aria-expanded', 'false');
+      for (const b of [P.settings, P.info, P.subs, P.tracks, P.queueBtn]) b.setAttribute('aria-expanded', 'false');
       if (refocus && popAnchor && popAnchor.isConnected) popAnchor.focus({ preventScroll: true });
       popAnchor = null;
       hideSoon(IDLE_MS);
@@ -1368,6 +1815,94 @@ defineApp({
           speeds,
           h('div.vid-pop__sep'),
           h('div.vid-pop__line', h('span', h('b', { text: 'Loop' }), h('small', { text: 'Start again at the end' })), loopSw));
+        const abHint = h('small', { text: abText() });
+        const abBtn = h('button.btn.btn--sm.vid-ab', { type: 'button', 'aria-label': 'A-B loop: mark A, then B, then clear', onclick: () => { cycleAB(); syncPop(); } }, abLabel());
+        const dimSw = h('button.switch', { type: 'button', role: 'switch', 'aria-checked': String(S.dim), 'aria-label': 'Dim the room', class: S.dim ? 'is-on' : null, onclick: () => setDim(!S.dim) });
+        setUi = { abHint, abBtn, dimSw };
+        P.pop.append(
+          h('div.vid-pop__sep'),
+          h('div.vid-pop__line', h('span', h('b', { text: 'A-B loop' }), abHint), abBtn),
+          h('div.vid-pop__line', h('span', h('b', { text: 'Frame' }), h('small', { text: ', and . while paused' })),
+            h('div.vid-stepper',
+              h('button.vid-step', { type: 'button', 'aria-label': 'Back one frame', onclick: () => stepFrame(-1) }, '◀'),
+              h('button.vid-step', { type: 'button', 'aria-label': 'Forward one frame', onclick: () => stepFrame(1) }, '▶'))),
+          h('div.vid-pop__line', h('span', h('b', { text: 'Save this frame' }), h('small', { text: 'S key · goes to ~/Pictures' })),
+            h('button.btn.btn--sm', { type: 'button', onclick: () => saveFrame() }, icon('camera'), h('span', { text: 'Save' }))),
+          h('div.vid-pop__line', h('span', h('b', { text: 'Dim the room' }), h('small', { text: 'D key · darkens everything else' })), dimSw));
+        return;
+      }
+      if (S.pop === 'subs') {
+        P.pop.setAttribute('role', 'dialog');
+        P.pop.setAttribute('aria-label', 'Subtitles');
+        const on = !!S.sub && S.subOn;
+        const choice = (label, sub, checked, fn) => h('button.vid-choice', {
+          type: 'button', role: 'radio', 'aria-checked': String(checked), class: checked ? 'is-on' : null, onclick: fn,
+        }, h('span', { text: label }), sub ? h('small', { text: sub }) : null);
+        const others = (S.subFiles || []).filter(f => f.node.name !== S.sub?.name);
+        const step = (label, aria, fn) => h('button.vid-step', { type: 'button', 'aria-label': aria, onclick: fn }, label);
+        subsUi = { size: h('output.vid-step__v.mono', { text: `${S.subSize}%` }), delay: h('output.vid-step__v.mono', { text: delayText(S.subDelay) }) };
+        P.pop.append(
+          h('div.vid-pop__head', h('b', { text: 'Subtitles' }), h('small', { text: 'C key' }), popClose()),
+          h('div.vid-choices', { role: 'radiogroup', 'aria-label': 'Subtitles' },
+            choice('Off', '', !on, () => { S.subOn = false; paintSubs(); paintPop(); P.pop.focus(); }),
+            S.sub ? choice(S.sub.name, S.sub.from === 'beside' ? 'Found next to the video' : 'Picked by hand', on, () => { S.subOn = true; paintSubs(); paintPop(); P.pop.focus(); }) : null,
+            ...others.map(f => choice(f.node.name, 'Next to the video', false, () => { loadSubs(f.node.name, f.node.content, 'beside'); P.pop.focus(); }))),
+          h('button.btn.btn--sm.vid-pop__wide', { type: 'button', onclick: () => subInput.click() }, icon('upload'), h('span', { text: 'Choose a .srt or .vtt file…' })),
+          h('div.vid-pop__sep'),
+          h('div.vid-pop__line', h('span', h('b', { text: 'Size' })),
+            h('div.vid-stepper', step('A−', 'Smaller subtitles', () => setSubSize(SUB_SIZES[Math.max(0, SUB_SIZES.findIndex(v => v >= S.subSize) - 1)] ?? 100)),
+              subsUi.size,
+              step('A+', 'Bigger subtitles', () => setSubSize(SUB_SIZES.find(v => v > S.subSize) ?? S.subSize)))),
+          h('div.vid-pop__line', h('span', h('b', { text: 'Delay' }), h('small', { text: 'G earlier · H later' })),
+            h('div.vid-stepper', step('−0.1', 'Show subtitles 0.1 seconds earlier', () => setSubDelay(S.subDelay - 0.1)),
+              subsUi.delay,
+              step('+0.1', 'Show subtitles 0.1 seconds later', () => setSubDelay(S.subDelay + 0.1)))),
+          h('div.vid-pop__line', h('span'), h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => setSubDelay(0) }, h('span', { text: 'Reset delay' }))),
+          S.sub ? h('button.btn.btn--sm.vid-pop__wide', { type: 'button', onclick: () => saveVtt() }, icon('save'), h('span', { text: 'Save as .vtt next to the video' })) : null);
+        return;
+      }
+      if (S.pop === 'tracks') {
+        P.pop.setAttribute('role', 'dialog');
+        P.pop.setAttribute('aria-label', 'Audio and subtitle tracks');
+        const aud = audioTracks(), txt = textTracks();
+        P.pop.append(h('div.vid-pop__head', h('b', { text: 'Tracks in this file' }), h('small', { text: 'Read from the file' }), popClose()));
+        if (aud.length) {
+          P.pop.append(h('div.vid-pop__label', { text: 'Audio' }),
+            h('div.vid-choices', { role: 'radiogroup', 'aria-label': 'Audio track' }, aud.map((t, i) => h('button.vid-choice', {
+              type: 'button', role: 'radio', dataset: { audio: String(i) }, 'aria-checked': String(!!t.enabled), class: t.enabled ? 'is-on' : null,
+              onclick: () => { aud.forEach(x => { x.enabled = x === t; }); paintPop(); P.pop.focus(); flash(`Audio: ${trackName(t, i, 'Track')}`, 'volume-2'); },
+            }, h('span', { text: trackName(t, i, 'Track') })))));
+        }
+        if (txt.length) {
+          const showing = txt.find(t => t.mode === 'showing');
+          P.pop.append(h('div.vid-pop__label', { text: 'Subtitles in the file' }),
+            h('div.vid-choices', { role: 'radiogroup', 'aria-label': 'Subtitle track' },
+              h('button.vid-choice', { type: 'button', role: 'radio', 'aria-checked': String(!showing), class: showing ? null : 'is-on',
+                onclick: () => { txt.forEach(x => { x.mode = 'disabled'; }); paintPop(); P.pop.focus(); } }, h('span', { text: 'Off' })),
+              ...txt.map((t, i) => h('button.vid-choice', {
+                type: 'button', role: 'radio', dataset: { text: String(i) }, 'aria-checked': String(t === showing), class: t === showing ? 'is-on' : null,
+                onclick: () => { txt.forEach(x => { x.mode = x === t ? 'showing' : 'disabled'; }); paintPop(); P.pop.focus(); },
+              }, h('span', { text: trackName(t, i, 'Subtitles') })))));
+        }
+        return;
+      }
+      if (S.pop === 'queue') {
+        P.pop.setAttribute('role', 'dialog');
+        P.pop.setAttribute('aria-label', 'Play queue');
+        const q = S.queue.filter(mediaNode);
+        const dir = S.path ? vfs.parentPath(S.path) : null;
+        const more = dir ? vfs.ls(dir).filter(n => n.type === 'file' && media.isMedia(n) && media.kindOf(n.name) === 'video' && n !== S.node && !q.includes(`${dir}/${n.name}`)) : [];
+        P.pop.append(
+          h('div.vid-pop__head', h('b', { text: 'Queue' }), h('small', { text: 'Q key' }), popClose()),
+          q.length ? h('ol.vid-queue', q.map(path => h('li', { dataset: { path } },
+            h('span.trunc', { text: vfs.baseName(path) }),
+            h('button.ibtn', { type: 'button', 'aria-label': `Play ${vfs.baseName(path)} now`, onclick: () => { S.queue = S.queue.filter(x => x !== path); paintQueueBtn(); openPath(path); } }, icon('play', { fill: true })),
+            h('button.ibtn', { type: 'button', 'aria-label': `Remove ${vfs.baseName(path)} from the queue`, onclick: () => toggleQueue(path) }, icon('x')))))
+            : h('p.vid-pop__hint', { text: 'Nothing queued. These play after this one, in order; when the queue is empty the next video in the folder is offered.' }),
+          more.length ? h('div.vid-pop__label', { text: 'Add from this folder' }) : null,
+          more.length ? h('div.vid-addlist', more.slice(0, 12).map(n => h('button.vid-choice', { type: 'button', onclick: () => toggleQueue(`${dir}/${n.name}`) },
+            icon('plus'), h('span.trunc', { text: n.name })))) : null,
+          q.length ? h('button.btn.btn--sm.btn--ghost.vid-pop__wide', { type: 'button', onclick: () => { S.queue = []; paintQueueBtn(); paintPop(); P.pop.focus(); } }, h('span', { text: 'Clear the queue' })) : null);
         return;
       }
       if (S.pop === 'info') {
@@ -1410,8 +1945,17 @@ defineApp({
     }
     /* speed / loop changed while the settings popover is open: update it in
        place so keyboard focus stays on the control that was used */
+    let setUi = null;
+    const abText = () => (!S.ab ? 'Press A at the start, again at the end' : S.ab.b == null ? `A at ${fmtTime(S.ab.a, dur())} — now mark B` : `${fmtTime(S.ab.a, dur())} to ${fmtTime(S.ab.b, dur())}`);
+    const abLabel = () => (!S.ab ? 'Mark A' : S.ab.b == null ? 'Mark B' : 'Clear');
     function syncPop() {
       if (S.pop !== 'settings') return;
+      if (setUi) {
+        setUi.abHint.textContent = abText();
+        setUi.abBtn.textContent = abLabel();
+        setUi.dimSw.classList.toggle('is-on', S.dim);
+        setUi.dimSw.setAttribute('aria-checked', String(S.dim));
+      }
       for (const b of P.pop.querySelectorAll('.vid-speed')) {
         const on = b.dataset.rate === String(S.rate);
         b.classList.toggle('is-on', on);
@@ -1504,7 +2048,7 @@ defineApp({
       const t = e.target;
       const inside = t === document.body || t === document.documentElement || win.el.contains(t);
       if (!inside) return;
-      if (closeDialog || trimmer) return;
+      if (closeDialog || trimmer || movie) return;
       const tag = t && t.tagName;
       const typing = tag === 'TEXTAREA' || t.isContentEditable || (tag === 'INPUT' && !['range', 'button', 'checkbox'].includes(t.type));
       if (typing) return;
@@ -1531,6 +2075,15 @@ defineApp({
       else if (lower === 'm') toggleMute();
       else if (lower === 'f') toggleFs();
       else if (lower === 'i') togglePop('info', P.info);
+      else if (lower === 'a') cycleAB();
+      else if (lower === 's') saveFrame();
+      else if (lower === 'c') toggleSubs();
+      else if (lower === 'g') { if (S.sub) { setSubDelay(S.subDelay - 0.1); flash(`Subtitles ${delayText(S.subDelay)}`, 'captions'); } }
+      else if (lower === 'h') { if (S.sub) { setSubDelay(S.subDelay + 0.1); flash(`Subtitles ${delayText(S.subDelay)}`, 'captions'); } }
+      else if (lower === 'd') setDim(!S.dim);
+      else if (lower === 'q') togglePop('queue', P.queueBtn);
+      else if (k === ',' && !e.shiftKey) stepFrame(-1);
+      else if (k === '.' && !e.shiftKey) stepFrame(1);
       else if (k === 'N' && e.shiftKey) step(1);
       else if (k === 'P' && e.shiftKey) step(-1);
       else if (lower === 'p') togglePip();
@@ -1561,6 +2114,7 @@ defineApp({
       P.msg.hidden = true;
       P.el.hidden = true;
       libEl.hidden = false;
+      paintRoom();
       win.setTitle('Videos');
       win.setSubtitle('');
       paintTools();
@@ -1614,13 +2168,14 @@ defineApp({
       S.dead = true;
       closeDialog?.();
       trimmer?.close();
+      movie?.close();
       if (inPip()) document.exitPictureInPicture().catch(() => {});
       if (isFs()) document.exitFullscreen?.().catch(() => {});
       releaseVideo();
       for (const abort of live.values()) abort();
       live.clear();
       waiting.length = 0;
-      clearTimeout(T.idle); clearTimeout(T.flash); clearTimeout(fsTimer); clearTimeout(resizeT);
+      clearTimeout(T.idle); clearTimeout(T.flash); clearTimeout(T.resume); clearTimeout(fsTimer); clearTimeout(resizeT);
       cancelAnimationFrame(T.raf);
       for (const [u, timer] of T.dl) { clearTimeout(timer); URL.revokeObjectURL(u); }
       T.dl.clear();

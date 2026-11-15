@@ -18,20 +18,45 @@
    compares that with its <video> every few hundred ms and seeks when
    they are more than DRIFT (0.5 s) apart.
 
+   The record may also carry `rate` (0.5 to 2): both players run at the
+   same speed, and expected() counts time at that speed.
+
    CONTENT IDS say which video without sending it:
      asset:<path>     a video that ships with StaticOS (~/Videos)
      sha256:<hex>     any other file, by the SHA-256 of its bytes
-   A received id is only ever compared with this device's own files;
-   it is never loaded as an address.
+     yt:<id>          a YouTube video (core/ytsync.js)
+     ia:<identifier>  a film on the Internet Archive; each device streams
+                      the same file from archive.org (never a file of
+                      ours), so nothing has to be sent between them
+   A received id is only ever compared with this device's own files, or
+   (yt and ia) turned into an address on one fixed host after it passed
+   the pattern below; it is never loaded as an address of its own.
    ============================================================ */
 import * as media from './media.js';
 import { vfs } from './vfs.js';
 
 export const DRIFT = 0.5;
-export const CID_RE = /^(asset:[A-Za-z0-9._/-]{1,200}|sha256:[0-9a-f]{64}|yt:[A-Za-z0-9_-]{11})$/;
+/* archive.org's own identifier rule: letters, digits, underscore, hyphen and period, starting with a letter or digit, at most 100 */
+export const IA_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+export const CID_RE = /^(asset:[A-Za-z0-9._/-]{1,200}|sha256:[0-9a-f]{64}|yt:[A-Za-z0-9_-]{11}|ia:[A-Za-z0-9][A-Za-z0-9._-]{0,99})$/;
+export const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+/** An archive.org details/download link or a bare identifier -> the identifier, or null. */
+export function parseArchive(input) {
+  const s = String(input ?? '').trim().slice(0, 400);
+  if (IA_ID_RE.test(s)) return s;
+  let u;
+  try { u = new URL(s); } catch (e) { return null; }
+  if (!/^https?:$/.test(u.protocol) || !/^(www\.)?archive\.org$/i.test(u.hostname)) return null;
+  const m = /^\/(?:details|download|embed|stream)\/([^/?#]+)/.exec(u.pathname);
+  if (!m) return null;
+  let id = '';
+  try { id = decodeURIComponent(m[1]); } catch (e) { return null; }
+  return IA_ID_RE.test(id) ? id : null;
+}
 const DAY = 86400;
 
-export const fresh = () => ({ ver: 0, by: 'host', play: false, pos: 0, at: 0 });
+export const fresh = () => ({ ver: 0, by: 'host', play: false, pos: 0, at: 0, rate: 1 });
 
 /** Is `b` newer than `a`? Same version: the host's record wins. */
 export const newer = (b, a) => b.ver > a.ver || (b.ver === a.ver && b.by === 'host' && a.by !== 'host');
@@ -39,20 +64,22 @@ export const newer = (b, a) => b.ver > a.ver || (b.ver === a.ver && b.by === 'ho
 /** Seconds the video should be at, at `now` (ms on this device's clock). */
 export function expected(st, now, dur = Infinity) {
   let t = st.pos;
-  if (st.play) t += Math.max(0, now - st.at) / 1000;
+  if (st.play) t += Math.max(0, now - st.at) / 1000 * (st.rate || 1);
   const end = Number.isFinite(dur) && dur > 0 ? dur : Infinity;
   return Math.max(0, Math.min(t, end));
 }
 
 /** A record that came from the friend → this device's clock (offset = their clock − ours). */
 export function fromPeer(m, offset, role) {
-  return { ver: m.ver, by: role === 'host' ? 'guest' : 'host', play: m.play, pos: m.pos, at: m.at - (Number.isFinite(offset) ? offset : 0) };
+  return { ver: m.ver, by: role === 'host' ? 'guest' : 'host', play: m.play, pos: m.pos, at: m.at - (Number.isFinite(offset) ? offset : 0), rate: m.rate || 1 };
 }
 
 export function checkState(m) {
   if (!Number.isInteger(m.ver) || m.ver < 0 || m.ver > 1e9) return null;
   if (typeof m.play !== 'boolean' || !Number.isFinite(m.pos) || m.pos < 0 || m.pos > DAY || !Number.isFinite(m.at)) return null;
-  return { ver: m.ver, play: m.play, pos: m.pos, at: m.at };
+  const out = { ver: m.ver, play: m.play, pos: m.pos, at: m.at };
+  if (m.rate !== undefined && m.rate !== 1) { if (!RATES.includes(m.rate)) return null; out.rate = m.rate; }
+  return out;
 }
 
 /* ---------- which video ---------- */
@@ -117,4 +144,4 @@ export async function findLocal(cid, size = null) {
   return null;
 }
 
-export default { DRIFT, CID_RE, fresh, newer, expected, fromPeer, checkState, cidOf, videos, findLocal };
+export default { DRIFT, CID_RE, IA_ID_RE, RATES, parseArchive, fresh, newer, expected, fromPeer, checkState, cidOf, videos, findLocal };

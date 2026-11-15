@@ -1047,6 +1047,1208 @@
      ]
     }
    ]
+  },
+  {
+   "id": "peppercarrot-fr",
+   "title": "Pepper&Carrot in French (Français)",
+   "author": "David Revoy",
+   "year": "2014-2025",
+   "summary": "The first 12 episodes of Pepper&Carrot with the French translation, for reading in your language or learning it.",
+   "licence": "CC BY 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+   "licenceQuote": "Pepper&Carrot webcomics, translations and artworks are licensed under a Creative Commons Attribution 4.0 International license unless otherwise noted (eg. fan-arts)",
+   "licenceQuoteUrl": "https://www.peppercarrot.com/en/about/index.html#license",
+   "attribution": "Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). French translation: David Revoy, Aurélien Gâteau, Remi Rampin, Xavier Dolques, Nartance, Valvin, Calimeroteknik, credited in https://www.peppercarrot.com/0_sources/langs.json. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/index.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "witch",
+    "cc-by",
+    "translation",
+    "fr"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "ep01-fr",
+     "title": "Episode 1: The Potion of Flight",
+     "file": "comics/peppercarrot-fr/ep01_Potion-of-Flight.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E01P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E01P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E01P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E01P04.jpg"
+     ]
+    },
+    {
+     "id": "ep02-fr",
+     "title": "Episode 2: Rainbow Potions",
+     "file": "comics/peppercarrot-fr/ep02_Rainbow-potions.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E02P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E02P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E02P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E02P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E02P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E02P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E02P06.jpg"
+     ]
+    },
+    {
+     "id": "ep03-fr",
+     "title": "Episode 3: The Secret Ingredients",
+     "file": "comics/peppercarrot-fr/ep03_The-secret-ingredients.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E03P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E03P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E03P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E03P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E03P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E03P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E03P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E03P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E03P08.jpg"
+     ]
+    },
+    {
+     "id": "ep04-fr",
+     "title": "Episode 4: Stroke of Genius",
+     "file": "comics/peppercarrot-fr/ep04_Stroke-of-genius.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E04P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E04P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E04P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E04P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E04P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E04P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E04P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E04P08.jpg"
+     ]
+    },
+    {
+     "id": "ep05-fr",
+     "title": "Episode 5: Special holiday episode",
+     "file": "comics/peppercarrot-fr/ep05_Special-holiday-episode.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E05P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E05P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E05P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E05P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E05P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E05P05.jpg"
+     ]
+    },
+    {
+     "id": "ep06-fr",
+     "title": "Episode 6: The Potion Contest",
+     "file": "comics/peppercarrot-fr/ep06_The-Potion-Contest.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P08.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P09.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E06P10.jpg"
+     ]
+    },
+    {
+     "id": "ep07-fr",
+     "title": "Episode 7: The Wish",
+     "file": "comics/peppercarrot-fr/ep07_The-Wish.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E07P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E07P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E07P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E07P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E07P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E07P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E07P06.jpg"
+     ]
+    },
+    {
+     "id": "ep08-fr",
+     "title": "Episode 8: Pepper's Birthday Party",
+     "file": "comics/peppercarrot-fr/ep08_Pepper-s-Birthday-Party.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E08P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E08P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E08P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E08P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E08P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E08P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E08P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E08P07.jpg"
+     ]
+    },
+    {
+     "id": "ep09-fr",
+     "title": "Episode 9: The Remedy",
+     "file": "comics/peppercarrot-fr/ep09_The-Remedy.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E09P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E09P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E09P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E09P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E09P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E09P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E09P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E09P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E09P08.jpg"
+     ]
+    },
+    {
+     "id": "ep10-fr",
+     "title": "Episode 10: Summer Special",
+     "file": "comics/peppercarrot-fr/ep10_Summer-Special.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E10P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E10P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E10P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E10P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E10P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E10P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E10P06.jpg"
+     ]
+    },
+    {
+     "id": "ep11-fr",
+     "title": "Episode 11: The Witches of Chaosah",
+     "file": "comics/peppercarrot-fr/ep11_The-Witches-of-Chaosah.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E11P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E11P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E11P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E11P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E11P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E11P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E11P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E11P07.jpg"
+     ]
+    },
+    {
+     "id": "ep12-fr",
+     "title": "Episode 12: Autumn Clearout",
+     "file": "comics/peppercarrot-fr/ep12_Autumn-Clearout.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E12P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E12P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E12P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E12P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E12P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E12P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E12P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/fr_Pepper-and-Carrot_by-David-Revoy_E12P08.jpg"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "peppercarrot-es",
+   "title": "Pepper&Carrot in Spanish (Español)",
+   "author": "David Revoy",
+   "year": "2014-2025",
+   "summary": "The first 12 episodes of Pepper&Carrot with the Spanish translation, for reading in your language or learning it.",
+   "licence": "CC BY 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+   "licenceQuote": "Pepper&Carrot webcomics, translations and artworks are licensed under a Creative Commons Attribution 4.0 International license unless otherwise noted (eg. fan-arts)",
+   "licenceQuoteUrl": "https://www.peppercarrot.com/en/about/index.html#license",
+   "attribution": "Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Spanish translation: TheFaico, credited in https://www.peppercarrot.com/0_sources/langs.json. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/index.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "witch",
+    "cc-by",
+    "translation",
+    "es"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "ep01-es",
+     "title": "Episode 1: The Potion of Flight",
+     "file": "comics/peppercarrot-es/ep01_Potion-of-Flight.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/es_Pepper-and-Carrot_by-David-Revoy_E01P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/es_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/es_Pepper-and-Carrot_by-David-Revoy_E01P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/es_Pepper-and-Carrot_by-David-Revoy_E01P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/es_Pepper-and-Carrot_by-David-Revoy_E01P04.jpg"
+     ]
+    },
+    {
+     "id": "ep02-es",
+     "title": "Episode 2: Rainbow Potions",
+     "file": "comics/peppercarrot-es/ep02_Rainbow-potions.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/es_Pepper-and-Carrot_by-David-Revoy_E02P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/es_Pepper-and-Carrot_by-David-Revoy_E02P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/es_Pepper-and-Carrot_by-David-Revoy_E02P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/es_Pepper-and-Carrot_by-David-Revoy_E02P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/es_Pepper-and-Carrot_by-David-Revoy_E02P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/es_Pepper-and-Carrot_by-David-Revoy_E02P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/es_Pepper-and-Carrot_by-David-Revoy_E02P06.jpg"
+     ]
+    },
+    {
+     "id": "ep03-es",
+     "title": "Episode 3: The Secret Ingredients",
+     "file": "comics/peppercarrot-es/ep03_The-secret-ingredients.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/es_Pepper-and-Carrot_by-David-Revoy_E03P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/es_Pepper-and-Carrot_by-David-Revoy_E03P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/es_Pepper-and-Carrot_by-David-Revoy_E03P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/es_Pepper-and-Carrot_by-David-Revoy_E03P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/es_Pepper-and-Carrot_by-David-Revoy_E03P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/es_Pepper-and-Carrot_by-David-Revoy_E03P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/es_Pepper-and-Carrot_by-David-Revoy_E03P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/es_Pepper-and-Carrot_by-David-Revoy_E03P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/es_Pepper-and-Carrot_by-David-Revoy_E03P08.jpg"
+     ]
+    },
+    {
+     "id": "ep04-es",
+     "title": "Episode 4: Stroke of Genius",
+     "file": "comics/peppercarrot-es/ep04_Stroke-of-genius.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/es_Pepper-and-Carrot_by-David-Revoy_E04P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/es_Pepper-and-Carrot_by-David-Revoy_E04P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/es_Pepper-and-Carrot_by-David-Revoy_E04P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/es_Pepper-and-Carrot_by-David-Revoy_E04P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/es_Pepper-and-Carrot_by-David-Revoy_E04P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/es_Pepper-and-Carrot_by-David-Revoy_E04P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/es_Pepper-and-Carrot_by-David-Revoy_E04P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/es_Pepper-and-Carrot_by-David-Revoy_E04P08.jpg"
+     ]
+    },
+    {
+     "id": "ep05-es",
+     "title": "Episode 5: Special holiday episode",
+     "file": "comics/peppercarrot-es/ep05_Special-holiday-episode.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/es_Pepper-and-Carrot_by-David-Revoy_E05P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/es_Pepper-and-Carrot_by-David-Revoy_E05P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/es_Pepper-and-Carrot_by-David-Revoy_E05P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/es_Pepper-and-Carrot_by-David-Revoy_E05P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/es_Pepper-and-Carrot_by-David-Revoy_E05P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/es_Pepper-and-Carrot_by-David-Revoy_E05P05.jpg"
+     ]
+    },
+    {
+     "id": "ep06-es",
+     "title": "Episode 6: The Potion Contest",
+     "file": "comics/peppercarrot-es/ep06_The-Potion-Contest.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P08.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P09.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/es_Pepper-and-Carrot_by-David-Revoy_E06P10.jpg"
+     ]
+    },
+    {
+     "id": "ep07-es",
+     "title": "Episode 7: The Wish",
+     "file": "comics/peppercarrot-es/ep07_The-Wish.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/es_Pepper-and-Carrot_by-David-Revoy_E07P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/es_Pepper-and-Carrot_by-David-Revoy_E07P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/es_Pepper-and-Carrot_by-David-Revoy_E07P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/es_Pepper-and-Carrot_by-David-Revoy_E07P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/es_Pepper-and-Carrot_by-David-Revoy_E07P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/es_Pepper-and-Carrot_by-David-Revoy_E07P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/es_Pepper-and-Carrot_by-David-Revoy_E07P06.jpg"
+     ]
+    },
+    {
+     "id": "ep08-es",
+     "title": "Episode 8: Pepper's Birthday Party",
+     "file": "comics/peppercarrot-es/ep08_Pepper-s-Birthday-Party.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/es_Pepper-and-Carrot_by-David-Revoy_E08P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/es_Pepper-and-Carrot_by-David-Revoy_E08P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/es_Pepper-and-Carrot_by-David-Revoy_E08P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/es_Pepper-and-Carrot_by-David-Revoy_E08P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/es_Pepper-and-Carrot_by-David-Revoy_E08P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/es_Pepper-and-Carrot_by-David-Revoy_E08P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/es_Pepper-and-Carrot_by-David-Revoy_E08P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/es_Pepper-and-Carrot_by-David-Revoy_E08P07.jpg"
+     ]
+    },
+    {
+     "id": "ep09-es",
+     "title": "Episode 9: The Remedy",
+     "file": "comics/peppercarrot-es/ep09_The-Remedy.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/es_Pepper-and-Carrot_by-David-Revoy_E09P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/es_Pepper-and-Carrot_by-David-Revoy_E09P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/es_Pepper-and-Carrot_by-David-Revoy_E09P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/es_Pepper-and-Carrot_by-David-Revoy_E09P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/es_Pepper-and-Carrot_by-David-Revoy_E09P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/es_Pepper-and-Carrot_by-David-Revoy_E09P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/es_Pepper-and-Carrot_by-David-Revoy_E09P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/es_Pepper-and-Carrot_by-David-Revoy_E09P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/es_Pepper-and-Carrot_by-David-Revoy_E09P08.jpg"
+     ]
+    },
+    {
+     "id": "ep10-es",
+     "title": "Episode 10: Summer Special",
+     "file": "comics/peppercarrot-es/ep10_Summer-Special.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/es_Pepper-and-Carrot_by-David-Revoy_E10P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/es_Pepper-and-Carrot_by-David-Revoy_E10P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/es_Pepper-and-Carrot_by-David-Revoy_E10P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/es_Pepper-and-Carrot_by-David-Revoy_E10P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/es_Pepper-and-Carrot_by-David-Revoy_E10P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/es_Pepper-and-Carrot_by-David-Revoy_E10P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/es_Pepper-and-Carrot_by-David-Revoy_E10P06.jpg"
+     ]
+    },
+    {
+     "id": "ep11-es",
+     "title": "Episode 11: The Witches of Chaosah",
+     "file": "comics/peppercarrot-es/ep11_The-Witches-of-Chaosah.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/es_Pepper-and-Carrot_by-David-Revoy_E11P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/es_Pepper-and-Carrot_by-David-Revoy_E11P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/es_Pepper-and-Carrot_by-David-Revoy_E11P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/es_Pepper-and-Carrot_by-David-Revoy_E11P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/es_Pepper-and-Carrot_by-David-Revoy_E11P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/es_Pepper-and-Carrot_by-David-Revoy_E11P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/es_Pepper-and-Carrot_by-David-Revoy_E11P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/es_Pepper-and-Carrot_by-David-Revoy_E11P07.jpg"
+     ]
+    },
+    {
+     "id": "ep12-es",
+     "title": "Episode 12: Autumn Clearout",
+     "file": "comics/peppercarrot-es/ep12_Autumn-Clearout.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/es_Pepper-and-Carrot_by-David-Revoy_E12P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/es_Pepper-and-Carrot_by-David-Revoy_E12P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/es_Pepper-and-Carrot_by-David-Revoy_E12P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/es_Pepper-and-Carrot_by-David-Revoy_E12P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/es_Pepper-and-Carrot_by-David-Revoy_E12P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/es_Pepper-and-Carrot_by-David-Revoy_E12P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/es_Pepper-and-Carrot_by-David-Revoy_E12P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/es_Pepper-and-Carrot_by-David-Revoy_E12P08.jpg"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "peppercarrot-de",
+   "title": "Pepper&Carrot in German (Deutsch)",
+   "author": "David Revoy",
+   "year": "2014-2025",
+   "summary": "The first 12 episodes of Pepper&Carrot with the German translation, for reading in your language or learning it.",
+   "licence": "CC BY 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+   "licenceQuote": "Pepper&Carrot webcomics, translations and artworks are licensed under a Creative Commons Attribution 4.0 International license unless otherwise noted (eg. fan-arts)",
+   "licenceQuoteUrl": "https://www.peppercarrot.com/en/about/index.html#license",
+   "attribution": "Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). German translation: Alexandra Jordan, Helmar Suschka, Carlo Gandolfi, colognella, Julian Eric Ain, Philipp (hapit) Hemmer, Ret Samys, Martin Disch, Ulrich Greve, kate, credited in https://www.peppercarrot.com/0_sources/langs.json. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/index.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "witch",
+    "cc-by",
+    "translation",
+    "de"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "ep01-de",
+     "title": "Episode 1: The Potion of Flight",
+     "file": "comics/peppercarrot-de/ep01_Potion-of-Flight.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/de_Pepper-and-Carrot_by-David-Revoy_E01P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/de_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/de_Pepper-and-Carrot_by-David-Revoy_E01P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/de_Pepper-and-Carrot_by-David-Revoy_E01P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/de_Pepper-and-Carrot_by-David-Revoy_E01P04.jpg"
+     ]
+    },
+    {
+     "id": "ep02-de",
+     "title": "Episode 2: Rainbow Potions",
+     "file": "comics/peppercarrot-de/ep02_Rainbow-potions.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/de_Pepper-and-Carrot_by-David-Revoy_E02P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/de_Pepper-and-Carrot_by-David-Revoy_E02P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/de_Pepper-and-Carrot_by-David-Revoy_E02P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/de_Pepper-and-Carrot_by-David-Revoy_E02P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/de_Pepper-and-Carrot_by-David-Revoy_E02P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/de_Pepper-and-Carrot_by-David-Revoy_E02P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/de_Pepper-and-Carrot_by-David-Revoy_E02P06.jpg"
+     ]
+    },
+    {
+     "id": "ep03-de",
+     "title": "Episode 3: The Secret Ingredients",
+     "file": "comics/peppercarrot-de/ep03_The-secret-ingredients.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/de_Pepper-and-Carrot_by-David-Revoy_E03P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/de_Pepper-and-Carrot_by-David-Revoy_E03P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/de_Pepper-and-Carrot_by-David-Revoy_E03P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/de_Pepper-and-Carrot_by-David-Revoy_E03P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/de_Pepper-and-Carrot_by-David-Revoy_E03P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/de_Pepper-and-Carrot_by-David-Revoy_E03P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/de_Pepper-and-Carrot_by-David-Revoy_E03P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/de_Pepper-and-Carrot_by-David-Revoy_E03P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/de_Pepper-and-Carrot_by-David-Revoy_E03P08.jpg"
+     ]
+    },
+    {
+     "id": "ep04-de",
+     "title": "Episode 4: Stroke of Genius",
+     "file": "comics/peppercarrot-de/ep04_Stroke-of-genius.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/de_Pepper-and-Carrot_by-David-Revoy_E04P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/de_Pepper-and-Carrot_by-David-Revoy_E04P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/de_Pepper-and-Carrot_by-David-Revoy_E04P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/de_Pepper-and-Carrot_by-David-Revoy_E04P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/de_Pepper-and-Carrot_by-David-Revoy_E04P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/de_Pepper-and-Carrot_by-David-Revoy_E04P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/de_Pepper-and-Carrot_by-David-Revoy_E04P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/de_Pepper-and-Carrot_by-David-Revoy_E04P08.jpg"
+     ]
+    },
+    {
+     "id": "ep05-de",
+     "title": "Episode 5: Special holiday episode",
+     "file": "comics/peppercarrot-de/ep05_Special-holiday-episode.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/de_Pepper-and-Carrot_by-David-Revoy_E05P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/de_Pepper-and-Carrot_by-David-Revoy_E05P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/de_Pepper-and-Carrot_by-David-Revoy_E05P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/de_Pepper-and-Carrot_by-David-Revoy_E05P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/de_Pepper-and-Carrot_by-David-Revoy_E05P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/de_Pepper-and-Carrot_by-David-Revoy_E05P05.jpg"
+     ]
+    },
+    {
+     "id": "ep06-de",
+     "title": "Episode 6: The Potion Contest",
+     "file": "comics/peppercarrot-de/ep06_The-Potion-Contest.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P08.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P09.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/de_Pepper-and-Carrot_by-David-Revoy_E06P10.jpg"
+     ]
+    },
+    {
+     "id": "ep07-de",
+     "title": "Episode 7: The Wish",
+     "file": "comics/peppercarrot-de/ep07_The-Wish.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/de_Pepper-and-Carrot_by-David-Revoy_E07P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/de_Pepper-and-Carrot_by-David-Revoy_E07P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/de_Pepper-and-Carrot_by-David-Revoy_E07P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/de_Pepper-and-Carrot_by-David-Revoy_E07P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/de_Pepper-and-Carrot_by-David-Revoy_E07P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/de_Pepper-and-Carrot_by-David-Revoy_E07P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/de_Pepper-and-Carrot_by-David-Revoy_E07P06.jpg"
+     ]
+    },
+    {
+     "id": "ep08-de",
+     "title": "Episode 8: Pepper's Birthday Party",
+     "file": "comics/peppercarrot-de/ep08_Pepper-s-Birthday-Party.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/de_Pepper-and-Carrot_by-David-Revoy_E08P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/de_Pepper-and-Carrot_by-David-Revoy_E08P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/de_Pepper-and-Carrot_by-David-Revoy_E08P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/de_Pepper-and-Carrot_by-David-Revoy_E08P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/de_Pepper-and-Carrot_by-David-Revoy_E08P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/de_Pepper-and-Carrot_by-David-Revoy_E08P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/de_Pepper-and-Carrot_by-David-Revoy_E08P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/de_Pepper-and-Carrot_by-David-Revoy_E08P07.jpg"
+     ]
+    },
+    {
+     "id": "ep09-de",
+     "title": "Episode 9: The Remedy",
+     "file": "comics/peppercarrot-de/ep09_The-Remedy.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/de_Pepper-and-Carrot_by-David-Revoy_E09P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/de_Pepper-and-Carrot_by-David-Revoy_E09P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/de_Pepper-and-Carrot_by-David-Revoy_E09P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/de_Pepper-and-Carrot_by-David-Revoy_E09P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/de_Pepper-and-Carrot_by-David-Revoy_E09P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/de_Pepper-and-Carrot_by-David-Revoy_E09P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/de_Pepper-and-Carrot_by-David-Revoy_E09P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/de_Pepper-and-Carrot_by-David-Revoy_E09P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/de_Pepper-and-Carrot_by-David-Revoy_E09P08.jpg"
+     ]
+    },
+    {
+     "id": "ep10-de",
+     "title": "Episode 10: Summer Special",
+     "file": "comics/peppercarrot-de/ep10_Summer-Special.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/de_Pepper-and-Carrot_by-David-Revoy_E10P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/de_Pepper-and-Carrot_by-David-Revoy_E10P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/de_Pepper-and-Carrot_by-David-Revoy_E10P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/de_Pepper-and-Carrot_by-David-Revoy_E10P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/de_Pepper-and-Carrot_by-David-Revoy_E10P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/de_Pepper-and-Carrot_by-David-Revoy_E10P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/de_Pepper-and-Carrot_by-David-Revoy_E10P06.jpg"
+     ]
+    },
+    {
+     "id": "ep11-de",
+     "title": "Episode 11: The Witches of Chaosah",
+     "file": "comics/peppercarrot-de/ep11_The-Witches-of-Chaosah.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/de_Pepper-and-Carrot_by-David-Revoy_E11P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/de_Pepper-and-Carrot_by-David-Revoy_E11P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/de_Pepper-and-Carrot_by-David-Revoy_E11P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/de_Pepper-and-Carrot_by-David-Revoy_E11P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/de_Pepper-and-Carrot_by-David-Revoy_E11P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/de_Pepper-and-Carrot_by-David-Revoy_E11P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/de_Pepper-and-Carrot_by-David-Revoy_E11P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/de_Pepper-and-Carrot_by-David-Revoy_E11P07.jpg"
+     ]
+    },
+    {
+     "id": "ep12-de",
+     "title": "Episode 12: Autumn Clearout",
+     "file": "comics/peppercarrot-de/ep12_Autumn-Clearout.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/de_Pepper-and-Carrot_by-David-Revoy_E12P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/de_Pepper-and-Carrot_by-David-Revoy_E12P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/de_Pepper-and-Carrot_by-David-Revoy_E12P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/de_Pepper-and-Carrot_by-David-Revoy_E12P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/de_Pepper-and-Carrot_by-David-Revoy_E12P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/de_Pepper-and-Carrot_by-David-Revoy_E12P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/de_Pepper-and-Carrot_by-David-Revoy_E12P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/de_Pepper-and-Carrot_by-David-Revoy_E12P08.jpg"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "peppercarrot-ja",
+   "title": "Pepper&Carrot in Japanese (日本語)",
+   "author": "David Revoy",
+   "year": "2014-2025",
+   "summary": "The first 12 episodes of Pepper&Carrot with the Japanese translation, for reading in your language or learning it.",
+   "licence": "CC BY 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+   "licenceQuote": "Pepper&Carrot webcomics, translations and artworks are licensed under a Creative Commons Attribution 4.0 International license unless otherwise noted (eg. fan-arts)",
+   "licenceQuoteUrl": "https://www.peppercarrot.com/en/about/index.html#license",
+   "attribution": "Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Japanese translation: guruguru, credited in https://www.peppercarrot.com/0_sources/langs.json. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/index.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "witch",
+    "cc-by",
+    "translation",
+    "ja"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "ep01-ja",
+     "title": "Episode 1: The Potion of Flight",
+     "file": "comics/peppercarrot-ja/ep01_Potion-of-Flight.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E01P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E01P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E01P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E01P04.jpg"
+     ]
+    },
+    {
+     "id": "ep02-ja",
+     "title": "Episode 2: Rainbow Potions",
+     "file": "comics/peppercarrot-ja/ep02_Rainbow-potions.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E02P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E02P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E02P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E02P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E02P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E02P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep02_Rainbow-potions/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E02P06.jpg"
+     ]
+    },
+    {
+     "id": "ep03-ja",
+     "title": "Episode 3: The Secret Ingredients",
+     "file": "comics/peppercarrot-ja/ep03_The-secret-ingredients.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E03P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E03P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E03P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E03P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E03P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E03P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E03P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E03P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep03_The-secret-ingredients/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E03P08.jpg"
+     ]
+    },
+    {
+     "id": "ep04-ja",
+     "title": "Episode 4: Stroke of Genius",
+     "file": "comics/peppercarrot-ja/ep04_Stroke-of-genius.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E04P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E04P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E04P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E04P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E04P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E04P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E04P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep04_Stroke-of-genius/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E04P08.jpg"
+     ]
+    },
+    {
+     "id": "ep05-ja",
+     "title": "Episode 5: Special holiday episode",
+     "file": "comics/peppercarrot-ja/ep05_Special-holiday-episode.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E05P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E05P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E05P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E05P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E05P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep05_Special-holiday-episode/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E05P05.jpg"
+     ]
+    },
+    {
+     "id": "ep06-ja",
+     "title": "Episode 6: The Potion Contest",
+     "file": "comics/peppercarrot-ja/ep06_The-Potion-Contest.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P08.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P09.jpg",
+      "https://www.peppercarrot.com/0_sources/ep06_The-Potion-Contest/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E06P10.jpg"
+     ]
+    },
+    {
+     "id": "ep07-ja",
+     "title": "Episode 7: The Wish",
+     "file": "comics/peppercarrot-ja/ep07_The-Wish.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E07P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E07P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E07P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E07P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E07P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E07P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep07_The-Wish/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E07P06.jpg"
+     ]
+    },
+    {
+     "id": "ep08-ja",
+     "title": "Episode 8: Pepper's Birthday Party",
+     "file": "comics/peppercarrot-ja/ep08_Pepper-s-Birthday-Party.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E08P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E08P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E08P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E08P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E08P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E08P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E08P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep08_Pepper-s-Birthday-Party/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E08P07.jpg"
+     ]
+    },
+    {
+     "id": "ep09-ja",
+     "title": "Episode 9: The Remedy",
+     "file": "comics/peppercarrot-ja/ep09_The-Remedy.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E09P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E09P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E09P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E09P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E09P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E09P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E09P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E09P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep09_The-Remedy/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E09P08.jpg"
+     ]
+    },
+    {
+     "id": "ep10-ja",
+     "title": "Episode 10: Summer Special",
+     "file": "comics/peppercarrot-ja/ep10_Summer-Special.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E10P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E10P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E10P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E10P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E10P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E10P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep10_Summer-Special/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E10P06.jpg"
+     ]
+    },
+    {
+     "id": "ep11-ja",
+     "title": "Episode 11: The Witches of Chaosah",
+     "file": "comics/peppercarrot-ja/ep11_The-Witches-of-Chaosah.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E11P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E11P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E11P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E11P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E11P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E11P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E11P06.jpg",
+      "https://www.peppercarrot.com/0_sources/ep11_The-Witches-of-Chaosah/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E11P07.jpg"
+     ]
+    },
+    {
+     "id": "ep12-ja",
+     "title": "Episode 12: Autumn Clearout",
+     "file": "comics/peppercarrot-ja/ep12_Autumn-Clearout.cbz",
+     "maxWidth": 640,
+     "quality": 35,
+     "pages": [
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E12P00.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E12P01.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E12P02.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E12P03.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E12P04.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E12P05.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E12P07.jpg",
+      "https://www.peppercarrot.com/0_sources/ep12_Autumn-Clearout/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E12P08.jpg"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "plish-and-plum",
+   "title": "Plish and Plum",
+   "author": "Wilhelm Busch (translated by Charles Timothy Brooks)",
+   "year": "1883",
+   "summary": "Busch’s Max und Moritz in English verse: two boys, seven pranks, one mill. A picture story from 1865 that helped invent the comic strip.",
+   "licence": "Public domain (author died 1908; US edition 1883)",
+   "licenceUrl": "https://archive.org/details/plishplumfromger00buscrich",
+   "licenceQuoteUrl": "https://archive.org/details/plishplumfromger00buscrich",
+   "attribution": "Plish and Plum, from the German of Wilhelm Busch (Wilhelm Busch, 1832-1908; translated by Charles Timothy Brooks, Roberts Brothers, Boston, 1883), public domain. Scan: University of California Libraries via the Internet Archive. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://archive.org/details/plishplumfromger00buscrich",
+   "tags": [
+    "classic",
+    "public-domain",
+    "english"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "plish-and-plum",
+     "title": "Plish and Plum",
+     "file": "comics/plish-and-plum/plish-and-plum.cbz",
+     "maxWidth": 640,
+     "quality": 30,
+     "pages": [
+      "https://archive.org/download/plishplumfromger00buscrich/page/n0_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n1_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n2_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n3_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n4_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n5_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n6_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n7_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n8_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n9_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n10_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n11_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n12_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n13_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n14_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n15_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n16_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n17_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n18_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n19_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n20_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n21_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n22_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n23_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n24_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n25_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n26_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n27_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n28_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n29_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n30_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n31_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n32_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n33_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n34_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n35_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n36_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n37_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n38_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n39_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n40_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n41_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n42_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n43_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n44_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n45_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n46_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n47_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n48_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n49_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n50_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n51_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n52_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n53_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n54_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n55_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n56_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n57_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n58_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n59_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n60_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n61_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n62_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n63_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n64_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n65_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n66_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n67_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n68_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n69_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n70_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n71_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n72_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n73_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n74_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n75_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n76_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n77_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n78_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n79_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n80_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n81_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n82_w800.jpg",
+      "https://archive.org/download/plishplumfromger00buscrich/page/n83_w800.jpg"
+     ]
+    }
+   ],
+   "licenceQuote": "Internet Archive record of the scan (checked 2026-11-08): title \"Plish and Plum : from the German of Wilhelm Busch\"; creator \"Busch, Wilhelm, 1832-1908\" and \"Brooks, Charles Timothy, 1813-1883\"; date \"1883\"; publisher \"Boston : Roberts Brothers\"; contributor \"University of California Libraries\"; sponsor \"MSN\". US term: \"Any copyright still in its renewal term at the time that the Sonny Bono Copyright Term Extension Act becomes effective shall have a copyright term of 95 years from the date copyright was originally secured.\" (17 U.S.C. 304(b), https://www.law.cornell.edu/uscode/text/17/304). A book published in 1883 was therefore out of copyright in the US by 1978 at the latest, and both the author (d. 1908) and the translator (d. 1883) died more than 70 years ago."
+  },
+  {
+   "id": "english-struwwelpeter",
+   "title": "The English Struwwelpeter",
+   "author": "Heinrich Hoffmann",
+   "year": "1909 edition (first published 1845)",
+   "summary": "Pretty stories and funny pictures: the cautionary picture tales of Shock-Headed Peter, in English, with the original drawings.",
+   "licence": "Public domain (author died 1894; published 1909)",
+   "licenceUrl": "https://archive.org/details/englishstruwwelp00hoffrich",
+   "licenceQuoteUrl": "https://archive.org/details/englishstruwwelp00hoffrich",
+   "attribution": "The English Struwwelpeter, or, Pretty stories and funny pictures (Heinrich Hoffmann, 1809-1894; London: Routledge & Kegan Paul, 1909), public domain. Scan: University of California Libraries via the Internet Archive. Pages downscaled to 800 px wide for StaticOS.",
+   "source": "https://archive.org/details/englishstruwwelp00hoffrich",
+   "tags": [
+    "classic",
+    "public-domain",
+    "english"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "english-struwwelpeter",
+     "title": "The English Struwwelpeter",
+     "file": "comics/english-struwwelpeter/english-struwwelpeter.cbz",
+     "maxWidth": 800,
+     "quality": 45,
+     "pages": [
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n0_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n1_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n2_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n3_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n4_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n5_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n6_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n7_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n8_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n9_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n10_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n11_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n12_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n13_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n14_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n15_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n16_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n17_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n18_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n19_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n20_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n21_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n22_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n23_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n24_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n25_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n26_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n27_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n28_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n29_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n30_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n31_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n32_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n33_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n34_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n35_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n36_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n37_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n38_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n39_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n40_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n41_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n42_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n43_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n44_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n45_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n46_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n47_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n48_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n49_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n50_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n51_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n52_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n53_w800.jpg",
+      "https://archive.org/download/englishstruwwelp00hoffrich/page/n54_w800.jpg"
+     ]
+    }
+   ],
+   "licenceQuote": "Internet Archive record of the scan (checked 2026-11-08): title \"The English Struwwelpeter, or, Pretty stories and funny pictures\"; creator \"Hoffmann, Heinrich, 1809-1894\"; date \"[1909]\"; publisher \"[London] : Routledge & K. Paul\"; contributor \"University of California Libraries\"; sponsor \"MSN\". US term: \"Any copyright still in its renewal term at the time that the Sonny Bono Copyright Term Extension Act becomes effective shall have a copyright term of 95 years from the date copyright was originally secured.\" (17 U.S.C. 304(b), https://www.law.cornell.edu/uscode/text/17/304). Published in 1909, so no US copyright can have outlasted 2004; the author died in 1894."
+  },
+  {
+   "id": "buster-brown",
+   "title": "Buster Brown, his dog Tige and their troubles",
+   "author": "R. F. Outcault",
+   "year": "1904",
+   "summary": "The Sunday-paper strip that sold a million shoes: a mischievous boy, his bulldog Tige, and a good resolution at the bottom of every page.",
+   "licence": "Public domain (author died 1928; published 1904)",
+   "licenceUrl": "https://archive.org/details/BusterBrownhisd00Outc",
+   "licenceQuoteUrl": "https://archive.org/details/BusterBrownhisd00Outc",
+   "attribution": "Buster Brown, his dog Tige and their troubles (Richard Felton Outcault, 1863-1928; New York: Frederick A. Stokes Company, 1904), public domain. Scan: Smithsonian Libraries via the Internet Archive. Pages downscaled to 800 px wide for StaticOS.",
+   "source": "https://archive.org/details/BusterBrownhisd00Outc",
+   "tags": [
+    "classic",
+    "public-domain",
+    "english",
+    "comic-strip"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "buster-brown",
+     "title": "Buster Brown, his dog Tige and their troubles",
+     "file": "comics/buster-brown/buster-brown.cbz",
+     "maxWidth": 800,
+     "quality": 45,
+     "pages": [
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n0_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n1_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n2_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n3_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n4_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n5_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n6_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n7_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n8_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n9_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n10_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n11_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n12_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n13_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n14_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n15_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n16_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n17_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n18_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n19_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n20_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n21_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n22_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n23_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n24_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n25_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n26_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n27_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n28_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n29_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n30_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n31_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n32_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n33_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n34_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n35_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n36_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n37_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n38_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n39_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n40_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n41_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n42_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n43_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n44_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n45_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n46_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n47_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n48_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n49_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n50_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n51_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n52_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n53_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n54_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n55_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n56_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n57_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n58_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n59_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n60_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n61_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n62_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n63_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n64_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n65_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n66_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n67_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n68_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n69_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n70_w800.jpg",
+      "https://archive.org/download/BusterBrownhisd00Outc/page/n71_w800.jpg"
+     ]
+    }
+   ],
+   "licenceQuote": "Internet Archive record of the scan (checked 2026-11-08): title \"Buster Brown, his dog Tige and their troubles\"; creator \"Outcault, Richard Felton, 1863-1928\"; date \"1904\"; publisher \"New York : Frederick A. Stokes Company\"; contributor \"Smithsonian Libraries\"; sponsor \"Metropolitan New York Library Council\". US term: \"Any copyright still in its renewal term at the time that the Sonny Bono Copyright Term Extension Act becomes effective shall have a copyright term of 95 years from the date copyright was originally secured.\" (17 U.S.C. 304(b), https://www.law.cornell.edu/uscode/text/17/304). Published in 1904, so no US copyright can have outlasted 2000; the author died in 1928, so it is public domain in Japan (life + 70) too."
   }
  ]
 }

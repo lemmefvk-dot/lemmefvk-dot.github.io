@@ -23,6 +23,7 @@ import { bus } from '../core/bus.js';
 import { store } from '../core/store.js';
 import { covered } from '../core/cover.js';
 import { isSpookySeason } from '../core/season.js';
+import { t } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-introvideo-css')) {
   const l = document.createElement('link');
@@ -35,11 +36,11 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-introvideo
 export const VIDEOS = {
   bubbles: {
     src: 'staticos-bubbles.mp4', name: 'StaticOS Bubbles.mp4', poster: 'assets/staticos-video.jpg', length: '2:08',
-    title: 'Watch the StaticOS video', text: 'Two minutes, with sound: a look around everything StaticOS can do.',
+    title: t('Watch the StaticOS video'), text: t('Two minutes, with sound: a look around everything StaticOS can do.'),
   },
   halloween: {
     src: 'staticos-halloween.mp4', name: 'StaticOS Halloween.mp4', poster: 'assets/staticos-halloween.jpg', length: '1:49',
-    title: 'Watch the Halloween video', text: 'Under two minutes, with sound: everything spooky in StaticOS this week.',
+    title: t('Watch the Halloween video'), text: t('Under two minutes, with sound: everything spooky in StaticOS this week.'),
   },
 };
 /** The video offered now: the Halloween one during spooky season. */
@@ -59,7 +60,7 @@ export function watch(video = current()) {
     if (!path && n.type === 'file' && n.content === want && p !== trash && !p.startsWith(trash + '/')) path = p;
   });
   if (!path && vfs.restoreSeed(home)) path = home;
-  if (!path) { api.notify({ title: 'The StaticOS video is missing', message: 'It could not be put back in ~/Videos.', icon: 'video' }); return null; }
+  if (!path) { api.notify({ title: t('The StaticOS video is missing'), message: t('It could not be put back in ~/Videos.'), icon: 'video' }); return null; }
   return api.openApp('videos', { path });
 }
 
@@ -109,11 +110,11 @@ export function mountIntroVideo(host) {
         h('div.ivid__t', { text: video.title }),
         h('div.ivid__m', { text: video.text }),
         h('div.ivid__acts',
-          h('button.btn.btn--primary.btn--sm.ivid__watch', { type: 'button', onclick: go }, icon('play'), 'Watch'),
-          h('button.btn.btn--sm.ivid__later', { type: 'button', onclick: hide }, 'Not now')),
+          h('button.btn.btn--primary.btn--sm.ivid__watch', { type: 'button', onclick: go }, icon('play'), t('Watch')),
+          h('button.btn.btn--sm.ivid__later', { type: 'button', onclick: hide }, t('Not now'))),
         h('button.ivid__never', { type: 'button', onclick: () => { store.set(PREF, false); hide(); } },
-          "Don't show this at start-up")),
-      h('button.ivid__x', { type: 'button', 'aria-label': 'Close', onclick: hide }, icon('x')));
+          t("Don't show this at start-up"))),
+      h('button.ivid__x', { type: 'button', 'aria-label': t('Close'), onclick: hide }, icon('x')));
     host.appendChild(card);
   }
 

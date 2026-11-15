@@ -15,12 +15,20 @@
 
    If a bridge is configured (see bridge() below) the page tops
    the baked numbers up with live ones.
+
+   THE DATE. data/roblox.meta.json ({ v: 1, asOf }) is written next to
+   it by tools/sync-roblox.mjs: `asOf` is the day the sync read Roblox,
+   and every count in the baked rows is a snapshot from that day. The
+   pages put the date beside each player count, and say "live" only
+   for a row the live mirror has just refreshed. Without the meta file
+   they say "last sync" and show no date.
    ============================================================ */
 
 const URL_PATH = 'data/roblox.json';
 let cache = null;
 let inflight = null;
 let failed = null;
+let snapshot = '';
 
 function dataUrl() {
   const base = new URL('../../', import.meta.url).href;
@@ -35,6 +43,8 @@ export async function load() {
     if (!res.ok) throw new Error(`Roblox catalogue: HTTP ${res.status}`);
     const rows = await res.json();
     if (!Array.isArray(rows) || !rows.length) throw new Error('Roblox catalogue is empty');
+    snapshot = await fetch(new URL('data/roblox.meta.json', new URL('../../', import.meta.url)).href, { cache: 'force-cache' })
+      .then(r => (r.ok ? r.json() : null)).then(m => (m && typeof m.asOf === 'string' ? m.asOf : '')).catch(() => '');
     cache = rows.map(normalise);
     return cache;
   })();
@@ -65,12 +75,31 @@ function normalise(r) {
     up: r.up || 0, down: r.down || 0,
     created: r.created || '', updated: r.updated || '',
     maturity: r.maturity || '',
+    year: Number(String(r.created || '').slice(0, 4)) || 0,
     art: r.art || null,
     wide: r.wide || null,
     cats: Array.isArray(r.cats) && r.cats.length ? r.cats : ['popular'],
     featured: !!r.featured,
   };
 }
+
+/** The day the baked counts were read from Roblox ('' if the file does not say). */
+export const asOf = () => snapshot;
+
+/** "23 Oct 2026" for a date or ISO stamp. A bare date is read as that calendar day, not shifted by the time zone. */
+export function fmtDay(iso, withYear = true) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.toLocaleDateString(undefined, withYear ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' });
+}
+
+/** What stands beside a player count: "live" for a row the mirror just refreshed, else the snapshot's day. */
+export const countWhen = (row, withYear = false) => (row && row.live ? 'live' : snapshot ? fmtDay(snapshot, withYear) : 'last sync');
+
+/** Roblox's own maturity words, for the ones it states. */
+const MATURITY = { minimal: 'Minimal', mild: 'Mild', moderate: 'Moderate', restricted: 'Restricted' };
+export const maturityName = m => MATURITY[m] || '';
 
 export const peek = () => cache;
 export const isLoaded = () => !!cache;
@@ -93,6 +122,40 @@ export const startLink  = placeId => `https://www.roblox.com/games/start?placeId
 
 export const isMobile = () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
+/** Which kind of device this is, from the user agent: 'chromeos' | 'android' | 'ios' | 'windows' | 'mac' | 'other'. */
+export function device(ua = navigator.userAgent, touchPoints = navigator.maxTouchPoints || 0) {
+  if (/\bCrOS\b/.test(ua)) return 'chromeos';
+  if (/Android/i.test(ua)) return 'android';
+  if (/iPhone|iPad|iPod/i.test(ua)) return 'ios';
+  if (/Macintosh|Mac OS X/i.test(ua)) return touchPoints > 1 ? 'ios' : 'mac';   // iPadOS asks for the desktop site
+  if (/Windows/i.test(ua)) return 'windows';
+  return 'other';
+}
+
+/* The official route on each device, in plain words. Nothing here suggests a
+   way round a school's settings: a Chromebook with Play turned off simply
+   cannot install the app, and only the school can change that. */
+const GUIDE = {
+  windows: ['On Windows', 'Roblox runs as an app you install from roblox.com. Sign in there once, then Play opens the experience in it.'],
+  mac: ['On a Mac', 'Roblox runs as an app you install from roblox.com. Sign in there once, then Play opens the experience in it.'],
+  chromeos: ['On a Chromebook', 'Roblox runs as the Android app from the Google Play Store. A school may have turned the Play Store off on this Chromebook; if so the app cannot be installed here, and only the school can change that. Static also cannot tell whether this Chromebook passes a Roblox link on to the app.'],
+  android: ['On Android', 'Install Roblox from Google Play and sign in, then Open in Roblox hands the experience to it.'],
+  ios: ['On iPhone or iPad', 'Install Roblox from the App Store and sign in, then Open in Roblox hands the experience to it.'],
+  other: ['On this device', 'Roblox runs as an app on Windows, macOS, Android, iOS and Chromebooks (through Google Play). Install it from Roblox, sign in, then Play hands the experience to it.'],
+};
+export const deviceGuide = (ua, touchPoints) => {
+  const id = device(ua, touchPoints);
+  return { id, title: GUIDE[id][0], text: GUIDE[id][1] };
+};
+
+/** Art is only ever drawn from Roblox's image CDN, as a plain <img>. Any other host is dropped. */
+export const iconUrl = (row, key = 'art') => {
+  try {
+    const x = new URL(row && row[key]);
+    return x.protocol === 'https:' && x.hostname === 'tr.rbxcdn.com' ? x.href : '';
+  } catch (e) { return ''; }
+};
+
 /** The link to hand the OS for this device. */
 export const launchLink = placeId => (isMobile() ? mobileLink(placeId) : deepLink(placeId));
 
@@ -103,6 +166,7 @@ const SORTS = {
   rating:  (a, b) => b.rating - a.rating || b.playing - a.playing,
   visits:  (a, b) => b.visits - a.visits,
   az:      (a, b) => a.name.localeCompare(b.name),
+  updated: (a, b) => String(b.updated).localeCompare(String(a.updated)) || b.playing - a.playing,
 };
 
 export const CATEGORIES = [
@@ -115,12 +179,14 @@ export const CATEGORIES = [
 ];
 
 /** query({category,q,sort,page,perPage}) -> {items,total,page,pages} */
-export function query({ category = 'all', q = '', sort = 'playing', page = 1, perPage = 48 } = {}) {
+export function query({ category = 'all', q = '', sort = 'playing', page = 1, perPage = 48, year = 0, maturity = '' } = {}) {
   const rows = all();
   const low = String(q).trim().toLowerCase();
   let items = rows.filter(r =>
     (category === 'all'
       || (category === 'featured' ? r.featured : r.cats.includes(category)))
+    && (!year || r.year === Number(year))
+    && (!maturity || r.maturity === maturity)
     && (!low || r.name.toLowerCase().includes(low)
         || r.creator.toLowerCase().includes(low)
         || r.desc.toLowerCase().includes(low)));
@@ -146,6 +212,34 @@ export function counts() {
   m.set('featured', all().filter(r => r.featured).length);
   m.set('all', all().length);
   return m;
+}
+
+/** Years experiences were made in, newest first, with how many each holds. */
+export function years() {
+  const m = new Map();
+  for (const r of all()) if (r.year) m.set(r.year, (m.get(r.year) || 0) + 1);
+  return [...m.entries()].sort((a, b) => b[0] - a[0]).map(([year, n]) => ({ year, n }));
+}
+/** The maturity ratings the catalogue states, with how many each holds. */
+export function maturities() {
+  const m = new Map();
+  for (const r of all()) if (maturityName(r.maturity)) m.set(r.maturity, (m.get(r.maturity) || 0) + 1);
+  return [...m.entries()].map(([id, n]) => ({ id, name: maturityName(id), n })).sort((a, b) => b.n - a.n);
+}
+
+/** Experiences like this one: the same creator first, then shared categories. From the catalogue only. */
+export function related(row, n = 12) {
+  if (!row) return [];
+  const cats = new Set(row.cats.filter(c => c !== 'popular'));
+  const out = [];
+  for (const r of all()) {
+    if (r.id === row.id) continue;
+    let score = r.creator && r.creator === row.creator ? 4 : 0;
+    for (const c of r.cats) if (cats.has(c)) score += 1;
+    if (score) out.push([score, r]);
+  }
+  out.sort((a, b) => b[0] - a[0] || b[1].playing - a[1].playing);
+  return out.slice(0, n).map(x => x[1]);
 }
 
 export const playersOnline = () => all().reduce((n, r) => n + r.playing, 0);
@@ -345,8 +439,8 @@ export async function servers(placeId, { limit = 10 } = {}) {
 }
 
 export default {
-  load, peek, isLoaded, loadError, all, query, byId, counts,
-  deepLink, mobileLink, webLink, startLink, launchLink, isMobile,
+  load, peek, isLoaded, loadError, all, query, byId, counts, asOf, fmtDay, countWhen, maturityName, years, maturities, related,
+  deepLink, mobileLink, webLink, startLink, launchLink, isMobile, device, deviceGuide, iconUrl,
   CATEGORIES, playersOnline, bridge, refreshPlaying, refreshVotes,
   searchLive, fetchArt, avatarHeadshot, servers, liveStatus, MIRRORS,
 };

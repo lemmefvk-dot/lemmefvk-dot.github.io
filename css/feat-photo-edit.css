@@ -69,3 +69,7 @@
 
 @media (prefers-reduced-motion:reduce){ .pe{animation:none} }
 body.reduce-motion .pe{animation:none}
+
+/* one-tap looks (Adjust pane) */
+.pe__looks{flex-wrap:wrap}
+.pe__looks button{flex:1 1 auto}

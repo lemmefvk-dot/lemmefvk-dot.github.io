@@ -57,6 +57,17 @@ const CSS = `
 .arx-hm__k:disabled{cursor:default}
 .arx-hm__k:disabled:not(.is-right):not(.is-wrong){opacity:.55}
 .arx-hm__sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* the Arcade's "Larger text" (ctx.bigText): bigger letters on the keys and in the bars */
+.arx-hm.is-big .arx-hm__k{font-size:clamp(17px,4.3cqw,23px)}
+.arx-hm.is-big .arx-hm__chip,.arx-hm.is-big .arx-hm__btn{font-size:15px}
+.arx-hm.is-big .arx-hm__stats{font-size:15px}
+/* a short window (the Arcade's smallest is 380 × 460): a smaller picture and tighter rows, so the keys stay on screen */
+@container (max-height:420px){
+  .arx-hm__stage{min-height:56px}
+  .arx-hm__chip,.arx-hm__btn{padding:5px 8px}
+  .arx-hm__k{height:clamp(26px,8.4cqh,40px)}
+  .arx-hm.is-big .arx-hm__chip,.arx-hm.is-big .arx-hm__btn,.arx-hm.is-big .arx-hm__stats{font-size:13px}
+}
 @media (hover:hover){.arx-hm__k:not(:disabled):hover{filter:brightness(1.2)}}
 `;
 
@@ -164,6 +175,7 @@ export default {
 
     function paint() {
       if (dead) return;
+      root.classList.toggle('is-big', !!ctx.bigText);
       const cat = S.cat === 'all' ? 'All categories' : CATEGORIES[S.cat].name;
       statsEl.replaceChildren(h('span', {}, 'Wins ', h('b', { text: String(P.wins) })), ' · ', h('span', {}, 'Losses ', h('b', { text: String(P.losses) })),
         ' · ', h('span', {}, 'Streak ', h('b', { text: String(P.streak) })), ' · ', h('span', {}, 'Best streak ', h('b', { text: String(P.bestStreak) })), ' · ', cat);
@@ -180,13 +192,15 @@ export default {
       sf.begin();
       const W = sf.w, H = sf.h, now = performance.now();
       const hue = cat();
+      /* "Larger text" in the Arcade's options: the word and the misses about a third bigger */
+      const k = ctx.bigText ? 1.36 : 1;
       const bg = g.createLinearGradient(0, 0, 0, H);
       bg.addColorStop(0, `hsl(${hue} 40% 14%)`);
       bg.addColorStop(1, '#07080f');
       g.fillStyle = bg;
       g.fillRect(0, 0, W, H);
       /* the scene: gallows on the left, word along the bottom */
-      const wordH = Math.min(H * 0.3, 90);
+      const wordH = Math.min(H * (k > 1 ? 0.36 : 0.3), 90 * k);
       const sceneH = H - wordH, u = Math.max(20, Math.min(sceneH / 10, W / 16));
       const gx = W / 2 - u * 2.6, gy = sceneH - u * 0.9;
       S.geo = { x: gx, y: gy, w: u, h: sceneH };
@@ -204,12 +218,13 @@ export default {
       figure(g, gx + u * 3.6, gy - u * 7.2, u, now);
       /* the word */
       const n = S.word.length;
-      const slot = Math.max(16, Math.min(46, (W - 24) / Math.max(n, 6) - 6));
+      const slot = Math.max(16, Math.min(46 * k, (W - 24) / Math.max(n, 6) - 6));
       const total = n * (slot + 6) - 6;
       let x = (W - total) / 2;
       const y = sceneH + wordH * 0.55;
       g.textAlign = 'center'; g.textBaseline = 'alphabetic';
-      g.font = `800 ${Math.round(slot * 0.95)}px ${FONT}`;
+      S.geo.font = Math.round(slot * 0.95);
+      g.font = `800 ${S.geo.font}px ${FONT}`;
       for (const ch of S.word) {
         const shown = !S.paused && (S.right.includes(ch) || S.over === 'lose');
         g.fillStyle = S.right.includes(ch) ? '#8cf0b0' : '#ff9aa8';
@@ -219,13 +234,17 @@ export default {
         x += slot + 6;
       }
       /* misses */
-      g.font = `600 ${Math.max(11, Math.round(u * 0.6))}px ${FONT}`;
+      /* sized from the usual scene, so the bigger word row does not shrink the misses with the gallows */
+      const uText = Math.max(20, Math.min((H - Math.min(H * 0.3, 90)) / 10, W / 16));
+      const small = Math.max(11 * k, Math.round(uText * 0.6 * k)), top = k > 1 ? small + 6 : 24;
+      S.geo.small = small;
+      g.font = `600 ${small}px ${FONT}`;
       g.fillStyle = 'rgba(255,170,185,.9)';
       g.textAlign = 'right';
-      g.fillText(S.wrong.length ? S.wrong.map(c => c.toUpperCase()).join(' ') : '', W - 14, 24);
+      g.fillText(S.wrong.length ? S.wrong.map(c => c.toUpperCase()).join(' ') : '', W - 14, top);
       g.textAlign = 'left';
       g.fillStyle = 'rgba(255,255,255,.65)';
-      g.fillText(`${MAX_WRONG - S.wrong.length} ${MAX_WRONG - S.wrong.length === 1 ? 'life' : 'lives'} left`, 14, 24);
+      g.fillText(`${MAX_WRONG - S.wrong.length} ${MAX_WRONG - S.wrong.length === 1 ? 'life' : 'lives'} left`, 14, top);
       if (S.paused) {
         g.fillStyle = 'rgba(5,6,12,.72)'; g.fillRect(0, 0, W, H);
         g.fillStyle = '#fff'; g.textAlign = 'center'; g.font = `700 ${Math.round(u)}px ${FONT}`; g.fillText('Paused', W / 2, H / 2);
@@ -318,6 +337,7 @@ export default {
         word: S.word, masked: masked(), right: S.right.slice(), wrong: S.wrong.slice(), parts: S.wrong.length, over: S.over, paused: S.paused,
         category: S.cat, wins: P.wins, losses: P.losses, streak: P.streak, bestStreak: P.bestStreak, ended: S.ended, words: pool().length,
         keys: [...keys.entries()].filter(([, b]) => b.disabled).map(([k]) => k).join(''),
+        bigText: !!ctx.bigText, font: S.geo.font || 0, small: S.geo.small || 0,
       }),
       /* test hook — nothing in the game calls it: word(w) plays that word next */
       hook(cmd, arg) {

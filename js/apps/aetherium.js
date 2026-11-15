@@ -16,12 +16,18 @@ const SETTINGS = 'portal.aetherium';
 const SEARCH_PREFIX = '__search__';
 const MAX_BOX = 132;      /* matches .ch__box textarea's max-height */
 const MAX_HISTORY = 60;
+/* the conversation itself, kept on this device (a separate key from SETTINGS,
+   which the model sheet writes whole). Text, cards and chips only. */
+const CHAT = 'portal.aetherium_chat';
+const MAX_SAVED = 80;      /* turns kept; the oldest go first */
 
 /* sidebar prompts: [label, what it actually sends, icon] */
 const STARTERS = [
   ['System status',      'system status',      'activity'],
+  ["What's due today?",  "what's due today",   'check-square'],
+  ['Start focus',        'start focus',        'clock'],
+  ['Screen time today',  'screen time today',  'bar-chart'],
   ['Top rated anime',    'top rated anime',    'star'],
-  ['Find a racing game', 'find a racing game', 'gamepad'],
   ['Open Lens',          'open lens',          'scan'],
   ['Dark mode',          'dark mode',          'moon'],
   ['What can you do?',   'what can you do',    'help-circle'],
@@ -29,9 +35,9 @@ const STARTERS = [
 
 /* the four on the empty state */
 const HERO_PROMPTS = [
+  ["What's due today?",  "what's due today"],
+  ['Start focus',        'start focus'],
   ['System status',      'system status'],
-  ['Top rated anime',    'top rated anime'],
-  ['Find a racing game', 'find a racing game'],
   ['What can you do?',   'what can you do'],
 ];
 
@@ -73,7 +79,26 @@ defineApp({
       sheet: false,    // model sheet shown instead of the log
       gen: 0,          // bumped on reset; a stale answer checks it before landing
       alive: true,     // false after teardown; async work checks it
+      log: [],         // the saved conversation: { who:'me'|'ae'|'sep', text, … }
     };
+
+    /* ---------------- saved conversation ---------------- */
+    const cleanCard = c => ({
+      title: String(c.title || 'Untitled'), icon: c.icon || '',
+      lines: (c.lines || []).map(String),
+      /* a card with a function behind it cannot be saved; one with an address can */
+      ...(typeof c.open === 'string' ? { open: c.open } : {}),
+      ...(typeof c.file === 'string' ? { file: c.file } : {}),
+    });
+    const loadLog = () => {
+      const v = store.get(CHAT);
+      return Array.isArray(v) ? v.filter(e => e && ['me', 'ae', 'sep'].includes(e.who)).slice(-MAX_SAVED) : [];
+    };
+    const saveLog = () => {
+      if (S.log.length > MAX_SAVED) S.log = S.log.slice(-MAX_SAVED);
+      store.set(CHAT, S.log.map(e => ({ ...e })));
+    };
+    const record = entry => { S.log.push({ ts: Date.now(), ...entry }); saveLog(); syncTools(); };
 
     /* saved settings -> engine config, before anything is painted */
     const saved = store.get(SETTINGS) || {};
@@ -116,12 +141,53 @@ defineApp({
       'data-tip': 'Model', 'aria-label': 'Model settings',
       onclick: () => (S.sheet ? closeSheet() : openSheet()),
     }, icon('sliders'));
-    win.setTools(toolNew, toolSheet);
+    const toolExport = h('button.ibtn.tip', {
+      'data-tip': 'Export conversation', 'aria-label': 'Export conversation', onclick: () => exportLog(),
+    }, icon('download'));
+    const toolClear = h('button.ibtn.tip', {
+      'data-tip': 'Clear history', 'aria-label': 'Clear history', onclick: () => clearHistory(),
+    }, icon('trash'));
+    win.setTools(toolNew, toolExport, toolClear, toolSheet);
 
     const syncSubtitle = () => win.setSubtitle(modeLabel());
     function syncTools() {
       toolSheet.classList.toggle('is-on', S.sheet);
       toolNew.disabled = S.sheet;
+      const has = S.log.some(e => e.who !== 'sep');
+      toolExport.disabled = S.sheet || !has;
+      toolClear.disabled = S.sheet || !S.log.length;
+    }
+
+    /** The conversation as a Markdown file. Only what is on screen: no settings, no key. */
+    function exportLog() {
+      const lines = [`# ${config.name} conversation`, '', `Exported ${new Date().toLocaleString()}`, ''];
+      for (const e of S.log) {
+        if (e.who === 'sep') { lines.push('---', ''); continue; }
+        lines.push(`**${e.who === 'me' ? 'You' : config.name}:** ${e.text || ''}`, '');
+        if (e.did) lines.push(`_Did: ${e.did}_`, '');
+        for (const c of e.cards || []) lines.push(`- ${c.title}${(c.lines || []).length ? ` — ${c.lines.join('; ')}` : ''}`);
+        if ((e.cards || []).length) lines.push('');
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = h('a', { href: url, download: `staticum-${new Date().toISOString().slice(0, 10)}.md`, rel: 'noopener', hidden: true });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+
+    async function clearHistory() {
+      if (!S.log.length) return;
+      const yes = await api.confirm({
+        title: 'Clear the conversation?',
+        message: 'This removes everything Staticum and you said here, on this device. It cannot be undone.',
+        ok: 'Clear', danger: true,
+      });
+      if (!yes || !S.alive) return;
+      S.log = [];
+      saveLog();
+      resetView();
     }
 
     /* ---------------- composer ------------- */
@@ -199,7 +265,8 @@ defineApp({
         h('div.ae-chips', HERO_PROMPTS.map(([label, text]) => chipBtn(label, text))));
     }
 
-    function addMe(text) {
+    function addMe(text, saved = false) {
+      if (!saved) record({ who: 'me', text });
       pushTurn(h('div.ae-turn.ae-turn--me',
         h('div.ae-turn__ico', icon('user')),
         h('div.ae-turn__b',
@@ -227,7 +294,14 @@ defineApp({
       }, kids);
     }
 
-    function addAnswer(res) {
+    function addAnswer(res, saved = false, showChips = true) {
+      if (!saved) {
+        record({
+          who: 'ae', text: res.say || '', kind: res.kind || 'answer', did: res.did || null,
+          cards: (res.cards || []).map(cleanCard),
+          chips: (res.chips || []).filter(c => c && c.label).map(c => ({ label: String(c.label), send: String(c.send || '') })),
+        });
+      }
       const who = h('div.ae-turn__who', { text: config.name });
       const head = res.kind === 'unsure'
         ? h('div.row', who, h('span.badge.badge--warn', { text: 'no skill for this' }))
@@ -236,7 +310,7 @@ defineApp({
       const body = h('div.ae-turn__b', head, h('div.ae-turn__t', { text: res.say || '' }));
       if (res.did) body.appendChild(h('div.ae-turn__did', icon('check'), h('span', { text: res.did })));
       for (const card of res.cards || []) body.appendChild(cardEl(card));
-      const chips = (res.chips || []).filter(c => c && c.label);
+      const chips = showChips ? (res.chips || []).filter(c => c && c.label) : [];
       if (chips.length) body.appendChild(h('div.ae-chips', chips.map(c => chipBtn(c.label, c.send))));
 
       pushTurn(h('div.ae-turn.ae-turn--ae', h('div.ae-turn__ico', icon('sparkles')), body));
@@ -281,7 +355,8 @@ defineApp({
       if (win.el.classList.contains('is-active') && !S.sheet) ta.focus();
     }
 
-    function newConversation() {
+    /** Back to the empty state (the saved conversation has already been dealt with). */
+    function resetView() {
       closeSheet();
       api.clear(log);
       S.turns = 0;
@@ -290,7 +365,34 @@ defineApp({
       S.busy = false;
       log.appendChild(hero());
       setComposer('');
+      syncTools();
       ta.focus();
+    }
+
+    /** A fresh start: earlier turns stay above a divider (Clear history removes them). */
+    function newConversation() {
+      closeSheet();
+      const last = S.log[S.log.length - 1];
+      if (!last || last.who === 'sep') { setComposer(''); ta.focus(); return; }
+      S.gen += 1;
+      S.busy = false;
+      S.hIdx = -1;
+      record({ who: 'sep', text: 'New conversation' });
+      pushTurn(sepEl());
+      setComposer('');
+      ta.focus();
+    }
+    const sepEl = () => h('div.row', { role: 'separator', style: { justifyContent: 'center', margin: 'var(--sp-4) 0', opacity: '.7' } },
+      h('small.dim', { text: 'New conversation' }));
+
+    /** Paint the saved turns, newest last. Only the last answer keeps its follow-up chips. */
+    function restore() {
+      const lastAe = S.log.map(e => e.who).lastIndexOf('ae');
+      S.log.forEach((e, i) => {
+        if (e.who === 'me') addMe(e.text, true);
+        else if (e.who === 'sep') pushTurn(sepEl());
+        else addAnswer({ say: e.text, kind: e.kind, did: e.did, cards: e.cards, chips: e.chips }, true, i === lastAe);
+      });
     }
 
     /* ---------------- sidebar -------------- */
@@ -500,10 +602,11 @@ defineApp({
     });
 
     /* ---------------- first paint ---------- */
+    S.log = loadLog();
     syncSubtitle();
     syncTools();
     paintSide();
-    log.appendChild(hero());
+    if (S.log.length) restore(); else log.appendChild(hero());
     grow();
     syncSend();
     if (opts && opts.ask) send(String(opts.ask));

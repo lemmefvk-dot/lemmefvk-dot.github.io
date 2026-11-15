@@ -190,63 +190,215 @@ export function parseTwelveQuote(j, sym = j.symbol) {
   };
 }
 
-/* ---------------- the practice account ---------------------------- */
-export function newAccount(cashCents, now = Date.now()) {
-  return { cash0: cashCents, cash: cashCents, positions: {}, orders: [], realised: 0, seq: 1, started: now };
+/* ---------------- the practice account ----------------------------
+   Practice costs are the person's own settings, never market data:
+     costs = { feeFlat: cents per filled order, feeBps: basis points of
+               the order's value (100 = 1%), slipBps: basis points the fill
+               price moves against you on market and stop orders }
+   A buy pays its fee on top and the fee joins the position's cost, so a
+   sale's realised profit or loss is net of both fees. Slippage moves a
+   market or stop fill away from the real quote (up for a buy, down for a
+   sell); a limit order never fills past its limit. With every cost at 0
+   (the default) fills are exactly at the real quote. */
+export const COST_LIMITS = { feeFlat: 100000, feeBps: 1000, slipBps: 500 };
+export function cleanCosts(c) {
+  const o = c && typeof c === 'object' ? c : {};
+  const n = (v, max) => (Number.isSafeInteger(v) && v >= 0 ? Math.min(v, max) : 0);
+  return { feeFlat: n(o.feeFlat, COST_LIMITS.feeFlat), feeBps: n(o.feeBps, COST_LIMITS.feeBps), slipBps: n(o.slipBps, COST_LIMITS.slipBps) };
 }
-export const reservedCash = a => a.orders.filter(o => o.status === 'open' && o.side === 'buy').reduce((s, o) => s + costOf(o.qty, o.limit), 0);
+export const hasCosts = c => !!(c && (c.feeFlat || c.feeBps || c.slipBps));
+export const feeOf = (total, costs) => { const c = cleanCosts(costs); return c.feeFlat + mulDiv(total, c.feeBps, 10000); };
+/** the price an order fills at, given the real quote */
+export function fillPriceOf(side, type, quote, costs, limit = null) {
+  const slip = mulDiv(quote, cleanCosts(costs).slipBps, 10000);
+  let p = side === 'buy' ? quote + slip : Math.max(1, quote - slip);
+  if (type === 'limit' && limit != null) p = side === 'buy' ? Math.min(p, limit) : Math.max(p, limit);
+  return p;
+}
+
+export function newAccount(cashCents, now = Date.now(), costs = null) {
+  return { cash0: cashCents, cash: cashCents, positions: {}, orders: [], realised: 0, seq: 1, started: now, costs: cleanCosts(costs) };
+}
+export const reservedCash = a => a.orders.filter(o => o.status === 'open' && o.side === 'buy').reduce((s, o) => { const t = costOf(o.qty, o.limit); return s + t + feeOf(t, a.costs); }, 0);
 export const reservedQty = (a, sym) => a.orders.filter(o => o.status === 'open' && o.side === 'sell' && o.sym === sym).reduce((s, o) => s + o.qty, 0);
 export const availableCash = a => a.cash - reservedCash(a);
 
-function applyFill(a, o, price, now) {
+function applyFill(a, o, quote, now) {
+  const price = fillPriceOf(o.side, o.type, quote, a.costs, o.limit);
   const total = costOf(o.qty, price);
+  const fee = feeOf(total, a.costs);
   if (o.side === 'buy') {
-    a.cash -= total;
+    a.cash -= total + fee;
     const p = a.positions[o.sym] || { qty: 0, cost: 0 };
-    p.qty += o.qty; p.cost += total;
+    p.qty += o.qty; p.cost += total + fee;
     a.positions[o.sym] = p;
   } else {
     const p = a.positions[o.sym];
     const basis = o.qty === p.qty ? p.cost : mulDiv(p.cost, o.qty, p.qty);
-    a.cash += total;
-    o.pnl = total - basis;
+    a.cash += total - fee;
+    o.pnl = total - fee - basis;
     a.realised += o.pnl;
     p.qty -= o.qty; p.cost -= basis;
     if (p.qty === 0) delete a.positions[o.sym];
   }
   o.status = 'filled'; o.price = price; o.total = total; o.filledAt = now;
+  o.fee = fee; o.quote = quote;
 }
-/** price is the real quote in cents. Returns { ok, order } or { ok:false, error }. Mutates `a`. */
-export function placeOrder(a, { sym, side, type, qty, limit = null, price, now = Date.now(), whole = true }) {
+/** What an order would cost or bring in at the real quote, with the account's practice costs. */
+export function estimate(a, { side, type, qty, quote, limit = null }) {
+  const price = fillPriceOf(side, type, quote, a.costs, limit);
+  const total = costOf(qty, price);
+  const fee = feeOf(total, a.costs);
+  return { price, total, fee, net: side === 'buy' ? total + fee : total - fee, slip: Math.abs(price - quote) };
+}
+/** price is the real quote in cents. Returns { ok, order } or { ok:false, error }. Mutates `a`.
+    type: market | limit | stop (a stop-loss: sell once a real price is at or below `stop`). */
+export function placeOrder(a, { sym, side, type, qty, limit = null, stop = null, price, now = Date.now(), whole = true, note = '' }) {
   const bad = error => ({ ok: false, error });
   if (!Number.isSafeInteger(qty) || qty <= 0) return bad('Enter a quantity above zero.');
   if (whole && qty % UNIT) return bad('Stocks trade in whole shares here.');
   if (!(price >= 1)) return bad('This price is under one cent, which practice trading cannot hold exactly.');
   if (type === 'limit' && !(Number.isSafeInteger(limit) && limit >= 1)) return bad('Enter a limit price.');
+  if (type === 'stop' && side !== 'sell') return bad('A stop-loss sells: it is for shares you hold.');
+  if (type === 'stop' && !(Number.isSafeInteger(stop) && stop >= 1)) return bad('Enter a stop price.');
   if (side === 'sell') {
     const have = (a.positions[sym]?.qty || 0) - reservedQty(a, sym);
     if (qty > have) return bad(`You have ${fmtQty(Math.max(0, have))} available to sell (open sell orders hold the rest).`);
   } else {
-    const need = costOf(qty, type === 'limit' && price > limit ? limit : price);   /* a resting limit order holds cash at its limit */
+    const at = type === 'limit' && price > limit ? limit : fillPriceOf('buy', type, price, a.costs, limit);   /* a resting limit order holds cash at its limit */
+    const t = costOf(qty, at), need = t + feeOf(t, a.costs);
     if (need > availableCash(a)) return bad(`Not enough practice cash: this needs ${fmtMoney(need)}, you have ${fmtMoney(availableCash(a))} free.`);
   }
-  const o = { id: a.seq++, sym, side, type, qty, limit: type === 'limit' ? limit : null, status: 'open', placedAt: now, price: null, total: null, filledAt: null, pnl: null };
+  const o = { id: a.seq++, sym, side, type, qty, limit: type === 'limit' ? limit : null, stop: type === 'stop' ? stop : null, status: 'open', placedAt: now, price: null, total: null, filledAt: null, pnl: null, note: cleanNote(note) };
   a.orders.unshift(o);
-  const crossed = type === 'market' || (side === 'buy' ? price <= limit : price >= limit);
-  if (crossed) applyFill(a, o, price, now);
+  if (crossedBy(o, price)) applyFill(a, o, price, now);
   return { ok: true, order: o };
 }
-/** a fresh real price for sym: fills every open limit order it has crossed. Returns the filled orders. */
+const crossedBy = (o, price) => (o.type === 'market' ? true : o.type === 'stop' ? price <= o.stop : o.side === 'buy' ? price <= o.limit : price >= o.limit);
+/** a fresh real price for sym: fills every open limit and stop order it has crossed. Returns the filled orders.
+    This is the only place a waiting order fills, so it happens only when StaticOS has just fetched that price. */
 export function checkLimits(a, sym, price, now = Date.now()) {
   const done = [];
   for (const o of [...a.orders].reverse()) {          /* oldest first */
     if (o.status !== 'open' || o.sym !== sym) continue;
-    if (o.side === 'buy' ? price <= o.limit : price >= o.limit) {
-      if (o.side === 'buy' && costOf(o.qty, price) > a.cash) continue;
+    if (crossedBy(o, price)) {
+      if (o.side === 'buy') { const e = estimate(a, { side: 'buy', type: o.type, qty: o.qty, quote: price, limit: o.limit }); if (e.net > a.cash) continue; }
+      if (o.side === 'sell' && (a.positions[sym]?.qty || 0) < o.qty) { o.status = 'cancelled'; o.why = 'not enough held'; continue; }
       applyFill(a, o, price, now); done.push(o);
     }
   }
   return done;
+}
+
+/* ---------------- journal notes, results, CSV, archive ------------ */
+export const NOTE_MAX = 280;
+export const cleanNote = s => String(s ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, NOTE_MAX);
+export function setNote(a, id, text) {
+  const o = a.orders.find(x => x.id === id);
+  if (o) o.note = cleanNote(text);
+  return !!o;
+}
+/** Results from closed practice trades only: every filled sell has a realised profit or loss. null when there are none. */
+export function results(a) {
+  const closed = a.orders.filter(o => o.status === 'filled' && o.side === 'sell' && o.pnl != null);
+  if (!closed.length) return null;
+  const pnl = closed.map(o => o.pnl);
+  const wins = pnl.filter(x => x > 0), losses = pnl.filter(x => x < 0);
+  const fees = a.orders.filter(o => o.status === 'filled').reduce((s, o) => s + (o.fee || 0), 0);
+  return {
+    n: closed.length, wins: wins.length, losses: losses.length, even: closed.length - wins.length - losses.length,
+    winRate: wins.length / closed.length, total: pnl.reduce((s, x) => s + x, 0),
+    best: wins.length ? Math.max(...wins) : null, worst: losses.length ? Math.min(...losses) : null, fees,
+  };
+}
+const csvText = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+const csvMoney = c => (c == null ? '' : (c < 0 ? '-' : '') + Math.floor(Math.abs(c) / 100) + '.' + String(Math.abs(c) % 100).padStart(2, '0'));
+const iso = ms => (ms ? new Date(ms).toISOString() : '');
+/** Every order of a practice account, oldest first. Money is plain decimals (a minus sign only on a loss);
+    text cells that start with = + - @ get an apostrophe so a spreadsheet can't run them. */
+export function tradesCsv(a) {
+  const rows = [['Order', 'Placed (UTC)', 'Filled (UTC)', 'Symbol', 'Side', 'Type', 'Quantity', 'Limit', 'Stop', 'Fill price', 'Real quote at fill', 'Total', 'Practice fee', 'Realised P/L', 'Status', 'Note'].join(',')];
+  for (const o of [...a.orders].reverse()) {
+    rows.push([o.id, iso(o.placedAt), iso(o.filledAt), csvText(o.sym), o.side, o.type, fmtQty(o.qty), csvMoney(o.limit), csvMoney(o.stop), csvMoney(o.price), csvMoney(o.quote ?? (o.price != null && !o.fee ? o.price : null)),
+      csvMoney(o.total), csvMoney(o.status === 'filled' ? o.fee || 0 : null), csvMoney(o.pnl), o.status, csvText(o.note || '')].join(','));
+  }
+  return rows.join('\r\n') + '\r\n';
+}
+/** The account as it was when reset, kept with what it was worth then (when every position had a price). */
+export function archiveOf(a, prices, now = Date.now()) {
+  const P = portfolio(a, prices);
+  return { ...JSON.parse(JSON.stringify(a)), endedAt: now, endValue: P.missing ? null : P.equity, endMissing: P.missing };
+}
+export const MAX_ARCHIVES = 12;
+
+/* ---------------- price lines ----------------------------------- */
+/* A price line is a level you draw on a symbol's chart. `above` says which
+   side of the price it was drawn on; it is reached when a fresh real price
+   gets to it. Lines are checked only when StaticOS fetches a price. */
+export function newLine(price, quote, now = Date.now()) {
+  return { id: 'l' + now.toString(36) + Math.random().toString(36).slice(2, 6), price, above: price > quote, at: now, hit: null };
+}
+export function checkLines(lines, price, now = Date.now()) {
+  const hit = [];
+  for (const l of lines || []) {
+    if (l.hit) continue;
+    if (l.above ? price >= l.price : price <= l.price) { l.hit = now; l.hitPrice = price; hit.push(l); }
+  }
+  return hit;
+}
+
+/* ---------------- lesson mode ------------------------------------ */
+/* What each indicator measures, in plain words, and what it reads now on
+   this chart. Every "now" sentence is computed from the bars; none of it
+   says what comes next. */
+export const LESSONS = {
+  sma: { title: 'Simple moving average (SMA 20 and 50)', what: 'The average close of the last 20 (or 50) bars, drawn bar by bar. It smooths the day-to-day wiggles so the general direction is easier to see.', read: 'Price above its average means recent closes have been higher than the period’s average; below means lower. A short average crossing a long one is often pointed out on charts.', careful: 'It is built from past closes, so it always lags the price, and in a sideways market it crosses back and forth a lot.' },
+  ema: { title: 'Exponential moving average (EMA 20)', what: 'An average like the SMA, but recent bars count for more (each new close gets a weight of 2/21), so it follows the price more closely.', read: 'Read it like the SMA: which side of it the price is on, and whether it is rising or falling.', careful: 'It reacts faster than the SMA, which also means it reacts to noise.' },
+  bb: { title: 'Bollinger Bands (20, 2)', what: 'The 20-bar average with a band two standard deviations above and below it. The bands widen when prices swing more and narrow when they calm down.', read: 'Where the close sits inside the band says how far it is from its recent average, measured against how much it usually moves.', careful: 'A close at a band is not a signal by itself; in a strong move prices can ride along a band for a long time.' },
+  rsi: { title: 'Relative Strength Index (RSI 14)', what: 'Compares the size of the up moves with the down moves over the last 14 bars, on a scale from 0 to 100 (Wilder’s method).', read: 'Above 70 is often called stretched upward (“overbought”), below 30 stretched downward (“oversold”), and 50 is balanced.', careful: 'These are labels for past moves, not forecasts: RSI can stay above 70 or below 30 for weeks.' },
+  macd: { title: 'MACD (12, 26, 9)', what: 'The difference between a 12-bar and a 26-bar EMA (the MACD line), a 9-bar EMA of that line (the signal) and the gap between the two (the histogram).', read: 'The line above zero means the shorter average is above the longer one. The histogram shows whether the line is above or below its signal, and by how much.', careful: 'Built from moving averages, so it lags; crossings happen often in choppy markets.' },
+  vol: { title: 'Volume', what: 'How many shares (or coins) traded in each bar. The bars under the price chart show it.', read: 'A bar much taller than usual means much more trading than usual in that period.', careful: 'Volume says how much traded, not why, and not which way prices go next. Twelve Data sends no volume for many crypto pairs.' },
+};
+const pctOf = (a, b) => (b ? ((a / b - 1) * 100) : null);
+const sgn = x => (x > 0 ? '+' : '') + x.toFixed(2);
+/** -> { key: "Now: …" } read from the last bar of `bars` with indicators `I` computed on them */
+export function lessonNow(bars, I) {
+  const n = bars.length, i = n - 1;
+  if (!n) return {};
+  const c = bars[i].c, v = x => (x == null ? null : x);
+  const out = {};
+  const s20 = v(I.sma20[i]), s50 = v(I.sma50[i]);
+  out.sma = s20 == null ? 'Now: there are too few bars for a 20-bar average.' : `Now: the last close ${f2(c)} is ${c >= s20 ? 'above' : 'below'} its 20-bar average ${f2(s20)} (${sgn(pctOf(c, s20))}%)` + (s50 == null ? ', and there are too few bars for the 50-bar one.' : `, and ${c >= s50 ? 'above' : 'below'} its 50-bar average ${f2(s50)}. The 20 is ${s20 >= s50 ? 'above' : 'below'} the 50.`);
+  const e = v(I.ema20[i]);
+  out.ema = e == null ? 'Now: there are too few bars.' : `Now: EMA 20 is ${f2(e)}; the last close is ${c >= e ? 'above' : 'below'} it by ${f2(Math.abs(c - e))}.`;
+  const lo = v(I.bb.lo[i]), up = v(I.bb.up[i]), mid = v(I.bb.mid[i]);
+  out.bb = lo == null ? 'Now: there are too few bars.' : `Now: lower ${f2(lo)}, middle ${f2(mid)}, upper ${f2(up)}. The close sits at ${up > lo ? Math.round(((c - lo) / (up - lo)) * 100) : 50}% of the way from the lower band to the upper one.`;
+  const r = v(I.rsi[i]);
+  out.rsi = r == null ? 'Now: there are too few bars.' : `Now: RSI 14 is ${r.toFixed(1)}, ${r >= 70 ? 'at or above 70' : r <= 30 ? 'at or below 30' : 'between 30 and 70'}.`;
+  const ml = v(I.macd.line[i]), ms = v(I.macd.signal[i]), mh = v(I.macd.hist[i]);
+  const hs = mh == null ? '' : mh.toFixed(3), level = mh == null || Number(hs) === 0;
+  out.macd = ml == null || ms == null ? 'Now: there are too few bars.' : `Now: the MACD line is ${ml.toFixed(3)} (${ml >= 0 ? 'above' : 'below'} zero) and the signal ${ms.toFixed(3)}, so the histogram is ${level ? 'about 0 (the two are level)' : `${mh > 0 ? '+' : ''}${hs} (the line is ${mh > 0 ? 'above' : 'below'} its signal)`}.`;
+  const vols = bars.map(b => b.v);
+  if (vols[i] == null) out.vol = 'Now: the provider sent no volume for this symbol.';
+  else if (n > 20 && vols.slice(n - 21, n - 1).every(x => x != null)) { const avg = vols.slice(n - 21, n - 1).reduce((s, x) => s + x, 0) / 20; out.vol = `Now: the last bar traded ${Math.round(vols[i]).toLocaleString('en-US')}, ${avg ? (vols[i] / avg).toFixed(2) : 'n/a'} times the average of the 20 bars before it.`; }
+  else out.vol = `Now: the last bar traded ${Math.round(vols[i]).toLocaleString('en-US')}; there are too few bars for an average.`;
+  return out;
+}
+
+/* ---------------- comparing two symbols ---------------------------
+   Both series rebased to 0% at the first bar they share, matched on the
+   same date (daily bars) or the same moment (intraday bars). Only shared
+   bars are used, so a weekend crypto bar has no partner and is left out. */
+export function compareSeries(a, b, daily) {
+  const key = x => (daily ? x.d : x.t);
+  const mb = new Map(b.map(x => [key(x), x]));
+  const pairs = a.filter(x => mb.has(key(x))).map(x => [x, mb.get(key(x))]);
+  if (pairs.length < 2) return null;
+  const a0 = pairs[0][0].c, b0 = pairs[0][1].c;
+  return {
+    n: pairs.length, from: pairs[0][0], to: pairs[pairs.length - 1][0],
+    a: pairs.map(([x]) => (x.c / a0 - 1) * 100), b: pairs.map(([, y]) => (y.c / b0 - 1) * 100), bars: pairs.map(([x]) => x),
+  };
 }
 export function cancelOrder(a, id) {
   const o = a.orders.find(x => x.id === id && x.status === 'open');

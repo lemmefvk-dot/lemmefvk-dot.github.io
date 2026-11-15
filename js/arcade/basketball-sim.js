@@ -13,17 +13,30 @@
    thrown off the board. Nothing here is random — the same release
    always gives the same shot.
 
-   speedFor(p)    release speed for a meter value p (0..1)
-   newShot(p) / stepShot(s, dt) / runShot(p)
+   A three-pointer is the same physics from farther out: released
+   from a jump at 2.3 m, 6.75 m from the middle of the rim, at a
+   flatter 52° (so it peaks under the arena's ceiling). The same
+   meter value is the same fraction of that spot's perfect speed, so
+   the green zone still swishes, but a miss by the same margin lands
+   farther from the rim: it is harder, as it should be.
+
+   SPOTS          { free, three }: where a shot is released from
+   speedFor(p, spot)    release speed for a meter value p (0..1)
+   newShot(p, spot) / stepShot(s, dt) / runShot(p, spot)
+                  (spot defaults to the free-throw line)
    outcome(s)     'swish' | 'bank' | 'rim-in' | 'rim-out' | 'board-out' | 'short' | 'long'
    ============================================================ */
 
 export const G = 9.81;
 export const BALL_R = 0.12;
-export const REL = { x: 0, y: 2.15 };
 export const HOOP = { x: 4.2, y: 3.05, r: 0.225 };
 export const BOARD = { x: HOOP.x + 0.375, y0: 2.9, y1: 3.95 };
 export const ANGLE = 58 * Math.PI / 180;
+export const SPOTS = {
+  free: { id: 'free', x: 0, y: 2.15, angle: ANGLE, dist: 4.2 },
+  three: { id: 'three', x: HOOP.x - 6.75, y: 2.3, angle: 52 * Math.PI / 180, dist: 6.75 },
+};
+export const REL = SPOTS.free;
 export const P_STAR = 0.72;            /* the meter value of the perfect release */
 export const GREEN_LO = 0.68, GREEN_HI = 0.78;   /* the meter's green zone: every release in it is a clean swish */
 export const WINDOW = 0.06;            /* ± around P_STAR that counts as the green zone */
@@ -33,23 +46,24 @@ const SLOPE_OUT_HI = 0.55;             /* … and a release that is too hard goe
 const RIM_PT = 0.02;                   /* the rim is a tube about 2 cm thick */
 const DT = 1 / 480;
 
-/* the speed that puts the ball through the middle of the hoop */
-export const PERFECT_V = (() => {
-  const dx = HOOP.x - REL.x, dy = HOOP.y - REL.y, c = Math.cos(ANGLE), t = Math.tan(ANGLE);
+/* the speed that puts the ball through the middle of the hoop from a spot */
+export const perfectV = (spot = REL) => {
+  const dx = HOOP.x - spot.x, dy = HOOP.y - spot.y, c = Math.cos(spot.angle), t = Math.tan(spot.angle);
   return Math.sqrt(G * dx * dx / (2 * c * c * (dx * t - dy)));
-})();
+};
+export const PERFECT_V = perfectV(REL);
 
-export const speedFor = p => {
+export const speedFor = (p, spot = REL) => {
   const e = p - P_STAR, a = Math.abs(e);
   const d = a <= WINDOW ? SLOPE_IN * a : SLOPE_IN * WINDOW + (e > 0 ? SLOPE_OUT_HI : SLOPE_OUT) * (a - WINDOW);
-  return PERFECT_V * (1 + Math.sign(e) * d);
+  return perfectV(spot) * (1 + Math.sign(e) * d);
 };
 
-export function newShot(p) {
-  const v = speedFor(p);
+export function newShot(p, spot = REL) {
+  const v = speedFor(p, spot);
   return {
-    p, t: 0, acc: 0,
-    x: REL.x, y: REL.y, vx: v * Math.cos(ANGLE), vy: v * Math.sin(ANGLE),
+    p, t: 0, acc: 0, spot: spot.id,
+    x: spot.x, y: spot.y, vx: v * Math.cos(spot.angle), vy: v * Math.sin(spot.angle),
     spin: 0, rot: 0,
     rim: 0, board: 0, floor: 0,         /* touches */
     scored: false, passed: false,       /* passed: crossed the rim's height going down */
@@ -132,8 +146,8 @@ export function outcome(s) {
 }
 
 /* the whole shot, headless */
-export function runShot(p) {
-  const s = newShot(p);
+export function runShot(p, spot = REL) {
+  const s = newShot(p, spot);
   while (!s.done) stepShot(s, 0.05);
   return { ...s, result: outcome(s) };
 }

@@ -725,6 +725,25 @@ export default {
       },
       pause() { S.paused = true; clearTimeout(S.aiT); S.drag = null; paint(); },
       resume() { S.paused = false; paint(); scheduleAI(); },
+      /* what a watcher may see (./spectate.js 'fleet'): this player's own side only — their fleet with
+         the shots it took ('.' sea, 'o' their miss, 'S' a ship, 'x' hit, '#' sunk), and their own shots
+         with what each answer said. Never the other fleet: online this screen doesn't know it, and the
+         computer's (S.theirs) is never read here. */
+      spectate: () => {
+        let own = '';
+        const at = new Int8Array(SIZE * SIZE).fill(-1);
+        const ships = S.mine ? S.mine.fleet : S.ships;
+        ships.forEach((s, i) => { if (s) cellsOf(s).forEach(([r, c]) => { at[r * SIZE + c] = i; }); });
+        for (let i = 0; i < SIZE * SIZE; i++) {
+          const shot = !!S.mine && S.mine.shot[i] === 1, k = at[i];
+          if (k < 0) own += shot ? 'o' : '.';
+          else if (!shot) own += 'S';
+          else own += S.mine.hitsOn[k] === S.mine.fleet[k].len ? '#' : 'x';
+        }
+        const shots = rowsOf(S.know).join('').replace(/\?/g, '.');
+        return { k: 'fleet', own, shots, ph: S.phase === 'over' || S.over ? 'over' : S.phase === 'place' || S.phase === 'wait' ? 'place' : 'play',
+          turn: S.turn === 'me' ? 1 : -1, pl: [{ n: 'You' }, { n: oppName }], txt: statusEl.textContent, over: !!S.over };
+      },
       peek: () => ({
         mode, phase: S.phase, turn: S.turn, level: S.level, paused: S.paused, first: firstIsMe ? 'me' : 'them',
         ships: S.ships.map(s => (s ? { ...s } : null)), sel: S.sel, dragging: !!S.drag, placed: S.ships.filter(Boolean).length,

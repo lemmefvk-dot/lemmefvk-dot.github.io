@@ -14,19 +14,26 @@
    · Clear everything for a fresh, fuller board with more colours.
      The round ends when a bubble reaches the red line.
    · Every colour also has its own mark inside, so they can be
-     told apart without relying on colour.
+     told apart without relying on colour. With the Arcade's
+     colour-blind colours on (ctx.palette 'cb') the bubbles take the
+     Okabe–Ito colours (PALETTE_CB) instead, flat, with the mark in
+     dark ink on the light ones.
 
    Keys: ← → aim, Space / ↑ fire, C / X / ↓ swap with the next
    bubble. Mouse: move to aim, click to fire. Touch: drag to aim,
    lift your finger to fire.
    ============================================================ */
 import { clamp, hsl, FONT, coarse, rng, randomSeed, fitView, surface, ownsKey, sounder, looper, rr, prompt } from './kit.js';
+import { PALETTE_CB } from './index.js';
 
 const R = 16, COLS = 11, ROWS_MAX = 16, LIMIT = 12;
 const S3 = R * Math.sqrt(3);
 const W = COLS * 2 * R, CY = R + LIMIT * S3 + 46, H = CY + 40;
 const CX = W / 2;
 const HUES = [352, 38, 130, 195, 265, 312];
+/* the colour-blind set, in the same order: vermilion, orange, bluish green, sky blue, blue, reddish purple */
+const CB = [5, 0, 2, 1, 4, 6].map(i => PALETTE_CB[i]);
+const CB_LIGHT = [false, true, false, true, false, false];        /* the mark is drawn dark on these */
 const MIN_A = 12, MAX_A = 168;
 const SPEED = 640;
 
@@ -34,6 +41,7 @@ export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
+    const cb = () => ctx.palette === 'cb';
     const S = {
       state: 'ready',                      /* ready | play | dying | over */
       paused: false,
@@ -146,7 +154,7 @@ export default {
       if (reduced) return;
       for (let i = 0; i < 6; i++) {
         const a = Math.random() * Math.PI * 2, v = 40 + Math.random() * 90;
-        S.parts.push({ x: px(r, c), y: py(r), vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.3 + Math.random() * 0.3, hue: HUES[color] });
+        S.parts.push({ x: px(r, c), y: py(r), vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.3 + Math.random() * 0.3, hue: HUES[color], color });
       }
     }
     function dropLoose() {
@@ -221,14 +229,23 @@ export default {
 
     /* ------------------------------ drawing ------------------------------ */
     function bubble(g, x, y, color, r = R, a = 1) {
-      const h = HUES[color];
-      const grd = g.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r);
-      grd.addColorStop(0, hsl(h, 95, 78, a));
-      grd.addColorStop(1, hsl(h, 80, 42, a));
-      g.fillStyle = grd;
-      g.beginPath(); g.arc(x, y, r - 0.8, 0, Math.PI * 2); g.fill();
+      const flat = cb();
+      if (flat) {
+        g.globalAlpha = a;
+        g.fillStyle = CB[color];
+        g.beginPath(); g.arc(x, y, r - 0.8, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 1.5; g.stroke();
+        g.globalAlpha = 1;
+      } else {
+        const h = HUES[color];
+        const grd = g.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r);
+        grd.addColorStop(0, hsl(h, 95, 78, a));
+        grd.addColorStop(1, hsl(h, 80, 42, a));
+        g.fillStyle = grd;
+        g.beginPath(); g.arc(x, y, r - 0.8, 0, Math.PI * 2); g.fill();
+      }
       /* the colour's own mark */
-      g.strokeStyle = `rgba(255,255,255,${0.8 * a})`; g.fillStyle = g.strokeStyle; g.lineWidth = r * 0.12;
+      g.strokeStyle = flat && CB_LIGHT[color] ? `rgba(10,10,20,${0.85 * a})` : `rgba(255,255,255,${(flat ? 0.95 : 0.8) * a})`; g.fillStyle = g.strokeStyle; g.lineWidth = r * (flat ? 0.15 : 0.12);
       const m = r * 0.36;
       g.beginPath();
       if (color === 0) g.arc(x, y, m * 0.55, 0, Math.PI * 2);                       /* dot */
@@ -247,7 +264,7 @@ export default {
       const pts = [];
       let n = 0;
       fly(sh, 2, (s, bounced) => { if (bounced) pts.push([s.x, s.y, 1]); else if (n++ % 4 === 0) pts.push([s.x, s.y, 0]); });
-      g.fillStyle = hsl(HUES[S.cur], 90, 75, 0.55);
+      g.fillStyle = cb() ? CB[S.cur] : hsl(HUES[S.cur], 90, 75, 0.55);
       pts.slice(2).forEach(([x, y, b]) => { if (!b) { g.beginPath(); g.arc(x, y, 2, 0, Math.PI * 2); g.fill(); } });
     }
     function draw() {
@@ -294,7 +311,7 @@ export default {
       g.font = `600 10px ${FONT}`; g.textAlign = 'center'; g.fillStyle = hsl(265, 30, 70);
       g.fillText('NEXT', CX - 64, CY + 36);
 
-      for (const p of S.parts) { g.fillStyle = hsl(p.hue, 100, 70, clamp(p.life * 2.5, 0, 1)); g.fillRect(p.x - 1.5, p.y - 1.5, 3, 3); }
+      for (const p of S.parts) { g.fillStyle = cb() && p.color >= 0 ? CB[p.color] : hsl(p.hue, 100, 70, clamp(p.life * 2.5, 0, 1)); g.globalAlpha = cb() && p.color >= 0 ? clamp(p.life * 2.5, 0, 1) : 1; g.fillRect(p.x - 1.5, p.y - 1.5, 3, 3); g.globalAlpha = 1; }
       g.font = `700 12px ${FONT}`;
       for (const q of S.pops) { g.fillStyle = hsl(q.hue, 100, 82, clamp(q.t * 2, 0, 1)); g.fillText(`+${q.n}`, q.x, q.y - (0.8 - q.t) * 30); }
       g.textAlign = 'left'; g.fillStyle = hsl(265, 30, 72); g.font = `600 11px ${FONT}`;
@@ -375,6 +392,7 @@ export default {
         grid: S.grid.slice(0, LIMIT + 1).map((row, r) => row.slice(0, colsIn(r)).map(v => (v < 0 ? '.' : String(v))).join('')),
         cur: S.cur, next: S.next, angle: S.angle, flying: !!S.shot, shots: S.shots, since: S.since, dropEvery: dropEvery(),
         drops: S.drops, popped: S.popped, fell: S.fell, falling: S.falling.length,
+        palette: cb() ? 'cb' : 'standard', swatches: cb() ? CB.slice() : null, geom: { ox: V.ox, oy: V.oy, s: V.s, R, S3, par: S.par },
       }),
       /* test hook — nothing in the game calls it:
          step(seconds) · grid(rows of '.'/digits, top first) · queue([cur, next]) · angle(deg) · since(n shots since a drop) */

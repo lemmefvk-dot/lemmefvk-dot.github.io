@@ -34,6 +34,12 @@
    best-effort). Removed items stay as stamped tombstones so an old add
    can't bring them back. Recent operations are kept in a short log.
 
+   PLAYING NOW. Whoever presses play on a song in the shared list sets a
+   marker ("np", the song's item id) that both of you see, with that person's
+   name. It is only a marker: it does not start anything on the other device,
+   nothing follows the song as it changes, and either of you can clear it.
+   Who added a song is the site that wrote its latest "added" stamp.
+
    Leaving closes the room; each person keeps their own copy.
    Nothing is stored on a server and the room ends when the page does.
    ============================================================ */
@@ -85,6 +91,8 @@ export const TYPES = {
   },
   miss: m => ({ k: (Array.isArray(m.k) ? m.k : []).filter(x => typeof x === 'string' && x.length <= 200).slice(0, LIMITS.ITEMS).map(x => cleanText(x, 200)) }),
   drop: m => (isCode(m.code) ? { code: m.code } : null),
+  /* "playing now": the song one of the two pressed play on, or { x: 1 } for none. Only a marker. */
+  np: m => (m.x === 1 ? { x: 1 } : typeof m.i === 'string' && ID_RE.test(m.i) ? { i: m.i } : null),
 };
 
 /* ---------------- the replicated document ---------------- */
@@ -228,7 +236,7 @@ export function createShares(hooks) {
     const doc = new Doc();
     const room = openPair({ kind: KIND, role, code, types: TYPES, rtc: false });
     const S = {
-      doc, room, role, plId, refs: new Map(), peerMiss: new Set(), offer: null, wantDrop: null,
+      doc, room, role, plId, refs: new Map(), peerMiss: new Set(), offer: null, wantDrop: null, now: null,
       lastMiss: '', timers: [], offs: [], ended: false, applying: false,
       get code() { return room.code; }, get phase() { return room.phase; }, get error() { return room.error; },
       get peerName() { return room.peer?.name || 'Your friend'; },
@@ -236,7 +244,12 @@ export function createShares(hooks) {
     sessions.add(S);
     const send = (t, body) => { try { return room.send(t, body); } catch (err) { return false; } };
     const sendRec = rec => { if (rec && room.phase === 'paired') send('rec', rec); };
-    const sendAll = () => { if (room.phase === 'paired') { for (const c of doc.chunks()) send('rec', c); sendMiss(true); } };
+    const sendAll = () => {
+      if (room.phase !== 'paired') return;
+      for (const c of doc.chunks()) send('rec', c);
+      sendMiss(true);
+      if (S.now && S.now.mine) send('np', { i: S.now.i });      /* a lost marker heals like a lost edit */
+    };
 
     function finish(reason) {
       if (S.ended) return;
@@ -278,8 +291,32 @@ export function createShares(hooks) {
       const items = doc.visible().map(it => ({
         i: it.i, name: it.n, size: it.s, ref: [...S.refs].find(([, i]) => i === it.i)?.[0] || null,
         peerMissing: S.peerMiss.has(keyOf(it.n, it.s)),
+        by: it.e && it.e[2] === doc.site ? 'You' : S.peerName,
+        playing: !!S.now && S.now.i === it.i,
       }));
-      return { items, stations, log: doc.log.slice(), missing: items.filter(x => !x.ref) };
+      const now = S.now && items.find(x => x.i === S.now.i) ? { i: S.now.i, who: S.now.who, mine: S.now.mine, name: items.find(x => x.i === S.now.i).name } : null;
+      return { items, stations, log: doc.log.slice(), missing: items.filter(x => !x.ref), now };
+    };
+    /** Who added the song on this device's playlist with this file reference ('You', or the friend's name). */
+    S.whoAdded = ref => {
+      const iid = S.refs.get(ref);
+      const it = iid && doc.items.get(iid);
+      return it && it.e ? (it.e[2] === doc.site ? 'You' : S.peerName) : null;
+    };
+    /** You pressed play on this song: mark it as playing now, for both of you. Nothing starts on the other side. */
+    S.setNow = ref => {
+      const i = S.refs.get(ref);
+      if (!i || S.ended) return false;
+      S.now = { i, who: 'You', mine: true };
+      send('np', { i });
+      emit({ type: 'change', plId: S.plId, session: S });
+      return true;
+    };
+    S.clearNow = () => {
+      if (!S.now) return;
+      S.now = null;
+      send('np', { x: 1 });
+      emit({ type: 'change', plId: S.plId, session: S });
     };
 
     /** The playlist on this device was edited by a person: turn the difference into operations. */
@@ -356,6 +393,10 @@ export function createShares(hooks) {
           if (doc.merge(m, S.peerName, hooks.station)) S.refresh();
         } else if (t === 'miss') {
           S.peerMiss = new Set(m.k);
+          emit({ type: 'change', plId: S.plId, session: S });
+        } else if (t === 'np') {
+          if (m.x) S.now = null;
+          else if (doc.items.has(m.i)) S.now = { i: m.i, who: S.peerName, mine: false };
           emit({ type: 'change', plId: S.plId, session: S });
         } else if (t === 'drop') {
           S.offer = { code: m.code, from: S.peerName };

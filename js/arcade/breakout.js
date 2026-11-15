@@ -1,26 +1,42 @@
 /* ============================================================
    arcade/breakout.js — Breakout for Static Arcade.
 
-   Clear the wall. Three lives; clearing every brick moves you to
-   the next level, which brings a new layout, a faster ball and,
-   from level 3, bricks that take two hits (from level 6, three).
-   Levels keep coming, so the score is simply how far you get:
-   higher rows are worth more, tough bricks pay per hit.
+   Clear the wall. Clearing every brick moves you to the next level,
+   which brings a new layout (ten of them, then round again), a
+   faster ball and, from level 3, bricks that take two hits (from
+   level 6, three). Levels keep coming, so the score is simply how far
+   you get: higher rows are worth more, tough bricks pay per hit.
+
+   Lives are the mode (ctx.mode; each keeps its own best): three
+   (the usual), one, or five.
+
+   Power-ups: now and then a broken brick drops a capsule. Catch it
+   with the paddle:
+     W  wide paddle for 15 s
+     M  multi-ball: every ball in play splits in three
+     S  slow ball: the balls slow down for 10 s
+   A life goes only when the last ball in play is lost; a new life,
+   a new level or the end of the round clears what was running.
 
    Paddle: the mouse or a finger anywhere over the table, or ← → /
-   A D. Launch the ball with Space, ↑, a click or a tap. The table
-   is an 800-wide arena scaled to fit: 600 tall, or up to 900 in a
-   tall play area (a phone held upright), fixed for the round. The
-   ball moves in small sub-steps so it never tunnels through a brick
-   at high speed.
+   A D. Mouse sensitivity (ctx.settings.sens, Options) scales how far
+   the paddle goes for a move of the pointer, around the middle of the
+   table: ×1 follows the pointer exactly, ×1.5 crosses the table with a
+   smaller move, ×0.6 gives finer control. Launch with Space, ↑, a
+   click or a tap. The table is an 800-wide arena scaled to fit: 600
+   tall, or up to 900 in a tall play area (a phone held upright),
+   fixed for the round. Balls move in small sub-steps so none tunnels
+   through a brick at high speed.
    Follows the module contract in ./index.js.
    ============================================================ */
 
 const HUE = 20;
 const W = 800;
 const COLS = 10, MARGIN = 36, GAP = 6, BH = 22, TOP = 78;
-const PAD_H = 14, BALL_R = 7;
-const LIVES = 3;
+const PAD_H = 14, BALL_R = 7, PAD_W = 112, WIDE_W = 168;
+const LIVES = { three: 3, one: 1, five: 5 };
+const MAX_BALLS = 9;
+const WIDE_SECS = 15, SLOW_SECS = 10, SLOW_K = 0.68, DROP_CHANCE = 0.12, CAP_V = 150;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const hsl = (h, s, l, a = 1) => `hsla(${h},${s}%,${l}%,${a})`;
@@ -32,18 +48,33 @@ const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: c
 /* warm neon rows, top to bottom */
 const ROW_HUES = [330, 345, 0, 14, 28, 40, 52, 64];
 
-/* which cells of a rows×COLS wall hold a brick, per level */
+/* which cells of a rows×COLS wall hold a brick, per level (then round again) */
+const INVADER = ['..#....#..', '...#..#...', '..######..', '.##.##.##.', '##########', '#.######.#', '#.#....#.#', '...##.##..'];
 const LAYOUTS = [
   (r, c) => r < 6,                                              /* full wall */
   (r, c) => r < 7 && (r + c) % 2 === 0,                         /* checker */
   (r, c) => r < 8 && Math.abs(c - 4.5) <= 5 - (r * 0.62),       /* inverted pyramid */
   (r, c) => r < 7 && c % 3 !== 2,                               /* columns */
   (r, c) => r < 8 && (Math.abs(c - 4.5) + Math.abs(r - 3.5)) <= 5.2, /* diamond */
+  (r, c) => r < 8 && (r === 0 || r === 7 || c === 0 || c === 9 || ((r === 3 || r === 4) && c > 2 && c < 7)), /* frame round a core */
+  (r, c) => r < 8 && Math.abs(((c + r) % 6) - 2.5) <= 1,        /* zigzag */
+  (r, c) => INVADER[r]?.[c] === '#',                            /* an invader */
+  (r, c) => r < 8 && r % 2 === 0 && (c + (r % 4 ? 1 : 0)) % 5 !== 0, /* stripes with gaps */
+  (r, c) => r < 7 && (c < 4 || c > 5) && (r < 2 || c % 2 === r % 2), /* two towers */
 ];
+const POWERS = {
+  wide: { letter: 'W', hue: 195, name: 'Wide paddle' },
+  multi: { letter: 'M', hue: 300, name: 'Multi-ball' },
+  slow: { letter: 'S', hue: 140, name: 'Slow ball' },
+};
+const POWER_KINDS = Object.keys(POWERS);
 
 export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
+    const pace = Number.isFinite(ctx.speed) ? clamp(ctx.speed, 0.5, 1) : 1;   /* the Arcade's game speed: the whole clock runs at this rate */
+    const MODE = LIVES[ctx.mode] ? ctx.mode : 'three', LIVES0 = LIVES[MODE];
+    const sens = () => clamp(Number(ctx.settings?.sens) || 1, 0.4, 2.5);
     const snd = sounder(ctx);
     const sf = surface(el, 'Breakout table', () => draw());
     /* the table's height follows the play area's shape, once per round */
@@ -52,10 +83,11 @@ export default {
     const S = {
       state: 'serve',          /* serve (ball on paddle) | play | clear | over */
       paused: false,
-      score: 0, lives: LIVES, level: 1, broken: 0,
-      pad: { x: W / 2, w: 112, target: null },
-      ball: { x: W / 2, y: PAD_Y - BALL_R, vx: 0, vy: 0, speed: 0 },
-      bricks: [],
+      score: 0, lives: LIVES0, level: 1, broken: 0,
+      pad: { x: W / 2, w: PAD_W, target: null },
+      balls: [newBall()],
+      bricks: [], caps: [],
+      wideT: 0, slowT: 0, caught: { wide: 0, multi: 0, slow: 0 }, dropped: 0,
       keys: new Set(),
       parts: [], banner: 0, shake: 0, time: 0,
       clearT: 0,
@@ -69,6 +101,7 @@ export default {
     ctx.onScore(0);
 
     /* ------------------------------ rules ------------------------------ */
+    function newBall() { return { x: W / 2, y: PAD_Y - BALL_R, vx: 0, vy: 0, speed: 0 }; }
     function buildLevel() {
       const shape = LAYOUTS[(S.level - 1) % LAYOUTS.length];
       const bw = (W - MARGIN * 2 - GAP * (COLS - 1)) / COLS;
@@ -86,21 +119,25 @@ export default {
       stick();
     }
 
+    /* one ball back on the paddle; whatever was running stops */
     function stick() {
       S.state = 'serve';
-      S.ball.vx = S.ball.vy = 0;
-      S.ball.speed = 0;
+      S.balls = [newBall()];
+      S.caps = [];
+      S.wideT = 0; S.slowT = 0; S.pad.w = PAD_W;
     }
 
     function baseSpeed() { return Math.min(760, 370 + (S.level - 1) * 38); }
+    /* a ball's speed right now: its own, slowed while Slow ball runs */
+    const vel = b => b.speed * (S.slowT > 0 ? SLOW_K : 1);
 
     function launch() {
       if (S.state !== 'serve' || S.paused) return;
-      const b = S.ball;
+      const b = S.balls[0];
       const a = (Math.random() * 2 - 1) * 0.35;
       b.speed = baseSpeed();
-      b.vx = Math.sin(a) * b.speed;
-      b.vy = -Math.cos(a) * b.speed;
+      b.vx = Math.sin(a);
+      b.vy = -Math.cos(a);
       S.state = 'play';
       snd.blip(520, 0.05, 'square', 0.7);
     }
@@ -113,7 +150,7 @@ export default {
       }
     }
 
-    function hitBrick(br) {
+    function hitBrick(br, b) {
       br.hp--;
       if (br.hp > 0) {
         S.score += 5;
@@ -125,19 +162,44 @@ export default {
         burst(br.x + br.w / 2, br.y + br.h / 2, br.hue);
         snd.blip(640 + (8 - Math.floor((br.y - TOP) / (BH + GAP))) * 60, 0.05, 'square', 0.8);
         /* the ball speeds up a little as the wall thins */
-        S.ball.speed = Math.min(baseSpeed() * 1.25, S.ball.speed * 1.012);
+        b.speed = Math.min(baseSpeed() * 1.25, b.speed * 1.012);
+        if (Math.random() < DROP_CHANCE) drop(br.x + br.w / 2, br.y + br.h / 2, POWER_KINDS[Math.floor(Math.random() * POWER_KINDS.length)]);
       }
       ctx.onScore(S.score);
     }
+    function drop(x, y, kind) { S.caps.push({ x, y, kind }); S.dropped++; }
 
-    function physics(dt) {
-      const b = S.ball, p = S.pad;
-      const n = Math.max(1, Math.ceil((b.speed * dt) / 4));
+    /* a capsule reached the paddle */
+    function catchCap(kind) {
+      S.caught[kind]++;
+      if (kind === 'wide') { S.wideT = WIDE_SECS; }
+      else if (kind === 'slow') { S.slowT = SLOW_SECS; }
+      else if (kind === 'multi') {
+        const out = [];
+        for (const b of S.balls) {
+          out.push(b);
+          if (S.state !== 'play') continue;
+          const a = Math.atan2(b.vx, -b.vy);
+          for (const da of [-0.45, 0.45]) {
+            if (S.balls.length + out.length > MAX_BALLS) break;
+            const na = clamp(a + da, -1.1, 1.1);
+            out.push({ x: b.x, y: b.y, vx: Math.sin(na), vy: -Math.cos(na), speed: b.speed });
+          }
+        }
+        S.balls = out.slice(0, MAX_BALLS);
+      }
+      snd.blip(880, 0.12, 'triangle', 0.8, 1320);
+    }
+
+    function moveBall(b, dt) {
+      const p = S.pad;
+      const v = vel(b);
+      const n = Math.max(1, Math.ceil((v * dt) / 4));
       const h = dt / n;
-      for (let i = 0; i < n && S.state === 'play'; i++) {
+      for (let i = 0; i < n; i++) {
         const px = b.x, py = b.y;
-        b.x += b.vx * h;
-        b.y += b.vy * h;
+        b.x += b.vx * v * h;
+        b.y += b.vy * v * h;
         if (b.x < BALL_R) { b.x = BALL_R; b.vx = Math.abs(b.vx); snd.blip(240, 0.03, 'square', 0.4); }
         if (b.x > W - BALL_R) { b.x = W - BALL_R; b.vx = -Math.abs(b.vx); snd.blip(240, 0.03, 'square', 0.4); }
         if (b.y < BALL_R) { b.y = BALL_R; b.vy = Math.abs(b.vy); snd.blip(240, 0.03, 'square', 0.4); }
@@ -146,8 +208,8 @@ export default {
         if (b.vy > 0 && b.y + BALL_R >= PAD_Y && py + BALL_R <= PAD_Y + 4 && Math.abs(b.x - p.x) <= p.w / 2 + BALL_R) {
           const off = clamp((b.x - p.x) / (p.w / 2), -1, 1);
           const a = off * 1.05;                        /* up to ~60° */
-          b.vx = Math.sin(a) * b.speed;
-          b.vy = -Math.cos(a) * b.speed;
+          b.vx = Math.sin(a);
+          b.vy = -Math.cos(a);
           b.y = PAD_Y - BALL_R;
           snd.blip(420, 0.04, 'square', 0.6);
         }
@@ -163,21 +225,32 @@ export default {
           else if (wasAbove && !wasBeside) b.vy = -b.vy;
           else { b.vx = -b.vx; b.vy = -b.vy; }
           b.x = px; b.y = py;
-          hitBrick(br);
+          hitBrick(br, b);
           break;
         }
-        /* keep the speed exact after a bump */
+        /* the direction stays a unit vector; never let it settle into a flat, endless sideways bounce */
         const m = Math.hypot(b.vx, b.vy) || 1;
-        b.vx = (b.vx / m) * b.speed;
-        b.vy = (b.vy / m) * b.speed;
-        /* never let it settle into a flat, endless sideways bounce */
-        if (Math.abs(b.vy) < b.speed * 0.22) {
-          b.vy = Math.sign(b.vy || -1) * b.speed * 0.22;
-          b.vx = Math.sign(b.vx || 1) * Math.sqrt(b.speed * b.speed - b.vy * b.vy);
+        b.vx /= m; b.vy /= m;
+        if (Math.abs(b.vy) < 0.22) {
+          b.vy = Math.sign(b.vy || -1) * 0.22;
+          b.vx = Math.sign(b.vx || 1) * Math.sqrt(1 - b.vy * b.vy);
         }
-
-        if (b.y > H + BALL_R * 3) { lose(); return; }
+        if (b.y > H + BALL_R * 3) { b.lost = true; return; }
       }
+    }
+
+    function physics(dt) {
+      for (const b of S.balls) if (!b.lost) moveBall(b, dt);
+      S.balls = S.balls.filter(b => !b.lost);
+      if (!S.balls.length) { lose(); return; }
+      /* capsules fall; the paddle catches them */
+      const p = S.pad;
+      for (const c of S.caps) {
+        c.y += CAP_V * dt;
+        if (c.y + 8 >= PAD_Y && c.y - 8 <= PAD_Y + PAD_H && Math.abs(c.x - p.x) <= p.w / 2 + 16) { c.done = true; catchCap(c.kind); }
+        else if (c.y > H + 20) c.done = true;
+      }
+      S.caps = S.caps.filter(c => !c.done);
       if (!S.bricks.some(br => br.alive)) {
         S.state = 'clear';
         S.clearT = 1.1;
@@ -191,10 +264,12 @@ export default {
       snd.blip(200, 0.3, 'sawtooth', 0.9, 70);
       if (S.lives <= 0) {
         S.state = 'over';
+        S.balls = [];
         draw();
+        const got = Object.entries(S.caught).filter(([, n]) => n).map(([k, n]) => `${n} ${POWERS[k].name.toLowerCase()}`);
         ctx.onEnd({
           score: S.score, won: false,
-          detail: `Reached level ${S.level} · ${S.broken} brick${S.broken === 1 ? '' : 's'} broken`,
+          detail: `Reached level ${S.level} · ${S.broken} brick${S.broken === 1 ? '' : 's'} broken${got.length ? ` · caught ${got.join(', ')}` : ''}`,
         });
         return;
       }
@@ -202,16 +277,22 @@ export default {
     }
 
     /* ------------------------------ loop ------------------------------ */
-    const loop = looper(dt => {
+    const loop = looper(dt0 => {
+      const dt = dt0 * pace;
       S.time += dt;
       const p = S.pad;
+      /* Wide paddle grows and shrinks back smoothly */
+      if (S.wideT > 0) S.wideT = Math.max(0, S.wideT - dt);
+      if (S.slowT > 0) S.slowT = Math.max(0, S.slowT - dt);
+      const wantW = S.wideT > 0 ? WIDE_W : PAD_W;
+      p.w += clamp(wantW - p.w, -240 * dt, 240 * dt);
       const left = S.keys.has('ArrowLeft') || S.keys.has('KeyA');
       const right = S.keys.has('ArrowRight') || S.keys.has('KeyD');
       if (left || right) { p.target = null; p.x += ((right ? 1 : 0) - (left ? 1 : 0)) * 780 * dt; }
       else if (p.target !== null) p.x += clamp(p.target - p.x, -1600 * dt, 1600 * dt);
       p.x = clamp(p.x, p.w / 2, W - p.w / 2);
 
-      if (S.state === 'serve') { S.ball.x = p.x; S.ball.y = PAD_Y - BALL_R; }
+      if (S.state === 'serve') { const b = S.balls[0]; b.x = p.x; b.y = PAD_Y - BALL_R; }
       else if (S.state === 'play') physics(dt);
       else if (S.state === 'clear') {
         S.clearT -= dt;
@@ -253,16 +334,26 @@ export default {
       g.fillStyle = glow;
       g.fillRect(0, 0, W, H);
 
-      /* top strip: lives + level */
+      /* top strip: lives, what is running, level */
       g.textBaseline = 'middle';
       g.font = `700 14px ${MONO}`;
       g.fillStyle = 'rgba(255,230,215,.55)';
       g.textAlign = 'left';
       g.fillText('LIVES', 22, 36);
-      for (let i = 0; i < LIVES; i++) {
+      for (let i = 0; i < LIVES0; i++) {
         g.fillStyle = i < S.lives ? hsl(HUE, 100, 65) : 'rgba(255,255,255,.12)';
         g.beginPath(); g.arc(88 + i * 20, 36, 6, 0, Math.PI * 2); g.fill();
       }
+      let rx = 88 + LIVES0 * 20 + 18;
+      for (const [kind, t, max] of [['wide', S.wideT, WIDE_SECS], ['slow', S.slowT, SLOW_SECS]]) {
+        if (t <= 0) continue;
+        capsule(g, rx + 14, 36, kind, 0.9);
+        g.fillStyle = 'rgba(255,255,255,.15)'; g.fillRect(rx, 47, 28, 3);
+        g.fillStyle = hsl(POWERS[kind].hue, 100, 65); g.fillRect(rx, 47, 28 * t / max, 3);
+        rx += 40;
+      }
+      if (S.balls.length > 1) { g.fillStyle = hsl(POWERS.multi.hue, 100, 75); g.font = `700 13px ${MONO}`; g.fillText(`×${S.balls.length}`, rx, 36); }
+      g.font = `700 14px ${MONO}`;
       g.textAlign = 'right';
       g.fillStyle = 'rgba(255,230,215,.55)';
       g.fillText(`LEVEL ${S.level}`, W - 22, 36);
@@ -290,11 +381,14 @@ export default {
         }
       }
 
+      /* capsules on their way down */
+      for (const c of S.caps) capsule(g, c.x, c.y, c.kind, 1);
+
       /* paddle */
       const p = S.pad;
       g.save();
       g.shadowBlur = 20;
-      g.shadowColor = hsl(HUE, 100, 55, 0.9);
+      g.shadowColor = S.wideT > 0 ? hsl(POWERS.wide.hue, 100, 60, 0.9) : hsl(HUE, 100, 55, 0.9);
       const pg = g.createLinearGradient(0, PAD_Y, 0, PAD_Y + PAD_H);
       pg.addColorStop(0, hsl(HUE + 15, 100, 72));
       pg.addColorStop(1, hsl(HUE, 100, 50));
@@ -303,14 +397,15 @@ export default {
       g.fill();
       g.restore();
 
-      /* ball */
-      const b = S.ball;
-      g.save();
-      g.shadowBlur = 18;
-      g.shadowColor = hsl(45, 100, 70, 0.95);
-      g.fillStyle = '#fff6e6';
-      g.beginPath(); g.arc(b.x, b.y, BALL_R, 0, Math.PI * 2); g.fill();
-      g.restore();
+      /* balls */
+      for (const b of S.balls) {
+        g.save();
+        g.shadowBlur = 18;
+        g.shadowColor = S.slowT > 0 ? hsl(POWERS.slow.hue, 100, 65, 0.95) : hsl(45, 100, 70, 0.95);
+        g.fillStyle = '#fff6e6';
+        g.beginPath(); g.arc(b.x, b.y, BALL_R, 0, Math.PI * 2); g.fill();
+        g.restore();
+      }
 
       for (const q of S.parts) {
         g.fillStyle = hsl(q.hue, 100, 65, clamp(q.life * 2, 0, 1));
@@ -331,8 +426,33 @@ export default {
 
       if (S.state === 'serve' && S.banner <= 0.2) {
         const touch = coarse();
-        prompt(g, sf, touch ? 'Tap to launch' : 'Space, click or tap to launch', touch ? 'Drag to move the paddle  ·  3 lives' : 'Mouse, finger or ← → to move  ·  3 lives', HUE, oy + (PAD_Y - 118) * k);
+        const lives = `${LIVES0} ${LIVES0 === 1 ? 'life' : 'lives'}`;
+        prompt(g, sf, touch ? 'Tap to launch' : 'Space, click or tap to launch', touch ? `Drag to move the paddle  ·  ${lives}` : `Mouse, finger or ← → to move  ·  ${lives}  ·  catch W M S`, HUE, oy + (PAD_Y - 118) * k);
       }
+    }
+
+    /* a power-up capsule: a lit pill with its letter */
+    function capsule(g, x, y, kind, a) {
+      const P = POWERS[kind];
+      g.save();
+      g.globalAlpha = a;
+      g.shadowBlur = reduced ? 0 : 12;
+      g.shadowColor = hsl(P.hue, 100, 60, 0.9);
+      const cg = g.createLinearGradient(0, y - 8, 0, y + 8);
+      cg.addColorStop(0, hsl(P.hue, 95, 70));
+      cg.addColorStop(1, hsl(P.hue, 90, 42));
+      g.fillStyle = cg;
+      rr(g, x - 16, y - 8, 32, 16, 8);
+      g.fill();
+      g.shadowBlur = 0;
+      g.fillStyle = 'rgba(255,255,255,.35)';
+      g.fillRect(x - 10, y - 6, 20, 2);
+      g.fillStyle = '#0b0610';
+      g.font = `800 11px ${MONO}`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(P.letter, x, y + 1);
+      g.restore();
     }
 
     /* ------------------------------ input ------------------------------ */
@@ -348,11 +468,15 @@ export default {
     };
     const onKeyUp = e => { S.keys.delete(e.code); };
     const onBlur = () => S.keys.clear();
-    const aim = e => {
-      if (S.paused || S.state === 'over') return;
+    /* where the pointer puts the paddle: the pointer's x on the table, scaled round the middle by the sensitivity */
+    const aimAt = clientX => {
       const r = sf.cv.getBoundingClientRect();
       const { k, ox } = view();
-      S.pad.target = (e.clientX - r.left - ox) / k;
+      return W / 2 + ((clientX - r.left - ox) / k - W / 2) * sens();
+    };
+    const aim = e => {
+      if (S.paused || S.state === 'over') return;
+      S.pad.target = aimAt(e.clientX);
     };
     const onDown = e => {
       snd.wake();
@@ -381,14 +505,43 @@ export default {
       },
       pause() { S.paused = true; S.keys.clear(); loop.stop(); draw(); },
       resume() { S.paused = false; if (S.state !== 'over') loop.start(); },
-      /* a read-only snapshot for automated play-tests (arena units) */
-      peek: () => ({
-        state: S.state, paused: S.paused, score: S.score, lives: S.lives, level: S.level, broken: S.broken,
-        bricks: S.bricks.filter(b => b.alive).length,
-        targets: S.bricks.filter(b => b.alive).sort((p, q) => q.y - p.y).slice(0, 4).map(b => ({ x: b.x + b.w / 2, y: b.y + b.h })),
-        ball: { x: S.ball.x, y: S.ball.y, vx: S.ball.vx, vy: S.ball.vy }, pad: { x: S.pad.x, w: S.pad.w },
-        arena: { W, H, PAD_Y, BALL_R },
-      }),
+      /* what a watcher may see (./spectate.js 'bricks'): the 8 × 10 wall as hits left ('0' gone),
+         the paddle and the first ball in play, in whole arena units */
+      spectate: () => {
+        const wall = Array(8 * COLS).fill('0');
+        const bw = (W - MARGIN * 2 - GAP * (COLS - 1)) / COLS;
+        for (const br of S.bricks) {
+          if (!br.alive) continue;
+          const r = Math.round((br.y - TOP) / (BH + GAP)), c = Math.round((br.x - MARGIN) / (bw + GAP));
+          if (r >= 0 && r < 8 && c >= 0 && c < COLS) wall[r * COLS + c] = String(Math.max(1, Math.min(3, br.hp)));
+        }
+        return { k: 'bricks', h: H, wall: wall.join(''), pad: [Math.round(S.pad.x), Math.round(S.pad.w)], ball: (b => [Math.round(b.x), Math.round(b.y)])(S.balls[0] || { x: 0, y: 0 }),
+          lv: S.level, lives: Math.max(0, S.lives), score: S.score, txt: S.state === 'over' ? 'Game over' : S.paused ? 'Paused' : `Level ${S.level}`, over: S.state === 'over' };
+      },
+      /* a read-only snapshot for automated play-tests (arena units; `ball` is the first ball in play) */
+      peek: () => {
+        const b = S.balls[0] || { x: 0, y: 0, vx: 0, vy: 0, speed: 0 };
+        const v = vel(b);
+        return {
+          state: S.state, paused: S.paused, score: S.score, lives: S.lives, level: S.level, broken: S.broken, mode: MODE, livesAtStart: LIVES0,
+          bricks: S.bricks.filter(x => x.alive).length, layouts: LAYOUTS.length,
+          targets: S.bricks.filter(x => x.alive).sort((p, q) => q.y - p.y).slice(0, 4).map(x => ({ x: x.x + x.w / 2, y: x.y + x.h })),
+          ball: { x: b.x, y: b.y, vx: b.vx * v, vy: b.vy * v }, balls: S.balls.map(q => ({ x: q.x, y: q.y, v: vel(q) })), pad: { x: S.pad.x, w: S.pad.w, target: S.pad.target },
+          caps: S.caps.map(c => ({ kind: c.kind, x: c.x, y: c.y })), dropped: S.dropped, wide: S.wideT, slow: S.slowT, caught: { ...S.caught }, sens: sens(),
+          arena: { W, H, PAD_Y, BALL_R }, time: S.time, pace,
+          view: (() => { const vv = view(); const r = sf.cv.getBoundingClientRect(); return { k: vv.k, ox: vv.ox + r.left, oy: vv.oy + r.top }; })(),
+        };
+      },
+      /* test hook — nothing in the game calls it: drop({ kind, x, y }) a capsule · clear() every brick but one ·
+         ball({ x, y, vx, vy }) put the first ball there, moving */
+      hook(cmd, arg) {
+        if (cmd === 'drop') drop(arg.x, arg.y, arg.kind);
+        else if (cmd === 'clear') { let left = 1; for (const br of S.bricks) { if (br.alive && left-- <= 0) br.alive = false; } }
+        else if (cmd === 'ball') { const b = S.balls[0]; Object.assign(b, { x: arg.x, y: arg.y }); const m = Math.hypot(arg.vx, arg.vy) || 1; b.vx = arg.vx / m; b.vy = arg.vy / m; b.speed = m; S.state = 'play'; }
+        else return false;
+        draw();
+        return true;
+      },
     };
   },
 };

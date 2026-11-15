@@ -770,6 +770,359 @@ function ifSum(args, book) {
 def('SUMIF', 2, 3, (a, b) => { const r = ifSum(a, b); return r instanceof CellError ? r : r.sum; });
 def('AVERAGEIF', 2, 3, (a, b) => { const r = ifSum(a, b); return r instanceof CellError ? r : r.n ? r.sum / r.n : ERR.DIV0; });
 
+/* ---- more maths: errors caught, middle and most common values, spread ---- */
+/* IFERROR only runs its fallback when it needs it, like IF */
+def('IFERROR', 2, 2, (args, book, ev, asRange) => {
+  const v = ev(args[0], asRange);
+  if (v instanceof Rng) return asRange ? v : v.single ? (book.valueIn(v.sid, v.r1, v.c1) ?? 0) : ERR.VALUE;
+  if (!(v instanceof CellError)) return v == null ? 0 : v;
+  return args[1].t === 'empty' ? 0 : ev(args[1], asRange);
+}, { lazy: true });
+def('MEDIAN', 1, MANY, (a, b) => {
+  const n = numbers(a, b);
+  if (n instanceof CellError) return n;
+  if (!n.length) return ERR.NUM;
+  const s = [...n].sort((x, y) => x - y), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+});
+/* the value that turns up most often; a tie goes to the one that came first (as Excel) */
+def('MODE', 1, MANY, (a, b) => {
+  const n = numbers(a, b);
+  if (n instanceof CellError) return n;
+  const seen = new Map();
+  for (const x of n) seen.set(x, (seen.get(x) || 0) + 1);
+  const most = Math.max(0, ...seen.values());
+  return most < 2 ? ERR.NA : n.find(x => seen.get(x) === most);
+});
+/* the sample standard deviation (divides by n − 1) */
+def('STDEV', 1, MANY, (a, b) => {
+  const n = numbers(a, b);
+  if (n instanceof CellError) return n;
+  if (n.length < 2) return ERR.DIV0;
+  const mean = n.reduce((s, x) => s + x, 0) / n.length;
+  return Math.sqrt(n.reduce((s, x) => s + (x - mean) ** 2, 0) / (n.length - 1));
+});
+def('PRODUCT', 1, MANY, (a, b) => { const n = numbers(a, b); return n instanceof CellError ? n : n.length ? fin(n.reduce((s, x) => s * x, 1)) : 0; });
+/* ROUNDUP goes away from zero, ROUNDDOWN toward it, at d decimal places (d < 0: tens, hundreds…) */
+function roundTo(a, b, how) {
+  const x = numArg(a[0], b), d = a[1] == null ? 0 : numArg(a[1], b);
+  const e = firstErr(x, d);
+  if (e) return e;
+  const m = 10 ** Math.trunc(d);
+  const scaled = Number((Math.abs(x) * m).toPrecision(15));
+  return fin(Math.sign(x) * how(scaled) / m) || 0;
+}
+def('ROUNDUP', 1, 2, (a, b) => roundTo(a, b, Math.ceil));
+def('ROUNDDOWN', 1, 2, (a, b) => roundTo(a, b, Math.floor));
+def('INT', 1, 1, (a, b) => { const x = numArg(a[0], b); return x instanceof CellError ? x : Math.floor(x); });
+
+/* ---- text ---- */
+const chars = t => [...t];
+def('SUBSTITUTE', 3, 4, (a, b) => {
+  const t = textArg(a[0], b), from = textArg(a[1], b), to = textArg(a[2], b);
+  const n = a[3] == null ? null : numArg(a[3], b);
+  const e = firstErr(t, from, to, n);
+  if (e) return e;
+  if (n !== null && n < 1) return ERR.VALUE;
+  if (!from) return t;
+  if (n === null) return t.split(from).join(to);
+  let at = -1;
+  for (let k = 0; k < Math.trunc(n); k++) { at = t.indexOf(from, at + 1); if (at < 0) return t; }
+  return t.slice(0, at) + to + t.slice(at + from.length);
+});
+/* where one text starts in another, counting from 1; capitals matter */
+def('FIND', 2, 3, (a, b) => {
+  const want = textArg(a[0], b), t = textArg(a[1], b);
+  const s = a[2] == null ? 1 : numArg(a[2], b);
+  const e = firstErr(want, t, s);
+  if (e) return e;
+  const hay = chars(t), need = chars(want), start = Math.trunc(s);
+  if (start < 1 || start > hay.length + 1) return ERR.VALUE;
+  for (let i = start - 1; i + need.length <= hay.length; i++) {
+    let k = 0;
+    while (k < need.length && hay[i + k] === need[k]) k++;
+    if (k === need.length) return i + 1;
+  }
+  return ERR.VALUE;
+});
+/* a capital after anything that isn't a letter, small letters elsewhere (Excel's rule: it's → It'S) */
+def('PROPER', 1, 1, (a, b) => {
+  const t = textArg(a[0], b);
+  if (t instanceof CellError) return t;
+  let out = '', prev = false;
+  for (const ch of t) { const letter = /\p{L}/u.test(ch); out += letter ? (prev ? ch.toLowerCase() : ch.toUpperCase()) : ch; prev = letter; }
+  return out;
+});
+/* text that reads as a number (12, 1,234, 50%, $9.99, 2026-01-31) → that number */
+def('VALUE', 1, 1, (a, b) => {
+  const v = one(a[0], b);
+  if (v instanceof CellError) return v;
+  if (v == null) return 0;
+  if (typeof v === 'number') return v;
+  if (typeof v !== 'string' || !v.trim()) return ERR.VALUE;
+  const n = parseLiteral(v.trim()).v;
+  return typeof n === 'number' ? n : ERR.VALUE;
+});
+
+/* ---- dates: serial numbers, days since 1899-12-30 ---- */
+const dateParts = serial => { const d = new Date(EPOCH + Math.floor(serial) * DAY); return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), wd: d.getUTCDay() }; };
+/* a date argument: a serial, or text that reads as a date */
+const dateArg = (a, book) => {
+  const v = one(a, book);
+  if (v instanceof CellError) return v;
+  const n = toNum(v);
+  if (n instanceof CellError) return n;
+  return n < 0 || n > 2958465 ? ERR.NUM : n;
+};
+/* DATE(year, month, day): months and days past the end roll over, as in other spreadsheets */
+def('DATE', 3, 3, (a, b) => {
+  let y = numArg(a[0], b);
+  const m = numArg(a[1], b), d = numArg(a[2], b);
+  const e = firstErr(y, m, d);
+  if (e) return e;
+  y = Math.trunc(y);
+  if (y >= 0 && y < 1900) y += 1900;
+  if (y < 0 || y > 9999) return ERR.NUM;
+  const s = (Date.UTC(y, Math.trunc(m) - 1, Math.trunc(d)) - EPOCH) / DAY;
+  return Number.isFinite(s) && s >= 0 ? s : ERR.NUM;
+});
+def('YEAR', 1, 1, (a, b) => { const s = dateArg(a[0], b); return s instanceof CellError ? s : dateParts(s).y; });
+def('MONTH', 1, 1, (a, b) => { const s = dateArg(a[0], b); return s instanceof CellError ? s : dateParts(s).m; });
+def('DAY', 1, 1, (a, b) => { const s = dateArg(a[0], b); return s instanceof CellError ? s : dateParts(s).d; });
+
+/* TEXT(value, format): a number or date written the way a format says.
+   Numbers: 0 (a digit always), # (a digit if there is one), a point for
+   decimals, a comma for thousands, % (times 100), and anything else in
+   quotes or plain ($, kg) kept as it is. Dates and times: yyyy yy, mmmm
+   mmm mm m, dddd ddd dd d, hh h, mm (minutes, after h or before s), ss,
+   AM/PM. A format it can't read is #VALUE!. */
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const WDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function textDate(serial, fmt) {
+  const ms = Math.round(serial * DAY / 1000) * 1000;
+  const d = new Date(EPOCH + ms);
+  if (Number.isNaN(d.getTime())) return ERR.NUM;
+  const toks = [];
+  const re = /"([^"]*)"|\\(.)|(yyyy|yy|mmmm|mmm|mm|m|dddd|ddd|dd|d|hh|h|ss|s|AM\/PM|am\/pm|A\/P|a\/p)|([\s\S])/gi;
+  let m;
+  while ((m = re.exec(fmt))) {
+    if (m[1] != null) toks.push({ lit: m[1] });
+    else if (m[2] != null) toks.push({ lit: m[2] });
+    else if (m[3] != null) toks.push({ code: m[3].toLowerCase() });
+    else toks.push({ lit: m[4] });
+  }
+  const ampm = toks.some(t => t.code === 'am/pm' || t.code === 'a/p');
+  /* m right after h or right before s is minutes */
+  toks.forEach((t, i) => {
+    if (t.code !== 'm' && t.code !== 'mm') return;
+    const prev = toks.slice(0, i).reverse().find(x => x.code), next = toks.slice(i + 1).find(x => x.code);
+    if ((prev && /^h/.test(prev.code)) || (next && /^s/.test(next.code))) t.min = true;
+  });
+  const H = d.getUTCHours(), h12 = H % 12 || 12;
+  let out = '';
+  for (const t of toks) {
+    if (t.lit != null) { out += t.lit; continue; }
+    switch (t.code) {
+      case 'yyyy': out += d.getUTCFullYear(); break;
+      case 'yy': out += pad2(d.getUTCFullYear() % 100); break;
+      case 'mmmm': out += MONTHS[d.getUTCMonth()]; break;
+      case 'mmm': out += MONTHS[d.getUTCMonth()].slice(0, 3); break;
+      case 'mm': out += t.min ? pad2(d.getUTCMinutes()) : pad2(d.getUTCMonth() + 1); break;
+      case 'm': out += t.min ? d.getUTCMinutes() : d.getUTCMonth() + 1; break;
+      case 'dddd': out += WDAYS[d.getUTCDay()]; break;
+      case 'ddd': out += WDAYS[d.getUTCDay()].slice(0, 3); break;
+      case 'dd': out += pad2(d.getUTCDate()); break;
+      case 'd': out += d.getUTCDate(); break;
+      case 'hh': out += pad2(ampm ? h12 : H); break;
+      case 'h': out += ampm ? h12 : H; break;
+      case 'ss': out += pad2(d.getUTCSeconds()); break;
+      case 's': out += d.getUTCSeconds(); break;
+      case 'am/pm': out += H < 12 ? 'AM' : 'PM'; break;
+      case 'a/p': out += H < 12 ? 'A' : 'P'; break;
+      default:
+    }
+  }
+  return out;
+}
+function textNumber(x, fmt) {
+  /* the number part is the first run of 0 # , . with a digit place in it; the
+     rest (quoted, escaped or plain) is kept as written around it */
+  const masked = fmt.replace(/"[^"]*"|\\./g, q => '\u0001'.repeat(q.length));
+  const m = /[#0,.]*[#0][#0,.]*/.exec(masked);
+  if (!m) return ERR.VALUE;
+  const lit = s => s.replace(/"([^"]*)"|\\(.)/g, (q, a, b2) => (a != null ? a : b2));
+  const before = lit(fmt.slice(0, m.index)), after = lit(fmt.slice(m.index + m[0].length));
+  const pct = (masked.slice(0, m.index) + masked.slice(m.index + m[0].length)).includes('%') ? 100 : 1;
+  const spec = m[0], dot = spec.indexOf('.');
+  const ip = dot < 0 ? spec : spec.slice(0, dot), dp = dot < 0 ? '' : spec.slice(dot + 1).replace(/,/g, '');
+  const minInt = (ip.match(/0/g) || []).length, maxDec = dp.length, minDec = (dp.match(/0/g) || []).length;
+  const k = 10 ** maxDec;
+  const v = Math.round(Number((Math.abs(x * pct) * k).toPrecision(15))) / k;
+  let [i, f = ''] = v.toFixed(maxDec).split('.');
+  while (f.length > minDec && f.endsWith('0')) f = f.slice(0, -1);
+  if (i === '0' && minInt === 0) i = '';
+  i = i.padStart(minInt, '0');
+  if (ip.includes(',')) i = i.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const num = dot < 0 ? i : `${i}.${f}`;
+  const neg = x < 0 && /[1-9]/.test(num);
+  return `${neg ? '-' : ''}${before}${num}${after}`;
+}
+def('TEXT', 2, 2, (a, b) => {
+  const v = one(a[0], b), f = textArg(a[1], b);
+  const e = firstErr(v, f);
+  if (e) return e;
+  if (typeof v === 'string' && numText(v) == null) return v;           /* text stays text */
+  const x = toNum(v);
+  if (x instanceof CellError) return x;
+  /* digit places (0 #) make it a number format; otherwise date and time codes make it a date one */
+  const bare = f.replace(/"[^"]*"|\\./g, '');
+  if (/[0#]/.test(bare)) return textNumber(x, f);
+  if (/[ymdhs]|am\/pm|a\/p/i.test(bare)) return textDate(x, f);
+  return ERR.VALUE;
+});
+
+/* ---- lookups ---- */
+/** a one-row or one-column range as a list of its cells' places */
+function line1(rng, book) {
+  if (!(rng instanceof Rng)) return null;
+  const ext = book.extentOf(rng.sid);
+  if (rng.cols === 1) {
+    const last = Math.min(rng.r2, Math.max(rng.r1, ext.r));
+    const out = [];
+    for (let r = rng.r1; r <= last; r++) out.push({ r, c: rng.c1 });
+    return out;
+  }
+  if (rng.rows === 1) {
+    const last = Math.min(rng.c2, Math.max(rng.c1, ext.c));
+    const out = [];
+    for (let c = rng.c1; c <= last; c++) out.push({ r: rng.r1, c });
+    return out;
+  }
+  return null;
+}
+const sameKind = (v, key) => v != null && rank(v) === rank(key);
+/** the place of a key in a line: exact (0), exact or next smaller (-1), next larger (1), wildcards (2) */
+function seek(cells, sid, key, book, mode, fromEnd) {
+  const order = fromEnd ? [...cells.keys()].reverse() : [...cells.keys()];
+  const rx = mode === 2 && typeof key === 'string' ? wildcard(key) : null;
+  let best = -1;
+  for (const i of order) {
+    const v = book.valueIn(sid, cells[i].r, cells[i].c);
+    if (rx) { if (typeof v === 'string' && rx.test(v)) return i; continue; }
+    if (!sameKind(v, key)) continue;
+    const d = compare(v, key);
+    if (d === 0) return i;
+    if (mode === -1 && d < 0 && (best < 0 || compare(v, book.valueIn(sid, cells[best].r, cells[best].c)) > 0)) best = i;
+    if (mode === 1 && d > 0 && (best < 0 || compare(v, book.valueIn(sid, cells[best].r, cells[best].c)) < 0)) best = i;
+  }
+  return best;
+}
+/* XLOOKUP(key, look-in, return-from, [if not found], [match: 0 exact, -1 or smaller, 1 or larger, 2 wildcards], [search: 1 first, -1 last]) */
+def('XLOOKUP', 3, 6, (args, book) => {
+  const key = one(args[0], book);
+  if (key instanceof CellError) return key;
+  const look = args[1], ret = args[2];
+  if (!(look instanceof Rng) || !(ret instanceof Rng)) return ERR.VALUE;
+  const cells = line1(look, book);
+  if (!cells) return ERR.VALUE;
+  const across = look.rows === 1 && look.cols > 1;
+  if (across ? ret.cols !== look.cols : ret.rows !== look.rows) return ERR.VALUE;
+  const mode = args[4] == null ? 0 : numArg(args[4], book), dir = args[5] == null ? 1 : numArg(args[5], book);
+  const e = firstErr(mode, dir);
+  if (e) return e;
+  if (![0, -1, 1, 2].includes(mode) || ![1, -1, 2, -2].includes(dir)) return ERR.VALUE;
+  const i = seek(cells, look.sid, key, book, mode, dir < 0);
+  if (i < 0) return args[3] != null ? args[3] : ERR.NA;
+  /* the matching row (or column) of what to return: one cell is a value, more stay a range for SUM and friends */
+  return across ? new Rng(ret.sid, ret.r1, ret.c1 + i, ret.r2, ret.c1 + i) : new Rng(ret.sid, ret.r1 + i, ret.c1, ret.r1 + i, ret.c2);
+});
+/* MATCH(key, line, [1: largest ≤ key in A→Z data, 0: exact, -1: smallest ≥ key in Z→A data]) → its place, from 1 */
+def('MATCH', 2, 3, (args, book) => {
+  const key = one(args[0], book);
+  if (key instanceof CellError) return key;
+  const cells = line1(args[1], book);
+  if (!cells) return ERR.NA;
+  const type = args[2] == null ? 1 : numArg(args[2], book);
+  if (type instanceof CellError) return type;
+  const sid = args[1].sid;
+  if (type === 0) {
+    const rx = typeof key === 'string' && /[*?~]/.test(key) ? wildcard(key) : null;
+    for (let i = 0; i < cells.length; i++) {
+      const v = book.valueIn(sid, cells[i].r, cells[i].c);
+      if (rx ? typeof v === 'string' && rx.test(v) : sameKind(v, key) && compare(v, key) === 0) return i + 1;
+    }
+    return ERR.NA;
+  }
+  /* sorted data: the last place that is still on the right side of the key */
+  let hit = -1;
+  for (let i = 0; i < cells.length; i++) {
+    const v = book.valueIn(sid, cells[i].r, cells[i].c);
+    if (!sameKind(v, key)) continue;
+    const d = compare(v, key);
+    if (type > 0 ? d <= 0 : d >= 0) hit = i; else break;
+  }
+  return hit < 0 ? ERR.NA : hit + 1;
+});
+/* INDEX(range, row, [column]): the cell at that place (from 1); 0 means the whole column or row */
+def('INDEX', 2, 3, (args, book) => {
+  const rng = args[0];
+  if (!(rng instanceof Rng)) return ERR.VALUE;
+  let r = numArg(args[1], book), c = args[2] == null ? null : numArg(args[2], book);
+  const e = firstErr(r, c);
+  if (e) return e;
+  r = Math.trunc(r);
+  /* one row and one number: the number picks the column */
+  if (c === null) { if (rng.rows === 1 && rng.cols > 1) { c = r; r = 1; } else c = 1; }
+  c = Math.trunc(c);
+  if (r < 0 || c < 0 || r > rng.rows || c > rng.cols) return ERR.REF;
+  const r1 = r ? rng.r1 + r - 1 : rng.r1, r2 = r ? r1 : rng.r2;
+  const c1 = c ? rng.c1 + c - 1 : rng.c1, c2 = c ? c1 : rng.c2;
+  return new Rng(rng.sid, r1, c1, r2, c2);
+});
+/** COUNTIFS / SUMIFS: every (range, criterion) pair must match; the ranges share one shape */
+function multiMatch(pairs, book, fn, also = []) {
+  const first = pairs[0][0];
+  for (const [rng] of pairs) if (!(rng instanceof Rng) || rng.rows !== first.rows || rng.cols !== first.cols) return ERR.VALUE;
+  const tests = pairs.map(([rng, crit]) => ({ rng, test: criterion(crit) }));
+  /* walk as far as any of the ranges (and the one being summed) holds data */
+  const ext = [...pairs.map(p => p[0]), ...also].reduce((m, rng) => { const x = book.extentOf(rng.sid); return { r: Math.max(m.r, x.r - rng.r1 + first.r1), c: Math.max(m.c, x.c - rng.c1 + first.c1) }; }, { r: -1, c: -1 });
+  const r2 = Math.min(first.r2, ext.r), c2 = Math.min(first.c2, ext.c);
+  let seen = 0;
+  for (let r = first.r1; r <= r2; r++) {
+    for (let c = first.c1; c <= c2; c++) {
+      seen++;
+      const dr = r - first.r1, dc = c - first.c1;
+      if (tests.every(t => t.test(book.valueIn(t.rng.sid, t.rng.r1 + dr, t.rng.c1 + dc)))) fn(dr, dc);
+    }
+  }
+  /* blank cells past the end of the data match "" too */
+  return { blanks: tests.every(t => t.test(null)) ? first.rows * first.cols - seen : 0 };
+}
+const critPairs = (list, book) => {
+  const out = [];
+  for (let i = 0; i < list.length; i += 2) out.push([list[i], one(list[i + 1], book)]);
+  return out;
+};
+def('COUNTIFS', 2, MANY, (args, book) => {
+  if (args.length % 2) return ERR.VALUE;
+  let n = 0;
+  const res = multiMatch(critPairs(args, book), book, () => { n++; });
+  return res instanceof CellError ? res : n + res.blanks;
+});
+def('SUMIFS', 3, MANY, (args, book) => {
+  const sum = args[0];
+  if (!(sum instanceof Rng) || (args.length - 1) % 2) return ERR.VALUE;
+  const pairs = critPairs(args.slice(1), book);
+  if (pairs[0][0] instanceof Rng && (pairs[0][0].rows !== sum.rows || pairs[0][0].cols !== sum.cols)) return ERR.VALUE;
+  let total = 0, bad = null;
+  const res = multiMatch(pairs, book, (dr, dc) => {
+    const v = book.valueIn(sum.sid, sum.r1 + dr, sum.c1 + dc);
+    if (v instanceof CellError) bad = bad || v;
+    else if (typeof v === 'number') total += v;
+  }, [sum]);
+  return res instanceof CellError ? res : bad || total;
+});
+
 export const FUNCTION_NAMES = Object.keys(FUNCS).sort();
 
 /* ------------------------------------------------------------------ */
@@ -792,7 +1145,9 @@ export class Book {
 
   /* ---- sheets ---- */
   addSheet(name) {
-    const sheet = { id: this.seq++, name: name || this.freeName(), cells: new Map(), colW: new Map(), maxR: -1, maxC: -1 };
+    /* meta: what the app keeps about a sheet that isn't a cell (filters, freeze,
+       merges, rules, its tab's colour) — plain data, saved and read back as it is */
+    const sheet = { id: this.seq++, name: name || this.freeName(), cells: new Map(), colW: new Map(), maxR: -1, maxC: -1, meta: {} };
     this.sheets.push(sheet);
     this.byId.set(sheet.id, sheet);
     return sheet;
@@ -905,7 +1260,7 @@ export class Book {
       try {
         const { ast, refs, ranges, volatile } = parse(cell.raw.slice(1));
         cell.f = ast;
-        if (ast.t === 'fn' && (ast.name === 'TODAY' || ast.name === 'NOW')) cell.auto = { nf: ast.name === 'TODAY' ? 'date' : 'datetime' };
+        if (ast.t === 'fn' && (ast.name === 'TODAY' || ast.name === 'NOW' || ast.name === 'DATE')) cell.auto = { nf: ast.name === 'NOW' ? 'datetime' : 'date' };
         this.link(sid, k, cell, refs, ranges);
         if (volatile) this.vol.add(k);
       } catch (e) {
@@ -1155,7 +1510,8 @@ export class Book {
         }
         const cols = {};
         for (const [c, w] of [...sh.colW].sort((a, b) => a[0] - b[0])) cols[colName(c)] = w;
-        return { name: sh.name, cells, cols };
+        const meta = sh.meta && Object.keys(sh.meta).length ? JSON.parse(JSON.stringify(sh.meta)) : null;
+        return meta ? { name: sh.name, cells, cols, meta } : { name: sh.name, cells, cols };
       }),
       ...extra,
     };
@@ -1177,6 +1533,10 @@ export class Book {
       for (const [name, w] of Object.entries(s.cols || {})) {
         const c = /^[A-Za-z]{1,3}$/.test(name) ? colIndex(name) : -1;
         if (c >= 0 && c < MAX_COLS && Number.isFinite(w)) sh.colW.set(c, Math.max(24, Math.min(800, w)));
+      }
+      /* passed through as plain data; the app checks every part of it before use */
+      if (s.meta && typeof s.meta === 'object' && !Array.isArray(s.meta)) {
+        try { sh.meta = JSON.parse(JSON.stringify(s.meta)); } catch (e) { sh.meta = {}; }
       }
     }
     if (!book.sheets.length) book.addSheet();

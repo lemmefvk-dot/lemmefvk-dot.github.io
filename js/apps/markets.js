@@ -12,6 +12,18 @@
    · The AI explains what the data says (js/portal/llm.js) and never
      predicts. Scan runs plain rules on the watchlist.
    · Nothing from the network or the model is ever set as HTML.
+   · Practice extras: a stop-loss (a sell that waits for a real price at
+     or below its stop, through the same check as limit orders); a
+     journal note on every order; results (profit/loss, win rate, the
+     biggest win and loss) from closed practice trades only, shown once
+     there is one; every order as a CSV in Documents; fees and slippage
+     as the person's own practice settings, said to be so wherever they
+     show; and Reset, which archives the old account before starting over.
+   · On the Static chart: price lines (a notification when a fetched
+     price reaches one, checked only while StaticOS is open), lesson mode
+     (what each indicator measures and what it reads now), Compare (two
+     symbols rebased to 0% on Sheets' line chart), and dividends and
+     splits, shown only when Twelve Data returns them.
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import { h } from '../core/dom.js';
@@ -23,9 +35,11 @@ import * as D from './markets-data.js';
 import * as K from './markets-lib.js';
 import { createChart, fmtPrice, palette } from './markets-chart.js';
 import * as TV from './markets-tv.js';
+import * as SheetChart from '../sheets/chart.js';
 
 const STOCK_EVERY = 5 * 60e3;       /* free plan: 8 credits a minute, 800 a day */
 const MAX_WATCH = 20;
+const MAX_LINES = 8;           /* price lines per symbol */
 const NOTE = 'Education, not financial advice.';
 /* what a first-time person sees: two US stocks, one fund and two coins (crypto first, so a chart shows even on a weekend) */
 const DEFAULT_WATCH = ['BTC-USD', 'ETH-USD', 'AAPL', 'MSFT', 'SPY'];
@@ -41,8 +55,12 @@ const CSS = `
 .mk__chip--practice{border-color:color-mix(in srgb,var(--accent) 60%,transparent);color:var(--ink-0)}
 .mk__tabs{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap}
 .mk__tab,.mk__btn{height:28px;padding:0 var(--sp-4);border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--fill-1);cursor:pointer}
-.mk__tab[aria-pressed=true],.mk__btn[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink,#fff)}
-.mk__btn--go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink,#fff);font-weight:600}
+/* text on the accent is --accent-ink. The four accents that pair it with white
+   (Crimson, Blue, Violet, Pink) are too light for white text (3.3 to 4.2:1), so
+   here they get the dark ink every other accent has; Increased contrast sets its own */
+:root:is([data-accent=aether],[data-accent=azure],[data-accent=violet],[data-accent=pink]):not([data-contrast=high]) .mk{--accent-ink:#14060a}
+.mk .mk__tab[aria-pressed=true],.mk .mk__btn[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.mk .mk__btn--go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
 .mk button:disabled{opacity:.45;cursor:default}
 .mk button:focus-visible,.mk input:focus-visible,.mk select:focus-visible,.mk__canvas:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .mk__msg{padding:var(--sp-2) var(--sp-4);font-size:var(--fs-12);color:var(--ink-1);background:var(--fill-1);border-bottom:1px solid var(--line-1)}
@@ -123,6 +141,28 @@ const CSS = `
 .mk__tvmsg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--sp-3);text-align:center;padding:var(--sp-5);color:var(--ink-1)}
 .mk__tvmsg p{margin:0;max-width:46ch}
 .mk__tvcredit{font-size:var(--fs-12);color:var(--ink-2);align-self:flex-end}
+.mk__tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--sp-3)}
+.mk__tile{border:1px solid var(--line-1);border-radius:var(--r-sm);padding:var(--sp-3);display:flex;flex-direction:column;gap:2px;background:var(--fill-1)}
+.mk__tile small{color:var(--ink-2);font-size:var(--fs-12)}
+.mk__tile b{font-size:1.15em;color:var(--ink-0);font-variant-numeric:tabular-nums}
+.mk__tile b.mk__up{color:var(--mk-up)}.mk__tile b.mk__down{color:var(--mk-down)}
+.mk__notef{grid-column:1/-1}
+.mk__notecell{min-width:140px;max-width:280px;color:var(--ink-1)}
+.mk__notecell span{overflow-wrap:anywhere}
+.mk__notecell .mk__x{margin-left:4px}
+.mk__notecell .mk__in{width:100%;margin-bottom:4px}
+.mk__linebar{align-items:flex-end}
+.mk__lines{align-items:center}
+.mk__linechip{display:inline-flex;align-items:center;gap:2px;padding:2px 2px 2px 9px;border-radius:999px;border:1px dashed var(--accent);font-size:var(--fs-12);font-variant-numeric:tabular-nums}
+.mk__linechip[data-hit=true]{opacity:.7;border-style:solid}
+.mk__cmp{display:block;width:100%;height:220px;border-radius:var(--r-sm);background:var(--chart-surface)}
+.mk__lessons{gap:var(--sp-4)}
+.mk__lesson{border-top:1px solid var(--line-1);padding-top:var(--sp-3)}
+.mk__lesson h4{margin:0 0 4px;font-size:var(--fs-13);color:var(--ink-0)}
+.mk__lesson p{margin:.25em 0;line-height:1.5}
+.mk__lessonnow{color:var(--ink-0);font-variant-numeric:tabular-nums;font-weight:550}
+.mk__lessonchk{border-style:dashed}
+.mk__ev h4{margin:var(--sp-3) 0 4px;font-size:var(--fs-13);color:var(--ink-0)}
 .mk--narrow .mk__body{flex-direction:column;overflow:auto}
 .mk--narrow .mk__side{width:auto;border-right:0;border-bottom:1px solid var(--line-1);max-height:none;overflow:visible}
 .mk--narrow .mk__main{overflow:visible}
@@ -153,7 +193,7 @@ defineApp({
   icon: 'trending-up',
   g1: '#3ddc97', g2: '#0b5d46',
   category: 'Utilities',
-  keywords: ['stocks', 'stock market', 'shares', 'trading', 'practice trading', 'paper trading', 'invest', 'chart', 'candlestick', 'crypto', 'bitcoin', 'watchlist', 'portfolio', 'rsi', 'macd', 'scan'],
+  keywords: ['stocks', 'stock market', 'shares', 'trading', 'practice trading', 'paper trading', 'invest', 'chart', 'candlestick', 'crypto', 'bitcoin', 'watchlist', 'portfolio', 'rsi', 'macd', 'scan', 'stop-loss', 'compare', 'price alert', 'trade journal', 'indicators lesson'],
   desc: 'Stock and crypto charts, a watchlist, an AI chart explainer and practice trading with virtual money',
   singleton: true,
   win: { w: 1020, h: 680, minW: 360, minH: 420 },
@@ -166,7 +206,7 @@ function build(root, api) {
   let dead = false;
   const timers = [];
   const ac = new AbortController();           /* every request of this window */
-  let aiAbort = null, scanAbort = null, chartAbort = null;
+  let aiAbort = null, scanAbort = null, chartAbort = null, cmpAbort = null, evAbort = null;
 
   /* ---------- saved state (per person, through the store) ---------- */
   const saved = store.get('markets') || {};
@@ -175,7 +215,10 @@ function build(root, api) {
     key: typeof saved.key === 'string' ? saved.key : '',
     watch: Array.isArray(saved.watch) ? saved.watch.filter(x => typeof x === 'string').slice(0, MAX_WATCH) : DEFAULT_WATCH.slice(),
     acct: saved.acct && typeof saved.acct.cash === 'number' ? saved.acct : null,
-    ui: { view: 'tv', type: 'line', ind: { sma: false, ema: false, bb: false, rsi: false, macd: false }, ...(saved.ui || {}) },
+    ui: { view: 'tv', type: 'line', ind: { sma: false, ema: false, bb: false, rsi: false, macd: false }, lesson: false, cmp: '', ...(saved.ui || {}) },
+    lines: saved.lines && typeof saved.lines === 'object' ? Object.fromEntries(Object.entries(saved.lines).filter(([k, v]) => typeof k === 'string' && Array.isArray(v))
+      .map(([k, v]) => [k, v.filter(l => l && Number.isSafeInteger(l.price) && l.price > 0).slice(0, MAX_LINES)])) : {},
+    archive: Array.isArray(saved.archive) ? saved.archive.filter(x => x && typeof x.cash === 'number').slice(0, K.MAX_ARCHIVES) : [],
     exch: saved.exch && typeof saved.exch === 'object' ? saved.exch : {},
     sym: null, range: '6M', tab: 'chart',
     quotes: new Map(),      /* sym -> { q, at } */
@@ -184,7 +227,8 @@ function build(root, api) {
     scan: null, results: [], searchNote: '',
   };
   S.sym = S.watch[0] || null;
-  const persist = () => store.set('markets', { mode: S.mode, key: S.key, watch: S.watch, acct: S.acct, ui: S.ui, exch: S.exch });
+  const persist = () => store.set('markets', { mode: S.mode, key: S.key, watch: S.watch, acct: S.acct, ui: S.ui, exch: S.exch, lines: S.lines, archive: S.archive });
+  if (S.acct) S.acct.costs = K.cleanCosts(S.acct.costs);          /* accounts from before practice costs: none */
 
   /* ---------- skeleton ---------- */
   const msg = h('div.mk__msg', { role: 'status', 'aria-live': 'polite', hidden: true });
@@ -332,10 +376,18 @@ function build(root, api) {
         const filled = K.checkLimits(S.acct, sym, q.price, Date.now());
         if (filled.length) {
           persist();
-          for (const o of filled) api.notify?.({ title: 'Practice order filled', message: `${o.side === 'buy' ? 'Bought' : 'Sold'} ${K.fmtQty(o.qty)} ${o.sym} at ${money(o.price)} (practice money)`, icon: 'trending-up' });
-          say(`${filled.length} practice limit order${filled.length > 1 ? 's' : ''} filled at the latest real price.`, 'info', 8000);
+          for (const o of filled) api.notify?.({ title: o.type === 'stop' ? 'Practice stop-loss filled' : 'Practice order filled', message: `${o.side === 'buy' ? 'Bought' : 'Sold'} ${K.fmtQty(o.qty)} ${o.sym} at ${money(o.price)} (practice money)`, icon: 'trending-up' });
+          say(`${filled.length} practice ${filled.some(o => o.type === 'stop') ? 'order' : 'limit order'}${filled.length > 1 ? 's' : ''} filled at the latest real price.`, 'info', 8000);
           if (S.tab === 'trade' || S.tab === 'portfolio') paintMain();
         }
+      }
+      /* price lines on this symbol's chart, checked against the price just fetched */
+      const reached = K.checkLines(S.lines[sym], q.price, Date.now());
+      if (reached.length) {
+        persist();
+        for (const l of reached) api.notify?.({ title: `${sym} reached your price line`, message: `${px(l.price)} line: the price is ${px(q.price)} (${q.source}, as of ${timeIn(q.asOf, q.tz)}).`, icon: 'trending-up' });
+        say(`${sym} reached ${reached.length === 1 ? 'your price line at ' + px(reached[0].price) : reached.length + ' of your price lines'}.`, 'info', 8000);
+        if (sym === S.sym && S.tab === 'chart') { drawChart(); paintLines?.(); }
       }
       paintSide(); paintSession();
       if (sym === S.sym && S.tab === 'chart') paintQuote();
@@ -350,7 +402,8 @@ function build(root, api) {
       throw e;
     }
   }
-  const watched = () => [...new Set([...S.watch, ...Object.keys(S.acct?.positions || {}), ...(S.acct?.orders || []).filter(o => o.status === 'open').map(o => o.sym)])];
+  const watched = () => [...new Set([...S.watch, ...Object.keys(S.acct?.positions || {}), ...(S.acct?.orders || []).filter(o => o.status === 'open').map(o => o.sym),
+    ...Object.keys(S.lines).filter(k => S.lines[k].some(l => !l.hit))])];
   async function tick(first = false) {
     if (dead || !S.mode || document.hidden) return;
     paintSession();
@@ -372,6 +425,7 @@ function build(root, api) {
 
   /* ---------- the chart tab ---------- */
   let chart = null, chartParts = null, tvs = [];
+  let paintLines = null, paintLesson = null, loadCompare = null;
   /* the AI model every AI app shares (Settings → AI model); this is a shortcut to it */
   const aiLine = () => { const d = AIM.describe(); return h('div.mk__ailine', h('span.mk__sub.mk__aimodel', { text: `Model: ${d.name}, requests go to ${d.host}.` }),
     h('button.mk__btn', { type: 'button', dataset: { act: 'ai-model' }, text: 'Change AI model', onclick: () => import('../core/wm.js').then(m => m.open('settings', { section: 'ai' })) })); };
@@ -384,7 +438,7 @@ function build(root, api) {
   const practiceNote = sym => (S.mode === 'practice' && !S.key
     ? h('p.mk__sub#mk-tv-note', { text: 'You can chart this symbol with TradingView without a key, but practice orders (and the AI and Scan) need real prices from your free Twelve Data key. Add it in Settings.' }) : null);
   function paintMain() {
-    chart?.destroy(); chart = null; chartParts = null; tradeUpd = null;
+    chart?.destroy(); chart = null; chartParts = null; tradeUpd = null; paintLines = null; paintLesson = null; loadCompare = null; cmpAbort?.abort(); evAbort?.abort();
     for (const t of tvs) t.destroy();
     tvs = [];
     if (!S.mode) return paintStart();
@@ -407,6 +461,115 @@ function build(root, api) {
     const PC = palette();
     const SW = { sma: [PC.sma20, PC.sma50], ema: [PC.ema20], bb: [PC.bb], rsi: [PC.rsi], macd: [PC.macd, PC.sig] };
     const indBox = IND.map(([k, label]) => h('label.mk__chk', h('input', { type: 'checkbox', dataset: { ind: k }, checked: !!S.ui.ind[k], onchange: ev => { S.ui.ind[k] = ev.target.checked; persist(); drawChart(); } }), ...SW[k].map(c => h('i', { style: { background: c }, 'aria-hidden': 'true' })), h('span', { text: label })));
+    const lessonBox = h('label.mk__chk.mk__lessonchk', h('input', { type: 'checkbox', dataset: { act: 'lesson' }, checked: !!S.ui.lesson, onchange: ev => { S.ui.lesson = ev.target.checked; persist(); paintLesson?.(); } }), h('span', { text: 'Lesson mode' }));
+
+    /* lesson mode: what each indicator measures, and what it reads on this chart now */
+    const lessonCard = h('section.mk__card.mk__lessons', { 'aria-label': 'Lesson: the indicators', hidden: true });
+    paintLesson = () => {
+      lessonCard.hidden = !S.ui.lesson;
+      if (!S.ui.lesson) return;
+      const s = S.series;
+      const now = s && s.sym === S.sym && s.disp.length ? (() => { const I = K.indicatorsOf(s.full), off = s.full.length - s.disp.length, cut = a => a.slice(off);
+        return K.lessonNow(s.disp, { sma20: cut(I.sma20), sma50: cut(I.sma50), ema20: cut(I.ema20), rsi: cut(I.rsi), macd: { line: cut(I.macd.line), signal: cut(I.macd.signal), hist: cut(I.macd.hist) }, bb: { mid: cut(I.bb.mid), up: cut(I.bb.up), lo: cut(I.bb.lo) } }); })() : {};
+      lessonCard.replaceChildren(h('h3', { text: 'Lesson: what each indicator measures' }),
+        h('p.mk__sub', { text: 'Each “now” line is read from this chart’s bars. None of this says what the price will do next.' }),
+        ...Object.entries(K.LESSONS).map(([k, L]) => h('div.mk__lesson', { dataset: { lesson: k } },
+          h('h4', { text: L.title + (k !== 'vol' && S.ui.ind[k] ? ' (on the chart)' : '') }),
+          h('p', { text: L.what }), h('p', { text: L.read }), h('p.mk__sub', { text: L.careful }),
+          h('p.mk__lessonnow', { text: now[k] || 'Now: the chart is still loading, or needs your key.' }))));
+    };
+
+    /* price lines: levels drawn on this symbol's chart, checked only when a price is fetched */
+    const lineIn = h('input.mk__in#mk-line', { inputmode: 'decimal', placeholder: 'e.g. 210.50', 'aria-label': 'Price line at ($)', size: 9 });
+    const lineMsg = h('span.mk__sub', { role: 'status' });
+    const lineList = h('div.mk__grp.mk__lines', { role: 'group', 'aria-label': 'Price lines' });
+    const addLine = () => {
+      const c = K.parseMoney(lineIn.value), q = S.quotes.get(S.sym)?.q;
+      if (c == null || c < 1) { lineMsg.textContent = 'Type a price like 210.50.'; return; }
+      if (!q) { lineMsg.textContent = 'Wait for a real price first: a line is reached when the price gets to it from where it is now.'; return; }
+      const list = S.lines[S.sym] || [];
+      if (list.length >= MAX_LINES) { lineMsg.textContent = `Up to ${MAX_LINES} lines per symbol.`; return; }
+      if (c === q.price) { lineMsg.textContent = 'That is the price right now.'; return; }
+      S.lines[S.sym] = [...list, K.newLine(c, q.price)];
+      persist(); lineIn.value = ''; lineMsg.textContent = `Line added at ${px(c)}, ${c > q.price ? 'above' : 'below'} the price now.`;
+      paintLines(); drawChart();
+    };
+    lineIn.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); addLine(); } });
+    paintLines = () => {
+      const list = S.lines[S.sym] || [];
+      lineList.replaceChildren(...(list.length ? list.map(l => h('span.mk__linechip', { dataset: { line: String(l.price), hit: String(!!l.hit) } },
+        h('span', { text: `${px(l.price)} ${l.above ? '▲' : '▼'}${l.hit ? ` reached ${new Date(l.hit).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}` }),
+        l.hit ? h('button.mk__x', { type: 'button', 'aria-label': `Watch the ${px(l.price)} line again`, title: 'Watch again', text: '↺', onclick: () => { const q = S.quotes.get(S.sym)?.q; l.hit = null; if (q) l.above = l.price > q.price; persist(); paintLines(); drawChart(); } }) : null,
+        h('button.mk__x', { type: 'button', 'aria-label': `Remove the price line at ${px(l.price)}`, text: '✕', onclick: () => { S.lines[S.sym] = list.filter(x => x !== l); if (!S.lines[S.sym].length) delete S.lines[S.sym]; persist(); paintLines(); drawChart(); } })))
+        : [h('span.mk__sub', { text: 'No lines yet.' })]));
+    };
+    const linesBar = h('div.mk__bar.mk__linebar', h('label.mk__f', h('span', { text: 'Price line ($)' }), lineIn),
+      h('button.mk__btn', { type: 'button', dataset: { act: 'add-line' }, text: 'Add line', onclick: addLine }), lineList, lineMsg,
+      h('p.mk__sub.mk__note', { text: 'You get a notification when a fresh real price reaches a line. Lines are checked only while StaticOS is open and this app fetches the price (every 5 minutes), so a quick touch in between can be missed.' }));
+
+    /* compare: two symbols on one chart, each from 0% at the first bar they share */
+    const cmpSel = h('select#mk-cmp', { 'aria-label': 'Compare with' }, h('option', { value: '', text: 'Compare with…' }),
+      S.watch.filter(x => x !== S.sym).map(x => h('option', { value: x, text: x, selected: S.ui.cmp === x })));
+    const cmpCanvas = h('canvas.mk__cmp', { role: 'img', 'aria-label': 'Comparison chart', hidden: true });
+    const cmpOut = h('p.mk__sub', { role: 'status', 'aria-live': 'polite' });
+    cmpSel.addEventListener('change', () => { S.ui.cmp = cmpSel.value; persist(); loadCompare(); });
+    loadCompare = async () => {
+      const other = S.ui.cmp && S.ui.cmp !== S.sym && S.watch.includes(S.ui.cmp) ? S.ui.cmp : '';
+      cmpAbort?.abort();
+      if (!other) { cmpCanvas.hidden = true; cmpOut.textContent = ''; return; }
+      const s = S.series;
+      if (!S.key) { cmpOut.textContent = 'Comparing needs real bars from your free Twelve Data key.'; return; }
+      if (!s || s.sym !== S.sym) { cmpOut.textContent = 'Waiting for this chart’s bars…'; return; }
+      cmpAbort = new AbortController();
+      const sig = cmpAbort.signal;
+      cmpOut.textContent = `Loading ${other}…`;
+      try {
+        const r = await D.bars(other, s.range, S.key, { signal: sig });
+        if (dead || sig.aborted || S.series !== s) return;
+        const R = D.RANGES[s.range];
+        const disp = R.daily ? D.sliceDays(r.bars, R.days) : r.bars;
+        const c = K.compareSeries(s.disp, disp, s.daily);
+        if (!c) { cmpCanvas.hidden = true; cmpOut.textContent = `${S.sym} and ${other} share fewer than two bars in this range (one may trade at hours or on days the other doesn’t), so there is nothing to compare.`; return; }
+        cmpCanvas.hidden = false;
+        const fmtD = b => (s.daily ? b.d : new Date(b.t).toLocaleString('en-US', { timeZone: s.tz === 'UTC' ? 'UTC' : s.tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }));
+        const spec = { type: 'line', title: '', yLabel: '% since the first shared bar', data: { labels: c.bars.map(fmtD), series: [{ name: S.sym, values: c.a.map(v => Math.round(v * 100) / 100) }, { name: other, values: c.b.map(v => Math.round(v * 100) / 100) }] } };
+        const w = Math.max(80, cmpCanvas.clientWidth || 600), hh = Math.max(80, cmpCanvas.clientHeight || 220), dpr = Math.min(3, window.devicePixelRatio || 1);
+        cmpCanvas.width = Math.round(w * dpr); cmpCanvas.height = Math.round(hh * dpr);
+        const g = cmpCanvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        SheetChart.drawChart(g, w, hh, spec, SheetChart.readTheme(el));
+        const end = (x, k) => `${k} ${x >= 0 ? '+' : ''}${x.toFixed(2)}%`;
+        const line = `From ${fmtD(c.from)} to ${fmtD(c.to)} (${c.n} shared bars of ${s.iv}): ${end(c.a[c.n - 1], S.sym)}, ${end(c.b[c.n - 1], other)}. Past change only.`;
+        cmpOut.textContent = line;
+        cmpCanvas.setAttribute('aria-label', `Line chart comparing ${S.sym} and ${other} as percent change. ${line}`);
+        cmpCanvas.dataset.n = String(c.n); cmpCanvas.dataset.end = `${c.a[c.n - 1].toFixed(4)},${c.b[c.n - 1].toFixed(4)}`;
+      } catch (e) { if (!dead && e.name !== 'AbortError') { cmpCanvas.hidden = true; cmpOut.textContent = `${other}: ${errText(e)}`; } }
+    };
+    const cmpCard = h('section.mk__card', { 'aria-label': 'Compare two symbols' }, h('div.mk__aihead', h('h3', { text: 'Compare' }), cmpSel),
+      h('p.mk__sub', { text: 'Both lines start at 0% on the first bar the two share in this range, so their moves can be read side by side whatever their prices.' }), cmpCanvas, cmpOut);
+
+    /* dividends and splits: only what the provider returns */
+    const evOut = h('div.mk__ev', { 'aria-live': 'polite' });
+    const evBtn = h('button.mk__btn', { type: 'button', dataset: { act: 'events' }, text: 'Ask Twelve Data' });
+    evBtn.onclick = async () => {
+      if (!S.key) { evOut.replaceChildren(h('p.mk__sub', { text: 'This needs your Twelve Data key (Settings).' })); return; }
+      evAbort?.abort(); evAbort = new AbortController();
+      const sym = S.sym;
+      evBtn.disabled = true; evOut.replaceChildren(h('p.mk__sub', { text: 'Asking Twelve Data…' }));
+      try {
+        const r = await D.events(sym, S.key, { signal: evAbort.signal });
+        if (dead || sym !== S.sym) return;
+        const table = (rows, head, cells, label) => h('div.mk__tw', h('table', { 'aria-label': label }, h('thead', h('tr', head.map((x, i) => h('th', { class: i ? 'n' : '', text: x })))), h('tbody', rows.map(x => h('tr', cells(x).map((v, i) => h('td', { class: i ? 'n' : '', text: v })))))));
+        evOut.replaceChildren(
+          h('h4', { text: 'Dividends, last 5 years' }),
+          r.dividends === null ? h('p.mk__sub', { text: `Not shown: ${r.divErr}` }) : r.dividends.length ? table(r.dividends, ['Ex-dividend date', `Amount per share (${r.currency})`], x => [x.date, String(x.amount)], `${sym} dividends`) : h('p.mk__sub', { text: `Twelve Data returned no dividends for ${sym} in the last 5 years.` }),
+          h('h4', { text: 'Splits, last 5 years' }),
+          r.splits === null ? h('p.mk__sub', { text: `Not shown: ${r.splitErr}` }) : r.splits.length ? table(r.splits, ['Date', 'Split'], x => [x.date, x.text], `${sym} splits`) : h('p.mk__sub', { text: `Twelve Data returned no splits for ${sym} in the last 5 years.` }),
+          h('p.mk__sub', { text: 'From Twelve Data, as it sent them. Practice positions are not paid dividends.' }));
+      } catch (e) { if (!dead && e.name !== 'AbortError') evOut.replaceChildren(h('p.mk__sub', { role: 'alert', text: `Not shown: ${errText(e)}` })); }
+      finally { evBtn.disabled = false; }
+    };
+    const evCard = D.isCrypto(S.sym) ? null : h('section.mk__card', { 'aria-label': 'Dividends and splits' }, h('div.mk__aihead', h('h3', { text: 'Dividends and splits' }), evBtn),
+      h('p.mk__sub', { text: `Shown only if Twelve Data returns them. It lists them on its paid Grow plan and up, at ${D.EVENT_CREDITS} credits each, so on a free key it will most likely say no, and then nothing is shown.` }), evOut);
     const aiOut = h('div.mk__ai', { 'aria-live': 'polite' });
     const aiBtns = [['explain', 'Explain this chart'], ['ideas', 'Ideas to watch']].map(([id, l]) => h('button.mk__btn', { type: 'button', dataset: { ai: id }, text: l, onclick: () => askAI(id, aiOut, aiBtns) }));
     const aiCard = h('section.mk__card', { 'aria-label': 'AI chart viewer' },
@@ -414,8 +577,8 @@ function build(root, api) {
       h('div.mk__bar', aiBtns), aiOut,
       h('p.mk__sub.mk__note', { text: 'Sends this chart’s numbers (as text) to the AI model you chose. ' + NOTE }));
     const ownBlock = h('div.mk__own',
-      h('div.mk__bar', h('div.mk__grp', { role: 'group', 'aria-label': 'Time range' }, rangeBtns), h('div.mk__grp', { role: 'group', 'aria-label': 'Chart type' }, typeBtns), h('div.mk__grp', { role: 'group', 'aria-label': 'Indicators' }, indBox)),
-      h('div.mk__chartbox', canvas, over), readout, live);
+      h('div.mk__bar', h('div.mk__grp', { role: 'group', 'aria-label': 'Time range' }, rangeBtns), h('div.mk__grp', { role: 'group', 'aria-label': 'Chart type' }, typeBtns), h('div.mk__grp', { role: 'group', 'aria-label': 'Indicators' }, indBox, lessonBox)),
+      h('div.mk__chartbox', canvas, over), readout, live, linesBar, lessonCard, cmpCard);
     const tvBlock = h('div.mk__tvblock',
       addTV('advanced-chart', { symbol: tvSym(S.sym), interval: 'D', timezone: 'exchange', style: '1', allow_symbol_change: false, autosize: true, hide_side_toolbar: false, support_host: 'https://www.tradingview.com' }, `TradingView advanced chart for ${S.sym}`, 480, 'The Static chart below the quote still works from its own data.'),
       practiceNote(S.sym));
@@ -431,11 +594,12 @@ function build(root, api) {
       tvBlock, ownBlock,
       h('section.mk__card', { 'aria-label': 'TradingView technical analysis' }, h('h3', { text: 'Technical analysis by TradingView' }),
         addTV('technical-analysis', { symbol: tvSym(S.sym), interval: '1D', width: '100%', height: '100%', isTransparent: false, showIntervalTabs: true, displayMode: 'single' }, `TradingView technical analysis for ${S.sym}`, 380, '')),
-      aiCard);
+      aiCard, evCard);
     tvBlock.hidden = S.ui.view !== 'tv'; ownBlock.hidden = S.ui.view === 'tv';
     chart = createChart(canvas, { readout, live });
     chartParts = { quoteEl, canvas, over };
     paintQuote();
+    paintLines(); paintLesson();
     loadChart();
   }
   function paintQuote() {
@@ -471,6 +635,7 @@ function build(root, api) {
       if (!disp.length) { show('The provider returned no bars for ' + sym + ' in this range.'); mine.set(null); return; }
       show('');
       drawChart();
+      loadCompare?.();
     } catch (e) {
       if (dead || sig.aborted || e.name === 'AbortError' || chart !== mine) return;
       mine.set(null);
@@ -485,8 +650,10 @@ function build(root, api) {
     const off = s.full.length - s.disp.length;
     const cut = a => a.slice(off);
     const Is = { sma20: cut(I.sma20), sma50: cut(I.sma50), ema20: cut(I.ema20), rsi: cut(I.rsi), macd: { line: cut(I.macd.line), signal: cut(I.macd.signal), hist: cut(I.macd.hist) }, bb: { mid: cut(I.bb.mid), up: cut(I.bb.up), lo: cut(I.bb.lo) } };
-    chart.set({ bars: s.disp, I: Is, type: S.ui.type, ind: S.ui.ind, tz: s.tz === 'UTC' ? 'UTC' : s.tz, daily: s.daily, range: s.range });
-    chartParts.canvas.setAttribute('aria-label', `${s.sym} ${D.RANGES[s.range].label} chart, ${s.disp.length} bars of ${s.iv}, from ${s.disp[0].d} to ${s.disp[s.disp.length - 1].d}, last close ${fmtPrice(s.disp[s.disp.length - 1].c)}. Use the left and right arrow keys to move through the bars.`);
+    const lines = (S.lines[s.sym] || []).map(l => ({ price: l.price / 100, hit: !!l.hit }));
+    chart.set({ bars: s.disp, I: Is, type: S.ui.type, ind: S.ui.ind, tz: s.tz === 'UTC' ? 'UTC' : s.tz, daily: s.daily, range: s.range, lines });
+    chartParts.canvas.setAttribute('aria-label', `${s.sym} ${D.RANGES[s.range].label} chart, ${s.disp.length} bars of ${s.iv}, from ${s.disp[0].d} to ${s.disp[s.disp.length - 1].d}, last close ${fmtPrice(s.disp[s.disp.length - 1].c)}.${lines.length ? ` Price lines at ${lines.map(l => fmtPrice(l.price)).join(', ')}.` : ''} Use the left and right arrow keys to move through the bars.`);
+    paintLesson?.();
   }
 
   /* ---------- AI ---------- */
@@ -519,10 +686,14 @@ function build(root, api) {
     const q0 = S.quotes.get(sym)?.q;
     const crypto = D.isCrypto(sym);
     const side = h('select#mk-side', { 'aria-label': 'Buy or sell' }, h('option', { value: 'buy', text: 'Buy' }), h('option', { value: 'sell', text: 'Sell' }));
-    const type = h('select#mk-type', { 'aria-label': 'Order type' }, h('option', { value: 'market', text: 'Market (now)' }), h('option', { value: 'limit', text: 'Limit (your price)' }));
+    const type = h('select#mk-type', { 'aria-label': 'Order type' }, h('option', { value: 'market', text: 'Market (now)' }), h('option', { value: 'limit', text: 'Limit (your price)' }), h('option', { value: 'stop', text: 'Stop-loss (sell if it falls to)' }));
     const qty = h('input.mk__in#mk-qty', { inputmode: 'decimal', value: '1', 'aria-label': crypto ? 'Quantity (up to 6 decimals)' : 'Shares (whole)' });
     const lim = h('input.mk__in#mk-limit', { inputmode: 'decimal', placeholder: q0 ? (q0.price / 100).toFixed(2) : '', 'aria-label': 'Limit price in dollars' });
     const limF = h('label.mk__f', { hidden: true }, h('span', { text: 'Limit price ($)' }), lim);
+    const stopIn = h('input.mk__in#mk-stop', { inputmode: 'decimal', placeholder: q0 ? (Math.floor(q0.price * 0.95) / 100).toFixed(2) : '', 'aria-label': 'Stop price in dollars' });
+    const stopF = h('label.mk__f', { hidden: true }, h('span', { text: 'Stop price ($)' }), stopIn);
+    const noteIn = h('input.mk__in#mk-note', { maxlength: String(K.NOTE_MAX), placeholder: 'Why this trade? (optional)', 'aria-label': 'Journal note for this order', autocomplete: 'off' });
+    const noteF = h('label.mk__f.mk__notef', h('span', { text: 'Journal note' }), noteIn);
     const est = h('dl.mk__est', { id: 'mk-est', 'aria-label': 'Order preview' });
     const why = h('div.mk__why#mk-why', { role: 'status' });
     const result = h('div', { id: 'mk-result', role: 'status', 'aria-live': 'polite' });
@@ -532,59 +703,76 @@ function build(root, api) {
     /* the order as typed: what it would cost, what would be left, and the first thing wrong with it */
     const check = () => {
       const q = S.quotes.get(sym)?.q;
+      const isStop = type.value === 'stop';
+      if (isStop && side.value !== 'sell') side.value = 'sell';
+      side.disabled = isStop;
       const buy = side.value === 'buy', isLimit = type.value === 'limit';
-      const n = K.parseQty(qty.value), limit = isLimit ? K.parseMoney(lim.value) : null;
+      const n = K.parseQty(qty.value), limit = isLimit ? K.parseMoney(lim.value) : null, stop = isStop ? K.parseMoney(stopIn.value) : null;
       const A = S.acct, free = K.availableCash(A), held = A.positions[sym]?.qty || 0;
-      const price = isLimit ? limit : q?.price;
-      const total = n && price >= 1 ? K.costOf(n, isLimit && buy && q && q.price < limit ? q.price : price) : null;
+      const price = isLimit ? limit : isStop ? stop : q?.price;
+      /* what it fills at: a market order at the real quote (with practice slippage), a limit at its limit or better, a stop at the price that reaches it */
+      const e = n && price >= 1 ? K.estimate(A, { side: side.value, type: type.value, qty: n, quote: isLimit && buy && q && q.price < limit ? q.price : isLimit && !buy && q && q.price > limit ? q.price : price, limit }) : null;
+      const total = e ? e.total : null;
       let bad = '';
       if (!S.key) bad = 'Needs your Twelve Data key (Settings): practice orders fill at real prices.';
       else if (!q) bad = S.qerr.get(sym) ? `No real price for ${sym} yet: ${S.qerr.get(sym).message}` : `Waiting for a real price for ${sym}.`;
       else if (!n) bad = crypto ? 'Enter a quantity above zero, up to 6 decimals.' : 'Enter a whole number of shares above zero.';
       else if (!crypto && n % K.UNIT) bad = 'Stocks trade in whole shares here.';
       else if (isLimit && !(limit >= 1)) bad = 'Enter a limit price like 150.25.';
+      else if (isStop && !(stop >= 1)) bad = 'Enter a stop price like 140.00.';
+      else if (isStop && held === 0) bad = `A stop-loss sells shares you hold, and you hold no ${sym}.`;
       else if (!(price >= 1)) bad = 'This price is under one cent, which practice trading cannot hold exactly.';
-      else if (buy && total > free) bad = `Not enough practice cash: this needs ${money(total)}, you have ${money(free)} free.`;
+      else if (buy && e.net > free) bad = `Not enough practice cash: this needs ${money(e.net)}, you have ${money(free)} free.`;
       else if (!buy && n > held - K.reservedQty(A, sym)) bad = `You can sell at most ${K.fmtQty(Math.max(0, held - K.reservedQty(A, sym)))} ${sym} (you hold ${K.fmtQty(held)}; open sell orders hold the rest).`;
-      return { buy, isLimit, n, price, total, free, held, bad };
+      return { buy, isLimit, isStop, n, price, total, e, free, held, bad };
     };
     const upd = () => {
-      limF.hidden = type.value !== 'limit';
+      limF.hidden = type.value !== 'limit'; stopF.hidden = type.value !== 'stop';
       const q = S.quotes.get(sym)?.q;
       const c = check();
       hdrPrice.textContent = q ? px(q.price) : 'no price yet';
       hdrSub.textContent = q ? `${q.source}, as of ${timeIn(q.asOf, q.tz)}` : (S.qerr.get(sym)?.message || 'Waiting for a real price.');
-      const rows = [...row('Price used', c.isLimit ? (c.price >= 1 ? `${money(c.price)} (your limit)` : 'enter a limit') : q ? `${px(q.price)} (last price)` : 'none yet')];
-      if (c.total != null) rows.push(...row(c.buy ? 'Estimated cost' : 'Estimated proceeds', money(c.total)), ...row('Practice cash now', money(c.free)), ...row('Cash after', money(c.buy ? c.free - c.total : c.free + c.total)));
-      else rows.push(...row('Practice cash now', money(c.free)));
+      const costs = S.acct.costs;
+      const rows = [...row('Price used', c.isLimit ? (c.price >= 1 ? `${money(c.price)} (your limit)` : 'enter a limit') : c.isStop ? (c.price >= 1 ? `${money(c.price)} (your stop; it sells at the real price that reaches it)` : 'enter a stop') : q ? `${px(q.price)} (last price)` : 'none yet')];
+      if (c.e && costs.slipBps && !c.isLimit) rows.push(...row('Practice slippage (your setting)', `${money(c.e.slip)} a ${D.isCrypto(sym) ? 'unit' : 'share'} against you, so ${money(c.e.price)}`));
+      if (c.total != null) {
+        rows.push(...row(c.buy ? 'Estimated cost' : 'Estimated proceeds', money(c.total)));
+        if (K.hasCosts(costs) && (costs.feeFlat || costs.feeBps)) rows.push(...row('Practice fee (your setting)', money(c.e.fee)));
+        rows.push(...row('Practice cash now', money(c.free)), ...row('Cash after', money(c.buy ? c.free - c.e.net : c.free + c.e.net)));
+      } else rows.push(...row('Practice cash now', money(c.free)));
       rows.push(...row('You hold', `${K.fmtQty(c.held)} ${sym}`));
       est.replaceChildren(...rows);
       why.textContent = c.bad; why.dataset.bad = String(!!c.bad);
       place.disabled = !!c.bad;
       place.title = c.bad;
     };
-    for (const e of [side, type, qty, lim]) e.addEventListener('input', upd);
+    for (const e of [side, type, qty, lim, stopIn]) e.addEventListener('input', upd);
     const form = h('form.mk__form', { onsubmit: ev => { ev.preventDefault(); submit(); } },
       h('label.mk__f', h('span', { text: 'Side' }), side), h('label.mk__f', h('span', { text: 'Order type' }), type),
-      h('label.mk__f', h('span', { text: crypto ? 'Quantity' : 'Shares' }), qty), limF, place);
+      h('label.mk__f', h('span', { text: crypto ? 'Quantity' : 'Shares' }), qty), limF, stopF, noteF, place);
     async function submit() {
       if (check().bad) { upd(); return; }
       const n = K.parseQty(qty.value);
-      let limit = null;
+      let limit = null, stop = null;
       if (type.value === 'limit') limit = K.parseMoney(lim.value);
+      if (type.value === 'stop') stop = K.parseMoney(stopIn.value);
       result.textContent = 'Getting the latest real price…';
       let fresh;
       try { fresh = await refreshQuote(sym, true); } catch (e) { result.textContent = 'Order not placed: ' + errText(e); return; }
       if (!fresh) return;
-      const r = K.placeOrder(S.acct, { sym, side: side.value, type: type.value, qty: n, limit, price: fresh.price, now: Date.now(), whole: !crypto });
+      const r = K.placeOrder(S.acct, { sym, side: side.value, type: type.value, qty: n, limit, stop, price: fresh.price, now: Date.now(), whole: !crypto, note: noteIn.value });
       if (!r.ok) { result.textContent = 'Order not placed: ' + r.error; return; }
       persist(); paintSide();
       const o = r.order;
       const sess = K.sessionState(Date.now(), fresh.tz, { kind: fresh.kind, isOpen: fresh.isOpen });
       const closedNote = sess.state !== 'open' ? ` The market is closed, so this used the last price (as of ${timeIn(fresh.asOf, fresh.tz)}).` : '';
+      const feeNote = o.fee ? ` Practice fee ${money(o.fee)}.` : '';
       result.textContent = o.status === 'filled'
-        ? `Practice order filled: ${o.side === 'buy' ? 'bought' : 'sold'} ${K.fmtQty(o.qty)} ${sym} at ${money(o.price)} for ${money(o.total)}.${o.pnl != null ? ' Realised ' + K.fmtMoney(o.pnl, { sign: true }) + '.' : ''}${closedNote}`
-        : `Limit order placed and waiting: it fills only if a real price reaches ${money(o.limit)}. It is checked only while StaticOS is open with this app running.`;
+        ? `Practice order filled: ${o.side === 'buy' ? 'bought' : 'sold'} ${K.fmtQty(o.qty)} ${sym} at ${money(o.price)} for ${money(o.total)}.${feeNote}${o.pnl != null ? ' Realised ' + K.fmtMoney(o.pnl, { sign: true }) + '.' : ''}${o.type === 'stop' ? ' The price was already at or below your stop, so it sold now.' : ''}${closedNote}`
+        : o.type === 'stop'
+          ? `Stop-loss placed and waiting: it sells if a real price falls to ${money(o.stop)} or below, at that price. It is checked only while StaticOS is open with this app running, so the sale can come later and lower than the stop.`
+          : `Limit order placed and waiting: it fills only if a real price reaches ${money(o.limit)}. It is checked only while StaticOS is open with this app running.`;
+      if (o.status !== 'cancelled') noteIn.value = '';
       upd();
     }
     upd();
@@ -593,7 +781,7 @@ function build(root, api) {
     mainEl.replaceChildren(
       h('div.mk__quote', h('h2', { text: `Practice order: ${sym}` }), hdrPrice, hdrSub),
       h('section.mk__card', h('h3', { text: 'Practice money, not real' }), form, est, why, result,
-        h('p.mk__sub.mk__note', { text: 'Market orders fill at the latest real price. Limit orders fill only when a real price reaches your limit, and that is checked only while StaticOS is open and this app has fetched the price.' })),
+        h('p.mk__sub.mk__note', { text: 'Market orders fill at the latest real price. Limit orders fill only when a real price reaches your limit; a stop-loss sells when a real price falls to your stop. Both are checked only while StaticOS is open and this app has fetched the price.' + (K.hasCosts(S.acct.costs) ? ' Fees and slippage here are your own practice settings (Settings), not what any broker charges.' : '') })),
       ...[practiceNote(sym)].filter(Boolean),
       h('p.mk__sub', { text: p ? `You hold ${K.fmtQty(p.qty)} ${sym}, average cost ${money(K.mulDiv(p.cost, K.UNIT, p.qty))}.` : `You hold no ${sym}.` }));
   }
@@ -612,25 +800,81 @@ function build(root, api) {
       h('td.n', { text: r.price != null ? px(r.price) : 'no price' }), h('td.n', { text: r.value != null ? money(r.value) : 'n/a' }), h('td.n', { class: dir(r.pnl), text: r.pnl != null ? K.fmtMoney(r.pnl, { sign: true }) : 'n/a' })));
     const open = a.orders.filter(o => o.status === 'open');
     const hist = a.orders.filter(o => o.status !== 'open');
-    const ordRow = o => h('tr', { dataset: { order: o.id } }, h('td', { text: new Date(o.filledAt || o.placedAt).toLocaleString() }), h('td', { text: o.sym }), h('td', { text: `${o.side} ${o.type}` }), h('td.n', { text: K.fmtQty(o.qty) }),
-      h('td.n', { text: o.price != null ? money(o.price) : o.limit != null ? 'limit ' + money(o.limit) : '' }), h('td.n', { text: o.total != null ? money(o.total) : '' }), h('td.n', { class: dir(o.pnl), text: o.pnl != null ? K.fmtMoney(o.pnl, { sign: true }) : '' }), h('td', { text: o.status }));
-    const head = ['When', 'Symbol', 'Order', 'Qty', 'Price', 'Total', 'Realised', 'Status'];
-    const table = (rows, label) => h('div.mk__tw', h('table', { 'aria-label': label }, h('thead', h('tr', head.map((x, i) => h('th', { class: i > 2 && i < 7 ? 'n' : '', text: x })))), h('tbody', rows)));
+    /* a journal note on each order: shown under it, and editable at any time */
+    const noteCell = o => {
+      const td = h('td.mk__notecell');
+      const show = () => td.replaceChildren(h('span', { text: o.note || '' }), h('button.mk__x', { type: 'button', 'aria-label': `${o.note ? 'Edit' : 'Add'} the journal note on order ${o.id}`, title: o.note ? 'Edit note' : 'Add a note', text: o.note ? '✎' : '+', onclick: edit }));
+      const edit = () => {
+        const inp = h('input.mk__in', { value: o.note || '', maxlength: String(K.NOTE_MAX), 'aria-label': `Journal note on order ${o.id}` });
+        const done = keep => { if (keep) { K.setNote(a, o.id, inp.value); persist(); } show(); };
+        inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); done(true); } else if (ev.key === 'Escape') { ev.preventDefault(); done(false); } });
+        td.replaceChildren(inp, h('button.mk__btn', { type: 'button', text: 'Save', onclick: () => done(true) }));
+        inp.focus();
+      };
+      show();
+      return td;
+    };
+    const ordRow = o => h('tr', { dataset: { order: o.id } }, h('td', { text: new Date(o.filledAt || o.placedAt).toLocaleString() }), h('td', { text: o.sym }), h('td', { text: `${o.side} ${o.type === 'stop' ? 'stop-loss' : o.type}` }), h('td.n', { text: K.fmtQty(o.qty) }),
+      h('td.n', { text: o.price != null ? money(o.price) : o.limit != null ? 'limit ' + money(o.limit) : o.stop != null ? 'stop ' + money(o.stop) : '' }), h('td.n', { text: o.total != null ? money(o.total) : '' }), h('td.n', { text: o.fee ? money(o.fee) : '' }), h('td.n', { class: dir(o.pnl), text: o.pnl != null ? K.fmtMoney(o.pnl, { sign: true }) : '' }), h('td', { text: o.status }), noteCell(o));
+    const head = ['When', 'Symbol', 'Order', 'Qty', 'Price', 'Total', 'Fee', 'Realised', 'Status', 'Journal note'];
+    const table = (rows, label) => h('div.mk__tw', h('table', { 'aria-label': label }, h('thead', h('tr', head.map((x, i) => h('th', { class: i > 2 && i < 8 ? 'n' : '', text: x })))), h('tbody', rows)));
     const cash = h('input.mk__in#mk-reset-cash', { value: (a.cash0 / 100).toFixed(2), inputmode: 'decimal', 'aria-label': 'Starting cash for the new account', size: 12 });
     const rmsg = h('span.mk__sub', { role: 'status' });
     const reset = h('button.mk__btn#mk-reset', { type: 'button', text: 'Reset practice account' });
     reset.onclick = () => {
-      if (reset.dataset.armed !== '1') { reset.dataset.armed = '1'; reset.textContent = 'Click again to erase positions and history'; return; }
+      if (reset.dataset.armed !== '1') { reset.dataset.armed = '1'; reset.textContent = 'Click again to archive this account and start over'; return; }
       const c = K.parseMoney(cash.value);
       if (c == null || c < 100) { rmsg.textContent = 'Enter a starting amount of at least $1.00.'; reset.dataset.armed = ''; reset.textContent = 'Reset practice account'; return; }
-      S.acct = K.newAccount(c, Date.now()); persist(); paintMain();
+      /* the old account is archived first, with what it was worth then, and kept below */
+      if (a.orders.length || a.cash !== a.cash0) S.archive = [K.archiveOf(a, prices, Date.now()), ...S.archive].slice(0, K.MAX_ARCHIVES);
+      S.acct = K.newAccount(c, Date.now(), a.costs); persist(); paintMain();
     };
+    /* writes the account's orders to Documents as a CSV; the name says it is practice */
+    const exportCsv = (acct, tag) => {
+      const dir = `${api.vfs.HOME}/Documents`;
+      if (!api.vfs.node(dir)) api.vfs.mkdir(dir);
+      const day = new Date().toISOString().slice(0, 10);
+      let name = `practice-trades-${tag || day}.csv`, k = 1;
+      while (api.vfs.node(`${dir}/${name}`)) name = `practice-trades-${tag || day} (${++k}).csv`;
+      api.vfs.write(`${dir}/${name}`, K.tradesCsv(acct));
+      api.notify?.({ app: 'Static Markets', title: 'Practice trades exported', message: `${name} is in Documents (${acct.orders.length} orders, practice money).`, icon: 'download',
+        actions: [{ label: 'Open in Sheets', onClick: () => api.openApp('sheets', { path: `${dir}/${name}` }) }, { label: 'Open in Files', onClick: () => api.openApp('files', { path: dir }) }] });
+      return name;
+    };
+    /* results from closed practice trades only, and only once there is one */
+    const R = K.results(a);
+    const tile = (k, label, value, cls) => h('div.mk__tile', { dataset: { k } }, h('small', { text: label }), h('b', { class: cls || '', text: value }));
+    const resultsCard = R ? h('section.mk__card', { 'aria-label': 'Practice results' }, h('h3', { text: 'Practice results' }),
+      h('div.mk__tiles',
+        tile('closed', 'Closed trades', String(R.n)),
+        tile('winrate', 'Win rate', `${(R.winRate * 100).toFixed(1)}% (${R.wins} of ${R.n})`),
+        tile('pnl', 'Profit/loss, closed trades', K.fmtMoney(R.total, { sign: true }), dir(R.total)),
+        tile('best', 'Biggest win', R.best != null ? K.fmtMoney(R.best, { sign: true }) : 'none yet', R.best != null ? 'mk__up' : ''),
+        tile('worst', 'Biggest loss', R.worst != null ? K.fmtMoney(R.worst, { sign: true }) : 'none yet', R.worst != null ? 'mk__down' : ''),
+        R.fees ? tile('fees', 'Practice fees paid', money(R.fees)) : null),
+      h('p.mk__sub', { text: `From closed practice trades only: each sale counts once, as a win (${R.wins}), a loss (${R.losses})${R.even ? ` or break-even (${R.even})` : ''}, net of any practice fees. Positions you still hold aren’t counted until they are sold. Practice money, not real.` }))
+      : h('section.mk__card', { 'aria-label': 'Practice results' }, h('h3', { text: 'Practice results' }), h('p.mk__sub', { text: 'Your results (profit/loss, win rate, biggest loss) appear after your first closed practice trade: a sale of some or all of a position.' }));
+    const archiveCard = S.archive.length ? h('section.mk__card', { 'aria-label': 'Past practice accounts' }, h('h3', { text: 'Past practice accounts' }),
+      h('div.mk__tw', h('table', { 'aria-label': 'Archived accounts' },
+        h('thead', h('tr', ['Started', 'Archived', 'Started with', 'Worth at the end', 'Closed trades', 'Profit/loss, closed', ''].map((x, i) => h('th', { class: i > 1 && i < 6 ? 'n' : '', text: x })))),
+        h('tbody', S.archive.map((x, i) => { const r = K.results(x); return h('tr', { dataset: { archive: String(i) } },
+          h('td', { text: new Date(x.started).toLocaleDateString() }), h('td', { text: new Date(x.endedAt).toLocaleDateString() }), h('td.n', { text: money(x.cash0) }),
+          h('td.n', { text: x.endValue != null ? money(x.endValue) : `not known (${x.endMissing} without a price)` }), h('td.n', { text: r ? String(r.n) : '0' }),
+          h('td.n', { class: r ? dir(r.total) : '', text: r ? K.fmtMoney(r.total, { sign: true }) : 'none' }),
+          h('td', h('button.mk__btn', { type: 'button', text: 'Export CSV', 'aria-label': `Export the trades of the account archived ${new Date(x.endedAt).toLocaleDateString()}`, onclick: () => exportCsv(x, 'archived-' + new Date(x.endedAt).toISOString().slice(0, 10)) }),
+            h('button.mk__x', { type: 'button', 'aria-label': `Delete the account archived ${new Date(x.endedAt).toLocaleDateString()}`, text: '✕', onclick: () => { if (!confirm2(i)) return; S.archive.splice(i, 1); persist(); paintMain(); } }))); })))),
+      h('p.mk__sub', { text: 'Each reset keeps the old account here (up to 12), with its orders and journal notes.' })) : null;
+    const confirm2 = i => { const b = mainEl.querySelector(`[data-archive="${i}"] .mk__x`); if (b && b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = 'Delete?'; return false; } return true; };
     mainEl.replaceChildren(
       h('section.mk__card', h('h3', { text: 'Practice account (not real money)' }), sum),
       h('section.mk__card', h('h3', { text: 'Positions' }), posRows.length ? h('div.mk__tw', h('table', { 'aria-label': 'Positions' }, h('thead', h('tr', ['Symbol', 'Quantity', 'Average cost', 'Price', 'Value', 'Unrealised'].map((x, i) => h('th', { class: i ? 'n' : '', text: x })))), h('tbody', posRows))) : h('p.mk__sub', { text: 'No positions yet.' })),
-      h('section.mk__card', h('h3', { text: 'Open limit orders' }), open.length ? table(open.map(o => { const r = ordRow(o); r.lastChild.replaceChildren(h('button.mk__btn', { type: 'button', text: 'Cancel', 'aria-label': `Cancel order ${o.id}`, onclick: () => { K.cancelOrder(a, o.id); persist(); paintMain(); } })); return r; }), 'Open orders') : h('p.mk__sub', { text: 'None. Limit orders are checked only while StaticOS is open.' })),
-      h('section.mk__card', h('h3', { text: 'Order history' }), hist.length ? table(hist.map(ordRow), 'Order history') : h('p.mk__sub', { text: 'No orders yet.' })),
-      h('section.mk__card', h('h3', { text: 'Start over' }), h('div.mk__bar', h('label.mk__f', h('span', { text: 'New starting cash ($)' }), cash), reset, rmsg)));
+      h('section.mk__card', h('h3', { text: 'Open limit and stop-loss orders' }), open.length ? table(open.map(o => { const r = ordRow(o); r.children[8].replaceChildren(h('button.mk__btn', { type: 'button', text: 'Cancel', 'aria-label': `Cancel order ${o.id}`, onclick: () => { K.cancelOrder(a, o.id); persist(); paintMain(); } })); return r; }), 'Open orders') : h('p.mk__sub', { text: 'None. Limit and stop-loss orders are checked only while StaticOS is open.' })),
+      h('section.mk__card', h('div.mk__aihead', h('h3', { text: 'Order history' }), a.orders.length ? h('button.mk__btn#mk-export', { type: 'button', text: 'Export trades (CSV)', onclick: () => exportCsv(a) }) : null),
+        hist.length ? table(hist.map(ordRow), 'Order history') : h('p.mk__sub', { text: 'No orders yet.' })),
+      resultsCard,
+      h('section.mk__card', h('h3', { text: 'Start over' }), h('div.mk__bar', h('label.mk__f', h('span', { text: 'New starting cash ($)' }), cash), reset, rmsg),
+        h('p.mk__sub', { text: 'Resetting archives this account first (below), then starts a new one with your practice cost settings.' })),
+      archiveCard);
   }
 
   /* ---------- scan tab ---------- */
@@ -738,7 +982,33 @@ function build(root, api) {
       }
       S.mode = mode; persist(); paintTop(); paintMain(); paintSide();
     };
+    /* practice fees and slippage: the person's own settings for the practice account, never market data */
+    const pctIn = (bps, label, id) => h('input.mk__in', { id, value: (bps / 100).toFixed(2), inputmode: 'decimal', 'aria-label': label, size: 6 });
+    const costsCard = S.acct ? (() => {
+      const c = K.cleanCosts(S.acct.costs);
+      const flat = h('input.mk__in#mk-fee-flat', { value: (c.feeFlat / 100).toFixed(2), inputmode: 'decimal', 'aria-label': 'Practice fee per filled order in dollars', size: 7 });
+      const pct = pctIn(c.feeBps, 'Practice fee as a percent of the order value', 'mk-fee-pct');
+      const slip = pctIn(c.slipBps, 'Practice slippage as a percent of the price', 'mk-slip');
+      const cmsg = h('span.mk__sub', { role: 'status', id: 'mk-costs-msg' });
+      const readPct = (v, max) => { const m = /^\s*(\d{1,2})(?:\.(\d{1,2}))?\s*%?\s*$/.exec(v); if (!m) return null; const b = Number(m[1]) * 100 + Number((m[2] || '').padEnd(2, '0')); return b <= max ? b : null; };
+      const saveCosts = () => {
+        const f = K.parseMoney(flat.value), p = readPct(pct.value, K.COST_LIMITS.feeBps), sl = readPct(slip.value, K.COST_LIMITS.slipBps);
+        if (f == null || f > K.COST_LIMITS.feeFlat) { cmsg.textContent = 'The fee per order is a dollar amount up to $1,000.00 (0 for none).'; return; }
+        if (p == null) { cmsg.textContent = 'The percent fee is from 0 to 10.00 (like 0.10 for a tenth of a percent).'; return; }
+        if (sl == null) { cmsg.textContent = 'Slippage is from 0 to 5.00 percent.'; return; }
+        S.acct.costs = K.cleanCosts({ feeFlat: f, feeBps: p, slipBps: sl }); persist();
+        cmsg.textContent = K.hasCosts(S.acct.costs) ? 'Saved. New practice orders use these; orders already filled keep what they paid.' : 'Saved: no fees or slippage, so fills are exactly at the real price.';
+      };
+      return h('section.mk__card', { 'aria-label': 'Practice fees and slippage' }, h('h3', { text: 'Practice fees and slippage' }),
+        h('p.mk__sub', { text: 'A practice setting you choose, not market data and not what any broker charges. Real trades often cost something, and set here, every practice fill pays it, so results include it. Leave them at 0 for fills exactly at the real price.' }),
+        h('div.mk__bar',
+          h('label.mk__f', h('span', { text: 'Fee per order ($)' }), flat), h('label.mk__f', h('span', { text: 'Fee (% of the order)' }), pct),
+          h('label.mk__f', h('span', { text: 'Slippage (% of the price)' }), slip),
+          h('button.mk__btn.mk__btn--go', { type: 'button', dataset: { act: 'save-costs' }, text: 'Save', onclick: saveCosts })), cmsg,
+        h('p.mk__sub', { text: 'Slippage moves a market or stop-loss fill against you (a buy pays more, a sale gets less); a limit order never fills past its limit. A buy’s fee becomes part of what the shares cost you.' }));
+    })() : null;
     mainEl.replaceChildren(
+      costsCard,
       h('section.mk__card', h('h3', { text: 'How you use Static Markets' }),
         h('p.mk__sub', { text: 'StaticOS only does practice trading. Prices are real, the money is not.' }),
         h('div.mk__bar',

@@ -19,7 +19,14 @@
 import { cleanText } from '../core/roomcode.js';
 import { checkSig } from '../core/avlink.js';
 
-export const ROUNDS = 3;
+export const ROUNDS = 3;                 /* the default */
+export const ROUND_CHOICES = [1, 3, 5];
+export const MAX_ROUNDS = 5;
+export const TIMER_CHOICES = [0, 45, 60, 90];   /* seconds per round; 0 is no timer */
+/* theme rounds: a line for the players. The AI is not asked whether the item fits; it only guesses what the item is. */
+export const THEMES = ['something blue', 'something older than you', 'something that makes a noise', 'the smallest thing in reach', 'something round',
+  'something from your desk', 'something you got as a gift', 'something soft', 'something shiny', 'your favourite thing on a shelf'];
+export const REACTIONS = ['👏', '😂', '😮', '🔥', '❤️', '🤔'];
 export const CHAT_MAX = 300;
 export const MAX_USD = 1000000;
 export const WHAT_MAX = 80;
@@ -45,9 +52,15 @@ export const TYPES = {
   chat: m => { const tx = cleanText(m.tx, CHAT_MAX); return tx ? { tx } : null; },
   msig: checkSig,
   av: m => (int(m.cam, 0, 2) && int(m.mic, 0, 2) ? { cam: m.cam, mic: m.mic } : null),
-  go: () => ({}),                                              /* the host starts the match */
-  fx: m => (int(m.r, 1, ROUNDS) ? { r: m.r } : null),         /* "I have sent my photo to the AI" (the friend looks at their video of it) */
-  vd: m => { const v = cleanVerdict(m); return v && int(m.r, 1, ROUNDS) ? { r: m.r, ...v } : null; },
+  /* the host starts the match, and says how many rounds, how long each may take, and the theme of each round (indexes into THEMES) */
+  go: m => ({
+    rounds: ROUND_CHOICES.includes(m.rounds) ? m.rounds : ROUNDS,
+    secs: TIMER_CHOICES.includes(m.secs) ? m.secs : 0,
+    th: Array.isArray(m.th) ? m.th.slice(0, MAX_ROUNDS).map(i => (int(i, 0, THEMES.length - 1) ? i : -1)) : [],
+  }),
+  rx: m => (REACTIONS.includes(m.e) ? { e: m.e } : null),     /* a reaction while the guesses are shown */
+  fx: m => (int(m.r, 1, MAX_ROUNDS) ? { r: m.r } : null),         /* "I have sent my photo to the AI" (the friend looks at their video of it) */
+  vd: m => { const v = cleanVerdict(m); return v && int(m.r, 1, MAX_ROUNDS) ? { r: m.r, ...v } : null; },
   end: () => ({}),                                             /* either player ends the match */
   rm: () => ({}),                                              /* a rematch, when both ask */
 };
@@ -98,7 +111,18 @@ export function winner(mine, theirs) {
   const a = totals(mine).mid, b = totals(theirs).mid;
   return a === b ? 'tie' : a > b ? 'me' : 'them';
 }
+/** Seconds as m:ss */
+export const mmss = secs => `${Math.floor(Math.max(0, secs) / 60)}:${String(Math.max(0, Math.ceil(secs) % 60)).padStart(2, '0')}`;
+/** A win/loss record per name: { [name]: { w, l, t, at } } -> the new record after a match ('me' | 'them' | 'tie'). */
+export function bump(rec, name, outcome, now = Date.now()) {
+  const key = String(name || '').slice(0, 24) || 'Friend';
+  const old = (rec && rec[key]) || { w: 0, l: 0, t: 0 };
+  const next = { w: old.w + (outcome === 'me' ? 1 : 0), l: old.l + (outcome === 'them' ? 1 : 0), t: old.t + (outcome === 'tie' ? 1 : 0), at: now };
+  const all = { ...(rec || {}), [key]: next };
+  const keep = Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, 40);
+  return Object.fromEntries(keep);
+}
 export const usd = n => '$' + Math.round(n).toLocaleString('en-US');
 export const range = (lo, hi) => `${usd(lo)}–${usd(hi)}`;
 
-export default { TYPES, judgeMessages, parseJudge, totals, winner, cleanVerdict, range, usd, ROUNDS };
+export default { ROUND_CHOICES, TIMER_CHOICES, THEMES, REACTIONS, TYPES, judgeMessages, parseJudge, totals, winner, cleanVerdict, range, usd, ROUNDS };

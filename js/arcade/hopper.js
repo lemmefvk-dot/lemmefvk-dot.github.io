@@ -9,8 +9,15 @@
      log or a turtle, which carries you along. Turtles dive now and
      then (they sink for a moment first). Being carried off the side
      of the screen is the same as drowning.
-   · Reach an empty home to fill it. Fill all five for a new, faster
-     round. Each frog has 30 seconds.
+   · Reach an empty home to fill it. Fill all five for the next round:
+     every round the traffic is faster and closer together, the logs
+     shorter (down to two cells), the turtles dive more often and each
+     frog has two seconds less (never under 18). A banner says what
+     changed.
+   · Difficulty (ctx.mode, each with its own best): Easy — five lives,
+     40 seconds a frog, traffic at 80% and turtles that stay up longer;
+     Normal, the game as it was; Hard — 22 seconds a frog, traffic at
+     125% and turtles that dive sooner.
    · Three lives. Score: 10 for each new row forward, 50 for a home
      plus 5 per second left, 500 for clearing all five homes.
 
@@ -24,6 +31,11 @@ const VW = COLS * CELL, VH = ROWS * CELL + 30;
 const START_ROW = 12, VERGE = 6;
 const HOMES = [1, 3, 6, 9, 11];
 const TIME_LIMIT = 30, DIE_SECS = 0.9, HOP_SECS = 0.11;
+const MODES = {
+  normal: { lives: 3, time: 30, v: 1, dive: 1 },
+  easy: { lives: 5, time: 40, v: 0.8, dive: 1.4 },
+  hard: { lives: 3, time: 22, v: 1.25, dive: 0.75 },
+};
 /* row → what runs along it: kind, item width, gap, speed in cells per second (negative goes left) */
 const LANES = [
   { row: 11, kind: 'car', w: 1, g: 3, v: 1.6, hue: 190 },
@@ -43,36 +55,45 @@ export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
+    const MODE = MODES[ctx.mode] ? ctx.mode : 'normal', M = MODES[MODE];
+    /* this round's rules: a frog's time and the turtles' dive cycle */
+    let LIMIT = M.time, DIVE_T = DIVE * M.dive;
     const S = {
       state: 'ready',                    /* ready | play | dying | over */
       paused: false,
-      score: 0, lives: 3, level: 1, time: 0,
+      score: 0, lives: M.lives, level: 1, time: 0, banner: 0, bannerText: '',
       lanes: [], homes: HOMES.map(() => false),
-      row: START_ROW, fx: (COLS - 1) / 2, face: 'up', best: START_ROW, left: TIME_LIMIT,
+      row: START_ROW, fx: (COLS - 1) / 2, face: 'up', best: START_ROW, left: M.time,
       hopT: 0, from: null, dieT: 0, cause: '', safe: false, lastDeath: null, parts: [],
     };
     const sf = surface(el, 'Road Hopper field', () => draw());
     let V = fitView(sf, VW, VH);
 
     function buildLanes() {
-      const f = 1 + 0.14 * (S.level - 1);
-      S.lanes = LANES.map(l => {
+      const up = S.level - 1;
+      const f = (1 + 0.14 * up) * M.v;
+      LIMIT = Math.max(18, M.time - 2 * up);
+      DIVE_T = Math.max(4.2, DIVE - 0.5 * up) * M.dive;
+      S.lanes = LANES.map(base => {
+        const road = base.kind === 'car' || base.kind === 'truck';
+        /* later rounds: traffic closer together, logs shorter */
+        const l = { ...base, g: road ? Math.max(base.kind === 'truck' ? 2.2 : 1.6, base.g - 0.3 * up) : base.g, w: base.kind === 'log' ? Math.max(2, base.w - Math.floor(up / 2)) : base.w };
         const n = Math.ceil((COLS + 2 * l.w + 2) / (l.w + l.g));
         const P = n * (l.w + l.g);
         return {
           ...l, v: l.v * f, P,
-          objs: Array.from({ length: n }, (_, i) => ({ x: ((i * (l.w + l.g) + l.row * 1.7) % P) - l.w, ph: (i * 2.3 + l.row) % DIVE })),
+          objs: Array.from({ length: n }, (_, i) => ({ x: ((i * (l.w + l.g) + l.row * 1.7) % P) - l.w, ph: (i * 2.3 + l.row) % DIVE_T })),
         };
       });
     }
     buildLanes();
 
     const laneOf = row => S.lanes.find(l => l.row === row) || null;
-    const submerged = (l, o) => l.kind === 'turtle' && ((S.time + o.ph) % DIVE) > DIVE - 1.6;
-    const sinking = (l, o) => l.kind === 'turtle' && ((S.time + o.ph) % DIVE) > DIVE - 2.6;
+    const submerged = (l, o) => l.kind === 'turtle' && ((S.time + o.ph) % DIVE_T) > DIVE_T - 1.6;
+    const sinking = (l, o) => l.kind === 'turtle' && ((S.time + o.ph) % DIVE_T) > DIVE_T - 2.6;
 
     function respawn() {
-      S.row = START_ROW; S.fx = (COLS - 1) / 2; S.face = 'up'; S.best = START_ROW; S.left = TIME_LIMIT; S.from = null; S.hopT = 0;
+      S.row = START_ROW; S.fx = (COLS - 1) / 2; S.face = 'up'; S.best = START_ROW; S.left = LIMIT; S.from = null; S.hopT = 0;
     }
     function begin() { if (S.state === 'ready') S.state = 'play'; }
 
@@ -103,6 +124,7 @@ export default {
       burst(HOMES[h] + 0.5, 0.5, 120, 14);
       if (S.homes.every(Boolean)) {
         S.score += 500; S.level++; S.homes = HOMES.map(() => false); buildLanes();
+        S.banner = 2.2; S.bannerText = `Round ${S.level}: faster traffic${S.level % 2 ? ', shorter logs' : ''} · ${LIMIT} s a frog`;
         snd.blip(880, 0.4, 'square', 0.8, 1760);
       }
       ctx.onScore(S.score);
@@ -154,18 +176,19 @@ export default {
         judge();
         S.left -= dt;
         if (S.left <= 0 && !S.safe && S.state === 'play') { S.left = 0; die('time'); }
-        else if (S.left <= 0) S.left = TIME_LIMIT;
+        else if (S.left <= 0) S.left = LIMIT;
       } else if (S.state === 'dying') {
         S.dieT += dt;
         if (S.dieT >= DIE_SECS) {
           if (S.lives <= 0) {
             S.state = 'over';
-            ctx.onEnd({ score: S.score, won: false, detail: `Round ${S.level} · ${S.homes.filter(Boolean).length} of ${HOMES.length} homes filled` });
+            ctx.onEnd({ score: S.score, won: false, detail: `Round ${S.level} · ${S.homes.filter(Boolean).length} of ${HOMES.length} homes filled${S.level > 1 ? ` · ${S.level - 1} round${S.level === 2 ? '' : 's'} cleared` : ''}` });
           } else { respawn(); S.state = 'play'; }
         }
       }
       for (const p of S.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92; p.life -= dt; }
       S.parts = S.parts.filter(p => p.life > 0);
+      if (S.banner > 0) S.banner = Math.max(0, S.banner - dt);
     }
     const loop = looper(dt => {
       update(dt);
@@ -274,16 +297,18 @@ export default {
       /* the bar below the field */
       const by = ROWS * CELL;
       g.fillStyle = '#0a0d12'; g.fillRect(0, by, VW, 30);
-      const frac = clamp(S.left / TIME_LIMIT, 0, 1);
-      g.fillStyle = 'rgba(255,255,255,.1)'; rr(g, 96, by + 10, 214, 10, 5); g.fill();
-      g.fillStyle = frac < 0.25 ? hsl(0, 85, 58) : hsl(110, 70, 50); rr(g, 96, by + 10, Math.max(8, 214 * frac), 10, 5); g.fill();
+      const frac = clamp(S.left / LIMIT, 0, 1);
+      const barW = Math.min(214, VW - 96 - 22 - Math.max(3, S.lives) * 26);      /* room for five lives on Easy */
+      g.fillStyle = 'rgba(255,255,255,.1)'; rr(g, 96, by + 10, barW, 10, 5); g.fill();
+      g.fillStyle = frac < 0.25 ? hsl(0, 85, 58) : hsl(110, 70, 50); rr(g, 96, by + 10, Math.max(8, barW * frac), 10, 5); g.fill();
       g.font = `600 12px ${FONT}`; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillStyle = hsl(205, 30, 78);
       g.fillText(`ROUND ${S.level}`, 10, by + 15);
       g.textAlign = 'right';
       for (let i = 0; i < Math.max(0, S.lives); i++) frog(g, VW - 12 - (i + 1) * 26 + 4, by - 1, 'up', 0, false);
       g.restore();
 
-      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Swipe to start' : 'Press an arrow key to start', 'Cross the road and the river, fill all five homes', 110, sf.h * 0.52);
+      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Swipe to start' : 'Press an arrow key to start', MODE === 'easy' ? 'Easy: five lives, 40 seconds a frog, slower traffic' : MODE === 'hard' ? 'Hard: 22 seconds a frog, fast traffic, diving turtles' : 'Cross the road and the river, fill all five homes', 110, sf.h * 0.52);
+      else if (S.banner > 0 && S.bannerText) prompt(g, sf, S.bannerText, null, 110, sf.h * 0.5);
     }
 
     /* ------------------------------ input ------------------------------ */
@@ -342,7 +367,8 @@ export default {
       peek: () => ({
         state: S.state, paused: S.paused, score: S.score, lives: S.lives, level: S.level, time: S.time,
         row: S.row, x: S.fx, left: S.left, homes: S.homes.slice(), homeCols: HOMES.slice(), lastDeath: S.lastDeath, safe: S.safe,
-        lanes: S.lanes.map(l => ({ row: l.row, kind: l.kind, v: l.v, w: l.w, objs: l.objs.map(o => ({ x: o.x, under: submerged(l, o) })) })),
+        mode: MODE, limit: LIMIT, dive: DIVE_T, banner: S.banner > 0 ? S.bannerText : '',
+        lanes: S.lanes.map(l => ({ row: l.row, kind: l.kind, v: l.v, w: l.w, g: l.g, objs: l.objs.map(o => ({ x: o.x, under: submerged(l, o) })) })),
       }),
       /* test hook — nothing in the game calls it:
          step(seconds) · safe(bool: nothing hurts the frog) · place({ row, x }) */
@@ -350,6 +376,7 @@ export default {
         if (cmd === 'step') { for (let t = 0; t < arg; t += 1 / 60) update(1 / 60); }
         else if (cmd === 'safe') S.safe = !!arg;
         else if (cmd === 'place') { S.row = arg.row; S.fx = arg.x; S.best = Math.min(S.best, arg.row); }
+        else if (cmd === 'homes') { S.homes = HOMES.map((_, i) => i < arg); }      /* fill the first n homes */
         draw();
         return true;
       },

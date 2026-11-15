@@ -1,6 +1,8 @@
 /* ============================================================
    util.js — formatting, math, ids, seeded fake data
    ============================================================ */
+import { t, lang, locale, num } from './i18n.js';
+
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 export const lerp  = (a, b, t) => a + (b - a) * t;
 export const round = (v, p = 0) => { const f = 10 ** p; return Math.round(v * f) / f; };
@@ -13,6 +15,8 @@ export function fmtBytes(n) {
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
   const v = n / 1024 ** i;
+  /* the digits follow the language's way of writing numbers (1,5 MB in Spanish) */
+  if (lang() !== 'en') return `${num(v, v >= 100 || i === 0 ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${u[i]}`;
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
 }
 
@@ -20,7 +24,7 @@ export const pad2 = n => String(n).padStart(2, '0');
 
 export function fmtClock(d = new Date(), h24 = false) {
   let hh = d.getHours();
-  const ap = hh >= 12 ? 'PM' : 'AM';
+  const ap = lang() === 'en' ? (hh >= 12 ? 'PM' : 'AM') : (hh >= 12 ? 'p. m.' : 'a. m.');
   if (!h24) { hh = hh % 12 || 12; }
   return { time: `${h24 ? pad2(hh) : hh}:${pad2(d.getMinutes())}`, ap, sec: pad2(d.getSeconds()) };
 }
@@ -28,22 +32,24 @@ export function fmtClock(d = new Date(), h24 = false) {
 const DAYS   = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
                 'August', 'September', 'October', 'November', 'December'];
-export const dayName   = (d, short) => short ? DAYS[d.getDay()].slice(0, 3) : DAYS[d.getDay()];
-export const monthName = (d, short) => short ? MONTHS[d.getMonth()].slice(0, 3) : MONTHS[d.getMonth()];
-export const fmtDateLong  = d => `${dayName(d)}, ${monthName(d)} ${d.getDate()}`;
-export const fmtDateShort = d => `${dayName(d, 1)} ${monthName(d, 1)} ${d.getDate()}`;
+/* English keeps its own tables; any other language asks Intl (js/core/i18n.js) */
+const intlPart = (d, opts) => new Intl.DateTimeFormat(locale(), opts).format(d).replace(/\.$/, '');
+export const dayName   = (d, short) => lang() !== 'en' ? intlPart(d, { weekday: short ? 'short' : 'long' }) : short ? DAYS[d.getDay()].slice(0, 3) : DAYS[d.getDay()];
+export const monthName = (d, short) => lang() !== 'en' ? intlPart(d, { month: short ? 'short' : 'long' }) : short ? MONTHS[d.getMonth()].slice(0, 3) : MONTHS[d.getMonth()];
+export const fmtDateLong  = d => lang() !== 'en' ? intlPart(d, { weekday: 'long', day: 'numeric', month: 'long' }) : `${dayName(d)}, ${monthName(d)} ${d.getDate()}`;
+export const fmtDateShort = d => lang() !== 'en' ? `${dayName(d, 1)} ${d.getDate()} ${monthName(d, 1)}` : `${dayName(d, 1)} ${monthName(d, 1)} ${d.getDate()}`;
 
 export function fmtAgo(iso) {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '—';
   const s = Math.max(0, (Date.now() - then) / 1000);
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  if (s < 172800) return 'Yesterday';
-  if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
+  if (s < 60) return t('just now');
+  if (s < 3600) return t('{n}m ago', { n: Math.floor(s / 60) });
+  if (s < 86400) return t('{n}h ago', { n: Math.floor(s / 3600) });
+  if (s < 172800) return t('Yesterday');
+  if (s < 604800) return t('{n}d ago', { n: Math.floor(s / 86400) });
   const d = new Date(iso);
-  return `${monthName(d, 1)} ${d.getDate()}`;
+  return lang() !== 'en' ? `${d.getDate()} ${monthName(d, 1)}` : `${monthName(d, 1)} ${d.getDate()}`;
 }
 
 export const fmtDur = s => `${Math.floor(s / 60)}:${pad2(Math.floor(s % 60))}`;

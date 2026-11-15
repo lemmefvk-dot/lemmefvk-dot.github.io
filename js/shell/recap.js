@@ -22,6 +22,7 @@ import { hasIcon } from '../core/icons.js';
 import * as RECAP from '../core/recap.js';
 import { fmtDur } from '../core/screentime.js';
 import { appTile } from '../core/appart.js';
+import { t as tr } from '../core/i18n.js';
 
 const PREF = 'prefs.weeklyRecap';
 const SHOWN = 'portal.recap';
@@ -70,7 +71,7 @@ export function mountRecap(host) {
         h('div.recap__big', h('b', { text: fmtDur(t.total) }), h('small', { text: `in StaticOS, on ${plural(t.days, 'day')}` }))));
       if (t.apps.length) {
         parts.push(h('section.recap__part', { dataset: { part: 'apps' } },
-          h('div.recap__k', { text: 'Top apps' }),
+          h('div.recap__k', { text: tr('Top apps') }),
           h('ol.recap__list', t.apps.map(a => {
             const app = getApp(a.id);
             return item(glyph(app), app ? app.name : a.id, a.sec, { app: a.id, sec: String(a.sec) });
@@ -78,7 +79,7 @@ export function mountRecap(host) {
       }
       if (t.games.length) {
         parts.push(h('section.recap__part', { dataset: { part: 'games' } },
-          h('div.recap__k', { text: 'Top games' }),
+          h('div.recap__k', { text: tr('Top games') }),
           h('ol.recap__list', t.games.map(g => item(glyph(getApp(g.kind === 'arcade' ? 'arcade' : 'aether-games'), g.icon), g.title, g.sec, { game: g.key, sec: String(g.sec) })))));
       }
     }
@@ -99,26 +100,26 @@ export function mountRecap(host) {
     }
     if (r.badges) {
       parts.push(h('section.recap__part', { dataset: { part: 'badges' } },
-        h('div.recap__k', { text: r.badges.length === 1 ? 'Badge earned' : 'Badges earned' }),
+        h('div.recap__k', { text: r.badges.length === 1 ? tr('Badge earned') : tr('Badges earned') }),
         h('div.recap__badges', r.badges.map(b => h('span.chip.recap__badge', icon(hasIcon(b.icon) ? b.icon : 'star'), h('span', { text: b.name }))))));
     }
     if (r.empty) {
-      parts.push(h('p.recap__none', { dataset: { part: 'none' }, text: 'Nothing was measured on this device that week. Screen Time counts while StaticOS is open and in use.' }));
+      parts.push(h('p.recap__none', { dataset: { part: 'none' }, text: tr('Nothing was measured on this device that week. Screen Time counts while StaticOS is open and in use.') }));
     }
 
     card = h('div.recap', {
       role: 'dialog', 'aria-labelledby': 'recap-title', dataset: { sunday: r.sunday },
       onkeydown: e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hide(); } },
     },
-      h('button.recap__x', { type: 'button', 'aria-label': 'Close', onclick: hide }, icon('x')),
-      h('div.recap__app', { text: 'Weekly recap' }),
-      h('b.recap__t#recap-title', { text: 'Your week' }),
+      h('button.recap__x', { type: 'button', 'aria-label': tr('Close'), onclick: hide }, icon('x')),
+      h('div.recap__app', { text: tr('Weekly recap') }),
+      h('b.recap__t#recap-title', { text: tr('Your week') }),
       h('small.recap__when', { text: `${dayFmt.format(start)} – ${dayFmt.format(end)}` }),
       h('div.recap__body', parts),
       h('div.recap__acts',
-        h('button.btn.btn--primary.btn--sm.recap__see', { type: 'button', onclick: () => { hide(); api.openApp('settings', { section: 'screentime' }); } }, icon('bar-chart'), 'See Screen Time'),
-        h('button.btn.btn--sm.recap__close', { type: 'button', onclick: hide }, 'Close')),
-      h('button.recap__never', { type: 'button', onclick: () => { store.set(PREF, false); hide(); } }, 'Don’t show weekly recaps'));
+        h('button.btn.btn--primary.btn--sm.recap__see', { type: 'button', onclick: () => { hide(); api.openApp('settings', { section: 'screentime' }); } }, icon('bar-chart'), tr('See Screen Time')),
+        h('button.btn.btn--sm.recap__close', { type: 'button', onclick: hide }, tr('Close'))),
+      h('button.recap__never', { type: 'button', onclick: () => { store.set(PREF, false); hide(); } }, tr('Don’t show weekly recaps')));
     host.appendChild(card);
     bus.emit('recap:shown', { sunday: r.sunday, empty: r.empty });
   }

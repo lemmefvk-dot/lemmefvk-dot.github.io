@@ -7,6 +7,7 @@
    ============================================================ */
 import api from '../core/api.js?v=ps5-cloud-proxy-v11';
 import * as L from '../core/layers.js';
+import { t } from '../core/i18n.js';
 
 export function mountMenus(host) {
   const { h, icon, on, placeInView, bus } = api;
@@ -41,6 +42,12 @@ export function mountMenus(host) {
   function row(it, depth) {
     if (it === '-') return h('div.menu__sep', { role: 'separator' });
     if (it.header) return h('div.menu__label', { text: it.label || '', role: 'presentation' });
+    /* a row that draws itself (the window menu's Transparency slider): it.node() returns an element */
+    if (typeof it.node === 'function') {
+      const el = it.node({ close: closeMenu });
+      el.addEventListener('mouseenter', () => closeFrom(depth + 1));
+      return el;
+    }
 
     const kids = Array.isArray(it.items) && it.items.length ? it.items : null;
     const el = h('button.menu__item', {
@@ -72,7 +79,7 @@ export function mountMenus(host) {
   }
 
   function panel(items, depth, label) {
-    const el = h('div.menu', { role: 'menu', 'aria-label': label || 'Menu', 'aria-orientation': 'vertical' });
+    const el = h('div.menu', { role: 'menu', 'aria-label': label || t('Menu'), 'aria-orientation': 'vertical' });
     for (const it of items || []) if (it) el.appendChild(row(it, depth));
     el.addEventListener('keydown', e => onKey(e, el, depth));
     return el;
@@ -83,7 +90,9 @@ export function mountMenus(host) {
 
   function onKey(e, el, depth) {
     const rows = rowsOf(el);
-    const i = rows.indexOf(document.activeElement);
+    /* a slider's arrows are its own: left and right change the value */
+    if (e.target?.matches?.('input[type="range"]') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
+    const i = rows.indexOf(document.activeElement?.closest?.('.menu__item'));
     const focusAt = j => rows[(j + rows.length) % rows.length]?.focus({ preventScroll: true });
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusAt(i + 1); break;
@@ -215,26 +224,44 @@ export function mountMenus(host) {
       const af = document.activeElement;
       if (af && af.tagName === 'BUTTON' && wrap.contains(af)) return;
       e.preventDefault();
-      done(true);
+      accept();
+    }
+
+    /* o.body: a node under the message (a form, a preview). o.validate(): a
+       string (or a promise of one) keeps the sheet open and shows it; '' lets
+       it close. o.collect(): what the promise resolves with instead of true. */
+    const problem = h('div.dlg-err', { role: 'alert' });
+    let checking = false;
+    async function accept() {
+      if (checking) return;
+      checking = true;
+      problem.textContent = '';
+      try {
+        const why = o.validate ? await o.validate() : '';
+        if (why) { problem.textContent = why; return; }
+        done(o.collect ? o.collect() || true : true);
+      } finally { checking = false; }
     }
 
     const ok = h('button.btn', {
       class: o.danger ? 'btn--danger' : 'btn--primary',
-      text: o.ok || 'Confirm',
-      onclick: () => done(true),
+      text: o.ok || t('Confirm'),
+      onclick: () => accept(),
     });
 
     const card = h('div.glass', {
-      role: 'dialog', 'aria-modal': 'true', 'aria-label': o.title || 'Confirm',
+      role: 'dialog', 'aria-modal': 'true', 'aria-label': o.title || t('Confirm'),
       style: {
         width: 'min(420px,90vw)', borderRadius: 'var(--r-lg)', padding: 'var(--sp-6)',
-        display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)',
+        display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)', maxHeight: '90vh', overflowY: 'auto',
       },
     },
-      h('div.h-sec', { text: o.title || 'Are you sure?' }),
+      h('div.h-sec', { text: o.title || t('Are you sure?') }),
       o.message ? h('div.muted', { text: o.message, style: { lineHeight: '1.5' } }) : null,
+      o.body || null,
+      o.validate ? problem : null,
       h('div.row', { style: { justifyContent: 'flex-end', marginTop: 'var(--sp-2)' } },
-        h('button.btn.btn--ghost', { text: o.cancel || 'Cancel', onclick: () => done(false) }),
+        h('button.btn.btn--ghost', { text: o.cancel || t('Cancel'), onclick: () => done(false) }),
         ok));
 
     const wrap = h('div.spot-wrap', {
@@ -248,7 +275,7 @@ export function mountMenus(host) {
     /* a modal sheet: Escape cancels, Tab stays inside, focus goes back
        to whatever asked the question */
     rel = L.push({ name: 'confirm', el: card, trap: true, close: () => done(false) });
-    ok.focus({ preventScroll: true });
+    (card.querySelector('input[type="password"], input[type="text"]') || ok).focus({ preventScroll: true });
 
     /* Bind on the next tick, not now. Spotlight runs a row on Enter from
        a keydown handler on its own panel; that same keydown is still

@@ -36,18 +36,39 @@
 
    Stats are this device's only, per variant, in store
    'portal.arcadeCards' { draw, suits, stats: { [variant]: { played,
-   won, best } } }: a deal counts as played from its first move, won
-   when the last card goes home, best is the fastest win in ms.
+   won, best, pts } } }: a deal counts as played from its first move,
+   won when the last card goes home, best is the fastest win in ms,
+   pts Solitaire's best points (cardrules.js scoring, points only).
+
+   Also in that store:
+   · daily: { [kind]: { last, streak, best, days: { [day]: ms } } } —
+     Today's deal (Solitaire and FreeCell): the same deal for everyone
+     on the same date (the shuffle, or FreeCell's deal number, comes
+     from the date), and the streak of days won in a row, kept on this
+     device only;
+   · won: [deal numbers] — the FreeCell deals won here, newest first,
+     each one a click away in Stats;
+   · undo: 'any' | '5' | 'off' — Spider's undo allowance per deal;
+   · saved: { [kind]: … } — the deal in progress, so closing the
+     window (or switching games) keeps it; it comes back as it was,
+     with its clock, moves and the last 60 undo steps;
+   · look — the Table look shared by all five card games (./cardlook.js:
+     back, colour, felt, larger cards, left-handed).
+   Show moves (M) points at the moves worth making, one per press; a
+   game won with it never sets a best.
 
    Tests: peek() is a read-only snapshot (pile contents and where
    every card is on the canvas). setNextDeal(kind, layout) lays out
-   the next deal of that game by hand, once (cardrules.fromLayout);
-   nothing in StaticOS calls it, so in normal use it does nothing.
+   the next deal of that game by hand, once (cardrules.fromLayout;
+   layout.daily: true counts it as today's deal); nothing in StaticOS
+   calls it, so in normal use it does nothing.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { store } from '../core/store.js';
 import * as R from './cardrules.js';
+import { readLook, backHue, feltColors, lookCard } from './cardlook.js';
+import { dayKey, addDays } from './stars.js';
 
 const PREF = 'portal.arcadeCards';
 const FONT = 'Inter,ui-sans-serif,system-ui,sans-serif';
@@ -86,6 +107,44 @@ function bumpStats(key, fn) {
   all[key] = fn({ ...all[key] });
   writePref({ stats: all });
 }
+/* best points per Solitaire variant (only Klondike scores points) */
+const bestPts = key => { const v = readPref().stats?.[key]?.pts; return Number.isFinite(v) && v >= 0 ? v : null; };
+
+/* ---- Today's deal: one per date, the same for everyone ---- */
+const fnv = str => { let x = 0x811c9dc5; for (let i = 0; i < str.length; i++) { x ^= str.charCodeAt(i); x = Math.imul(x, 0x01000193) >>> 0; } return x >>> 0; };
+export const dailySeed = (kind, day) => fnv(`staticos-${kind}-${day}`);
+/* FreeCell's daily deal is a Microsoft deal number from 1 to 32,000 — but
+   never #11982, the one deal of those that can't be won */
+export function dailyDeal(day) { const n = 1 + (dailySeed('freecell', day) % 32000); return n === 11982 ? 11983 : n; }
+export function readDaily(kind) {
+  const d = readPref().daily?.[kind];
+  const days = d && typeof d.days === 'object' && d.days ? d.days : {};
+  return { last: typeof d?.last === 'string' ? d.last : null, streak: Math.max(0, d?.streak | 0), best: Math.max(0, d?.best | 0), days };
+}
+/** the streak as it stands today: still alive if the last win was today or yesterday */
+export function streakNow(kind, today = dayKey()) {
+  const d = readDaily(kind);
+  return d.last === today || d.last === addDays(today, -1) ? d.streak : 0;
+}
+function winDaily(kind, day, ms) {
+  const d = readDaily(kind);
+  if (d.days[day]) return d;                       /* already won that day: once is the streak */
+  const streak = d.last === addDays(day, -1) ? d.streak + 1 : d.last === day ? d.streak : 1;
+  const days = { ...d.days, [day]: ms };
+  for (const k of Object.keys(days).sort().slice(0, -60)) delete days[k];
+  const next = { last: day, streak, best: Math.max(d.best, streak), days };
+  writePref({ daily: { ...(readPref().daily || {}), [kind]: next } });
+  return next;
+}
+/* ---- FreeCell deals won here ---- */
+export const wonDeals = () => (Array.isArray(readPref().won) ? readPref().won.filter(n => Number.isInteger(n) && n >= 1 && n <= R.FREECELL_MAX) : []);
+const addWon = n => writePref({ won: [n, ...wonDeals().filter(x => x !== n)].slice(0, 400) });
+/* ---- Spider's undo allowance ---- */
+const UNDO = { any: Infinity, 5: 5, off: 0 };
+const undoPref = () => (['any', '5', 'off'].includes(readPref().undo) ? readPref().undo : 'any');
+/* ---- the deal in progress, per game ---- */
+const savedOf = kind => { const v = readPref().saved?.[kind]; return v && typeof v === 'object' && v.snap ? v : null; };
+const putSaved = (kind, v) => { const all = { ...(readPref().saved || {}) }; if (v) all[kind] = v; else delete all[kind]; writePref({ saved: all }); };
 
 /* the test hook: a hand-made layout for the next deal of one game */
 const NEXT = {};
@@ -145,6 +204,13 @@ const CSS = `
 .arx-cd__card td:first-child{color:var(--ink-1,#ddd)}
 .arx-cd__card tr.is-now td:first-child{color:var(--ink-0,#fff);font-weight:700}
 .arx-cd__acts{display:flex;justify-content:flex-end;margin-top:var(--sp-4,12px)}
+.arx-cd__look{position:absolute;inset:0;z-index:4;display:grid;place-items:center;padding:var(--sp-5,16px);background:rgba(4,4,8,.72);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.arx-cd__look[hidden],.arx-cd__day[hidden]{display:none}
+.arx-cd__card h4{margin:var(--sp-4,12px) 0 6px;font-size:var(--fs-12,12px);color:var(--ink-1,#ddd)}
+.arx-cd__card .arx-cd__more{margin:0 0 4px}
+.arx-cd__won{display:flex;flex-wrap:wrap;gap:5px;max-height:120px;overflow:auto}
+.arx-cd__won .arx-cd__btn{padding:5px 8px;font-variant-numeric:tabular-nums}
 @container (max-width:560px){.arx-cd__lbl{display:none}.arx-cd__seg button{padding:7px 8px}.arx-cd__btn{padding:7px 8px}.arx-cd__hint{display:none}}
 `;
 
@@ -224,8 +290,9 @@ const PIPS = {
   10: [[L3, 0], [R3, 0], [M3, 1 / 6], [L3, 1 / 3], [R3, 1 / 3], [L3, 2 / 3], [R3, 2 / 3], [M3, 5 / 6], [L3, 1], [R3, 1]],
 };
 
-/** One card face, w × h CSS px, onto g (already scaled for the DPR). */
-function drawFace(g, w, hh, r, s) {
+/** One card face, w × h CSS px, onto g (already scaled for the DPR).
+    big: the larger corner letters of the "Larger cards" look. */
+function drawFace(g, w, hh, r, s, big = false) {
   const ink = R.isRed(s) ? '#c8102e' : '#15151c';
   rr(g, 0.5, 0.5, w - 1, hh - 1, w * 0.075);
   g.fillStyle = '#fbfaf6';
@@ -233,10 +300,10 @@ function drawFace(g, w, hh, r, s) {
   g.strokeStyle = 'rgba(0,0,0,.32)';
   g.lineWidth = 1;
   g.stroke();
-  const small = w < 54;
+  const small = w < 54 || big;
   const label = R.RANKS[r - 1];
   /* the top strip carries rank and suit, so a fanned column still reads */
-  const fs = w * (small ? 0.4 : 0.25);
+  const fs = w * (small ? (big ? 0.36 : 0.4) : 0.25);
   g.fillStyle = ink;
   g.textBaseline = 'top';
   g.textAlign = 'left';
@@ -318,33 +385,51 @@ function drawFace(g, w, hh, r, s) {
   pip(g, s, cx, fy + fh * 0.84, w * 0.15, ink);
 }
 
-/** The back of every card: the game's colour, a lattice, a quiet border. */
-function drawBack(g, w, hh, hue) {
+/** The back of every card: a colour (the game's own unless the Table look
+    picks another; hue -1 is black), a pattern, a quiet border.
+    pattern: lattice (the original) | stripes | dots | plain (./cardlook.js) */
+function drawBack(g, w, hh, hue, pattern = 'lattice') {
+  const black = hue < 0;
+  const tone = (s, l, a = 1) => (black ? hsl(230, 8, l * 0.5, a) : hsl(hue, s, l, a));
   rr(g, 0.5, 0.5, w - 1, hh - 1, w * 0.075);
   const grd = g.createLinearGradient(0, 0, w, hh);
-  grd.addColorStop(0, hsl(hue, 62, 34));
-  grd.addColorStop(1, hsl(hue, 70, 20));
+  grd.addColorStop(0, tone(62, 34));
+  grd.addColorStop(1, tone(70, 20));
   g.fillStyle = grd;
   g.fill();
   g.strokeStyle = 'rgba(0,0,0,.4)';
   g.lineWidth = 1;
   g.stroke();
   const m = w * 0.09;
+  const line = (a) => (black ? `rgba(220,220,235,${a})` : hsl(hue, 90, 78, a));
   g.save();
   rr(g, m, m, w - m * 2, hh - m * 2, w * 0.04);
   g.clip();
-  g.strokeStyle = hsl(hue, 90, 78, 0.22);
+  g.strokeStyle = line(0.22);
+  g.fillStyle = line(0.2);
   g.lineWidth = Math.max(1, w * 0.012);
   const step = w * 0.16;
-  g.beginPath();
-  for (let d = -hh; d < w + hh; d += step) { g.moveTo(d, 0); g.lineTo(d + hh, hh); g.moveTo(d + hh, 0); g.lineTo(d, hh); }
-  g.stroke();
+  if (pattern === 'stripes') {
+    g.lineWidth = Math.max(1, w * 0.035);
+    g.beginPath();
+    for (let d = -hh; d < w + hh; d += step * 0.9) { g.moveTo(d, 0); g.lineTo(d + hh, hh); }
+    g.stroke();
+  } else if (pattern === 'dots') {
+    const r0 = Math.max(0.8, w * 0.028);
+    for (let y = m + step / 2, row = 0; y < hh - m; y += step * 0.8, row++) {
+      for (let x = m + (row % 2 ? step : step / 2); x < w - m; x += step) { g.beginPath(); g.arc(x, y, r0, 0, Math.PI * 2); g.fill(); }
+    }
+  } else if (pattern !== 'plain') {
+    g.beginPath();
+    for (let d = -hh; d < w + hh; d += step) { g.moveTo(d, 0); g.lineTo(d + hh, hh); g.moveTo(d + hh, 0); g.lineTo(d, hh); }
+    g.stroke();
+  }
   g.restore();
   rr(g, m, m, w - m * 2, hh - m * 2, w * 0.04);
-  g.strokeStyle = hsl(hue, 90, 85, 0.55);
+  g.strokeStyle = black ? 'rgba(220,220,235,.5)' : hsl(hue, 90, 85, 0.55);
   g.lineWidth = Math.max(1, w * 0.016);
   g.stroke();
-  g.fillStyle = hsl(hue, 95, 82, 0.8);
+  g.fillStyle = black ? 'rgba(230,230,240,.75)' : hsl(hue, 95, 82, 0.8);
   suitPath(g, 1, w / 2, hh / 2, w * 0.26);
   g.fill();
 }
@@ -358,8 +443,10 @@ function mountTable(el, ctx, kind) {
   const now = () => performance.now();
   const pref = readPref();
   let st = null;
+  let look = readLook();
   const S = {
     hist: [], started: false, counted: false, startAt: 0, banked: 0, paused: false, statsOpen: false,
+    daily: null, shown: 0, showAt: 0, show: null, undos: 0, lookOpen: false,
     won: false, ended: false, dead: false, auto: null, autoTimer: 0, celebrate: null,
     press: null, drag: null, tap: null, dragged: false,
     kbd: false, cur: { row: 1, i: 0 }, held: null,
@@ -395,20 +482,46 @@ function mountTable(el, ctx, kind) {
     } }, h('span', { text: 'Deal #' }), dealInput,
       h('button.arx-cd__btn', { type: 'submit', title: 'Play this deal' }, h('span', { text: 'Play' })));
   }
-  const undoBtn = h('button.arx-cd__btn', { type: 'button', title: 'Undo (U)', 'aria-label': 'Undo (U)', onclick: () => undo() }, icon('rotate-ccw'), h('span.arx-cd__lbl', { text: 'Undo' }));
+  const undoLbl = h('span.arx-cd__lbl', { text: 'Undo' });
+  const undoBtn = h('button.arx-cd__btn', { type: 'button', title: 'Undo (U)', 'aria-label': 'Undo (U)', onclick: () => undo() }, icon('rotate-ccw'), undoLbl);
+  /* Spider: how many undos a deal allows */
+  let undoSeg = null;
+  if (kind === 'spider') {
+    const opts = [['any', 'Any undo', 'Undo as often as you like'], ['5', '5 undos', 'Five undos a deal'], ['off', 'No undo', 'No taking back']];
+    const btns = opts.map(([v, text, tip]) => h('button', { type: 'button', dataset: { undo: v }, 'aria-pressed': String(v === undoPref()), title: tip, onclick: () => {
+      writePref({ undo: v });
+      btns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.undo === v)));
+      say(v === 'any' ? 'Undo as often as you like.' : v === 'off' ? 'No undo in this deal or the next.' : `Five undos a deal${S.undos ? `; ${Math.max(0, 5 - S.undos)} left in this one` : ''}.`);
+      paintBar();
+    } }, text));
+    undoSeg = h('div.arx-cd__seg', { role: 'group', 'aria-label': 'Undos a deal' }, btns);
+  }
+  const ptsEl = h('b', { text: '0' });
+  const ptsRead = kind === 'klondike' ? h('span.arx-cd__read', { title: 'Points: +10 to a foundation, +5 from the waste to a column, +5 for turning a card over, −15 back from a foundation; turning the stock over costs 100 in Draw 1, 20 in Draw 3 after the third time' }, ptsEl, h('small', { text: 'points' })) : null;
+  const dayText = h('span', { text: '' });
+  const dayRead = h('span.arx-cd__read.arx-cd__day', { hidden: true, title: 'Today’s deal: the same deal for everyone today' }, icon('calendar'), dayText);
+  const todayBtn = kind !== 'spider' ? h('button.arx-cd__btn', { type: 'button', title: 'Today’s deal: the same for everyone today. Win it on days in a row for a streak.', dataset: { k: 'today' }, onclick: () => deal({ daily: dayKey() }) },
+    icon('calendar'), h('span.arx-cd__lbl', { text: 'Today' })) : null;
+  const showBtn = h('button.arx-cd__btn', { type: 'button', title: 'Show a move you can make (M). A game won with it never sets a best.', dataset: { k: 'show' }, onclick: () => showMove() }, icon('eye'), h('span.arx-cd__lbl', { text: 'Show moves' }));
+  const lookBtn = h('button.arx-cd__btn', { type: 'button', title: 'Card backs, the table, larger cards, left-handed', 'aria-haspopup': 'dialog', dataset: { k: 'look' }, onclick: () => openLook() }, icon('palette'), h('span.arx-cd__lbl', { text: 'Table' }));
   const newBtn = h('button.arx-cd__btn', { type: 'button', title: kind === 'freecell' ? 'A random deal' : 'A new deal', onclick: () => deal({}) }, icon('shuffle'), h('span.arx-cd__lbl', { text: 'New deal' }));
   const statsBtn = h('button.arx-cd__btn', { type: 'button', title: 'Games played and won on this device', 'aria-haspopup': 'dialog', onclick: () => openStats() }, icon('bar-chart'), h('span.arx-cd__lbl', { text: 'Stats' }));
-  const bar = h('div.arx-cd__bar', variantEl, h('div.arx-cd__grow'),
-    h('span.arx-cd__read', { title: 'Time since your first move' }, icon('clock'), timeEl),
-    h('span.arx-cd__read', { title: 'Moves' }, movesEl, h('small', { text: 'moves' })),
-    undoBtn, newBtn, statsBtn);
+  const grow = h('div.arx-cd__grow');
+  const reads = [h('span.arx-cd__read', { title: 'Time since your first move' }, icon('clock'), timeEl),
+    h('span.arx-cd__read', { title: 'Moves' }, movesEl, h('small', { text: 'moves' })), ptsRead, dayRead];
+  const acts = [undoBtn, showBtn, todayBtn, newBtn, statsBtn, lookBtn];
+  const bar = h('div.arx-cd__bar');
+  /* left-handed: the buttons come first, on the left */
+  const orderBar = () => bar.replaceChildren(...(look.left ? [...acts, ...reads, grow, variantEl, undoSeg] : [variantEl, undoSeg, grow, ...reads, ...acts]).filter(Boolean));
+  orderBar();
   const table = h('div.arx-cd__table');
   const hint = h('span.arx-cd__hint', {},
     'Drag, or click a card to move it · double-click sends it home · ',
-    h('kbd', { text: '← → ↑ ↓' }), ' pile ', h('kbd', { text: 'Enter' }), ' pick up / put down ', h('kbd', { text: 'U' }), ' undo');
+    h('kbd', { text: '← → ↑ ↓' }), ' pile ', h('kbd', { text: 'Enter' }), ' pick up / put down ', h('kbd', { text: 'U' }), ' undo ', h('kbd', { text: 'M' }), ' show a move');
   const foot = h('div.arx-cd__foot', hint);
   const statsLayer = h('div.arx-cd__stats', { hidden: true });
-  const root = h('div.arx-cd', { tabindex: '-1', style: { '--h': G.hue } }, h('style', { text: CSS }), bar, table, foot, live, statsLayer);
+  const lookLayer = h('div.arx-cd__look', { hidden: true });
+  const root = h('div.arx-cd', { tabindex: '-1', style: { '--h': G.hue } }, h('style', { text: CSS }), bar, table, foot, live, statsLayer, lookLayer);
   el.appendChild(root);
   /* a button clicked with the mouse hands the keys back to the table, so
      Enter picks up cards again instead of pressing that button twice */
@@ -430,32 +543,75 @@ function mountTable(el, ctx, kind) {
     stopAuto();
     S.celebrate = null;
     const p = readPref();
+    const day = change.daily || null;
     const opt = {
       draw: change.draw ?? (p.draw === 3 ? 3 : 1),
       suits: change.suits ?? ([1, 2, 4].includes(p.suits) ? p.suits : 1),
-      deal: change.deal ?? (kind === 'freecell' ? 1 + Math.floor(Math.random() * 32000) : null),
+      deal: day && kind === 'freecell' ? dailyDeal(day) : change.deal ?? (kind === 'freecell' ? 1 + Math.floor(Math.random() * 32000) : null),
     };
     const hand = change.layout;
-    st = hand ? R.fromLayout(kind, { ...opt, ...(hand.opt || {}) }, hand) : R.newGame(kind, opt, crypto.getRandomValues(new Uint32Array(1))[0]);
-    Object.assign(S, { hist: [], started: false, counted: false, startAt: 0, banked: 0, won: false, ended: false, press: null, drag: null, tap: null, dragged: false, held: null, lastSec: -1, result: null });
+    const seed = day ? dailySeed(kind, day) : crypto.getRandomValues(new Uint32Array(1))[0];
+    st = hand ? R.fromLayout(kind, { ...opt, ...(hand.opt || {}) }, hand) : R.newGame(kind, opt, seed);
+    Object.assign(S, { hist: [], started: false, counted: false, startAt: 0, banked: 0, won: false, ended: false, press: null, drag: null, tap: null, dragged: false, held: null, lastSec: -1, result: null,
+      daily: day, shown: 0, showIx: 0, show: null, undos: 0 });
+    putSaved(kind, null);                   /* the deal before this one is let go */
     S.anim.clear();
     S.cur = { row: 1, i: 0 };
     for (const b of segBtns) b.setAttribute('aria-pressed', String(Number(b.dataset.v) === (kind === 'klondike' ? st.draw : st.suits)));
     if (dealInput) dealInput.value = String(st.deal);
     paintBar();
     ctx.onScore?.(0);
-    live.textContent = kind === 'freecell' ? `FreeCell deal number ${st.deal}.` : `New ${G.title} deal.`;
+    live.textContent = day ? `Today’s ${G.title} deal${kind === 'freecell' ? `, number ${st.deal}` : ''}: the same for everyone today.` : kind === 'freecell' ? `FreeCell deal number ${st.deal}.` : `New ${G.title} deal.`;
+    if (day) say(`Today’s deal${kind === 'freecell' ? ` (#${st.deal})` : ''} — the same for everyone today. ${streakNow(kind) ? `Your streak: ${streakNow(kind)} ${streakNow(kind) === 1 ? 'day' : 'days'}.` : 'Win it to start a streak.'}`, 4000);
     kick(0.3);
   }
 
+  /* ---------------- keeping the deal (closing the window, switching games) ---------------- */
+  function persist() {
+    if (!st || !S.started || S.won) return;
+    putSaved(kind, {
+      v: 1, draw: st.draw, suits: st.suits, deal: st.deal, seed: st.seed, ids: st.cards.map(c => c.id),
+      snap: R.snapshot(st), hist: S.hist.slice(-60), ms: Math.round(elapsed()), daily: S.daily, shown: S.shown, undos: S.undos,
+    });
+  }
+  function resumeSaved(v) {
+    let s2;
+    try {
+      s2 = R.newGame(kind, { draw: v.draw, suits: v.suits, deal: v.deal }, v.seed >>> 0);
+      if (Array.isArray(v.ids)) { const keep = new Set(v.ids); s2.cards = s2.cards.filter(c => keep.has(c.id)); }
+      R.restore(s2, v.snap);
+      if (s2.P.reduce((n, pl) => n + pl.c.length, 0) !== s2.cards.length || R.isWon(s2)) throw new Error('not a deal in progress');
+      for (const snap of v.hist || []) if (!snap || !Array.isArray(snap.p) || snap.p.length !== s2.P.length) throw new Error('bad undo step');
+    } catch (err) { putSaved(kind, null); return false; }
+    st = s2;
+    Object.assign(S, { hist: (v.hist || []).slice(-60), started: true, counted: true, startAt: now(), banked: Math.max(0, Number(v.ms) || 0), won: false, ended: false,
+      press: null, drag: null, tap: null, dragged: false, held: null, lastSec: -1, result: null,
+      daily: typeof v.daily === 'string' ? v.daily : null, shown: v.shown | 0, showIx: 0, show: null, undos: v.undos | 0 });
+    S.anim.clear();
+    S.cur = { row: 1, i: 0 };
+    for (const b of segBtns) b.setAttribute('aria-pressed', String(Number(b.dataset.v) === (kind === 'klondike' ? st.draw : st.suits)));
+    if (dealInput) dealInput.value = String(st.deal);
+    paintBar();
+    ctx.onScore?.(Math.floor(S.banked / 1000));
+    say(`Your ${G.title} deal from before, as you left it.`, 3500);
+    kick(0.3);
+    return true;
+  }
+
   /* ---------------- the clock & stats ---------------- */
-  const running = () => S.started && !S.won && !S.paused && !S.statsOpen;
+  const running = () => S.started && !S.won && !S.paused && !S.statsOpen && !S.lookOpen;
   const elapsed = () => S.banked + (running() ? now() - S.startAt : 0);
   function setRunning(fn) { const ms = elapsed(); fn(); S.banked = ms; S.startAt = now(); }
+  const undoLeft = () => (kind === 'spider' ? UNDO[undoPref()] - S.undos : Infinity);
   function paintBar() {
     timeEl.textContent = clock(elapsed());
     movesEl.textContent = String(st.moves);
-    undoBtn.disabled = !S.hist.length || S.won || !!S.auto;
+    if (ptsRead) ptsEl.textContent = String(st.points || 0);
+    const left = undoLeft();
+    undoBtn.disabled = !S.hist.length || S.won || !!S.auto || left <= 0;
+    undoLbl.textContent = Number.isFinite(left) ? `Undo (${Math.max(0, left)})` : 'Undo';
+    dayRead.hidden = !S.daily;
+    if (S.daily) dayText.textContent = `Today${streakNow(kind) ? ` · streak ${streakNow(kind)}` : ''}`;
   }
   const ticker = setInterval(() => {
     if (S.dead || !st) return;
@@ -478,9 +634,11 @@ function mountTable(el, ctx, kind) {
   function layout() {
     const W = sf.w, H = sf.h, n = G.cols;
     const pad = clamp(Math.min(W, H) * 0.03, 8, 20);
-    let cw = (W - pad * 2) / (n + (n - 1) * GAP);
-    cw = Math.max(18, Math.floor(Math.min(cw, (H - pad * 2) / (ASPECT * 3.3), 120)));
-    const ch = Math.round(cw * ASPECT), gap = cw * GAP;
+    /* Larger cards: less room between the columns, and a shorter table allowance */
+    const GP = look.big ? 0.07 : GAP;
+    let cw = (W - pad * 2) / (n + (n - 1) * GP);
+    cw = Math.max(18, Math.floor(Math.min(cw, (H - pad * 2) / (ASPECT * (look.big ? 2.7 : 3.3)), look.big ? 160 : 120)));
+    const ch = Math.round(cw * ASPECT), gap = cw * GP;
     const ox = (W - (n * cw + (n - 1) * gap)) / 2;
     return { W, H, n, pad, cw, ch, gap, colX: i => ox + i * (cw + gap), topY: pad, tabY: pad + ch + Math.max(10, gap * 1.6) };
   }
@@ -488,9 +646,11 @@ function mountTable(el, ctx, kind) {
     const p = st.P[pi];
     const tabAt = i => ({ x: L.colX(i), y: L.tabY });
     if (p.t === 'tab') return tabAt(p.i);
-    if (kind === 'klondike') return { x: L.colX(p.t === 'stock' ? 0 : p.t === 'waste' ? 1 : 3 + p.i), y: L.topY };
-    if (kind === 'freecell') return { x: L.colX(p.t === 'cell' ? p.i : 4 + p.i), y: L.topY };
-    return { x: L.colX(p.t === 'stock' ? L.n - 1 : 0), y: L.topY };
+    /* left-handed: the stock (Spider, Solitaire) or the free cells on the right become the left, and back */
+    const lh = look.left;
+    if (kind === 'klondike') return { x: L.colX(p.t === 'stock' ? (lh ? 6 : 0) : p.t === 'waste' ? (lh ? 5 : 1) : (lh ? p.i : 3 + p.i)), y: L.topY };
+    if (kind === 'freecell') return { x: L.colX(p.t === 'cell' ? (lh ? 4 + p.i : p.i) : (lh ? p.i : 4 + p.i)), y: L.topY };
+    return { x: L.colX(p.t === 'stock' ? (lh ? 0 : L.n - 1) : (lh ? L.n - 1 : 0)), y: L.topY };
   }
   function fanOf(L, pi) {
     const c = st.P[pi].c;
@@ -511,12 +671,13 @@ function mountTable(el, ctx, kind) {
         p.c.forEach((c, k) => { out.set(c.id, { x: s.x, y, pi, k }); y += c.up ? fu : fd; });
       } else if (p.t === 'waste') {
         const fan = st.draw === 3 ? Math.min(3, n) : 1;
-        p.c.forEach((c, k) => out.set(c.id, { x: s.x + Math.max(0, k - (n - fan)) * L.cw * 0.24, y: s.y, pi, k }));
+        const dir = look.left ? -1 : 1;                /* the waste fans away from the stock */
+        p.c.forEach((c, k) => out.set(c.id, { x: s.x + dir * Math.max(0, k - (n - fan)) * L.cw * 0.24, y: s.y, pi, k }));
       } else if (p.t === 'done') {
-        p.c.forEach((c, k) => out.set(c.id, { x: L.colX(Math.floor(k / 13)), y: s.y, pi, k }));
+        p.c.forEach((c, k) => out.set(c.id, { x: L.colX(look.left ? L.n - 1 - Math.floor(k / 13) : Math.floor(k / 13)), y: s.y, pi, k }));
       } else if (p.t === 'stock' && kind === 'spider') {
-        const deals = Math.ceil(n / 10);
-        p.c.forEach((c, k) => out.set(c.id, { x: s.x - (deals - 1 - Math.floor(k / 10)) * L.cw * 0.16, y: s.y, pi, k }));
+        const deals = Math.ceil(n / 10), dir = look.left ? 1 : -1;
+        p.c.forEach((c, k) => out.set(c.id, { x: s.x + dir * (deals - 1 - Math.floor(k / 10)) * L.cw * 0.16, y: s.y, pi, k }));
       } else p.c.forEach((c, k) => out.set(c.id, { x: s.x, y: s.y, pi, k }));
     });
     return out;
@@ -525,8 +686,8 @@ function mountTable(el, ctx, kind) {
   function stockRect(L, T) {
     const p = st.P[st.ix.stock], s = slotOf(L, st.ix.stock);
     const xs = p.c.map(c => T.get(c.id).x);
-    const x0 = xs.length ? Math.min(...xs) : s.x;
-    return { x: x0, y: s.y, w: s.x + L.cw - x0, h: L.ch };
+    const x0 = Math.min(s.x, ...xs), x1 = Math.max(s.x, ...xs) + L.cw;
+    return { x: x0, y: s.y, w: x1 - x0, h: L.ch };
   }
   /** the card (or empty pile, idx -1) under a point */
   function hitAt(L, T, x, y) {
@@ -567,6 +728,9 @@ function mountTable(el, ctx, kind) {
   function rows() {
     const top = kind === 'klondike' ? [st.ix.stock, st.ix.waste, ...st.ix.found]
       : kind === 'freecell' ? [...st.ix.cells, ...st.ix.found] : [st.ix.stock];
+    /* the keys walk the piles in the order they stand on the table */
+    const L = layout();
+    top.sort((a, b) => slotOf(L, a).x - slotOf(L, b).x);
     return [top, st.ix.tab];
   }
   const curPile = () => { const rw = rows()[S.cur.row]; return rw[clamp(S.cur.i, 0, rw.length - 1)]; };
@@ -611,6 +775,7 @@ function mountTable(el, ctx, kind) {
     const res = change(fn);
     if (!res || res.blocked) return res;
     S.hist.push(snap);
+    if (S.hist.length > 400) S.hist.splice(0, S.hist.length - 400);
     firstMove();
     if (label) live.textContent = label(res);
     afterChange(res);
@@ -618,8 +783,10 @@ function mountTable(el, ctx, kind) {
   }
   function afterChange(res) {
     if (res?.off?.length) { snd.blip(660, 0.08, 'triangle', 0.7); setTimeout(() => snd.blip(990, 0.12, 'triangle', 0.7), 90); }
+    S.show = null; S.showIx = 0;
     paintBar();
     if (R.isWon(st)) { win(); return; }
+    persist();
     if (!S.auto) {
       const plan = R.autoPlan(st);
       if (plan && plan.length) startAuto(plan);
@@ -651,12 +818,39 @@ function mountTable(el, ctx, kind) {
   }
   function undo() {
     if (!S.hist.length || S.won || S.auto || S.celebrate) return;
+    if (undoLeft() <= 0) { bad(); say(undoPref() === 'off' ? 'Undo is off for Spider (the Undo setting in the bar).' : 'No undos left in this deal.'); return; }
+    if (kind === 'spider') S.undos++;
+    S.show = null; S.showIx = 0;
     const snap = S.hist.pop();
     change(() => { R.restore(st, snap); return true; }, 130);
     S.held = null;
     snd.blip(330, 0.04, 'triangle', 0.35);
-    live.textContent = 'Undone.';
+    live.textContent = Number.isFinite(undoLeft()) ? `Undone. ${Math.max(0, undoLeft())} ${undoLeft() === 1 ? 'undo' : 'undos'} left.` : 'Undone.';
     paintBar();
+    persist();
+  }
+
+  /* ---------------- show moves ---------------- */
+  function describe(mv) {
+    if (mv.draw) return kind === 'spider' ? 'Deal a row from the stock.' : st.P[st.ix.stock].c.length ? 'Turn over the stock.' : 'Turn the waste back over.';
+    const c = st.P[mv.from].c[mv.idx], n = st.P[mv.from].c.length - mv.idx;
+    return `${R.nameOf(c)}${n > 1 ? ` and the ${n - 1 === 1 ? 'card' : `${n - 1} cards`} on it` : ''} to ${pileName(mv.to)}.`;
+  }
+  function showMove() {
+    if (!st || S.won || S.auto || S.celebrate) return;
+    const list = R.hints(st);
+    if (!list.length) {
+      bad();
+      say(kind === 'spider' && st.P[st.ix.stock].c.length ? 'No moves on the table — and every column needs a card before you deal a row.' : 'No moves left. Undo, or start a new deal.', 3500);
+      return;
+    }
+    const mv = list[S.showIx % list.length];
+    S.showIx++;
+    S.shown++;
+    S.show = { mv, t0: now() };
+    say(`${list.length > 1 ? `${(S.showIx - 1) % list.length + 1} of ${list.length}: ` : ''}${describe(mv)}`, 3000);
+    kick(2.6);
+    persist();
   }
   function bad(ids) {
     S.shakeAt = reduced ? -1 : now();
@@ -693,10 +887,17 @@ function mountTable(el, ctx, kind) {
     S.banked = ms;
     S.held = null;
     paintBar();
-    bumpStats(variantKey(st), s => ({ ...s, won: s.won + 1, best: s.best === null ? ms : Math.min(s.best, ms) }));
+    /* a deal won with Show moves counts as won, but its time isn't a best */
+    const helped = S.shown > 0;
+    bumpStats(variantKey(st), s => ({ ...s, won: s.won + 1, best: helped ? s.best : s.best === null ? ms : Math.min(s.best, ms),
+      ...(kind === 'klondike' && !helped ? { pts: Math.max(bestPts(variantKey(st)) ?? 0, st.points || 0) } : {}) }));
+    if (kind === 'freecell') addWon(st.deal);
+    const daily = S.daily ? winDaily(kind, S.daily, ms) : null;
+    putSaved(kind, null);
     [523, 659, 784, 1047].forEach((f, k) => setTimeout(() => snd.blip(f, 0.16, 'triangle', 0.8), k * 110));
-    say(`You won in ${timeText(ms)} and ${st.moves} moves.`, 15000);
-    S.result = { ms, moves: st.moves };
+    say(`You won in ${timeText(ms)} and ${st.moves} moves${kind === 'klondike' ? `, with ${st.points || 0} points` : ''}.${daily ? ` Today’s deal: a streak of ${daily.streak} ${daily.streak === 1 ? 'day' : 'days'}.` : ''}`, 15000);
+    S.result = { ms, moves: st.moves, points: st.points || 0, helped, daily };
+    paintBar();
     celebrate();
   }
   function finishWin() {
@@ -706,7 +907,9 @@ function mountTable(el, ctx, kind) {
     kick();
     const v = VARIANTS.find(x => x.key === variantKey(st));
     const secs = Math.max(0.1, Math.floor(S.result.ms / 100) / 10);
-    ctx.onEnd?.({ score: secs, won: true, detail: `${v.label}${kind === 'freecell' ? ` #${st.deal}` : ''} · ${S.result.moves} moves · ${timeText(S.result.ms)}` });
+    const R0 = S.result;
+    ctx.onEnd?.({ score: secs, won: true, ...(R0.helped ? { assisted: true } : {}),
+      detail: `${v.label}${kind === 'freecell' ? ` #${st.deal}` : ''}${R0.daily ? ' · Today’s deal' : ''} · ${R0.moves} moves · ${timeText(R0.ms)}${kind === 'klondike' ? ` · ${R0.points} points` : ''}${R0.daily ? ` · streak ${R0.daily.streak}` : ''}${R0.helped ? ` · Show moves used ${S.shown === 1 ? 'once' : `${S.shown} times`}` : ''}` });
   }
   /* cards leave the foundations one by one and bounce away, leaving trails */
   function celebrate() {
@@ -754,7 +957,7 @@ function mountTable(el, ctx, kind) {
 
   /* ---------------- drawing ---------------- */
   function face(c, L) {
-    const key = `${c.r}|${c.s}|${L.cw}|${sf.dpr}`;
+    const key = `${c.r}|${c.s}|${L.cw}|${sf.dpr}|${look.big ? 'B' : ''}`;
     let s = sprites.get(key);
     if (s) return s;
     s = document.createElement('canvas');
@@ -762,12 +965,12 @@ function mountTable(el, ctx, kind) {
     s.height = Math.max(1, Math.round(L.ch * sf.dpr));
     const g = s.getContext('2d');
     g.scale(sf.dpr, sf.dpr);
-    drawFace(g, L.cw, L.ch, c.r, c.s);
+    drawFace(g, L.cw, L.ch, c.r, c.s, look.big);
     sprites.set(key, s);
     return s;
   }
   function back(L) {
-    const key = `back|${L.cw}|${sf.dpr}`;
+    const key = `back|${L.cw}|${sf.dpr}|${look.back}|${look.color}`;
     let s = sprites.get(key);
     if (s) return s;
     s = document.createElement('canvas');
@@ -775,7 +978,7 @@ function mountTable(el, ctx, kind) {
     s.height = Math.max(1, Math.round(L.ch * sf.dpr));
     const g = s.getContext('2d');
     g.scale(sf.dpr, sf.dpr);
-    drawBack(g, L.cw, L.ch, G.hue);
+    drawBack(g, L.cw, L.ch, backHue(look, G.hue), look.back);
     sprites.set(key, s);
     return s;
   }
@@ -828,15 +1031,16 @@ function mountTable(el, ctx, kind) {
     sf.begin();
     const t = now(), L = layout(), T = targets(L), pos = shown(L, T, t);
     const bgd = g.createRadialGradient(L.W / 2, L.H * 0.35, 0, L.W / 2, L.H * 0.35, Math.max(L.W, L.H) * 0.8);
-    bgd.addColorStop(0, hsl(G.hue, 38, 17));
-    bgd.addColorStop(1, hsl(G.hue, 45, 6));
+    const felt = feltColors(look);
+    bgd.addColorStop(0, felt ? felt[0] : hsl(G.hue, 38, 17));
+    bgd.addColorStop(1, felt ? felt[1] : hsl(G.hue, 45, 6));
     g.fillStyle = bgd;
     g.fillRect(0, 0, L.W, L.H);
 
     st.P.forEach((p, pi) => { if (p.t !== 'done' && !(p.t === 'stock' && kind === 'spider' && p.c.length)) slotMark(g, L, pi); });
     if (kind === 'spider') for (let j = 0; j < 8; j++) {
       if (st.P[st.ix.done].c.length > j * 13) continue;
-      rr(g, L.colX(j) + 1, L.topY + 1, L.cw - 2, L.ch - 2, L.cw * 0.075);
+      rr(g, L.colX(look.left ? L.n - 1 - j : j) + 1, L.topY + 1, L.cw - 2, L.ch - 2, L.cw * 0.075);
       g.strokeStyle = 'rgba(255,255,255,.1)';
       g.lineWidth = 1;
       g.stroke();
@@ -893,6 +1097,26 @@ function mountTable(el, ctx, kind) {
       g.stroke();
       g.setLineDash([]);
     }
+    /* Show moves: the cards to move and where they go, for a moment */
+    if (S.show && t - S.show.t0 < 2500 && !S.won) {
+      const mv = S.show.mv;
+      const a = 0.95 * Math.min(1, (2500 - (t - S.show.t0)) / 400);
+      g.save();
+      g.strokeStyle = `rgba(255,214,80,${a})`;
+      g.lineWidth = 3;
+      g.setLineDash([7, 4]);
+      const ring = z => { rr(g, z.x - 4, z.y - 4, z.w + 8, z.h + 8, L.cw * 0.11); g.stroke(); };
+      if (mv.draw) ring(stockRect(L, T));
+      else {
+        const from = st.P[mv.from], q0 = pos.get(from.c[mv.idx].id), q1 = pos.get(from.c[from.c.length - 1].id);
+        if (q0 && q1) ring({ x: q0.x, y: q0.y, w: L.cw, h: q1.y + L.ch - q0.y });
+        const to = st.P[mv.to];
+        const z = to.t === 'tab' && to.c.length ? cardRect(L, T.get(to.c[to.c.length - 1].id)) : { ...slotOf(L, mv.to), w: L.cw, h: L.ch };
+        g.strokeStyle = `rgba(110,240,150,${a})`;
+        ring(z);
+      }
+      g.restore();
+    }
     if (held) {
       held.cards.forEach((c, j) => cardAt(g, L, c, held.x, held.y + j * held.fu, 1));
       rr(g, held.x - 3, held.y - 3, L.cw + 6, L.ch + 6 + (held.cards.length - 1) * held.fu, L.cw * 0.1);
@@ -939,7 +1163,7 @@ function mountTable(el, ctx, kind) {
   const loop = looper(dt => {
     stepCelebrate(dt);
     draw();
-    const busy = S.anim.size || S.drag || S.celebrate || (S.shakeAt >= 0 && now() - S.shakeAt < 320);
+    const busy = S.anim.size || S.drag || S.celebrate || (S.shakeAt >= 0 && now() - S.shakeAt < 320) || (S.show && now() - S.show.t0 < 2600);
     if (!busy && now() / 1000 > until) loop.stop();
   });
   function kick(extra = 0.05) { until = Math.max(until, now() / 1000 + extra); loop.start(); }
@@ -1042,6 +1266,7 @@ function mountTable(el, ctx, kind) {
   const onKey = e => {
     if (!ownsKey(root, e) || !st) return;
     if (S.statsOpen) { if (e.key === 'Escape') { e.preventDefault(); closeStats(); } return; }
+    if (S.lookOpen) return;
     const k = e.code;
     if (S.celebrate && (k === 'Enter' || k === 'Space' || k === 'Escape' || k === 'NumpadEnter')) { e.preventDefault(); finishWin(); return; }
     if (S.won || S.auto) return;
@@ -1070,6 +1295,8 @@ function mountTable(el, ctx, kind) {
       live.textContent = 'Put back.';
     } else if (k === 'KeyU' || k === 'KeyZ' || k === 'Backspace') {
       undo();
+    } else if (k === 'KeyM') {
+      showMove();
     } else if (k === 'KeyF') {
       const pi = S.held ? S.held.from : curPile();
       const to = R.foundationFor(st, pi);
@@ -1119,10 +1346,54 @@ function mountTable(el, ctx, kind) {
       h('h3', { text: 'Card games on this device' }),
       h('p', { text: 'A deal counts as played once you make a move in it. Times run from the first move to the last card home, not counting pauses.' }),
       h('table', h('thead', h('tr', ['Game', 'Played', 'Won', 'Win rate', 'Best time'].map(x => h('th', { text: x })))), h('tbody', rowsEl)),
+      extras(),
       h('div.arx-cd__acts', close)));
     statsLayer.hidden = false;
     setTimeout(() => { if (!S.dead && S.statsOpen) close.focus({ preventScroll: true }); }, 30);
   }
+  /* under the table: Solitaire's best points, Today's deal, FreeCell's won deals */
+  function extras() {
+    const out = [];
+    if (kind === 'klondike') {
+      const d1 = bestPts('klondike-d1'), d3 = bestPts('klondike-d3');
+      out.push(h('p.arx-cd__more', { dataset: { k: 'points' }, text: `Best points: Draw 1 ${d1 === null ? '—' : d1.toLocaleString()} · Draw 3 ${d3 === null ? '—' : d3.toLocaleString()}. Points only; a game won with Show moves sets no best.` }));
+    }
+    if (kind !== 'spider') {
+      const d = readDaily(kind), today = dayKey(), now = streakNow(kind, today);
+      out.push(h('h4', { text: 'Today’s deal' }),
+        h('p.arx-cd__more', { dataset: { k: 'daily' }, text: `${d.days[today] ? `Won today in ${timeText(d.days[today])}.` : 'Not won yet today.'} Streak: ${now} ${now === 1 ? 'day' : 'days'} in a row (best ${d.best}). The same deal for everyone on the same date; the streak is kept on this device.` }));
+    }
+    if (kind === 'freecell') {
+      const list = wonDeals();
+      out.push(h('h4', { text: `Deals you’ve won here (${list.length.toLocaleString()})` }),
+        list.length
+          ? h('div.arx-cd__won', { role: 'list', dataset: { k: 'won' } }, list.slice(0, 120).map(n => h('button.arx-cd__btn', { type: 'button', role: 'listitem', dataset: { deal: String(n) }, title: `Play deal #${n} again`,
+            onclick: () => { closeStats(); deal({ deal: n }); } }, `#${n}`)))
+          : h('p.arx-cd__more', { text: 'None yet. Any deal from 1 to 1,000,000 can be typed in by the Deal box.' }));
+    }
+    return out;
+  }
+  /* ---------------- the Table look (./cardlook.js) ---------------- */
+  function openLook() {
+    if (S.lookOpen || !st) return;
+    setRunning(() => { S.lookOpen = true; });
+    const card = lookCard({
+      h, icon, gameHue: G.hue, paintBack: (g, w, hh, pattern, hue) => drawBack(g, w, hh, hue, pattern),
+      onChange: () => { look = readLook(); sprites.clear(); orderBar(); S.anim.clear(); kick(0.2); },
+      onClose: () => closeLook(),
+    });
+    lookLayer.replaceChildren(card.el);
+    lookLayer.hidden = false;
+    setTimeout(() => { if (!S.dead && S.lookOpen) card.focus(); }, 30);
+  }
+  function closeLook() {
+    if (!S.lookOpen) return;
+    setRunning(() => { S.lookOpen = false; });
+    lookLayer.hidden = true;
+    lookLayer.replaceChildren();
+    lookBtn.focus({ preventScroll: true });
+  }
+  lookLayer.addEventListener('pointerdown', e => { if (e.target === lookLayer) closeLook(); });
   function closeStats() {
     if (!S.statsOpen) return;
     setRunning(() => { S.statsOpen = false; });
@@ -1141,10 +1412,13 @@ function mountTable(el, ctx, kind) {
   sf.cv.addEventListener('click', onClick);
   const hand = NEXT[kind];
   NEXT[kind] = null;
-  deal(hand ? { layout: hand, deal: hand.deal } : {});
+  /* the deal left unfinished last time comes back first */
+  const kept = hand ? null : savedOf(kind);
+  if (!kept || !resumeSaved(kept)) deal(hand ? { layout: hand, deal: hand.deal, daily: hand.daily ? dayKey() : null } : {});
 
   return {
     stop() {
+      persist();
       S.dead = true;
       stopAuto();
       clearInterval(ticker);
@@ -1176,6 +1450,8 @@ function mountTable(el, ctx, kind) {
             at: p.c.map(c => { const q = T.get(c.id); return { x: q.x, y: q.y }; }) };
         }),
         moves: st.moves, time: Math.round(elapsed()), started: S.started, undo: S.hist.length,
+        points: st.points || 0, daily: S.daily, shown: S.shown, show: S.show && now() - S.show.t0 < 2500 ? { ...S.show.mv } : null, undos: S.undos, undoLeft: Number.isFinite(undoLeft()) ? undoLeft() : null,
+        look: { ...look }, lookOpen: S.lookOpen, saved: !!savedOf(kind), seed: st.seed,
         won: S.won, ended: S.ended, auto: !!S.auto, celebrating: !!S.celebrate, settled: !S.anim.size && !S.drag,
         kbd: S.kbd, cursor: { row: S.cur.row, i: S.cur.i, pile: curPile() }, held: S.held ? { ...S.held } : null,
         stats: readStats(),

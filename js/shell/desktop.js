@@ -16,12 +16,22 @@ import * as fileimport from '../core/fileimport.js';
 import * as Desktops from '../core/desktops.js';
 import * as ROTATE from '../core/wprotate.js';
 import { appTile } from '../core/appart.js';
+import * as L from '../core/layers.js';
+import * as wm from '../core/wm.js';
+import * as FS from '../core/deskfs.js';
+import * as TB from './trashbin.js';
+import { mountIconLayer, SIZES } from './deskicons.js';
+import * as SAVER from '../core/datasaver.js';
+import { t } from '../core/i18n.js';
+import { appShortcutId, openAppShortcut } from '../core/shortcuts.js';
+import { getApp } from '../core/registry.js';
 
 const arcadeHue = new Map(ARCADE.map(g => [g.id, g.hue]));
 
 const SHORTCUTS = [
-  { label: 'Static Drive', icon: 'hard-drive', path: '/' },
-  { label: 'Home', icon: 'home', path: null },   /* null → vfs.HOME */
+  { id: 'drive', label: t('Static Drive'), icon: 'hard-drive', path: '/' },
+  { id: 'home', label: t('Home'), icon: 'home', path: null },   /* null → vfs.HOME */
+  { id: 'trash', label: t('Trash'), icon: 'trash', trash: true },
 ];
 
 export function mountDesktop(host) {
@@ -56,7 +66,7 @@ export function mountDesktop(host) {
   let painted = '';
   let fadeNext = false;
   let crossNext = false;
-  const MEDIA = ':scope > .wp__video, :scope > .wp__still, :scope > .wp__img, :scope > .wp__preset, :scope > .wp__day';
+  const MEDIA = ':scope > .wp__video, :scope > .wp__still, :scope > .wp__img, :scope > .wp__preset, :scope > .wp__day, :scope > .wp__live';
 
   /* Spooky season (js/core/season.js): the haunted house stands in for
      whatever wallpaper is chosen, in three layers that take the same
@@ -103,7 +113,7 @@ export function mountDesktop(host) {
     /* Settings fires both the store change and 'wallpaper:changed' for one
        pick — build the (possibly 1080p) layer once. A video that fell back
        to its GIF has replaced itself, so look at what is actually in .wp. */
-    const key = `${chosen?.id}|${wantsMedia}`;
+    const key = `${chosen?.id}|${wantsMedia}|${SAVER.on()}`;
     if (key !== painted || (wantsMedia && !wp.querySelector(MEDIA))) {
       const old = [...wp.querySelectorAll(MEDIA)];
       /* rotation cross-fades: the old picture stays under the new one until
@@ -209,9 +219,9 @@ export function mountDesktop(host) {
       wp.classList.add('wp--still');
       api.notify({
         app: 'Desktop', icon: 'gauge',
-        title: 'Wallpaper motion turned off',
-        message: `This machine was running at about ${median} frames per second with it on. `
-               + 'Turn it back on in Settings → Wallpaper if you would rather have it.',
+        title: t('Wallpaper motion turned off'),
+        message: t('This machine was running at about {median} frames per second with it on. ', { median })
+               + t('Turn it back on in Settings → Wallpaper if you would rather have it.'),
         timeout: 9000,
       });
     } catch (err) {
@@ -268,7 +278,7 @@ export function mountDesktop(host) {
      its centring, its entrance and every rule that hides the clock
      (Game Mode, phone layout, the Linux desk terminal, the pref). The
      clock text stays aria-hidden; the pills are real buttons. */
-  const deskHome = h('div.deskhome', { role: 'group', 'aria-label': 'Pick up where you left off' });
+  const deskHome = h('div.deskhome', { role: 'group', 'aria-label': t('Pick up where you left off') });
   const deskClock = h('div.deskclock',
     h('div.deskclock__face', { 'aria-hidden': 'true' }, clockDay, clockDate, clockTime),
     deskHome);
@@ -318,13 +328,13 @@ export function mountDesktop(host) {
         ? h('span.deskhome__art', { style: { backgroundImage: `url("${String(last.art).replace(/"/g, '%22')}")` } })
         : h('span.deskhome__art.deskhome__art--glyph', { style: a ? { '--hue': a.hue } : null }, icon(a ? a.icon : last.kind === 'creation' ? 'sparkles' : 'gamepad'));
       deskHome.appendChild(h('button.deskhome__pill', {
-        type: 'button', title: `Continue ${last.title}`,
+        type: 'button', title: t('Continue {title}', { title: last.title }),
         onclick: () => launchItem({ kind: last.kind, id: last.id, url: last.url }),
-      }, art, h('span', { text: 'Continue ' }), h('b', { text: last.title })));
+      }, art, h('span', { text: t('Continue ') }), h('b', { text: last.title })));
     }
     if (canQuick) {
       deskHome.appendChild(h('button.deskhome__pill.deskhome__pill--quick', {
-        type: 'button', title: 'Pick a game for me',
+        type: 'button', title: t('Pick a game for me'),
         onclick: async e => {
           const btn = e.currentTarget;
           btn.disabled = true;
@@ -333,13 +343,13 @@ export function mountDesktop(host) {
             await Q.ready();
             const item = Q.pick({ avoidIds: last ? [last.id] : [] });
             if (item && Q.launch(item, api)) {
-              api.notify({ app: 'Quick Play', icon: 'zap', timeout: 4500, title: item.title, message: item.reason });
+              api.notify({ app: t('Quick Play'), icon: 'zap', timeout: 4500, title: item.title, message: item.reason });
             }
           } catch (err) {
-            api.notify({ app: 'Quick Play', icon: 'alert', title: 'Quick Play couldn’t pick', message: String(err?.message || err) });
+            api.notify({ app: t('Quick Play'), icon: 'alert', title: t('Quick Play couldn’t pick'), message: String(err?.message || err) });
           } finally { btn.disabled = false; }
         },
-      }, icon('zap'), h('span', { text: 'Quick Play' })));
+      }, icon('zap'), h('span', { text: t('Quick Play') })));
     }
   }
 
@@ -416,36 +426,56 @@ export function mountDesktop(host) {
     ? { style: { '--g1': 'var(--accent-soft)', '--g2': 'var(--accent)' } }
     : { class: 'glyph--flat' }, icon(name));
 
-  /* .desk-icon has no selected rule of its own — borrow the
-     .tile.is-sel look from tokens, inline. */
-  function mark(btn, on) {
-    btn.classList.toggle('is-sel', on);
-    btn.style.background = on ? 'var(--fill-accent)' : '';
-    btn.style.boxShadow = on ? 'inset 0 0 0 1px var(--line-accent)' : '';
-  }
-  function select(btn) {
-    for (const b of iconsEl.children) mark(b, b === btn);
+  /* The layer (shell/deskicons.js) puts the buttons on a grid and handles
+     selecting, dragging and renaming; what each icon does is decided here. */
+  const layer = mountIconLayer({
+    host: iconsEl, desktop, store, bus,
+    freeWidth: () => wm.freeWidth(),
+    cb: {
+      open: it => it.open(),
+      menu: (e, it, picked) => itemMenu(e, it, picked),
+      rename: (it, next) => renameItem(it, next),
+      trash: list => trashItems(list),
+      copy: list => copyItems(list),
+      paste: () => pasteHere(),
+      moveInto: (group, target) => moveInto(group, target),
+      canDrop: (group, target) => (target.kind === 'trash' ? group.some(g => g.trashable)
+        : group.some(g => g.movable) && !!target.path && !group.some(g => g.path === target.path || target.path.startsWith(g.path + '/'))),
+      canDockDrop: (group, appId) => !!api.getApp(appId) && group.every(g => g.kind === 'file' && !g.app),
+      dockDrop: (group, appId) => { for (const g of group) { FS.usedApp(appId); api.openFile(g.path, appId); } },
+    },
+  });
+
+  const plural = TB.plural;
+  const badge = n => (n ? h('i.desk-badge', { text: String(n), 'aria-hidden': 'true' }) : null);
+  let trashCount = TB.trashItems().length;
+
+  /* Home and Static Drive open Files; a Files window already showing that
+     folder just comes forward — "Open in New Window" makes another */
+  function openFolder(path, fresh) {
+    if (!fresh) {
+      const w = wm.byApp('files').find(x => x.state?.reopen?.path === path && x.desk === wm.desktops.current());
+      if (w) { if (w.min) wm.restore(w); else wm.focus(w, { lift: true }); return w; }
+    }
+    return api.openApp('files', { path });
   }
 
   function shortcut(s) {
-    const path = s.path || vfs.HOME;
-    const open = () => api.openApp('files', { path });
-    const btn = h('button.desk-icon', {
-      'aria-label': s.label,
-      onclick: () => select(btn),
-      ondblclick: open,
-      oncontextmenu: e => {
-        e.preventDefault(); e.stopPropagation(); select(btn);
-        api.menu([{ label: 'Open', icon: 'folder-open', onClick: open }], e.clientX, e.clientY);
-      },
-    }, appTile({ id: s.icon, icon: s.icon, g1: 'var(--accent-soft)', g2: 'var(--accent)' }), h('span', { text: s.label }));
-    return btn;
+    const path = s.trash ? TB.TRASH : s.path || vfs.HOME;
+    const n = s.trash ? trashCount : 0;
+    const el = h('button.desk-icon', { 'aria-label': n ? `${s.label}, ${plural(n, 'item')}` : s.label },
+      appTile({ id: s.icon, icon: s.icon, g1: 'var(--accent-soft)', g2: 'var(--accent)' }), badge(n), h('span', { text: s.label }));
+    return {
+      key: `sc:${s.id}`, el, name: s.label, kind: s.trash ? 'trash' : 'dir', path, shortcut: s,
+      pinned: true, canRename: false, trashable: false, movable: false, sort: { name: s.label, kind: '', mtime: 0 },
+      open: () => openFolder(path),
+    };
   }
 
-  /* A .aethergame file is a launcher: it holds the game's id and the URL of
+  /* A .staticgame file (or an older .aethergame) is a launcher: it holds the game's id and the URL of
      the host's own title card, which we reference for the icon. */
   function readGame(n) {
-    if (n.type !== 'file' || !n.name.endsWith('.aethergame')) return null;
+    if (n.type !== 'file' || !/\.(static|aether)game$/.test(n.name)) return null;
     try { return JSON.parse(n.content || '{}'); } catch (err) { return null; }
   }
 
@@ -456,7 +486,7 @@ export function mountDesktop(host) {
       style: { '--g1': hue != null ? `hsl(${hue} 80% 60%)` : 'var(--accent-soft)',
                '--g2': hue != null ? `hsl(${hue + 30} 70% 34%)` : 'var(--accent)',
                overflow: 'hidden', position: 'relative' },
-    }, icon(g.kind === 'arcade' ? 'zap' : g.kind === 'creation' ? 'sparkles' : 'gamepad'));
+    }, icon(g.kind === 'arcade' ? 'zap' : g.kind === 'creation' ? 'sparkles' : g.kind === 'collection' ? 'layers' : 'gamepad'));
     if (g.kind === 'creation' && !g.art) g = { ...g, art: (store.get('portal.forge.thumbs', {}) || {})[g.id] || null };
     if (g.art) {
       box.appendChild(h('img', {
@@ -470,69 +500,214 @@ export function mountDesktop(host) {
     return box;
   }
 
+  /* A .staticapp file names an app: its own tile and (translated) name. One whose app is gone
+     comes back as a plain file, so it is drawn like any file and says so when opened. */
+  function entryApp(n, path) {
+    const id = appShortcutId(n);
+    const app = id && getApp(id);
+    const label = app ? app.name : n.name;
+    const el = h('button.desk-icon', { 'aria-label': app ? t('Open {name}', { name: label }) : t('{name}, app not installed', { name: label }) },
+      app ? appTile(app) : glyph(vfs.iconFor(n), false), h('span', { text: label }));
+    return {
+      key: `f:${n.name}`, el, name: label, fileName: n.name, path, app: true, appId: app ? id : null,
+      kind: 'file', pinned: false, canRename: false, trashable: true, movable: true,
+      sort: { name: label, kind: n.kind || '', mtime: Date.parse(n.mtime) || 0 },
+      open: () => openAppShortcut(n, i => api.openApp(i)),
+    };
+  }
+
   function entry(n) {
     const path = `${DESK}/${n.name}`;
+    if (n.type === 'file' && /\.staticapp$/i.test(n.name)) return entryApp(n, path);
     const game = readGame(n);
     const label = game ? game.title : n.name;
-    const open = game
-      ? () => launchItem(game)
-      : () => api.openFile(path);
-
-    const btn = h('button.desk-icon', {
-      'aria-label': game ? `Play ${label}` : n.name,
-      onclick: () => select(btn),
-      ondblclick: open,
-      oncontextmenu: e => {
-        e.preventDefault(); e.stopPropagation(); select(btn);
-        if (game) gameMenu(e, game, n, path); else itemMenu(e, n, path);
-      },
-    }, game ? gameGlyph(game) : glyph(vfs.iconFor(n), n.type === 'dir'),
-       h('span', { text: label }));
-    return btn;
+    const el = h('button.desk-icon', { 'aria-label': game ? t('Play {label}', { label }) : n.name },
+      game ? gameGlyph(game) : glyph(vfs.iconFor(n), n.type === 'dir'),
+      h('span', { text: label }));
+    return {
+      key: `f:${n.name}`, el, name: label, fileName: n.name, path, game,
+      kind: game ? 'game' : n.type === 'dir' ? 'dir' : 'file',
+      pinned: false, canRename: !game, trashable: true, movable: true,
+      sort: { name: label, kind: n.type === 'dir' ? '' : n.kind || '', mtime: Date.parse(n.mtime) || 0 },
+      open: game ? () => launchItem(game) : () => api.openFile(path),
+    };
   }
 
-  function gameMenu(e, game, n, path) {
-    api.menu([
-      { label: 'Play', icon: 'play', onClick: () => launchItem(game) },
-      { label: 'Open in Browser', icon: 'globe',
-        onClick: () => api.openApp('browser', { url: game.url || `static://games/${game.id}` }) },
-      { label: 'Share…', icon: 'share',
-        onClick: () => bus.emit('share:open', { kind: game.kind || 'web', id: game.id, title: game.title, art: game.art || null }) },
-      '-',
-      { label: 'Remove from Desktop', icon: 'trash', danger: true, onClick: () => {
-          if (vfs.rm(path)) {
-            api.notify({ app: 'Desktop', icon: 'trash', title: 'Removed', message: game.title });
-          }
-        } },
-    ].filter(Boolean), e.clientX, e.clientY);
+  /* ---------------- what the menus do ---------------- */
+  const say = t => bus.emit('a11y:say', t);
+
+  /* Delete means the Trash — never for good — and the notice has an Undo.
+     The name it gets in the Trash is worked out the way vfs.rm does it. */
+  function trashItems(list) {
+    const rows = list.filter(i => i.trashable);
+    if (!rows.length) return;
+    const trash = vfs.node(TB.TRASH);
+    const moved = [];
+    for (const it of rows) {
+      let as = it.fileName, k = 1;
+      while (trash && trash.children.some(c => c.name === as)) as = `${it.fileName} (${++k})`;
+      if (vfs.rm(it.path)) moved.push({ orig: it.fileName, as, label: it.name });
+    }
+    if (!moved.length) return;
+    layer.clear();
+    api.notify({
+      app: 'Desktop', icon: 'trash', title: t('Moved to Trash'), timeout: 9000,
+      message: moved.length === 1 ? moved[0].label : t('{length} items', { length: moved.length }),
+      actions: [{ label: t('Undo'), onClick: () => undoTrash(moved) }],
+    });
+  }
+  function undoTrash(moved) {
+    let back = 0;
+    for (const m of moved) {
+      const from = `${TB.TRASH}/${m.as}`;
+      if (!vfs.node(from) || vfs.node(`${DESK}/${m.as}`)) continue;
+      if (!vfs.mv(from, DESK)) continue;
+      back++;
+      if (m.as !== m.orig && !vfs.node(`${DESK}/${m.orig}`)) vfs.rename(`${DESK}/${m.as}`, m.orig);
+    }
+    api.notify({ app: 'Desktop', icon: 'undo', title: back ? t('Put back') : t('Couldn’t put back'),
+      message: back ? (back === 1 ? moved[0].label : `${back} items`) : t('They are no longer in the Trash.'), timeout: 4000 });
   }
 
-  function itemMenu(e, n, path) {
+  function renameItem(it, next) {
+    if (/[\/\\]/.test(next)) { api.notify({ app: 'Desktop', icon: 'alert', title: t('Can’t use that name'), message: t('A name can’t have a slash in it.') }); return; }
+    if (vfs.node(`${DESK}/${next}`)) {
+      api.notify({ app: 'Desktop', icon: 'alert', title: t('Name already used'), message: t('The Desktop already has “{next}”.', { next }) });
+      return;
+    }
+    layer.rekey(it.key, `f:${next}`);
+    if (!vfs.rename(it.path, next)) layer.rekey(`f:${next}`, it.key);
+  }
+
+  function moveInto(group, target) {
+    if (target.kind === 'trash') { trashItems(group); return; }
+    const dest = target.path;
+    const done = [];
+    for (const g of group) {
+      if (!g.movable || g.path === dest || dest.startsWith(g.path + '/')) continue;
+      if (vfs.node(`${dest}/${g.fileName}`)) {
+        api.notify({ app: 'Desktop', icon: 'alert', title: t('Not moved'), message: t('{name} already has “{fileName}”.', { name: target.name, fileName: g.fileName }) });
+        continue;
+      }
+      if (vfs.mv(g.path, dest)) done.push(g.name);
+    }
+    if (!done.length) return;
+    layer.clear();
+    api.notify({ app: 'Desktop', icon: 'folder', title: t('Moved to {name}', { name: target.name }), timeout: 5000,
+      message: done.length === 1 ? done[0] : t('{length} items', { length: done.length }) });
+  }
+
+  function copyItems(list) {
+    const rows = list.filter(i => i.movable);
+    if (!rows.length) return;
+    FS.holdCopy(rows.map(i => i.path));
+    say(rows.length === 1 ? `Copied ${rows[0].name}` : `Copied ${rows.length} items`);
+  }
+  function pasteHere() {
+    const from = FS.copied();
+    if (!from.length) return;
+    let made = 0, last = null;
+    for (const p of from) { const name = FS.copyInto(p, DESK); if (name) { made++; last = name; } }
+    api.notify({ app: 'Desktop', icon: made ? 'copy' : 'alert', timeout: 4000,
+      title: made ? t('Pasted') : t('Nothing pasted'), message: made ? (made === 1 ? last : `${made} items`) : t('Those items can’t be copied here.') });
+    if (last) layer.select([`f:${last}`]);
+  }
+
+  async function copyText(text, what) {
+    try { await navigator.clipboard.writeText(text); say(`${what} copied`); }
+    catch (e) { api.notify({ app: 'Desktop', icon: 'alert', title: t('Couldn’t copy'), message: t('This browser did not allow it.') }); }
+  }
+
+  /* Get Info: the real numbers from the vfs, nothing estimated */
+  let infoRel = null;
+  function infoSheet(path) {
+    const i = FS.info(path);
+    if (!i) return;
+    infoRel?.();
+    const row = (k, v) => h('div.desk-info__row', h('span', { text: k }), h('b', { text: v }));
+    const close = () => { infoRel?.(); infoRel = null; wrap.remove(); };
+    const card = h('div.glass.desk-info', { role: 'dialog', 'aria-modal': 'true', 'aria-label': t('{name} info', { name: i.name }) },
+      h('div.h-sec', { text: i.name }),
+      row(t('Kind'), i.kind),
+      row(t('Size'), i.size),
+      row(t('Where'), i.path),
+      row(t('Modified'), i.modified ? i.modified.toLocaleString() : t('Not recorded')),
+      h('div.row', { style: { justifyContent: 'flex-end', marginTop: 'var(--sp-2)' } },
+        h('button.btn.btn--primary', { text: t('Done'), onclick: close })));
+    const wrap = h('div.spot-wrap', { style: { alignItems: 'center', paddingTop: '0' },
+      onpointerdown: e => { if (e.target === wrap) close(); } }, card);
+    host.appendChild(wrap);
+    infoRel = L.push({ name: 'info', el: card, trap: true, close });
+    card.querySelector('.btn')?.focus({ preventScroll: true });
+  }
+
+  function openWithMenu(it) {
+    const apps = FS.openWithApps(it.path);
+    if (!apps.length) return null;
+    const recent = new Set(FS.openWithRecent(it.path).map(a => a.id));
+    const mk = a => ({ label: a.name, icon: a.icon, onClick: () => { FS.usedApp(a.id); api.openFile(it.path, a.id); } });
+    return { label: t('Open With'), icon: 'external-link', items: [
+      ...apps.filter(a => recent.has(a.id)).map(mk),
+      recent.size ? '-' : null,
+      ...apps.filter(a => !recent.has(a.id)).slice(0, 12).map(mk),
+    ].filter(Boolean) };
+  }
+
+  function itemMenu(e, it, picked) {
+    const many = picked.length > 1;
+    const at = [e.clientX, e.clientY];
+    /* the Trash */
+    if (it.kind === 'trash') {
+      api.menu([
+        { label: t('Open'), icon: 'folder-open', onClick: it.open },
+        { label: t('Open in New Window'), icon: 'plus', onClick: () => openFolder(it.path, true) },
+        '-',
+        { label: t('Empty Trash'), icon: 'trash', danger: true, disabled: !trashCount, onClick: () => TB.emptyTrash() },
+      ], ...at);
+      return;
+    }
+    /* Home and Static Drive */
+    if (it.pinned) {
+      api.menu([
+        { label: t('Open'), icon: 'folder-open', onClick: it.open },
+        { label: t('Open in New Window'), icon: 'plus', onClick: () => openFolder(it.path, true) },
+        deskterm.available() ? { label: t('Open Terminal Here'), icon: 'terminal', onClick: () => api.openApp('terminal', { cwd: it.path }) } : null,
+        '-',
+        { label: t('Copy Path'), icon: 'copy', onClick: () => copyText(it.path, t('Path')) },
+      ].filter(Boolean), ...at);
+      return;
+    }
+    const trash = { label: many ? t('Move {length} Items to Trash', { length: picked.length }) : t('Move to Trash'), icon: 'trash', danger: true, hint: 'Del', onClick: () => trashItems(picked) };
+    if (many) {
+      api.menu([
+        { label: t('Open {length} Items', { length: picked.length }), icon: 'external-link', onClick: () => picked.forEach(p => p.open()) },
+        { label: t('Copy'), icon: 'copy', onClick: () => copyItems(picked) },
+        '-', trash,
+      ], ...at);
+      return;
+    }
+    const game = it.game;
     api.menu([
-      { label: 'Open', icon: n.type === 'dir' ? 'folder-open' : 'external-link',
-        onClick: () => api.openFile(path) },
+      { label: game ? t('Play') : t('Open'), icon: game ? 'play' : it.kind === 'dir' ? 'folder-open' : 'external-link', hint: '↵', onClick: it.open },
+      game ? { label: t('Open in Browser'), icon: 'globe',
+        onClick: () => api.openApp('browser', { url: game.url || `static://games/${game.id}` }) } : null,
+      game ? { label: t('Share…'), icon: 'share',
+        onClick: () => bus.emit('share:open', { kind: game.kind || 'web', id: game.id, title: game.title, art: game.art || null }) } : null,
+      it.kind === 'file' && !it.app ? openWithMenu(it) : null,
+      it.kind === 'dir' ? { label: t('Open in New Window'), icon: 'plus', onClick: () => api.openApp('files', { path: it.path }) } : null,
       '-',
-      { label: 'Rename…', icon: 'edit-3', onClick: () => {
-          const next = prompt('New name', n.name);
-          if (next && next.trim() && next.trim() !== n.name) vfs.rename(path, next.trim());
-        } },
-      { label: 'Move to Trash', icon: 'trash', danger: true, onClick: async () => {
-          const ok = await api.confirm({
-            title: `Move “${n.name}” to Trash?`,
-            message: 'You can restore it from the Trash later.',
-            ok: 'Move to Trash',
-          });
-          if (!ok || !vfs.rm(path)) return;
-          api.notify({ app: 'Desktop', icon: 'trash', title: 'Moved to Trash', message: n.name });
-        } },
-    ], e.clientX, e.clientY);
+      { label: t('Get Info'), icon: 'info', onClick: () => infoSheet(it.path) },
+      { label: t('Copy'), icon: 'copy', onClick: () => copyItems([it]) },
+      { label: t('Copy Path'), icon: 'link', onClick: () => copyText(it.path, t('Path')) },
+      it.canRename ? { label: t('Rename'), icon: 'edit-3', hint: 'F2', onClick: () => layer.startRename(it.key) } : null,
+      '-', trash,
+    ].filter(Boolean), ...at);
   }
 
   function paintIcons() {
-    clear(iconsEl);
     iconsEl.classList.toggle('hidden', !store.get('prefs.desktopIcons'));
-    for (const s of SHORTCUTS) iconsEl.appendChild(shortcut(s));
-    for (const n of vfs.ls(DESK)) iconsEl.appendChild(entry(n));
+    trashCount = TB.trashItems().length;
+    layer.paint([...SHORTCUTS.map(shortcut), ...vfs.ls(DESK).map(entry)]);
   }
 
   /* ---------------- new items ------------ */
@@ -550,26 +725,35 @@ export function mountDesktop(host) {
   /* ---------------- desktop menu --------- */
   function deskMenu(e) {
     api.menu([
-      { label: 'New Folder', icon: 'plus', onClick: newFolder },
-      { label: 'New Text File', icon: 'file-text', onClick: newFile },
+      { label: t('New Folder'), icon: 'plus', onClick: newFolder },
+      { label: t('New Text File'), icon: 'file-text', onClick: newFile },
+      { label: t('Paste Here'), icon: 'copy', disabled: !FS.copied().length, onClick: pasteHere },
+      '-',
+      { label: t('Sort By'), icon: 'list', items: [
+        ['name', 'Name'], ['kind', 'Kind'], ['date', t('Date Modified')],
+      ].map(([how, label]) => ({ label, onClick: () => layer.sortBy(how) })) },
+      { label: t('Clean Up'), icon: 'grid', onClick: () => layer.cleanUp() },
+      { label: t('Icon Size'), icon: 'maximize', items: Object.entries(SIZES).map(([id, z]) => ({
+        label: z.label, checked: (store.get('prefs.deskIconSize') || 'medium') === id,
+        onClick: () => store.set('prefs.deskIconSize', id) })) },
       '-',
       /* 'appearance' is where the wallpaper controls live; settings.js
          validates opts.section against its own ids and ignores unknown ones. */
-      { label: 'Change Wallpaper…', icon: 'wallpaper',
+      { label: t('Change Wallpaper…'), icon: 'wallpaper',
         onClick: () => api.openApp('settings', { section: 'appearance' }) },
-      { label: 'Add Widget…', icon: 'plus', onClick: () => bus.emit('deskwidgets:picker') },
-      { label: 'Toggle Widget Rail', icon: 'sidebar',
+      { label: t('Add Widget…'), icon: 'plus', onClick: () => bus.emit('deskwidgets:picker') },
+      { label: t('Toggle Widget Rail'), icon: 'sidebar',
         onClick: () => store.set('prefs.widgetsVisible', !store.get('prefs.widgetsVisible')) },
-      { label: 'Show Overview', icon: 'grid-9', hint: fmt.modLabel + '`', onClick: () => api.overview() },
-      { label: 'New Desktop', icon: 'layers', disabled: Desktops.count() >= Desktops.MAX,
+      { label: t('Show Overview'), icon: 'grid-9', hint: fmt.modLabel + '`', onClick: () => api.overview() },
+      { label: t('New Desktop'), icon: 'layers', disabled: Desktops.count() >= Desktops.MAX,
         onClick: () => { const d = api.wm.addDesktop(); if (d) api.wm.switchDesktop(d.id); } },
       '-',
       /* the terminal only exists on the Linux drive, in the wallpaper */
       deskterm.available()
-        ? { label: 'Open Terminal Here', icon: 'terminal',
+        ? { label: t('Open Terminal Here'), icon: 'terminal',
           onClick: () => api.openApp('terminal', { cwd: DESK }) }
         : null,
-      { label: 'About This Static', icon: 'info', onClick: () => api.openApp('about') },
+      { label: t('About This Static'), icon: 'info', onClick: () => api.openApp('about') },
     ], e.clientX, e.clientY);
   }
 
@@ -577,7 +761,7 @@ export function mountDesktop(host) {
      there, right-click is the browser's copy/paste menu */
   const onBare = (e, fn) => { if (!e.target.closest('.desk-icon, .desk-term')) fn(e); };
   desktop.addEventListener('contextmenu', e => onBare(e, () => { e.preventDefault(); deskMenu(e); }));
-  desktop.addEventListener('click', e => onBare(e, () => { bus.emit('launcher:close'); select(null); }));
+  desktop.addEventListener('click', e => onBare(e, () => { bus.emit('launcher:close'); if (!layer.swallowClick()) layer.clear(); }));
   desktop.addEventListener('dblclick', e => onBare(e, () => api.overview()));
 
   /* ---------------- drop files from the computer ------------
@@ -595,9 +779,9 @@ export function mountDesktop(host) {
   let importing = false;
   const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
   function showDrop() {
-    dropTitle.textContent = importing ? 'Still saving the last files…' : 'Drop to save to the Desktop';
-    dropNote.textContent = importing ? 'Wait a moment, then drop again.'
-      : 'Any file from your computer is kept in this browser, in ~/Desktop. Text up to 200 KB stays editable.';
+    dropTitle.textContent = importing ? 'Still saving the last files…' : t('Drop to save to the Desktop');
+    dropNote.textContent = importing ? t('Wait a moment, then drop again.')
+      : t('Any file from your computer is kept in this browser, in ~/Desktop. Text up to 200 KB stays editable.');
     desktop.classList.add('is-dropping');
   }
   function hideDrop() { dragDepth = 0; desktop.classList.remove('is-dropping'); }
@@ -615,7 +799,7 @@ export function mountDesktop(host) {
     e.stopPropagation();
     hideDrop();
     if (importing) {
-      api.notify({ app: 'Desktop', icon: 'alert', title: 'Still saving', message: 'Wait for the last files to finish, then drop again.' });
+      api.notify({ app: 'Desktop', icon: 'alert', title: t('Still saving'), message: t('Wait for the last files to finish, then drop again.') });
       return;
     }
     const { files, folders } = fileimport.fromDrop(e.dataTransfer);
@@ -627,7 +811,7 @@ export function mountDesktop(host) {
       results = await fileimport.importFiles(DESK, files, {
         folders,
         onProgress: ({ index, total, current }) => {
-          dropTitle.textContent = total > 1 ? `Saving to the Desktop — ${index} of ${total}` : 'Saving to the Desktop…';
+          dropTitle.textContent = total > 1 ? `Saving to the Desktop — ${index} of ${total}` : t('Saving to the Desktop…');
           dropNote.textContent = current;
         },
       });
@@ -642,7 +826,7 @@ export function mountDesktop(host) {
     const lines = [
       ...saved.slice(0, 3).map(r => `${r.as} — ${fileimport.fmtSize(r.size)}${r.note ? ` (${r.note})` : ''}`),
       ...(saved.length > 3 ? [`and ${saved.length - 3} more`] : []),
-      ...refused.slice(0, 3).map(r => `Not saved: ${r.name} — ${r.why}`),
+      ...refused.slice(0, 3).map(r => t('Not saved: {name} — {why}', { name: r.name, why: r.why })),
     ];
     const first = saved[0];
     api.notify({
@@ -651,20 +835,23 @@ export function mountDesktop(host) {
       message: lines.join('\n'),
       timeout: refused.length || saved.some(r => r.note) ? 0 : 7000,
       actions: first
-        ? [{ label: 'Show in Files', onClick: () => api.openApp('files', { path: first.path }) }, { label: 'OK' }]
+        ? [{ label: t('Show in Files'), onClick: () => api.openApp('files', { path: first.path }) }, { label: 'OK' }]
         : [{ label: 'OK' }],
     });
     /* the newest arrival is what you'd click next */
-    if (first) {
-      const btn = [...iconsEl.children].find(b => b.getAttribute('aria-label') === first.as);
-      if (btn) select(btn);
-    }
+    if (first) layer.select([`f:${first.as}`]);
   });
 
   /* ---------------- wiring --------------- */
   paintIcons();
-  bus.on('fs:change', dir => { if (!dir || vfs.norm(dir) === DESK) paintIcons(); });
+  /* a file moved to or from the Desktop repaints; anything that changes the Trash's count does too */
+  bus.on('fs:change', dir => {
+    if (!dir || vfs.norm(dir) === DESK || TB.trashItems().length !== trashCount) paintIcons();
+  });
   store.sub('prefs.desktopIcons', paintIcons);
+  bus.on('apps:declared', paintIcons);
+  /* icon size, the dock's size and the widget rail all change the room the grid has */
+  store.sub('prefs', () => layer.relayout());
   store.sub('prefs.wallpaperGrid', paintLayers);
   store.sub('prefs.wallpaperGrain', paintLayers);
 

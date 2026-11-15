@@ -68,8 +68,24 @@
    derived from the US layout (KeyZ → 'z'). keyCode / which are
    set too for older game code that still reads them.
 
-   Store: portal.controller = { deadzone, bridge, mapping:{id:code} }
-   (the Controller Center also keeps `labels` there).
+   PROFILES. A game may have a mapping of its own:
+   profiles: { [arcade game id]: {id:code} }. start({ game }) uses it
+   while that game runs; every other game uses `mapping`. A profile
+   is a whole mapping (made from the main one when it is added), so
+   changing the main one later does not change it.
+
+   CALIBRATION. A worn stick may rest a little off centre. The
+   Controller Center measures where each stick rests and keeps it per
+   controller: calibration: { [gamepad id]: [x0, y0, x1, y1] }. Every
+   reading here subtracts it before the dead zone (calOf, axesOf).
+
+   RUMBLE. roundRumble() gives a short buzz when an Arcade round ends,
+   only if the person turned it on (rumble: true) and only on a pad
+   whose browser exposes vibrationActuator; it does nothing otherwise.
+
+   Store: portal.controller = { deadzone, bridge, mapping:{id:code},
+   profiles, calibration, rumble } (the Controller Center also keeps
+   `labels` there).
    ============================================================ */
 import { store } from './store.js';
 import { bus } from './bus.js';
@@ -121,6 +137,20 @@ const REPEAT_DELAY = 450;
 const REPEAT_EVERY = 45;
 
 /* ---------- config ------------------------------------------------ */
+const GAME_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const MAX_PROFILES = 40;
+const MAX_PADS = 8;
+const cleanMap = m => Object.fromEntries(Object.entries(m && typeof m === 'object' ? m : {})
+  .filter(([k, v]) => INPUTS.some(i => i.id === k) && typeof v === 'string' && v.length < 40));
+function cleanProfiles(p) {
+  if (!p || typeof p !== 'object') return {};
+  return Object.fromEntries(Object.entries(p).filter(([g]) => GAME_ID.test(g)).slice(0, MAX_PROFILES).map(([g, m]) => [g, cleanMap(m)]));
+}
+function cleanCal(c) {
+  if (!c || typeof c !== 'object') return {};
+  return Object.fromEntries(Object.entries(c).slice(0, MAX_PADS)
+    .filter(([, v]) => Array.isArray(v) && v.length === 4 && v.every(x => Number.isFinite(x) && Math.abs(x) <= 0.5)));
+}
 export function getConfig() {
   const c = store.get(KEY) || {};
   const dz = Number(c.deadzone);
@@ -129,6 +159,9 @@ export function getConfig() {
     deadzone: Number.isFinite(dz) ? Math.min(MAX_DEADZONE, Math.max(0, dz)) : DEFAULT_DEADZONE,
     bridge: !!c.bridge,
     mapping: { ...DEFAULT_MAPPING, ...(c.mapping && typeof c.mapping === 'object' ? c.mapping : {}) },
+    profiles: cleanProfiles(c.profiles),
+    calibration: cleanCal(c.calibration),
+    rumble: c.rumble === true,
   };
 }
 /** Merge `partial` into portal.controller (always a NEW object — store.set
@@ -137,13 +170,96 @@ export function setConfig(partial) {
   const cur = store.get(KEY) || {};
   return store.set(KEY, { ...cur, ...partial });
 }
-export function setMapping(id, code) {
+/** The mapping a game plays with: its own profile, or the main one. */
+export function mappingFor(game, cfg = getConfig()) {
+  return game && cfg.profiles[game] ? cfg.profiles[game] : cfg.mapping;
+}
+export const hasProfile = (game, cfg = getConfig()) => !!(game && cfg.profiles[game]);
+/** One control's key, in the main mapping or in `game`'s profile. */
+export function setMapping(id, code, game = null) {
   const cur = store.get(KEY) || {};
+  if (game) {
+    const profiles = cleanProfiles(cur.profiles);
+    if (!profiles[game]) return false;
+    return store.set(KEY, { ...cur, profiles: { ...profiles, [game]: { ...profiles[game], [id]: code || '' } } });
+  }
   return store.set(KEY, { ...cur, mapping: { ...(cur.mapping || {}), [id]: code || '' } });
 }
-export function resetMapping() {
+/** The main mapping back to the defaults; with `game`, that profile back to a copy of the main mapping. */
+export function resetMapping(game = null) {
   const cur = store.get(KEY) || {};
+  if (game) {
+    const profiles = cleanProfiles(cur.profiles);
+    if (!profiles[game]) return false;
+    return store.set(KEY, { ...cur, profiles: { ...profiles, [game]: { ...getConfig().mapping } } });
+  }
   return store.set(KEY, { ...cur, mapping: { ...DEFAULT_MAPPING } });
+}
+/** A profile for `game`, starting as a copy of the main mapping. */
+export function addProfile(game) {
+  if (!GAME_ID.test(String(game))) return false;
+  const cur = store.get(KEY) || {};
+  const profiles = cleanProfiles(cur.profiles);
+  if (profiles[game]) return true;
+  if (Object.keys(profiles).length >= MAX_PROFILES) return false;
+  return store.set(KEY, { ...cur, profiles: { ...profiles, [game]: { ...getConfig().mapping } } });
+}
+export function removeProfile(game) {
+  const cur = store.get(KEY) || {};
+  const profiles = cleanProfiles(cur.profiles);
+  if (!profiles[game]) return false;
+  delete profiles[game];
+  return store.set(KEY, { ...cur, profiles });
+}
+
+/* ---------- calibration ------------------------------------------- */
+/** what a controller is called in `calibration`: its id, as the browser reports it */
+export const padKey = gp => String(gp?.id || '').slice(0, 160);
+/** where this pad's sticks rest, [x0, y0, x1, y1], or null when never measured */
+export const calOf = (gp, cfg = getConfig()) => cfg.calibration[padKey(gp)] || null;
+/** the pad's four stick axes with its resting point taken off, -1..1 */
+export function axesOf(gp, cal = null) {
+  const ax = gp?.axes || [];
+  return [0, 1, 2, 3].map(i => Math.max(-1, Math.min(1, (Number(ax[i]) || 0) - (cal ? cal[i] : 0))));
+}
+/** keep `centre` ([x0, y0, x1, y1], each within ±0.5) as where this pad's sticks rest */
+export function setCalibration(gp, centre) {
+  if (!Array.isArray(centre) || centre.length !== 4 || !centre.every(x => Number.isFinite(x) && Math.abs(x) <= 0.5)) return false;
+  const cur = store.get(KEY) || {};
+  const cal = { ...cleanCal(cur.calibration) };
+  const k = padKey(gp);
+  if (!cal[k] && Object.keys(cal).length >= MAX_PADS) delete cal[Object.keys(cal)[0]];
+  cal[k] = centre.map(x => Math.round(x * 1000) / 1000);
+  return store.set(KEY, { ...cur, calibration: cal });
+}
+export function clearCalibration(gp) {
+  const cur = store.get(KEY) || {};
+  const cal = { ...cleanCal(cur.calibration) };
+  delete cal[padKey(gp)];
+  return store.set(KEY, { ...cur, calibration: cal });
+}
+
+/* ---------- rumble ------------------------------------------------- */
+/** can this pad rumble in this browser? */
+export function canRumble(gp) {
+  const a = gp?.vibrationActuator;
+  if (!a || typeof a.playEffect !== 'function') return false;
+  const effects = Array.isArray(a.effects) ? a.effects : [a.type || 'dual-rumble'];
+  return effects.includes('dual-rumble');
+}
+/** A short buzz on each pad that can, when a round ends — only if the person turned it on.
+    A win is a light double tap's worth; a loss one longer, heavier buzz. -> how many pads buzzed */
+export function roundRumble({ won = false } = {}) {
+  if (!getConfig().rumble) return 0;
+  let n = 0;
+  for (const gp of connectedPads()) {
+    if (!canRumble(gp)) continue;
+    const params = won
+      ? { startDelay: 0, duration: 180, strongMagnitude: 0.3, weakMagnitude: 0.9 }
+      : { startDelay: 0, duration: 380, strongMagnitude: 0.9, weakMagnitude: 0.3 };
+    try { Promise.resolve(gp.vibrationActuator.playEffect('dual-rumble', params)).catch(() => {}); n++; } catch (e) { /* this pad said no */ }
+  }
+  return n;
 }
 export const isEnabled = () => getConfig().bridge;
 export const setEnabled = on => setConfig({ bridge: !!on });
@@ -243,8 +359,8 @@ export function connectedPads() {
 const btnValue = b => (b && typeof b === 'object' ? (Number(b.value) || 0) : Number(b) || 0);
 const btnPressed = b => (b && typeof b === 'object' ? !!b.pressed : Number(b) > 0.5);
 
-/** Analog amount 0..1 an input is pushed on this pad, dead zone applied. */
-export function inputAmount(gp, inp, dz) {
+/** Analog amount 0..1 an input is pushed on this pad, its resting point (`cal`) and the dead zone taken off. */
+export function inputAmount(gp, inp, dz, cal = null) {
   if (inp.button !== undefined) {
     const b = gp.buttons?.[inp.button];
     if (!b) return 0;
@@ -253,19 +369,19 @@ export function inputAmount(gp, inp, dz) {
     if (inp.analog) return v > 0 ? Math.min(1, v) : (btnPressed(b) ? 1 : 0);
     return btnPressed(b) ? 1 : Math.min(1, v);
   }
-  const ax = gp.axes || [];
-  const [x, y] = applyDeadzone(Number(ax[inp.axes[0]]) || 0, Number(ax[inp.axes[1]]) || 0, dz);
+  const ax = axesOf(gp, cal);
+  const [x, y] = applyDeadzone(ax[inp.axes[0]], ax[inp.axes[1]], dz);
   const v = inp.axis === inp.axes[0] ? x : y;
   return Math.max(0, v * inp.dir);
 }
 
 /** Is `inp` on, given whether it was on last frame (hysteresis). */
-export function inputOn(gp, inp, dz, was = false) {
+export function inputOn(gp, inp, dz, was = false, cal = null) {
   if (inp.button !== undefined && !inp.analog) {
     const b = gp.buttons?.[inp.button];
     return !!b && (btnPressed(b) || btnValue(b) > PRESS);
   }
-  const v = inputAmount(gp, inp, dz);
+  const v = inputAmount(gp, inp, dz, cal);
   return was ? v > RELEASE : v >= PRESS;
 }
 
@@ -299,12 +415,14 @@ export function elementInFront(el) {
                    null, or a function returning nothing, sends nothing
      app / scope / when   the gate (see THE GATE above); none = no gate
      requireToggle only act while portal.controller.bridge is on
+     game          an Arcade game id: its own mapping profile, if it has one
+                   (a function returning the id is read every frame)
      repeat        send keyboard-style auto-repeat keydowns while held
      onKey({type,key,code,repeat})   after each dispatch
      onFrame({active:Set<inputId>, held:[code], pads, live})  every
                    polled frame; `live` = the gate was open            */
 export function createBridge({
-  target = window, app = null, scope = null, when = null,
+  target = window, app = null, scope = null, when = null, game = null,
   requireToggle = true, repeat = false, onKey = null, onFrame = null,
 } = {}) {
   let running = false;
@@ -384,11 +502,15 @@ export function createBridge({
     const seen = new Set();
     const first = fresh;
     fresh = false;
+    let gameId = null;
+    try { gameId = typeof game === 'function' ? game() : game; } catch (e) { gameId = null; }
+    const mapping = mappingFor(gameId, cfg);
     for (const gp of pads) {
+      const cal = calOf(gp, cfg);
       for (const inp of INPUTS) {
         const k = gp.index + ':' + inp.id;
         seen.add(k);
-        const on = inputOn(gp, inp, cfg.deadzone, was.get(k));
+        const on = inputOn(gp, inp, cfg.deadzone, was.get(k), cal);
         was.set(k, on);
         if (!on) { muted.delete(k); continue; }
         active.add(inp.id);
@@ -397,7 +519,7 @@ export function createBridge({
            sends anything */
         if (!open || first) { muted.add(k); continue; }
         if (muted.has(k)) continue;
-        const code = cfg.mapping[inp.id];
+        const code = mapping[inp.id];
         if (code) want.add(code);
       }
     }
@@ -464,11 +586,12 @@ export function createBridge({
 let main = null;
 
 /** Start the shared bridge (stops a previous one first). Without an
-    app / scope / when of its own it gates on the Arcade (THE GATE). */
-export function start({ target = window, repeat = false, app, scope = null, when = null } = {}) {
+    app / scope / when of its own it gates on the Arcade (THE GATE).
+    `game`: the Arcade game running, for its own mapping profile. */
+export function start({ target = window, repeat = false, app, scope = null, when = null, game = null } = {}) {
   if (main) main.stop();
   if (app === undefined) app = scope || when ? null : 'arcade';
-  main = createBridge({ target, repeat, app, scope, when, requireToggle: true }).start();
+  main = createBridge({ target, repeat, app, scope, when, game, requireToggle: true }).start();
   bus.emit('padmap:change', { active: true });
   return main;
 }
@@ -483,5 +606,6 @@ export const isActive = () => !!main && main.isActive();
 export const isSending = () => !!main && main.isSending();
 
 export default { start, stop, isActive, isSending, isEnabled, setEnabled, getConfig, setConfig, setMapping, resetMapping,
+  mappingFor, hasProfile, addProfile, removeProfile, padKey, calOf, axesOf, setCalibration, clearCalibration, canRumble, roundRumble,
   createBridge, appInFront, elementInFront, applyDeadzone, connectedPads, inputOn, inputAmount, keyForCode, keyCodeFor,
   codeLabel, INPUTS, DEFAULT_MAPPING };

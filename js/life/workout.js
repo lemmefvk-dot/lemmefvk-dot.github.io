@@ -17,30 +17,61 @@
    has been away and several parts went by, only the part you are in
    now is announced, not each one that went by.
 
+   With spoken cues on, the voice also counts the last three seconds of
+   a part ("3", "2", "1") and says "Halfway" in a work part of 20
+   seconds or more. The voice is the one picked in Settings ›
+   Accessibility › Read aloud.
+
    While a workout runs the window title shows the time left (the same
    visible-timer idea as Focus' top-bar readout) and the screen is kept
    awake where the browser allows. Closing the window, or stopping,
    clears the timer, silences speech and releases the wake lock.
+
+   History: every workout that was started is written down when it
+   ends (finished, stopped, or the window closed), with the time
+   actually spent in it: the clock time it ran, less pauses and less
+   what Skip jumped over. Nothing is estimated from it.
    ============================================================ */
 import * as W from '../core/workout.js';
 import * as sfx from '../core/sfx.js';
 import * as speech from '../core/speech.js';
 import { hold } from '../core/wakelock.js';
+import { dayKey, shiftDay } from '../core/habits.js';
 import { read, write, uid } from './data.js';
 
 const clock = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const span = ms => { const s = Math.max(0, Math.round(ms / 1000)), hh = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return hh ? `${hh}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : `${m}:${String(s % 60).padStart(2, '0')}`; };
+const MAX_HISTORY = 500;
+const MIN_KEEP = 5000;           /* a start that is stopped within 5 s isn't a workout */
+const normRun = r => (r && typeof r === 'object' && Number.isFinite(r.at) && Number.isFinite(r.active) && r.active >= 0
+  ? { id: String(r.id || '').slice(0, 40), at: r.at, day: /^\d{4}-\d{2}-\d{2}$/.test(r.day) ? r.day : dayKey(r.at), name: String(r.name || 'Workout').slice(0, 40),
+    active: Math.round(r.active), planned: Math.round(Number(r.planned) || 0), finished: r.finished === true, rounds: Math.max(0, Math.round(Number(r.rounds) || 0)), of: Math.max(0, Math.round(Number(r.of) || 0)) } : null);
 const FIELDS = [['warm', 'Warm-up (seconds)'], ['work', 'Work (seconds)'], ['rest', 'Rest (seconds)'], ['rounds', 'Rounds'], ['cool', 'Cool-down (seconds)']];
 
 export function mountWorkout(el, ctx) {
   const { h, icon, confirm } = ctx.api;
   const win = ctx.win;
-  const S = { draft: { ...W.DEFAULT_ROUTINE, id: '' }, run: null, routine: null, lastIndex: -1, lastSec: null, finished: false, error: '', dead: false };
+  const S = { draft: { ...W.DEFAULT_ROUTINE, id: '' }, run: null, routine: null, lastIndex: -1, lastSec: null, half: -1, skipped: 0, logged: false, finished: false, error: '', dead: false, allRuns: false };
   let timer = 0;
   let lock = null;
   let view = {};        /* the live readout's elements while a workout is on screen */
 
-  const cfg = () => { const w = read().workout || {}; return { sound: w.sound !== false, voice: w.voice === true, routines: (Array.isArray(w.routines) ? w.routines : []).map(W.clean).filter(Boolean) }; };
+  const cfg = () => { const w = read().workout || {}; return { sound: w.sound !== false, voice: w.voice === true, routines: (Array.isArray(w.routines) ? w.routines : []).map(W.clean).filter(Boolean), history: (Array.isArray(w.history) ? w.history : []).map(normRun).filter(Boolean) }; };
   const saveCfg = patch => write('workout', { ...cfg(), ...patch });
+
+  /* ---------------- history ---------------- */
+  function logRun(finished) {
+    if (!S.run || S.logged) return;
+    const p = S.run.position();
+    const active = Math.max(0, p.elapsed - S.skipped);
+    if (!finished && active < MIN_KEEP) return;
+    S.logged = true;
+    const segs = S.run.segs;
+    let t = 0, rounds = 0;
+    for (const s of segs) { if (s.kind === 'work' && p.elapsed >= t + s.dur) rounds++; t += s.dur; }
+    const run = { id: uid('wr'), at: Date.now(), day: dayKey(), name: S.routine.name, active, planned: S.run.total, finished, rounds, of: S.routine.rounds };
+    saveCfg({ history: [run, ...cfg().history].slice(0, MAX_HISTORY) });
+  }
   const setTitle = t => { try { win && win.setTitle(t); } catch (e) { /* no window */ } };
 
   /* ---------------- cues ---------------- */
@@ -60,7 +91,7 @@ export function mountWorkout(el, ctx) {
     const r = W.clean({ ...S.draft, name: S.draft.name || 'Workout' });
     S.routine = r;
     S.run = W.runner(r);
-    S.lastIndex = -1; S.lastSec = null; S.finished = false;
+    S.lastIndex = -1; S.lastSec = null; S.half = -1; S.skipped = 0; S.logged = false; S.finished = false;
     S.run.start();
     lock = lock || hold();
     timer = timer || setInterval(step, 250);
@@ -75,6 +106,7 @@ export function mountWorkout(el, ctx) {
   }
 
   function stop() {
+    if (S.run && !S.finished) logRun(false);
     finishUp();
     try { speech.stop(); } catch (e) { /* nothing was speaking */ }
     S.run = null;
@@ -85,14 +117,21 @@ export function mountWorkout(el, ctx) {
     if (S.dead || !S.run) return;
     const p = S.run.position();
     if (p.status === 'done') {
-      if (!S.finished) { S.finished = true; cue(null); finishUp(); render(); }
+      if (!S.finished) { S.finished = true; logRun(true); cue(null); finishUp(); render(); }
       return;
     }
-    if (p.index !== S.lastIndex) { S.lastIndex = p.index; S.lastSec = null; cue(p.seg); }
+    const fresh = p.index !== S.lastIndex;
+    if (fresh) { S.lastIndex = p.index; S.lastSec = null; S.half = p.into >= p.seg.dur / 2 ? p.index : -1; cue(p.seg); }
     const secs = Math.ceil(p.left / 1000);
     if (p.status === 'running' && secs <= 3 && secs >= 1 && secs !== S.lastSec && p.seg.dur > 4000) {
+      /* a late tick (a throttled tab) that lands in the last seconds says only the second it is now */
       S.lastSec = secs;
       if (cfg().sound) sfx.play('tap');
+      if (!fresh) say(String(secs));
+    }
+    if (p.status === 'running' && p.seg.kind === 'work' && p.seg.dur >= 20000 && S.half !== p.index && p.into >= p.seg.dur / 2 && p.left > 4000) {
+      S.half = p.index;
+      say('Halfway');
     }
     paintRun(p);
   }
@@ -130,7 +169,7 @@ export function mountWorkout(el, ctx) {
       h('div.bar', view.bar),
       h('div.life-form__row.life-wk__ctl',
         pp,
-        h('button.btn', { type: 'button', 'data-act': 'skip', onclick: () => { S.run.skip(); step(); } }, icon('skip-forward'), h('span', { text: 'Skip' })),
+        h('button.btn', { type: 'button', 'data-act': 'skip', onclick: () => { const q = S.run.position(); if (q.seg) S.skipped += q.left; S.run.skip(); step(); } }, icon('skip-forward'), h('span', { text: 'Skip' })),
         h('button.btn', { type: 'button', 'data-act': 'stop', onclick: stop }, icon('x'), h('span', { text: 'Stop' }))),
       h('div.life-form__row', toggleSwitch('sound', 'Sound cues', c.sound), toggleSwitch('voice', 'Spoken cues', c.voice),
         c.voice && !speech.supported() ? h('small.life-note', { text: 'This browser can’t speak, so spoken cues are off here.' }) : null));
@@ -191,7 +230,38 @@ export function mountWorkout(el, ctx) {
           d.id ? h('button.btn.btn--ghost', { type: 'button', onclick: () => { S.draft = { ...S.draft, id: '' }; render(); } }, h('span', { text: 'Save as new' })) : null)),
       h('div.life-form__row', toggleSwitch('sound', 'Sound cues', c.sound), toggleSwitch('voice', 'Spoken cues', c.voice),
         c.voice && !speech.supported() ? h('small.life-note', { text: 'This browser can’t speak, so spoken cues are off here.' }) : null),
+      c.voice ? h('small.life-note', { text: 'The voice names each part, counts down the last three seconds and says “Halfway” in longer work parts. It uses the voice set in Settings › Accessibility › Read aloud.' }) : null,
+      history(c.history),
     ];
+  }
+
+  function history(runs) {
+    const today = dayKey();
+    const since = n => runs.filter(r => r.day > shiftDay(today, -n));
+    const sum = list => list.reduce((t, r) => t + r.active, 0);
+    const w7 = since(7), w30 = since(30);
+    const shown = S.allRuns ? runs : runs.slice(0, 15);
+    const when = r => new Date(r.at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return h('section.life-history', { 'aria-label': 'Workout history' },
+      h('div.life-head', h('h3', { text: 'History' }),
+        runs.length ? h('button.btn.btn--sm.btn--ghost', { type: 'button', 'data-act': 'clear-history', onclick: async () => {
+          if (!(await confirm({ title: 'Clear the workout history?', message: `All ${runs.length} ${runs.length === 1 ? 'entry goes' : 'entries go'}. Your routines stay. This can’t be undone.`, ok: 'Clear', danger: true })) || S.dead) return;
+          saveCfg({ history: [] }); render();
+        } }, icon('trash'), h('span', { text: 'Clear' })) : null),
+      !runs.length ? h('p.life-note', { text: 'Each workout you start is listed here when it ends, with the time you actually spent in it.' }) : [
+        h('div.life-tiles',
+          h('div.life-tile', h('small', { text: 'Last 7 days' }), h('b', { 'data-k': 'wk7', text: `${w7.length} · ${span(sum(w7))}` })),
+          h('div.life-tile', h('small', { text: 'Last 30 days' }), h('b', { 'data-k': 'wk30', text: `${w30.length} · ${span(sum(w30))}` })),
+          h('div.life-tile', h('small', { text: 'Finished' }), h('b', { 'data-k': 'wkdone', text: `${runs.filter(r => r.finished).length} of ${runs.length}` }))),
+        h('small.life-note', { text: 'Workouts and time spent in them: the clock time each one ran, less pauses and anything skipped.' }),
+        h('ul.life-entries.life-runs', shown.map(r => h('li', { 'data-run': r.id },
+          h('span.life-entries__date', { text: when(r) }),
+          h('span.life-entries__cat', { text: r.name }),
+          h('span.life-entries__note', { text: r.finished ? `Finished · ${r.rounds} ${r.rounds === 1 ? 'round' : 'rounds'}` : `Stopped · ${r.rounds} of ${r.of || r.rounds} ${(r.of || r.rounds) === 1 ? 'round' : 'rounds'} done` }),
+          h('b', { text: span(r.active) }),
+          h('button.ibtn', { type: 'button', 'aria-label': `Delete the ${r.name} workout of ${when(r)}`, onclick: () => { saveCfg({ history: cfg().history.filter(x => x.id !== r.id) }); render(); } }, icon('trash'))))),
+        runs.length > 15 ? h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => { S.allRuns = !S.allRuns; render(); } }, h('span', { text: S.allRuns ? 'Show fewer' : `Show all ${runs.length}` })) : null,
+      ]);
   }
 
   function render() {
@@ -208,6 +278,7 @@ export function mountWorkout(el, ctx) {
   render();
 
   return () => {
+    if (S.run && !S.finished) logRun(false);        /* the window closed mid-workout: what was done still counts */
     S.dead = true;
     document.removeEventListener('visibilitychange', vis);
     if (timer) { clearInterval(timer); timer = 0; }

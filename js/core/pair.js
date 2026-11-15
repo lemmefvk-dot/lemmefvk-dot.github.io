@@ -64,6 +64,7 @@
        delivered to apps that asked for it.
 
      openPair({ kind, role:'host'|'guest', code?, types, rtc?, binary? })
+       (a host's code? is one it had before, to open that room again)
        -> room { code, role, kind, phase, error, peer, link, topic,
                  on(fn) -> off   fn(type, data):
                    'phase' p · 'peer' {id,name,color} · 'left' {reason}
@@ -165,7 +166,8 @@ export async function unseal(key, text) {
 export function openPair({ kind, role, code = null, types = {}, rtc = false, binary = false }) {
   const host = role === 'host';
   const R = {
-    code: host ? randomCode() : normalizeCode(code),
+    /* a host may open its own earlier code again (Notes' "rejoin"); otherwise a fresh one */
+    code: host ? (code && isCode(normalizeCode(code)) ? normalizeCode(code) : randomCode()) : normalizeCode(code),
     phase: 'connecting', error: null, peer: null,
     link: rtc ? 'connecting' : 'off', topic: null,
   };

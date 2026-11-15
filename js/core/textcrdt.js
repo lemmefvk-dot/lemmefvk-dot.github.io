@@ -20,14 +20,17 @@
    here yet waits for it, and a repeat changes nothing.
 
    FORMATTING is carried, not markup: a character has two marks
-   (b, i), a line has a kind (t: p h1 h2 h3 ul ol check img), a tick
+   (b, i), a line has a kind (t: p h1 h2 h3 ul ol check quote hr row
+   img), a tick
    (d) and a picture (im: { p: vfs path, a: alt }). Each mark and each
    line field is its own last-writer-wins register stamped (counter,
    site), so bolding a word or changing a list can never touch text.
    Line 0's fields live on the root; every other line's on the break
    that starts it, so merging two lines keeps the first line's kind.
-   A picture line that somehow got text (two people, one empty line) is
-   drawn as a paragraph: the words are what must survive.
+   A picture or divider line that somehow got text (two people, one
+   empty line) is drawn as a paragraph: the words are what must survive.
+   A table row's cells are its text with a tab between them (notesfmt's
+   cellsOf), so two people typing in different cells is ordinary typing.
 
      createDoc({ site }) -> doc
        doc.render() -> { blocks, lines, flat }   blocks are notesfmt's own
@@ -68,7 +71,7 @@ export const LIMITS = {
   alt: 120,
   path: 400,
 };
-export const KINDS = new Set(['p', 'h1', 'h2', 'h3', 'ul', 'ol', 'check', 'img']);
+export const KINDS = new Set(['p', 'h1', 'h2', 'h3', 'ul', 'ol', 'check', 'quote', 'hr', 'row', 'img']);
 export const ROOT = '0';
 export const SITE_RE = /^[a-z0-9]{1,8}$/;
 const MAX_CTR = 2 ** 45;
@@ -213,7 +216,7 @@ function flatten(blocks) {
     if (k) units.push({ nl: true, a });
     starts.push(units.length);
     const line = [];
-    if (a.t !== 'img') {
+    if (a.t !== 'img' && a.t !== 'hr') {
       for (const r of b.runs || []) {
         for (const ch of cps(cleanText(r.text))) { units.push({ ch, b: !!r.b, i: !!r.i }); line.push(ch); }
       }
@@ -500,8 +503,9 @@ export function createDoc({ site }) {
     lines.forEach((ln, k) => {
       const n = ln.node, bk = blocks[k];
       let t = n.t[0];
-      /* a picture line holding text: the words are what must survive */
+      /* a picture or divider line holding text: the words are what must survive */
       if (t === 'img' && (bk.runs.length || !n.im[0])) t = 'p';
+      if (t === 'hr' && bk.runs.length) t = 'p';
       bk.t = t;
       if (t === 'check') bk.done = !!n.d[0];
       if (t === 'img') { bk.path = n.im[0].p; bk.alt = n.im[0].a; }

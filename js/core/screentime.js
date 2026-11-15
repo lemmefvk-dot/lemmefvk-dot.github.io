@@ -47,12 +47,28 @@
    flush()                    write pending time now
    status()                   { leader, counting, front } — for tests
    dayKey(ms?)                local 'YYYY-MM-DD'
+   compare(endKey?)           this week against the one before: totals and each app
+   csv()                      every kept day as CSV text: date,kind,id,name,seconds
+   checkNudges(now?, force?)  the gentle reminders below, once
+
+   GENTLE NUDGES — a notification and nothing else. Never a block, never a
+   lock, nothing closes or pauses: if you ignore it, nothing happens.
+     prefs.stNudges    { appId: minutes }  a heads-up the first time an app
+                       passes that many minutes in a day (once a day each)
+     prefs.stBreakMin  0 = off; after this many minutes of using StaticOS
+                       without a break (five minutes of not using it), a
+                       "take a break" note, and again after that long
+     prefs.stGoalMin   0 = no goal; a daily goal line on the chart
+   They are measured by the same counting as everything else here, and only
+   by the tab that counts (see "Several tabs").
    ============================================================ */
 import { bus } from './bus.js';
 import * as wm from './wm.js';
 import { covered } from './cover.js';
 import * as tap from './audiotap.js';
 import { key, local } from './profiles.js';
+import { store } from './store.js';
+import { getApp } from './registry.js';
 
 export const KEY = key('staticos.screentime.v1');   /* this person's (core/profiles.js) */
 export const IDLE_MS = 5 * 60_000;
@@ -61,6 +77,7 @@ const FLUSH_MS = 60_000;
 export const KEEP_DAYS = 56;
 const GAME_WINDOWS = new Set(['aether-games', 'arcade']);
 const CHANNEL = key('staticos-screentime');
+export const BREAK_GAP = 5 * 60_000;   /* five minutes of not using StaticOS is a break */
 
 const S = {
   on: false,
@@ -72,6 +89,10 @@ const S = {
   names: {},           /* game key -> { t, i } */
   dirty: false,
   flushedAt: 0,
+  runStart: 0,         /* when the current stretch of use began (no break since) */
+  runLast: 0,          /* the last moment counted in it */
+  breakAt: 0,          /* when the last take-a-break note went out */
+  nudgeAt: 0,
 };
 
 /* ---------------- days ----------------------------------------- */
@@ -173,6 +194,9 @@ function add(day, part, id, ms) {
 }
 
 function credit(cur, from, to) {
+  /* one stretch of use runs until a gap of BREAK_GAP: that gap is a break */
+  if (!S.runLast || from - S.runLast > BREAK_GAP) S.runStart = from;
+  S.runLast = to;
   while (from < to) {
     const d = new Date(from);
     const midnight = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
@@ -203,6 +227,7 @@ function sample() {
   }
   S.cur = front();
   if (S.dirty && now - S.flushedAt >= FLUSH_MS) flush();
+  if (S.cur) checkNudges(now);
 }
 
 function onInput(e) {
@@ -212,6 +237,8 @@ function onInput(e) {
   /* back from an idle spell: close the idle stretch (counted up to five
      minutes after the old input) before the input time moves on */
   if (now - S.input >= IDLE_MS) sample();
+  /* five minutes with no input, and nothing playing to keep it counting, was a break */
+  if (now - S.input >= BREAK_GAP && S.runLast <= S.input + IDLE_MS + 1500) { S.runStart = 0; S.runLast = 0; }
   S.input = now;
   claim();
 }
@@ -357,6 +384,98 @@ export function week(endKey = dayKey()) {
   return out;
 }
 
+/* ---------------- gentle nudges ---------------------------------- */
+const pref = (k, d) => store.get('prefs.' + k, d);
+const notify = n => bus.emit('noti:push', { app: 'Screen Time', icon: 'bar-chart', timeout: 9000, ...n });
+
+/** The apps with a nudge set: { appId: minutes }. */
+export function nudgeMap() {
+  const v = pref('stNudges', {});
+  const out = {};
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    for (const [id, m] of Object.entries(v)) if (/^[\w.-]{1,40}$/.test(id) && Number.isFinite(+m) && +m >= 5 && +m <= 720) out[id] = Math.round(+m);
+  }
+  return out;
+}
+export const breakMin = () => { const m = Number(pref('stBreakMin', 0)); return Number.isFinite(m) && m >= 10 && m <= 240 ? Math.round(m) : 0; };
+export const goalMin = () => { const m = Number(pref('stGoalMin', 0)); return Number.isFinite(m) && m >= 15 && m <= 1440 ? Math.round(m) : 0; };
+
+/** Look at the clock once and send whatever gentle note is due. `force` skips the 15 s throttle. */
+export function checkNudges(now = Date.now(), force = false) {
+  if (!force && now - S.nudgeAt < 15_000) return [];
+  S.nudgeAt = now;
+  const sent = [];
+  const brk = breakMin();
+  if (brk && S.runLast && now - S.runLast < 60_000) {
+    const mins = brk * 60_000;
+    if (now - S.runStart >= mins && now - Math.max(S.breakAt, S.runStart) >= mins) {
+      S.breakAt = now;
+      const spent = Math.round((now - S.runStart) / 60_000);
+      notify({ title: 'Time for a break?',
+        message: `You’ve been at it for ${fmtDur(spent * 60)} without stopping. Stretch, get some water. This is only a reminder: nothing is paused or closed.`,
+        actions: [{ label: 'Remind me in 10 min', onClick: () => { S.breakAt = Date.now() - mins + 10 * 60_000; } }] });
+      sent.push('break');
+    }
+  }
+  const map = nudgeMap();
+  const ids = Object.keys(map);
+  if (ids.length) {
+    const today = dayKey(now);
+    const done = pref('stNudged', null);
+    const already = new Set(done && done.day === today && Array.isArray(done.ids) ? done.ids : []);
+    const apps = day(today).apps;
+    for (const id of ids) {
+      if (already.has(id)) continue;
+      const a = apps.find(x => x.id === id);
+      if (!a || a.sec < map[id] * 60) continue;
+      already.add(id);
+      store.set('prefs.stNudged', { day: today, ids: [...already] });
+      const name = (getApp(id) && getApp(id).name) || id;
+      notify({ title: `${fmtDur(a.sec)} in ${name} today`,
+        message: 'Just a heads-up, as you asked. Nothing is blocked: carry on, or take a break.' });
+      sent.push(id);
+    }
+  }
+  return sent;
+}
+/** For tests: pretend the current stretch of use began at `start` and was last seen at `last`. */
+export function debugRun(start, last) { S.runStart = start; S.runLast = last; S.breakAt = 0; }
+
+/* ---------------- compare, and CSV ------------------------------- */
+/** This 7 days against the 7 before: { now, before, delta, pct, apps:[{id,now,before,delta}], hasBefore }. */
+export function compare(endKey = dayKey()) {
+  const a = range(7, endKey), b = range(7, shift(endKey, -7));
+  const ids = new Set([...a.apps.map(x => x.id), ...b.apps.map(x => x.id)]);
+  const apps = [...ids].map(id => {
+    const now = (a.apps.find(x => x.id === id) || { sec: 0 }).sec;
+    const before = (b.apps.find(x => x.id === id) || { sec: 0 }).sec;
+    return { id, now, before, delta: now - before };
+  }).sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+  return { now: a.total, before: b.total, delta: a.total - b.total, pct: b.total ? Math.round((a.total - b.total) / b.total * 100) : null, apps, hasBefore: b.total > 0 };
+}
+
+const cell = v => {
+  let t = String(v ?? '');
+  if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;      /* a spreadsheet must never run a game's title */
+  return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+};
+/** Every kept day (up to 56) as CSV: date,kind,id,name,seconds. Games are part of their app's time. */
+export function csv() {
+  const data = read();
+  const keys = new Set(Object.keys(data.d));
+  for (const k of Object.keys(S.pending)) keys.add(k);
+  const rows = [['date', 'kind', 'id', 'name', 'seconds']];
+  const oldest = shift(dayKey(), -(KEEP_DAYS - 1));
+  for (const k of [...keys].filter(x => /^\d{4}-\d\d-\d\d$/.test(x) && x >= oldest).sort()) {
+    const d = shape(k, merged(k, data), data);
+    if (!d.total && !d.games.length) continue;
+    rows.push([k, 'total', 'all', 'All apps', d.total]);
+    for (const a of d.apps) rows.push([k, 'app', a.id, (getApp(a.id) && getApp(a.id).name) || a.id, a.sec]);
+    for (const g of d.games) rows.push([k, 'game', g.key, g.title, g.sec]);
+  }
+  return rows.map(r => r.map(cell).join(',')).join('\r\n') + '\r\n';
+}
+
 /** Forget every day, in every open tab. */
 export function clear() {
   dropPending();
@@ -368,4 +487,4 @@ export function clear() {
 
 export const status = () => ({ leader: leader(), counting: !!S.cur, front: S.cur ? { ...S.cur, game: S.cur.game ? S.cur.game.key : null } : null, idleFor: Date.now() - S.input });
 
-export default { init, day, range, week, clear, flush, status, dayKey, fmtDur, KEY, IDLE_MS, KEEP_DAYS };
+export default { init, day, range, week, clear, flush, status, dayKey, fmtDur, compare, csv, checkNudges, nudgeMap, breakMin, goalMin, KEY, IDLE_MS, KEEP_DAYS };

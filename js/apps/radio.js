@@ -24,14 +24,15 @@
      A read that fails is said out loud even while older figures are
      still up, so nothing on screen ever claims to be newer than it is.
 
-   One player
-   · StaticOS has one player: Music. A station Music knows (its
-     openWith accepts only the ids in its own STATIONS list, mirrored
-     in MUSIC_PLAYS below) is handed to it with openApp('music',
-     { station }) and plays in Music's own player; Radio keeps its
-     window in front and follows Music's media:track to show what's on.
-   · A station Music doesn't list plays in Radio's single module-level
-     <audio>. It first emits media:pause so Music stops, stops itself
+   One list, one player
+   · The stations are js/core/stations.js — the same list Music uses, so
+     a station added there is in both. StaticOS has one player: Music. A
+     station on the list is handed to it with openApp('music', { station })
+     and plays in Music's own player; Radio keeps its window in front and
+     follows Music's media:track to show what's on.
+   · A stream link you add yourself (Your streams) is not SomaFM's and not
+     on the list, so Music can't take it: it plays in Radio's single
+     module-level <audio>. It first emits media:pause so Music stops, stops itself
      the moment Music reports sound again, obeys media:pause from the
      rest of the OS, and announces itself on media:track so the Now
      Playing widget stays truthful. While it has the sound it holds the
@@ -42,8 +43,17 @@
      playing after the window closes; the widget, the media keys or
      reopening Radio stop it. Only window things are torn down.
 
+   More Radio does: a sleep timer (shared with Music), station search,
+   sort by listeners (only while SomaFM's numbers are fresh), keys for
+   everything, hearts for the song on air (a list of finds), sending a
+   station to a friend, a wake-up alarm that rides on Clock's alarms
+   (it only rings while StaticOS is open), SomaFM's own lower-bitrate
+   streams for slow connections, your own stream links, and "Report not
+   playing", which marks a station that had trouble this session.
+
    Saved on this device under store 'portal.radio': favourites, the
-   stations played here (newest first) and the last view. Favourites
+   stations played here (newest first), the last view, the sort, your
+   own streams and the songs you kept. Favourites
    are listed first in every list of stations (All, and each genre),
    under their own heading — and Music's Radio tab reads and writes the
    same hearts, so a station hearted in either is a favourite in both.
@@ -53,6 +63,12 @@ import { bus } from '../core/bus.js';
 import { store } from '../core/store.js';
 import api from '../core/api.js?v=ps5-cloud-proxy-v11';
 import * as tap from '../core/audiotap.js';
+import { appLevel } from '../core/appearance.js';
+import { STATIONS, BY_ID, SOMA, SOMA_API, QUALITIES, streamUrl as stationUrl, triesFor, quality as streamQuality, setQuality, qualityInfo, trouble } from '../core/stations.js';
+import * as sleepT from '../core/mediasleep.js';
+import * as finds from '../core/radiofinds.js';
+import * as alarmsCore from '../core/alarms.js';
+import { paintMediaPanel } from '../portal/sendfriend.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-radio-css')) {
   const l = document.createElement('link');
@@ -62,48 +78,44 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-radio-css'
   document.head.appendChild(l);
 }
 
-const SOMA = 'https://somafm.com';
-const SOMA_API = 'https://api.somafm.com';
 const STORE_KEY = 'portal.radio';
-/* where Radio's own player fetches a stream from, in order: SomaFM's two
-   servers with CORS (so the wallpaper's music visualizer may read the
-   sound — the same order Music uses), then plain, which still plays where
-   something on the way strips the CORS headers */
-const TRIES = [['ice1', true], ['ice2', true], ['ice1', false], ['ice2', false]];
-const streamUrl = (st, host = 'ice1') => `https://${host}.somafm.com/${st.id}-128-mp3`;
 const onLocalhost = () => typeof location !== 'undefined' && /^(localhost|127\.|\[::1\])/.test(location.hostname);
 const online = () => typeof navigator === 'undefined' || navigator.onLine !== false;
 
-/* ---------------- the stations (SomaFM's own words) ---------------- */
-const STATIONS = [
-  ['dronezone', 'Drone Zone', 'Ambient', 'Served best chilled, safe with most medications. Atmospheric textures with minimal beats.', 'png'],
-  ['deepspaceone', 'Deep Space One', 'Ambient', 'Deep ambient electronic, experimental and space music. For inner and outer space exploration.', 'png'],
-  ['groovesalad', 'Groove Salad', 'Ambient · electronic', 'A nicely chilled plate of ambient/downtempo beats and grooves.', 'png'],
-  ['beatblender', 'Beat Blender', 'Electronic', 'A late night blend of deep-house and downtempo chill.', 'png'],
-  ['spacestation', 'Space Station Soma', 'Electronic', 'Tune in, turn on, space out. Spaced-out ambient and mid-tempo electronica.', 'png'],
-  ['poptron', 'PopTron', 'Alternative', 'Electropop and indie dance rock with sparkle and pop.', 'png'],
-  ['vaporwaves', 'Vaporwaves', 'Electronic', 'All Vaporwave. All the time.', 'png'],
-  ['u80s', 'Underground 80s', 'Alternative · electronic', 'Early 80s UK Synthpop and a bit of New Wave.', 'png'],
-  ['seventies', 'Left Coast 70s', '70s · rock', 'Mellow album rock from the Seventies. Yacht not required.', 'jpg'],
-  ['7soul', 'Seven Inch Soul', 'Oldies', 'Vintage soul tracks from the original 45 RPM vinyl.', 'png'],
-  ['insound', 'The In-Sound', 'Oldies', '60s/70s Hipster Euro Pop where psychedelic melodies meets groovy vibes.', 'jpg'],
-  ['fluid', 'Fluid', 'Electronic · hip-hop', 'Drown in the electronic sound of instrumental hiphop, future soul and liquid trap.', 'jpg'],
-  ['illstreet', 'Illinois Street Lounge', 'Lounge', 'Classic bachelor pad, playful exotica and vintage music of tomorrow.', 'jpg'],
-  ['defcon', 'DEF CON Radio', 'Electronic', 'Music for Hacking. The DEF CON Year-Round Channel.', 'png'],
-  ['lush', 'Lush', 'Electronic', 'Sensuous and mellow female vocals, many with an electronic influence.', 'png'],
-  ['secretagent', 'Secret Agent', 'Lounge', 'The soundtrack for your stylish, mysterious, dangerous life. For Spies and PIs too!', 'png'],
-  ['indiepop', 'Indie Pop Rocks!', 'Alternative · rock', 'New and classic favorite indie pop tracks.', 'png'],
-].map(([id, name, genre, blurb, ext]) => ({
-  id, name, genre, blurb,
-  page: `${SOMA}/${id}/`,
-  logo: `${SOMA_API}/logos/256/${id}256.${ext}`,
-  logoType: ext === 'jpg' ? 'image/jpeg' : 'image/png',
-}));
-const BY_ID = new Map(STATIONS.map(s => [s.id, s]));
+/* ---------------- the stations (SomaFM's own words: js/core/stations.js) ----------------
+   Your own stream links join them here, and only here (see "Your streams"). */
 const ALL_IDS = STATIONS.slice().sort((a, b) => a.name.localeCompare(b.name)).map(s => s.id);
-
-/* the ids Music's openWith({ station }) accepts — STATIONS in music.js */
-const MUSIC_PLAYS = new Set(['groovesalad', 'dronezone', 'lush', 'secretagent', 'defcon', 'deepspaceone', 'spacestation', 'indiepop', 'u80s', 'vaporwaves']);
+const CUSTOM = new Map();               /* id -> station, rebuilt from the saved list on every read */
+const MAX_CUSTOM = 12;
+const stationOf = id => BY_ID.get(id) || CUSTOM.get(id) || null;
+function cleanCustom(list) {
+  const seen = new Set();
+  const out = [];
+  for (const c of Array.isArray(list) ? list : []) {
+    if (!c || typeof c.id !== 'string' || !/^u-[a-z0-9]{3,16}$/.test(c.id) || seen.has(c.id)) continue;
+    const url = httpsUrl(c.url);
+    const name = String(c.name || '').replace(/[\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!url || !name) continue;
+    seen.add(c.id);
+    out.push({ id: c.id, name, url });
+  }
+  return out.slice(0, MAX_CUSTOM);
+}
+/** Only https links to a web address (an http link would be blocked from this page). */
+function httpsUrl(v) {
+  try {
+    const u = new URL(String(v || '').trim());
+    return u.protocol === 'https:' && u.hostname.includes('.') && !u.username && !u.password ? u.href : '';
+  } catch (e) { return ''; }
+}
+function syncCustom(list) {
+  CUSTOM.clear();
+  for (const c of list) {
+    let host = '';
+    try { host = new URL(c.url).hostname; } catch (e) { /* cleaned already */ }
+    CUSTOM.set(c.id, { id: c.id, name: c.name, genre: 'Your stream', blurb: `A stream you added — ${host}`, page: c.url, logo: '', logoType: '', custom: true, url: c.url });
+  }
+}
 
 /* ---------------- views: the library, then the genres ---------------- */
 const LIBRARY = [
@@ -116,6 +128,12 @@ const LIBRARY = [
   { id: 'recent', name: 'Recently played', short: 'Recent', icon: 'clock', g1: '#bfdbfe', g2: '#1e40af',
     kicker: 'On this device',
     note: 'Stations played on this computer, from Radio or Music, newest first.' },
+  { id: 'finds', name: 'Song finds', short: 'Finds', icon: 'star', g1: '#fde68a', g2: '#b45309',
+    kicker: 'Songs you hearted on air',
+    note: 'Tap the heart on a song while it is on the radio and it is kept here, with its station, so you can look it up later. Only the title, artist and album SomaFM printed are kept.' },
+  { id: 'mine', name: 'Your streams', short: 'Yours', icon: 'link', g1: '#a7f3d0', g2: '#065f46',
+    kicker: 'Links you added',
+    note: 'Add a link to an internet radio stream you are allowed to listen to. It plays in your browser straight from its own server, and it is not part of SomaFM.' },
 ];
 const GENRES = [
   { id: 'ambient', name: 'Ambient', icon: 'cloud', g1: '#a5b4fc', g2: '#312e81',
@@ -147,16 +165,20 @@ const VIEWS = [...LIBRARY, ...GENRES];
 const VIEW_BY_ID = new Map(VIEWS.map(v => [v.id, v]));
 
 /* ---------------- saved state ---------------- */
+const SORTS = ['az', 'listeners'];
 function data() {
   const raw = store.get(STORE_KEY);
   const o = raw && typeof raw === 'object' ? raw : {};
-  const favs = [...new Set((Array.isArray(o.favs) ? o.favs : []).filter(id => BY_ID.has(id)))];
+  const custom = cleanCustom(o.custom);
+  syncCustom(custom);
+  const favs = [...new Set((Array.isArray(o.favs) ? o.favs : []).filter(id => stationOf(id)))];
   const seen = new Set();
   const recent = (Array.isArray(o.recent) ? o.recent : [])
-    .filter(r => r && BY_ID.has(r.id) && Number.isFinite(Number(r.at)) && !seen.has(r.id) && seen.add(r.id))
+    .filter(r => r && stationOf(r.id) && Number.isFinite(Number(r.at)) && !seen.has(r.id) && seen.add(r.id))
     .map(r => ({ id: r.id, at: Number(r.at) }))
     .slice(0, 12);
-  return { v: 1, favs, recent, view: VIEW_BY_ID.has(o.view) ? o.view : 'all' };
+  /* finds are kept by js/core/radiofinds.js; they pass through here untouched so a save never drops them */
+  return { v: 1, favs, recent, view: VIEW_BY_ID.has(o.view) ? o.view : 'all', sort: SORTS.includes(o.sort) ? o.sort : 'az', custom, finds: Array.isArray(o.finds) ? o.finds : [] };
 }
 const save = patch => store.set(STORE_KEY, { ...data(), ...patch });
 const isFav = id => data().favs.includes(id);
@@ -165,22 +187,31 @@ function toggleFav(id) {
   save({ favs: favs.includes(id) ? favs.filter(x => x !== id) : [...favs, id] });
 }
 function addRecent(id) {
-  if (!BY_ID.has(id)) return;
+  if (!stationOf(id)) return;
   const d = data();
   if (d.recent[0]?.id === id && Date.now() - d.recent[0].at < 60000) return;
   save({ recent: [{ id, at: Date.now() }, ...d.recent.filter(r => r.id !== id)].slice(0, 12) });
 }
 function idsFor(viewId) {
+  if (viewId === 'finds') return [];
   if (viewId === 'favs') return data().favs;
   if (viewId === 'recent') return data().recent.map(r => r.id);
+  if (viewId === 'mine') return data().custom.map(c => c.id);
   const ids = viewId === 'all' ? ALL_IDS : GENRES.find(g => g.id === viewId)?.ids || [];
   /* favourites first, in the order they were hearted; the rest keep their order */
   const favs = data().favs.filter(id => ids.includes(id));
   return [...favs, ...ids.filter(id => !favs.includes(id))];
 }
+/** The ids of a view in the order it is shown: favourites lead (A–Z), or by listeners while SomaFM's numbers are fresh. */
+function shownIds(viewId) {
+  const ids = idsFor(viewId);
+  if (data().sort !== 'listeners' || !chFresh() || viewId === 'favs' || viewId === 'recent' || viewId === 'mine') return ids;
+  const n = id => chInfo(id)?.listeners ?? -1;
+  return ids.slice().sort((a, b) => n(b) - n(a) || (stationOf(a)?.name || '').localeCompare(stationOf(b)?.name || ''));
+}
 /** How many of a view's stations lead it as favourites (0 for Favorites/Recent themselves). */
 function favLead(viewId) {
-  if (viewId === 'favs' || viewId === 'recent') return 0;
+  if (viewId === 'favs' || viewId === 'recent' || viewId === 'finds' || viewId === 'mine' || data().sort === 'listeners') return 0;
   const favs = new Set(data().favs);
   return idsFor(viewId).filter(id => favs.has(id)).length;
 }
@@ -299,7 +330,7 @@ let slowTimer = 0, stallTimer = 0;
 function applyVolume() {
   if (!audio) return;
   const v = Number(store.get('prefs.volume', 62));
-  audio.volume = Math.min(100, Math.max(0, Number.isFinite(v) ? v : 62)) / 100;
+  audio.volume = Math.min(100, Math.max(0, Number.isFinite(v) ? v : 62)) / 100 * appLevel('radio') * sleepT.fade();   /* the mixer's level for Radio (Settings > Sound), and the sleep timer's fade */
   audio.muted = store.get('prefs.muted', false) === true;
 }
 function ensureAudio() {
@@ -309,6 +340,7 @@ function ensureAudio() {
   audio.preload = 'none';
   applyVolume();
   store.sub('prefs', applyVolume);
+  bus.on('mediasleep:fade', applyVolume);
   audio.addEventListener('playing', onPlaying);
   audio.addEventListener('waiting', onWaiting);
   audio.addEventListener('timeupdate', onTime);
@@ -319,7 +351,9 @@ function ensureAudio() {
   tap.register('radio', audio, {
     label: 'Static Radio',
     blocked: () => (R.own.st && !R.own.cors
-      ? `${R.own.st.name} is coming through SomaFM’s plain server (its CORS servers didn’t answer here), so the browser won’t let StaticOS read the sound. The music still plays.`
+      ? (R.own.st.custom
+        ? `${R.own.st.name} is a stream you added, and its server doesn’t let other websites read its sound, so the browser won’t let StaticOS draw it. The music still plays.`
+        : `${R.own.st.name} is coming through SomaFM’s plain server (its CORS servers didn’t answer here), so the browser won’t let StaticOS read the sound. The music still plays.`)
       : null),
   });
   return audio;
@@ -346,7 +380,10 @@ const ERR = {
   localhost: st => ({ title: `${st.name} didn’t play`, detail: 'SomaFM refuses streams to pages served from localhost. It plays on the published StaticOS.' }),
   blocked: st => ({ title: `${st.name} didn’t play`, detail: 'SomaFM may be down, or this network blocks streaming radio — school and work Wi-Fi often do.' }),
   noaudio: () => ({ title: 'This browser can’t play audio', detail: 'Radio needs the browser’s audio player, and it isn’t available here.' }),
+  custom: st => ({ title: `${st.name} didn’t play`, detail: 'The link may be wrong, the stream may be off the air, or its server may not let other websites play it. Check the link, or remove it and add it again.' }),
 };
+/* where Radio's own player fetches from, in order: SomaFM's servers (the same order Music uses), or the one link the person added */
+const ownTries = st => (st.custom ? [[null, false, '']] : triesFor(streamQuality()));
 
 function startOwn(st) {
   if (!st) return;
@@ -363,7 +400,7 @@ function startOwn(st) {
   }
   emitQuiet('media:pause');                /* one player: Music stops before this starts */
   unloadOwn();
-  Object.assign(R.own, { st, phase: 'loading', err: null, note: null, slow: false, tryIx: 0, cors: true, started: false, drops: [] });
+  Object.assign(R.own, { st, phase: 'loading', err: null, note: null, slow: false, tryIx: 0, cors: !st.custom, started: false, drops: [] });
   claimSession();
   sendCard();
   changed('np');
@@ -376,10 +413,12 @@ function connect(tok) {
   if (!st || tok !== R.own.token || !audio) return;
   if (!online()) { failOwn(tok, 'offline'); return; }
   armSlow(tok);
-  const [host, cors] = TRIES[R.own.tryIx % TRIES.length];
+  const tries = ownTries(st);
+  const [host, cors, q] = tries[R.own.tryIx % tries.length];
   R.own.cors = cors;
+  R.own.quality = q;
   if (cors) audio.crossOrigin = 'anonymous'; else audio.removeAttribute('crossorigin');
-  audio.src = streamUrl(st, host);
+  audio.src = st.custom ? st.url : stationUrl(st, host, q);
   let pr;
   try { pr = audio.play(); } catch (e) { pr = Promise.reject(e); }
   pr?.catch?.(e => {
@@ -407,6 +446,7 @@ function failOwn(tok, kind) {
   R.own.phase = 'error';
   R.own.err = ERR[kind](R.own.st);
   R.own.slow = false;
+  trouble.mark(R.own.st.id, 'failed');
   releaseCard();
   changed('np');
   syncAir();
@@ -431,6 +471,7 @@ function onPlaying() {
   if (!OWN_ON.has(R.own.phase)) return;
   clearTimeout(stallTimer);
   clearSlow();
+  trouble.ok(R.own.st?.id);
   R.own.phase = 'playing';
   R.own.started = true;
   R.own.slow = false;
@@ -476,12 +517,12 @@ function onErr() {
       connect(tok);
       return;
     }
-  } else if (R.own.tryIx < TRIES.length - 1 && online()) {
+  } else if (R.own.tryIx < ownTries(R.own.st).length - 1 && online()) {
     R.own.tryIx++;
     connect(tok);
     return;
   }
-  failOwn(tok, !online() ? 'offline' : onLocalhost() ? 'localhost' : 'blocked');
+  failOwn(tok, !online() ? 'offline' : R.own.st.custom ? 'custom' : onLocalhost() ? 'localhost' : 'blocked');
 }
 
 /* ---------------- the Now Playing card + media keys ---------------- */
@@ -491,7 +532,7 @@ function sendCard() {
   const s = airNow(st.id);
   cardMine = true;
   emitTrack({
-    title: s?.title || st.name, artist: s ? (s.artist || 'SomaFM') : 'SomaFM', album: `${st.name} · live radio`,
+    title: s?.title || st.name, artist: st.custom ? 'Internet radio' : s ? (s.artist || 'SomaFM') : 'SomaFM', album: `${st.name} · live radio`,
     duration: 0, elapsed: 0, playing: OWN_ON.has(R.own.phase), live: true, source: 'radio',
   });
   msMeta();
@@ -529,8 +570,8 @@ function msMeta() {
   try {
     if (typeof MediaMetadata === 'function') {
       msMine = new MediaMetadata({
-        title: s?.title || st.name, artist: s ? (s.artist || 'SomaFM') : 'SomaFM', album: `${st.name} · live radio`,
-        artwork: [{ src: st.logo, sizes: '256x256', type: st.logoType }],
+        title: s?.title || st.name, artist: st.custom ? 'Internet radio' : s ? (s.artist || 'SomaFM') : 'SomaFM', album: `${st.name} · live radio`,
+        artwork: st.logo ? [{ src: st.logo, sizes: '256x256', type: st.logoType }] : [],
       });
       MS.metadata = msMine;
     }
@@ -561,7 +602,7 @@ function stepOwn(dir) {
   const ids = R.ctx.length ? R.ctx : ALL_IDS;
   let i = ids.indexOf(R.own.st.id);
   if (i < 0) i = dir > 0 ? -1 : 0;
-  const next = BY_ID.get(ids[(i + dir + ids.length) % ids.length]);
+  const next = stationOf(ids[(i + dir + ids.length) % ids.length]);
   if (next && next !== R.own.st) playStation(next, { ctx: ids });
 }
 
@@ -569,7 +610,7 @@ function stepOwn(dir) {
 function playStation(st, o = {}) {
   if (!st) return;
   if (Array.isArray(o.ctx) && o.ctx.length) R.ctx = o.ctx.slice();
-  if (MUSIC_PLAYS.has(st.id) && api.getApp('music')) {
+  if (!st.custom && api.getApp('music')) {
     if (ownOn()) stopOwn(false);                          /* Music is about to announce itself */
     const seq = R.music.seq;
     if (R.music.st === st && !R.music.playing) bus.emit('media:play');     /* Music is already on it: just resume */
@@ -592,7 +633,7 @@ function playStation(st, o = {}) {
 /* ---------------- listening to the rest of the OS ---------------- */
 function stationFromAlbum(album) {
   const m = /^(.*) · live radio$/.exec(String(album || ''));
-  return m ? STATIONS.find(s => s.name === m[1]) || null : null;
+  return m ? STATIONS.find(s => s.name === m[1]) || [...CUSTOM.values()].find(s => s.name === m[1]) || null : null;
 }
 function onTrack(t) {
   if (selfTrack) return;
@@ -613,7 +654,7 @@ function onTrack(t) {
   M.playing = playing;
   M.song = st && t.title && !(t.title === st.name && t.artist === 'SomaFM') ? { title: String(t.title), artist: String(t.artist || '') } : null;
   M.file = !st && t && t.source === 'file' ? { title: String(t.title || ''), artist: String(t.artist || '') } : null;
-  if (playing && st && (!wasPlaying || wasSt !== st)) addRecent(st.id);
+  if (playing && st && (!wasPlaying || wasSt !== st)) { addRecent(st.id); trouble.ok(st.id); }
   const sig = `${st?.id || ''}|${playing}|${M.song?.title || ''}|${M.song?.artist || ''}|${M.file?.title || ''}|${R.lead}`;
   if (sig !== M.sig) {
     M.sig = sig;
@@ -633,6 +674,7 @@ let airId = null, airGen = 0, airTimer = 0;
 function airWanted() {
   const np = nowPlaying();
   if (!np.st) return null;
+  if (np.st.custom) return null;                                   /* a link you added has no SomaFM feed */
   if (np.via === 'own' && np.on) return np.st.id;                   /* the widget shows the song */
   if (np.via === 'music' && np.on && openWins > 0) return np.st.id; /* Radio's window shows it */
   return null;
@@ -665,14 +707,21 @@ defineApp({
   g1: '#ec5fc6', g2: '#961a7f',
   category: 'Media',
   keywords: ['radio', 'somafm', 'stations', 'live', 'stream', 'internet radio', 'music', 'ambient', 'electronic', 'retro',
-    'focus', 'study', 'lofi', 'lo-fi', 'chill', 'gaming', 'random', 'discover'],
+    'focus', 'study', 'lofi', 'lo-fi', 'chill', 'gaming', 'random', 'discover', 'sleep timer', 'wake up alarm', 'song finds',
+    'send a station', 'low data'],
   desc: 'Live internet radio from SomaFM, by genre',
   singleton: true,
   win: { w: 880, h: 600, minW: 400, minH: 420 },
   /* keys listed on the shortcut sheet (hold ⌘ / Ctrl): each one is bound below */
   shortcuts: [
-    ['Space / K', 'Play or pause'],
+    ['Space / K', 'Play or stop'],
     ['R', 'A random station'],
+    ['N / P', 'Next / previous station'],
+    ['F', 'Favorite the station'],
+    ['H', 'Keep the song on air'],
+    ['S', 'Sleep timer'],
+    ['/', 'Search stations'],
+    ['I / ?', 'This list of keys'],
   ],
 
   mount(ctx) {
@@ -682,7 +731,7 @@ defineApp({
     let dead = false;
     openWins++;
 
-    const S = { view: data().view, hist: false };
+    const S = { view: data().view, hist: false, q: '', sheet: null, sheetStation: null, keyHelp: false };
     const listLogos = new Map();
     const npLogos = new Map();
     const uid = `rd${win.id}`;
@@ -700,7 +749,17 @@ defineApp({
     const list = h('div.app__content.rd-list');
     const npBox = h('section.rd-np', { 'aria-label': 'Now playing' });
     const live = h('div.sr', { role: 'status', 'aria-live': 'polite' });
-    const main = h('div.app__main.rd-main', chips, head, list, npBox);
+    /* search, sort and the wake-up alarm; these live outside the list, so a repaint never takes them away mid-typing */
+    const searchIn = h('input', { type: 'search', placeholder: 'Search stations', 'aria-label': 'Search stations by name, genre or song', spellcheck: 'false', dataset: { k: 'search' },
+      oninput: ev => { S.q = ev.target.value; paintHead(); paintList(); },
+      onkeydown: ev => { if (ev.key === 'Escape' && S.q) { ev.preventDefault(); ev.stopPropagation(); S.q = ''; searchIn.value = ''; paintHead(); paintList(); } else if (ev.key === 'Enter') { const first = list.querySelector('[data-role="main"]'); if (first) { ev.preventDefault(); first.click(); } } } });
+    const sortSel = h('select.select.rd-sort', { 'aria-label': 'Sort stations', dataset: { k: 'sort' }, onchange: ev => save({ sort: ev.target.value }) },
+      h('option', { value: 'az', text: 'A–Z' }), h('option', { value: 'listeners', text: 'Most listeners' }));
+    const alarmBtn = h('button.btn.btn--sm.rd-alarmbtn', { type: 'button', dataset: { k: 'alarm' }, 'aria-haspopup': 'dialog', onclick: () => toggleSheet('alarm') },
+      icon('bell'), h('span', { text: 'Wake-up alarm' }));
+    const toolsBar = h('div.rd-tools', h('label.field.rd-search', icon('search'), searchIn), sortSel, alarmBtn);
+    const sheetBox = h('section.rd-sheet.hidden', { 'aria-label': 'Radio panel' });
+    const main = h('div.app__main.rd-main', chips, head, toolsBar, sheetBox, list, npBox);
     const shell = h('div.app.rd', side, main, live);
     root.appendChild(shell);
 
@@ -713,6 +772,7 @@ defineApp({
     function logo(st, cache) {
       let box = cache.get(st.id);
       if (!box) {
+        if (!st.logo) { box = h('span.rd-logo.is-broken', icon('link')); cache.set(st.id, box); return box; }   /* a stream you added has no picture */
         const img = h('img', { src: st.logo, alt: '', decoding: 'async', loading: 'lazy', draggable: 'false' });
         box = h('span.rd-logo', img);
         img.addEventListener('error', () => { box.classList.add('is-broken'); img.remove(); box.prepend(icon('cast')); }, { once: true });
@@ -730,9 +790,9 @@ defineApp({
     }
     function statusText(np) {
       if (np.via === 'own') {
-        if (np.phase === 'loading') return np.slow ? 'Still connecting — SomaFM may be slow, or this network may be blocking streaming radio.' : 'Connecting to SomaFM…';
+        if (np.phase === 'loading') return np.slow ? 'Still connecting — the server may be slow, or this network may be blocking streaming radio.' : np.st.custom ? 'Connecting to your stream…' : 'Connecting to SomaFM…';
         if (np.phase === 'buffering') return 'Buffering — the stream picks up again by itself.';
-        if (np.phase === 'playing') return 'Live · playing here, because Music doesn’t list this station.';
+        if (np.phase === 'playing') return 'Live · playing here: it is a link you added, so it is not part of SomaFM or Music’s list.';
         if (np.phase === 'error') return `${np.err?.title || 'It didn’t play'}. ${np.err?.detail || ''}`.trim();
         return np.note || 'Stopped.';
       }
@@ -749,7 +809,7 @@ defineApp({
     }
 
     /* ---------------- sidebar + phone chips ---------------- */
-    function countFor(v) { return idsFor(v.id).length; }
+    function countFor(v) { return v.id === 'finds' ? finds.list().length : idsFor(v.id).length; }
     function paintSide() {
       clear(side);
       const item = v => {
@@ -763,6 +823,7 @@ defineApp({
       };
       side.append(
         h('div.side__group', h('div.side__label', { text: 'Radio' }), LIBRARY.map(item)),
+        sleepT.state() ? h('div.rd-sleepnote', icon('moon'), h('span', { text: sleepText() })) : null,
         h('div.side__group', h('div.side__label', { text: 'Genres' }), GENRES.map(item)),
         h('div.grow'),
         h('div.side__meter.rd-about',
@@ -789,8 +850,15 @@ defineApp({
       clear(headGlyph).appendChild(icon(v.icon));
       headTitle.textContent = v.name;
       headKicker.textContent = v.kicker;
-      const n = currentIds().length;
-      headCount.textContent = n ? `${n} station${n === 1 ? '' : 's'}` : '';
+      const n = S.view === 'finds' ? finds.list().length : visibleIds().length;
+      const total = S.view === 'finds' ? n : currentIds().length;
+      headCount.textContent = S.view === 'finds' ? (n ? `${n} song${n === 1 ? '' : 's'}` : '')
+        : S.q.trim() ? `${n} of ${total}` : n ? `${n} station${n === 1 ? '' : 's'}` : '';
+      const fresh = chFresh();
+      sortSel.value = data().sort === 'listeners' && fresh ? 'listeners' : 'az';
+      sortSel.querySelector('option[value="listeners"]').disabled = !fresh;
+      sortSel.title = fresh ? 'Sort the stations A–Z, or by how many people are listening' : 'Listener numbers are only used while SomaFM’s figures are fresh (under 3 minutes old) — they aren’t right now';
+      sortSel.classList.toggle('hidden', S.view === 'finds' || S.view === 'favs' || S.view === 'recent' || S.view === 'mine');
       const scoped = n >= 2 && S.view !== 'all';
       const tip = scoped ? `Play a random station from ${v.name} (R)` : 'Play a random station (R)';
       randomBtn.title = tip;
@@ -811,6 +879,7 @@ defineApp({
       const played = S.view === 'recent' ? data().recent.find(r => r.id === st.id)?.at : 0;
       const meta = [st.genre];
       if (info) meta.push(`${info.listeners.toLocaleString()} listening`);
+      const tr = trouble.get(st.id);
       if (played) meta.push(`played ${ago(played)}`);
       const descId = `${uid}-${st.id}-d`;
 
@@ -831,7 +900,9 @@ defineApp({
       },
         box,
         h('span.rd-row__txt',
-          h('span.rd-row__name', h('b', { text: st.name }), cur ? h(`span.rd-tag.is-${np.phase}`, { text: stateWord(np) }) : null),
+          h('span.rd-row__name', h('b', { text: st.name }), cur ? h(`span.rd-tag.is-${np.phase}`, { text: stateWord(np) }) : null,
+            tr ? h('span.rd-tag.is-trouble', { dataset: { role: 'trouble' }, title: tr.why === 'reported' ? 'You reported this station as not playing — this mark only lasts for this visit' : 'This station failed to play earlier this visit',
+              text: tr.why === 'reported' ? 'Reported' : 'Had trouble' }) : null),
           h('span.rd-row__blurb', { text: st.blurb }),
           h('span.rd-row__meta', { id: descId },
             h('span', { text: meta.join(' · ') }),
@@ -854,7 +925,26 @@ defineApp({
       }, mainBtn, h('div.rd-row__acts', favBtn, moreBtn));
     }
 
+    function matches(id) {
+      const q = S.q.trim().toLowerCase();
+      if (!q) return true;
+      const st = stationOf(id);
+      if (!st) return false;
+      const a = onAir(id);
+      return `${st.name} ${st.genre} ${st.blurb} ${a ? a.row : ''}`.toLowerCase().includes(q);
+    }
+    const visibleIds = () => shownIds(S.view).filter(matches);
+
     function emptyFor(v) {
+      if (S.q.trim()) {
+        return h('div.empty.rd-empty', icon('search'), h('b', { text: 'No stations match' }),
+          h('small', { text: `Nothing in ${v.name} matches “${S.q.trim()}” — stations are matched on name, genre, description and the song on air.` }),
+          h('button.btn.btn--sm', { type: 'button', dataset: { k: 'empty:clear' }, onclick: () => { S.q = ''; searchIn.value = ''; paintHead(); paintList(); } }, icon('x'), h('span', { text: 'Clear search' })));
+      }
+      if (v.id === 'mine') {
+        return h('div.empty.rd-empty', icon('link'), h('b', { text: 'No streams yet' }),
+          h('small', { text: 'Add the link of an internet radio stream above — it must start with https://.' }));
+      }
       if (v.id === 'favs') {
         return h('div.empty.rd-empty', icon('heart'), h('b', { text: 'No favorites yet' }),
           h('small', { text: 'Tap the heart on any station and it stays here.' }),
@@ -863,6 +953,54 @@ defineApp({
       return h('div.empty.rd-empty', icon('clock'), h('b', { text: 'Nothing played yet' }),
         h('small', { text: 'Stations you play from Radio or Music show up here.' }),
         h('button.btn.btn--sm', { type: 'button', dataset: { k: 'empty:random' }, onclick: () => random() }, icon('shuffle'), h('span', { text: 'Random station' })));
+    }
+
+    /* ---------- Song finds ---------- */
+    function findsList() {
+      const all = finds.list();
+      if (!all.length) {
+        return h('div.empty.rd-empty', icon('star'), h('b', { text: 'No finds yet' }),
+          h('small', { text: 'While a station is playing, press the heart beside the song on air (or H) to keep it here.' }));
+      }
+      return h('div.rd-finds', { role: 'list', 'aria-label': 'Songs you kept' }, all.map(f => {
+        const st = stationOf(f.station);
+        const label = f.artist ? `${f.artist} — ${f.title}` : f.title;
+        return h('div.rd-find', { role: 'listitem', dataset: { id: f.id } },
+          icon('music'),
+          h('div.rd-find__txt', h('b', { text: f.title }),
+            h('small', { text: [f.artist, f.album, st ? `heard on ${st.name}` : '', ago(f.at)].filter(Boolean).join(' · ') })),
+          h('button.ibtn', { type: 'button', title: 'Copy the song name', 'aria-label': `Copy ${label}`, dataset: { role: 'find-copy' }, onclick: () => copyText(f.artist ? `${f.artist} - ${f.title}` : f.title, 'Song name') }, icon('copy')),
+          h('button.ibtn', { type: 'button', title: 'Remove from your finds', 'aria-label': `Remove ${label} from your finds`, dataset: { role: 'find-x' }, onclick: () => finds.remove(f.id) }, icon('x')));
+      }));
+    }
+
+    /* ---------- Your streams: the add form is built once and reused, so typing survives a repaint ---------- */
+    const mineName = h('input', { type: 'text', maxlength: '40', placeholder: 'Name, e.g. My station', 'aria-label': 'Name for the stream', spellcheck: 'false', dataset: { k: 'mine-name' } });
+    const mineUrl = h('input', { type: 'url', placeholder: 'https://example.com/stream.mp3', 'aria-label': 'Stream address', spellcheck: 'false', dataset: { k: 'mine-url' } });
+    const mineErr = h('small.rd-mine__err', { role: 'alert' });
+    const mineAdd = () => {
+      const url = httpsUrl(mineUrl.value);
+      const name = mineName.value.replace(/\s+/g, ' ').trim().slice(0, 40);
+      if (!name) { mineErr.textContent = 'Give the stream a name.'; mineName.focus(); return; }
+      if (!url) { mineErr.textContent = 'That isn’t a web address StaticOS can play — it must start with https:// (browsers block plain http links on a secure page).'; mineUrl.focus(); return; }
+      const cur = data().custom;
+      if (cur.length >= MAX_CUSTOM) { mineErr.textContent = `You can keep ${MAX_CUSTOM} streams. Remove one first.`; return; }
+      if (cur.some(c => c.url === url)) { mineErr.textContent = 'That stream is already in the list.'; return; }
+      const id = `u-${Date.now().toString(36).slice(-6)}${Math.random().toString(36).slice(2, 5)}`.slice(0, 16);
+      save({ custom: [...cur, { id, name, url }] });
+      mineErr.textContent = '';
+      mineName.value = ''; mineUrl.value = '';
+      A.notify({ app: 'Static Radio', icon: 'link', title: 'Stream added', message: `${name} is in Your streams. Press play to listen.`, timeout: 3500 });
+    };
+    const mineForm = h('form.rd-mine', { onsubmit: ev => { ev.preventDefault(); mineAdd(); } },
+      h('div.rd-mine__row', h('label.field', mineName), h('label.field.grow', mineUrl),
+        h('button.btn.btn--sm.btn--primary', { type: 'submit', dataset: { k: 'mine-add' } }, icon('plus'), h('span', { text: 'Add stream' }))),
+      mineErr,
+      h('small.dim', { text: 'Only add streams you’re allowed to listen to. The link plays in your browser straight from its own server; StaticOS doesn’t relay it, and it can’t be sent to friends or used for the wake-up alarm.' }));
+    function removeStream(st) {
+      save({ custom: data().custom.filter(c => c.id !== st.id), favs: data().favs.filter(x => x !== st.id) });
+      if (R.own.st?.id === st.id) stopOwn();
+      A.notify({ app: 'Static Radio', icon: 'trash', title: 'Stream removed', message: st.name, timeout: 3000 });
     }
 
     function foot() {
@@ -878,8 +1016,13 @@ defineApp({
         : 'Couldn’t reach SomaFM for what’s on air. The stations may still play.';
       else if (chFresh()) status = `On air and listener numbers from SomaFM · updated ${ago(CH.at)}`;
       else if (CH.map) status = `What’s on air was last read ${ago(CH.at)} — too long ago to still be right, so the rows leave it out.`;
+      const q = streamQuality();
+      const qSel = h('select.select', { 'aria-label': 'Stream quality', dataset: { k: 'quality' }, onchange: ev => { setQuality(ev.target.value); soon(); } },
+        QUALITIES.map(o => h('option', { value: o.id, selected: o.id === q, text: `${o.label} — ${o.detail}` })));
       return h('footer.rd-foot',
         h('p', { text: 'Live radio from SomaFM, an independent, listener-supported station in San Francisco — not affiliated with StaticOS. It streams over the internet, so it needs a connection, and a locked-down network (school or work Wi-Fi) may block it.' }),
+        h('div.rd-foot__row.rd-foot__q', h('label.rd-foot__lbl', { text: 'Stream quality' }), qSel,
+          h('small.dim', { text: 'The 64 and 32 kbps choices are SomaFM’s own AAC streams for slow connections. It applies the next time a station starts, in Music and here.' })),
         h('div.rd-foot__row',
           CH.busy ? h('span.spinner', { 'aria-hidden': 'true' }) : null,
           h('span.rd-foot__status', { text: status }),
@@ -897,18 +1040,29 @@ defineApp({
           h('span', { text: 'You’re offline. Radio needs the internet — the stations play again once you reconnect.' })));
       }
       list.appendChild(h('p.rd-note', icon('info'), h('span', { text: v.note })));
-      const ids = currentIds();
-      const lead = favLead(S.view);
+      if (data().sort === 'listeners' && !chFresh() && v.id !== 'finds') {
+        list.appendChild(h('p.rd-note', icon('clock'), h('span', { text: 'Sorted A–Z: SomaFM’s listener numbers are too old to sort by.' })));
+      }
+      if (v.id === 'finds') {
+        list.appendChild(findsList());
+        if (finds.list().length) list.appendChild(h('div.rd-finds__foot', h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { role: 'finds-clear' },
+          onclick: async () => { if (await A.confirm({ title: 'Clear your song finds?', ok: 'Clear them', danger: true, message: 'The songs you kept are removed from this device.' })) finds.clear(); } }, icon('trash'), h('span', { text: 'Clear all finds' }))));
+        list.appendChild(foot());
+        return;
+      }
+      if (v.id === 'mine') list.appendChild(mineForm);
+      const ids = visibleIds();
+      const lead = S.q.trim() ? 0 : favLead(S.view);
       if (!ids.length) list.appendChild(emptyFor(v));
       else if (lead) {
         list.appendChild(h('div.rd-group', icon('heart', { fill: true }), h('span.label', { text: `Favorites · ${lead}` }),
           h('span.rd-group__note', { text: 'saved on this device · shown first' })));
-        list.appendChild(h('div.rd-rows', { role: 'list', 'aria-label': `Favorite ${v.name} stations` }, ids.slice(0, lead).map(id => row(BY_ID.get(id)))));
+        list.appendChild(h('div.rd-rows', { role: 'list', 'aria-label': `Favorite ${v.name} stations` }, ids.slice(0, lead).map(id => row(stationOf(id)))));
         if (ids.length > lead) {
           list.appendChild(h('div.rd-group', h('span.label', { text: S.view === 'all' ? 'All stations' : `More ${v.name}` })));
-          list.appendChild(h('div.rd-rows', { role: 'list', 'aria-label': `More ${v.name} stations` }, ids.slice(lead).map(id => row(BY_ID.get(id)))));
+          list.appendChild(h('div.rd-rows', { role: 'list', 'aria-label': `More ${v.name} stations` }, ids.slice(lead).map(id => row(stationOf(id)))));
         }
-      } else list.appendChild(h('div.rd-rows', { role: 'list', 'aria-label': `${v.name} stations` }, ids.map(id => row(BY_ID.get(id)))));
+      } else list.appendChild(h('div.rd-rows', { role: 'list', 'aria-label': `${v.name} stations` }, ids.map(id => row(stationOf(id)))));
       list.appendChild(foot());
     }
 
@@ -935,7 +1089,7 @@ defineApp({
       const fav = isFav(st.id);
       const histId = `${uid}-hist`;
 
-      if (S.hist) npBox.appendChild(history(st, histId));
+      if (S.hist && !st.custom) npBox.appendChild(history(st, histId));
 
       const toggle = h('button.rd-play', {
         type: 'button', dataset: { k: 'np:toggle' }, 'aria-keyshortcuts': 'K',
@@ -945,10 +1099,29 @@ defineApp({
         onclick: () => (np.on ? stopNP() : playStation(st, { win, ctx: R.ctx.length ? R.ctx : currentIds() })),
       }, icon(err ? 'refresh' : np.on ? 'square' : 'play', { fill: !err }));
 
+      const air = st.custom ? null : onAir(st.id);
+      const kept = air ? finds.has(air) : false;
+      const sl = sleepT.state();
+      const extras = [
+        air ? h('button.btn.btn--sm.rd-keep', {
+          type: 'button', class: kept ? 'is-on' : null, 'aria-pressed': kept ? 'true' : 'false', dataset: { k: 'np:heartsong' }, 'aria-keyshortcuts': 'H',
+          'aria-label': kept ? `Remove ${air.title} from your song finds` : `Keep ${air.title} in your song finds`,
+          title: kept ? 'In your song finds — press to remove (H)' : 'Keep the song on air in your song finds (H)',
+          onclick: () => heartSong(),
+        }, icon('heart', kept ? { fill: true } : undefined), h('span', { text: kept ? 'Kept' : 'Keep song' })) : null,
+        air ? h('button.ibtn', { type: 'button', dataset: { k: 'np:copy' }, title: 'Copy the song name', 'aria-label': `Copy the name of ${air.title}`,
+          onclick: () => copyText(air.artist ? `${air.artist} - ${air.title}` : air.title, 'Song name') }, icon('copy')) : null,
+        st.custom ? null : h('button.ibtn', { type: 'button', dataset: { k: 'np:send' }, title: 'Send this station to a friend', 'aria-label': `Send ${st.name} to a friend`,
+          onclick: () => toggleSheet('send', st) }, icon('send')),
+        h('button.ibtn.rd-sleepbtn', { type: 'button', class: sl ? 'is-on' : null, dataset: { k: 'np:sleep' }, 'aria-haspopup': 'menu', 'aria-keyshortcuts': 'S',
+          title: sl ? `Sleep timer — ${sleepText()}` : 'Sleep timer (S)', 'aria-label': sl ? `Sleep timer: ${sleepText()}` : 'Sleep timer', onclick: e => sleepMenu(e) }, icon('moon')),
+      ];
+
       npBox.appendChild(h('div.rd-np__bar',
         h('span.rd-np__art', logo(st, npLogos), np.on && !np.busy ? eq() : null),
         h('div.rd-np__txt',
           h('div.rd-np__title', h('b', { text: st.name }), h(`span.rd-tag.is-${np.phase}`, { text: stateWord(np) })),
+          sl ? h('div.rd-np__sleep', icon('moon'), h('span', { text: `${sleepText()} · only while StaticOS is open` })) : null,
           song
             ? h('div.rd-np__song', { title: song.album ? `${song.text} · ${song.album}` : song.text },
               h('span.rd-np__songt', { text: song.text }),
@@ -966,7 +1139,8 @@ defineApp({
             'aria-label': fav ? `Remove ${st.name} from favorites` : `Add ${st.name} to favorites`, title: fav ? 'Remove from favorites' : 'Add to favorites',
             onclick: () => toggleFav(st.id),
           }, icon('heart', fav ? { fill: true } : undefined)),
-          h('button.ibtn.rd-np__histbtn', {
+          extras,
+          st.custom ? null : h('button.ibtn.rd-np__histbtn', {
             type: 'button', class: S.hist ? 'is-on' : null, dataset: { k: 'np:hist' },
             'aria-expanded': S.hist ? 'true' : 'false', 'aria-controls': S.hist ? histId : null,
             'aria-label': `Songs played earlier on ${st.name}`, title: 'Played earlier',
@@ -992,6 +1166,144 @@ defineApp({
     }
 
     /* ---------------- actions ---------------- */
+    function sleepText() {
+      const sl = sleepT.state();
+      if (!sl) return '';
+      if (sl.afterSong) return 'Stops after the song';
+      const sec = Math.ceil(sl.left / 1000), m = Math.floor(sec / 60);
+      return m >= 1 ? `Stops in ${m} min` : `Stops in ${sec} s`;
+    }
+    function sleepMenu(e) {
+      const r = e.currentTarget?.getBoundingClientRect?.();
+      const sl = sleepT.state();
+      A.menu([
+        { header: true, label: 'Sleep timer' },
+        { label: 'Off', icon: !sl ? 'check' : 'dot', onClick: () => sleepT.clear() },
+        ...sleepT.CHOICES.map(m => ({ label: `${m} minutes`, icon: sl && sl.minutes === m ? 'check' : 'moon', onClick: () => sleepT.set(m) })),
+      ], (r ? r.left : 0), (r ? r.top - 4 : 0));
+    }
+    async function copyText(text, what) {
+      try {
+        await navigator.clipboard.writeText(text);
+        A.notify({ app: 'Static Radio', icon: 'copy', title: `${what} copied`, message: text, timeout: 3000 });
+      } catch (e) {
+        A.notify({ app: 'Static Radio', icon: 'alert', title: 'Couldn’t copy', message: `The clipboard isn’t available here. It reads: ${text}`, timeout: 9000 });
+      }
+    }
+    /** Keep (or let go of) the song on air. */
+    function heartSong() {
+      const np = nowPlaying();
+      if (!np.st || np.st.custom) return;
+      const air = onAir(np.st.id);
+      if (!air) { A.notify({ app: 'Static Radio', icon: 'info', title: 'No song to keep yet', message: 'SomaFM hasn’t said what is on air right now.', timeout: 3500 }); return; }
+      const now = finds.toggle(air, np.st.id);
+      A.notify({ app: 'Static Radio', icon: now ? 'heart' : 'x', title: now ? 'Kept in your song finds' : 'Removed from your song finds',
+        message: `${air.title}${air.artist ? ` — ${air.artist}` : ''}`, timeout: 3000 });
+    }
+    /** "Report not playing": marks a station that had trouble this visit. It is a note on this screen only — nothing is sent to SomaFM. */
+    function reportStation(st) {
+      if (trouble.get(st.id)?.why === 'reported') {
+        trouble.clear(st.id);
+        A.notify({ app: 'Static Radio', icon: 'check', title: 'Mark cleared', message: st.name, timeout: 3000 });
+        return;
+      }
+      trouble.mark(st.id, 'reported');
+      A.notify({ app: 'Static Radio', icon: 'alert', title: `Marked ${st.name} as not playing`, timeout: 6000,
+        message: 'It stays marked until you close StaticOS, so you remember to try another. Nothing was sent to SomaFM.' });
+    }
+
+    /* ---------- panels above the list: wake-up alarm, send to a friend, keys ---------- */
+    function closeSheet() {
+      S.sheet = null; S.sheetStation = null;
+      sheetBox.classList.add('hidden');
+      clear(sheetBox);
+      alarmBtn.setAttribute('aria-expanded', 'false');
+    }
+    function toggleSheet(kind, st) {
+      if (S.sheet === kind && (!st || S.sheetStation === st.id)) { closeSheet(); return; }
+      S.sheet = kind; S.sheetStation = st ? st.id : null;
+      clear(sheetBox);
+      sheetBox.classList.remove('hidden');
+      alarmBtn.setAttribute('aria-expanded', String(kind === 'alarm'));
+      if (kind === 'alarm') buildAlarm();
+      else if (kind === 'send') buildSend(st);
+      else buildKeys();
+    }
+    const sheetHead = (title, ic) => h('div.rd-sheet__head', icon(ic), h('b', { text: title }), h('div.grow'),
+      h('button.ibtn', { type: 'button', 'aria-label': 'Close', dataset: { role: 'sheet-x' }, onclick: closeSheet }, icon('x')));
+
+    const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
+    function buildAlarm() {
+      alarmsCore.init();
+      const favs = data().favs.filter(id => BY_ID.has(id));
+      const cur = nowPlaying().st;
+      const pick = cur && !cur.custom ? cur.id : favs[0] || 'groovesalad';
+      const timeIn = h('input', { type: 'time', value: S.alarmTime || '07:00', 'aria-label': 'Wake-up time', dataset: { k: 'alarm-time' } });
+      const stSel = h('select.select', { 'aria-label': 'Station to wake up to', dataset: { k: 'alarm-station' } },
+        ALL_IDS.map(id => h('option', { value: id, selected: id === pick, text: BY_ID.get(id).name })));
+      const days = new Set(S.alarmDays || []);
+      const dayBtns = DAYS.map(([d, label]) => h('button.rd-day', { type: 'button', class: days.has(d) ? 'is-on' : null, 'aria-pressed': String(days.has(d)), dataset: { day: String(d) },
+        onclick: e => { days.has(d) ? days.delete(d) : days.add(d); S.alarmDays = [...days]; e.currentTarget.classList.toggle('is-on', days.has(d)); e.currentTarget.setAttribute('aria-pressed', String(days.has(d))); } }, label));
+      const err = h('small.rd-mine__err', { role: 'alert' });
+      const set = () => {
+        if (!timeIn.value) { err.textContent = 'Pick a time.'; return; }
+        S.alarmTime = timeIn.value;
+        const st = BY_ID.get(stSel.value);
+        const a = alarmsCore.addAlarm({ time: timeIn.value, label: `Wake up to ${st.name}`, days: [...days], radio: st.id });
+        if (!a) { err.textContent = 'You already have as many alarms as Clock keeps. Remove one in Clock first.'; return; }
+        err.textContent = '';
+        alarmsCore.init();
+        A.notify({ app: 'Static Radio', icon: 'bell', title: 'Wake-up alarm set', message: `${st.name} at ${timeIn.value}${days.size ? '' : ', once'}. It only works while StaticOS is open.`, timeout: 5000 });
+        buildAlarm();
+      };
+      const mine = alarmsCore.alarms().filter(a => a.radio && BY_ID.has(a.radio));
+      clear(sheetBox);
+      sheetBox.append(
+        sheetHead('Wake-up alarm', 'bell'),
+        h('p.rd-sheet__warn', { dataset: { role: 'alarm-warn' } }, icon('info'),
+          h('span', { text: 'This only rings while StaticOS is open in a browser tab. A closed tab, a sleeping computer or a phone with the screen off can’t wake itself, so don’t rely on it to get you up. It plays at your current volume — if StaticOS is muted, you won’t hear it. Clock lists it with your other alarms.' })),
+        h('div.rd-sheet__row', h('label.field', timeIn), h('label.field', stSel), h('div.rd-days', { role: 'group', 'aria-label': 'Repeat on' }, dayBtns),
+          h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { role: 'alarm-set' }, onclick: set }, icon('bell'), h('span', { text: 'Set alarm' }))),
+        h('small.dim', { text: days.size ? 'Repeats on the days chosen.' : 'No days chosen: it rings once, then switches itself off.' }),
+        err,
+        mine.length ? h('ul.rd-alarms', { 'aria-label': 'Your wake-up alarms', dataset: { role: 'alarm-list' } }, mine.map(a => h('li', { dataset: { id: a.id } },
+          h('b', { text: a.time }),
+          h('span', { text: `${BY_ID.get(a.radio).name} · ${alarmsCore.repeatText(a.days)}${a.enabled ? '' : ' · off'}` }),
+          h('div.grow'),
+          h('button.btn.btn--sm', { type: 'button', dataset: { role: 'alarm-toggle' }, 'aria-pressed': String(a.enabled), onclick: () => alarmsCore.updateAlarm(a.id, { enabled: !a.enabled }) }, a.enabled ? 'Turn off' : 'Turn on'),
+          h('button.ibtn', { type: 'button', dataset: { role: 'alarm-x' }, 'aria-label': `Delete the ${a.time} alarm`, onclick: () => alarmsCore.removeAlarm(a.id) }, icon('trash'))))) : null);
+    }
+    function buildSend(st) {
+      const hold = h('div.rd-sheet__list', { dataset: { role: 'friend-hold' } });
+      clear(sheetBox);
+      sheetBox.append(sheetHead(`Send ${st.name} to a friend`, 'send'), hold);
+      const key = S.sheetStation;
+      paintMediaPanel({ api: A }, hold, {
+        label: st.name,
+        note: `This sends the name of the station to your friend, nothing more. They choose whether to listen; it never plays by itself.`,
+        noun: 'it',
+        send: fp => import('../core/friends.js').then(F => F.sendMedia(fp, { kind: 'radio', id: st.id, title: st.name })),
+      }, () => !dead && S.sheet === 'send' && S.sheetStation === key);
+    }
+    function buildKeys() {
+      const rows = [['Space / K', 'Play or stop'], ['↑ / ↓', 'Move between stations'], ['Enter', 'Play the station'], ['R', 'A random station'], ['N / P', 'Next / previous station'],
+        ['F', 'Favorite the station that is playing'], ['H', 'Keep the song on air'], ['S', 'Sleep timer'], ['/', 'Search stations'], ['I or ?', 'This list'], ['Esc', 'Close a panel']];
+      clear(sheetBox);
+      sheetBox.append(sheetHead('Radio keys', 'keyboard'),
+        h('dl.rd-keys', rows.map(([k, d]) => h('div', h('dt', h('kbd', { text: k })), h('dd', { text: d })))));
+    }
+
+    /** Next or previous station within the list the playing one was picked from. */
+    function stepNP(dir) {
+      const np = nowPlaying();
+      if (!np.st) { random(); return; }
+      const ids = R.ctx.length ? R.ctx : currentIds().length ? currentIds() : ALL_IDS;
+      let i = ids.indexOf(np.st.id);
+      if (i < 0) i = dir > 0 ? -1 : 0;
+      const next = stationOf(ids[(i + dir + ids.length) % ids.length]);
+      if (next && next !== np.st) playStation(next, { win, ctx: ids });
+    }
+
     function stopNP() {
       const np = nowPlaying();
       if (np.via === 'own') stopOwn();
@@ -1008,7 +1320,7 @@ defineApp({
       if (pool.length < 2) pool = ALL_IDS;
       const cur = nowPlaying().st?.id;
       const choices = pool.filter(id => id !== cur);
-      const pick = BY_ID.get(choices[Math.floor(Math.random() * choices.length)]);
+      const pick = stationOf(choices[Math.floor(Math.random() * choices.length)]);
       if (pick) playStation(pick, { win, ctx: pool });
     }
     function go(viewId) {
@@ -1038,12 +1350,18 @@ defineApp({
         { label: on ? `Stop ${st.name}` : `Play ${st.name}`, icon: on ? 'square' : 'play', onClick: () => (on ? stopNP() : playStation(st, { win, ctx: currentIds() })) },
         { label: fav ? 'Remove from favorites' : 'Add to favorites', icon: 'heart', onClick: () => toggleFav(st.id) },
         '-',
-        { label: 'Station page on somafm.com', icon: 'external-link', onClick: () => { try { window.open(st.page, '_blank', 'noopener,noreferrer'); } catch (err) { /* popup blocked */ } } },
+        st.custom ? null : { label: 'Send to a friend…', icon: 'send', onClick: () => toggleSheet('send', st) },
+        { label: trouble.get(st.id)?.why === 'reported' ? 'Clear the “not playing” mark' : 'Report not playing', icon: 'alert', onClick: () => reportStation(st) },
+        '-',
+        st.custom ? { label: 'Open the stream address', icon: 'external-link', onClick: () => { try { window.open(st.url, '_blank', 'noopener,noreferrer'); } catch (err) { /* popup blocked */ } } }
+          : { label: 'Station page on somafm.com', icon: 'external-link', onClick: () => { try { window.open(st.page, '_blank', 'noopener,noreferrer'); } catch (err) { /* popup blocked */ } } },
         { label: 'Copy stream address', icon: 'copy', onClick: () => copyStream(st) },
-      ], x, y);
+        st.custom ? '-' : null,
+        st.custom ? { label: 'Remove this stream', icon: 'trash', danger: true, onClick: () => removeStream(st) } : null,
+      ].filter(Boolean), x, y);
     }
     async function copyStream(st) {
-      const url = streamUrl(st);
+      const url = st.custom ? st.url : stationUrl(st, 'ice1', streamQuality());
       try {
         await navigator.clipboard.writeText(url);
         A.notify({ app: 'Static Radio', icon: 'copy', title: 'Stream address copied', message: `${st.name} — paste it into any audio player.`, timeout: 3500 });
@@ -1108,6 +1426,14 @@ defineApp({
     const onChange = () => { armStale(); soon(); };
     subs.add(onChange);
     const offStore = store.sub(STORE_KEY, soon);
+    /* the sleep timer, the song finds, a station that had trouble and Clock's alarms can all change from outside this window */
+    const offs = [
+      bus.on('mediasleep:change', () => soon()),
+      bus.on('radiofinds:change', () => soon()),
+      bus.on('clock:change', () => { if (S.sheet === 'alarm') buildAlarm(); }),
+      bus.on('tick:1s', () => { if (!dead && sleepT.state()) soon(); }),
+      trouble.on(() => soon()),
+    ];
     const onNet = () => { if (online()) loadChannels(true); soon(); };
     window.addEventListener('online', onNet);
     window.addEventListener('offline', onNet);
@@ -1132,17 +1458,31 @@ defineApp({
       if (e.key === 'r' || e.key === 'R') { e.preventDefault(); random(); }
       else if (e.key === 'k' || e.key === 'K') { e.preventDefault(); toggleNP(); }
       else if (e.key === ' ' && !(tag === 'BUTTON' || tag === 'A')) { e.preventDefault(); toggleNP(); }
+      else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); stepNP(1); }
+      else if (e.key === 'p' || e.key === 'P') { e.preventDefault(); stepNP(-1); }
+      else if (e.key === 'f' || e.key === 'F') { const st = nowPlaying().st; if (st) { e.preventDefault(); toggleFav(st.id); } }
+      else if (e.key === 'h' || e.key === 'H') { e.preventDefault(); heartSong(); }
+      else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        const b = npBox.querySelector('.rd-sleepbtn');
+        if (b) sleepMenu({ currentTarget: b });
+        else A.menu([{ label: 'Play a station first', icon: 'moon', disabled: true }], 40, 120);
+      }
+      else if (e.key === '/') { e.preventDefault(); searchIn.focus(); searchIn.select(); }
+      else if (e.key === '?' || e.key === 'i' || e.key === 'I') { e.preventDefault(); toggleSheet('keys'); }
+      else if (e.key === 'Escape' && S.sheet) { e.preventDefault(); closeSheet(); }
     };
     window.addEventListener('keydown', onKey);
 
     function openWith(o) {
       if (!o) return;
       if (o.view && VIEW_BY_ID.has(o.view)) go(o.view);
-      const st = o.station ? BY_ID.get(String(o.station)) : null;
+      const st = o.station ? stationOf(String(o.station)) : null;
       if (st) playStation(st, { win, ctx: currentIds().includes(st.id) ? currentIds() : ALL_IDS });
     }
     win.onReopen(o => openWith(o));
 
+    searchIn.value = '';
     paint();
     let chipRaf = requestAnimationFrame(() => { chipRaf = 0; if (!dead) showChip(); });
     armStale();
@@ -1160,6 +1500,7 @@ defineApp({
       window.removeEventListener('online', onNet);
       window.removeEventListener('offline', onNet);
       window.removeEventListener('keydown', onKey);
+      offs.forEach(fn => { try { fn(); } catch (e) { /* already off */ } });
       document.removeEventListener('visibilitychange', onLook);
       clearInterval(chTimer);
       clearTimeout(staleTimer);

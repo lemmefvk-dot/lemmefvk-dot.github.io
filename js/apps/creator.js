@@ -5,7 +5,12 @@
    One window. The sidebar holds the sections, and every one is
    built only from what this device really has:
 
-     Overview         real counts — projects, published, drafts,
+     Art, Sounds      the person's real files: Paint drawings, Picture Tools
+                    collages, comics and GIFs, and pumpkins saved in
+                    ~/Pictures, plus the sprites and sounds (and jingles)
+                    kept in Asset Lab's library. Each can be played or
+                    opened, or added to a game as an asset.
+   Overview         real counts — projects, published, drafts,
                       versions kept, versions the AI wrote, and how
                       many of your games are in this device's play
                       history — plus quick actions, the games you
@@ -26,6 +31,15 @@
                       projects Static Jam filed under this week in
                       store 'portal.jam' ({ '<year>-W<week>': [id] }).
      Creator profile  a summary, and the way into the Profile app.
+
+   Next steps (Overview) is a checklist read from real data: a game with
+   no thumbnail, one never run on this device (core/plays.js), one not
+   entered in this week's jam. Export every game writes ONE .json file
+   (a game's whole history and assets) and Import games reads it back,
+   here or on another device; games can also be selected to export,
+   delete or collect. Version notes show who wrote each version, you or
+   the AI. The publish sheet can take a thumbnail itself by running the
+   game hidden for a moment, so Studio games get one too.
 
    Nothing is invented. There are no follower counts, views,
    ratings or trends, because StaticOS has no server to count them;
@@ -52,6 +66,9 @@ import * as P from '../core/projects.js';
 import * as Plays from '../core/plays.js';
 import { jamTheme, isoWeek } from '../core/events.js';
 import { appTile } from '../core/appart.js';
+import { kv } from '../core/db.js';
+import { vfs } from '../core/vfs.js';
+import * as media from '../core/media.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-creator-css')) {
   const l = document.createElement('link');
@@ -74,6 +91,8 @@ const SECTIONS = [
   { id: 'published', label: 'Published', icon: 'upload', group: 'Games' },
   { id: 'updates', label: 'Updates', icon: 'tag', group: 'Games' },
   { id: 'assets', label: 'Assets', icon: 'image', group: 'Make' },
+  { id: 'art', label: 'Art', icon: 'palette', group: 'Make' },
+  { id: 'sounds', label: 'Sounds', icon: 'volume', group: 'Make' },
   { id: 'jams', label: 'Game jams', icon: 'flame', group: 'Make' },
   { id: 'profile', label: 'Creator profile', icon: 'user', group: 'You' },
 ];
@@ -91,6 +110,22 @@ const SORTS = [
   { id: 'edited', label: 'Last edited' },
   { id: 'name', label: 'Name (A–Z)' },
 ];
+const ART_KINDS = [
+  { id: 'all', label: 'All' }, { id: 'drawing', label: 'Drawings' }, { id: 'sprite', label: 'Sprites' }, { id: 'collage', label: 'Collages' },
+  { id: 'gif', label: 'GIFs' }, { id: 'comic', label: 'Comics' }, { id: 'pumpkin', label: 'Pumpkins' }, { id: 'picture', label: 'Other' },
+];
+/** What made a picture in ~/Pictures, from the name its app gave it. */
+export function artKind(name) {
+  const n = String(name || '');
+  if (/^Static Paint/i.test(n)) return 'drawing';
+  if (/^Pumpkin/i.test(n)) return 'pumpkin';
+  if (/^Comic\b/i.test(n)) return 'comic';
+  if (/^Collage\b/i.test(n)) return 'collage';
+  if (/\.gif$/i.test(n)) return 'gif';
+  return 'picture';
+}
+/** Export file: every game, whole, in one JSON object that importFull can read back. */
+export const BUNDLE_FORMAT = 'staticos-games';
 const KINDS = [
   { id: 'all', label: 'All' },
   { id: 'image', label: 'Images' },
@@ -98,6 +133,10 @@ const KINDS = [
 ];
 
 /* the apps the quick actions and buttons hand off to */
+const MEDIA_CAP = 300;
+const BUNDLE_MAX = 80 * 1024 * 1024;
+const GAME_CAP = 200;
+const by = u => (u === 'ai' ? 'the AI' : u === 'revert' ? 'a restore' : 'you');
 const APP_NAMES = { forge: 'Static Forge', studio: 'Studio', assetlab: 'Asset Lab', profile: 'Profile', jam: 'Static Jam' };
 
 /* ------------------------------------------------------------------
@@ -188,6 +227,8 @@ defineApp({
     let raf = 0;
     let sheet = null;           /* the open publish sheet: { close } */
     let audio = null;           /* the sound being previewed: { key, el } */
+    let M = null;               /* the person's files: { art:[…], sounds:[…] }, or null while they are read */
+    let mseq = 0, mediaT = 0;
     const timers = new Set();
     const offs = [];
 
@@ -196,10 +237,12 @@ defineApp({
       sec: canon(opts?.section) || canon(saved.sec) || 'overview',
       sort: SORTS.some(s => s.id === saved.sort) ? saved.sort : 'new',
       kind: KINDS.some(k => k.id === saved.kind) ? saved.kind : 'all',
+      art: ART_KINDS.some(k => k.id === saved.art) ? saved.art : 'all',
+      selecting: false, selected: new Set(),
       q: '',
       history: new Set(),       /* published rows showing their whole update history */
     };
-    const remember = () => store.set(KEY, { sec: S.sec, sort: S.sort, kind: S.kind });
+    const remember = () => store.set(KEY, { sec: S.sec, sort: S.sort, kind: S.kind, art: S.art });
 
     /* ---------------- small helpers ---------------- */
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!dead) fn(); }, ms); timers.add(t); return t; };
@@ -252,7 +295,17 @@ defineApp({
     const countEl = h('span.dim.cr-count');
     const tools = h('div.cr-tools');
     const newBtn = btn('plus', 'New game', () => openIn('forge'), '.btn--primary.cr-new', { title: 'Describe a new game in Static Forge', dataset: { fk: 'bar:new' } });
-    const bar = h('div.app__bar.cr-bar', titleEl, countEl, h('div.grow'), tools, newBtn);
+    const fileBtn = h('button.btn.btn--sm.btn--ghost.cr-filebtn', {
+      type: 'button', 'aria-haspopup': 'menu', title: 'Export every game as one file, or bring games in from one',
+      onclick: e => { const r = e.currentTarget.getBoundingClientRect(); fileMenu(r.left, r.bottom + 4); },
+    }, icon('save'), h('span', { text: 'Backup' }));
+    const importIn = h('input', { type: 'file', accept: '.json,application/json', hidden: true, 'aria-hidden': 'true', tabindex: '-1', 'aria-label': 'Games file to import',
+      onchange: async e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) await importFile(f); } });
+    const selBtn = h('button.btn.btn--sm.btn--ghost.cr-selbtn', {
+      type: 'button', 'aria-pressed': 'false', title: 'Pick several games to export, delete or collect',
+      onclick: () => { S.selecting = !S.selecting; S.selected.clear(); paintBar(); paintContent(); },
+    }, icon('check-circle'), h('span', { text: 'Select' }));
+    const bar = h('div.app__bar.cr-bar', titleEl, countEl, h('div.grow'), tools, newBtn, importIn);
     const content = h('div.app__content.cr-content', { tabindex: '-1' });
     const app = h('div.app.cr', side, h('div.app__main.cr-main', bar, content), live);
     root.appendChild(h('div.cr-wrap', app));
@@ -303,8 +356,8 @@ defineApp({
       const s = SECTIONS.find(x => x.id === S.sec);
       titleEl.textContent = s.label;
       clear(tools);
-      if (LISTS.includes(S.sec) || S.sec === 'assets') {
-        search.placeholder = S.sec === 'assets' ? 'Search assets' : 'Search games';
+      if (LISTS.includes(S.sec) || S.sec === 'assets' || S.sec === 'art' || S.sec === 'sounds') {
+        search.placeholder = S.sec === 'assets' ? 'Search assets' : S.sec === 'art' ? 'Search art' : S.sec === 'sounds' ? 'Search sounds' : 'Search games';
         search.setAttribute('aria-label', search.placeholder);
         tools.appendChild(searchField);
       }
@@ -312,7 +365,11 @@ defineApp({
         sortLabel.textContent = SORTS.find(x => x.id === S.sort).label;
         sortBtn.setAttribute('aria-label', `Sort: ${sortLabel.textContent}`);
         tools.appendChild(sortBtn);
+        selBtn.setAttribute('aria-pressed', String(S.selecting));
+        selBtn.classList.toggle('is-on', S.selecting);
+        tools.appendChild(selBtn);
       }
+      if (LISTS.includes(S.sec) || S.sec === 'overview') tools.appendChild(fileBtn);
       newBtn.hidden = S.sec === 'overview';
     }
 
@@ -321,7 +378,7 @@ defineApp({
         const on = id === S.sec;
         b.classList.toggle('is-on', on);
         if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
-        const n = st ? { games: st.projects, drafts: st.drafts, published: st.published, updates: st.updates, assets: st.assets }[id] : 0;
+        const n = st ? { games: st.projects, drafts: st.drafts, published: st.published, updates: st.updates, assets: st.assets, art: M ? M.art.length : 0, sounds: M ? M.sounds.length : 0 }[id] : 0;
         count.textContent = n ? String(n) : '';
       }
     }
@@ -329,7 +386,7 @@ defineApp({
     function go(sec) {
       const c = canon(sec);
       if (!c || dead) return;
-      if (c !== S.sec) { S.q = ''; search.value = ''; }
+      if (c !== S.sec) { S.q = ''; search.value = ''; S.selecting = false; S.selected.clear(); }
       S.sec = c;
       remember();
       paintBar();
@@ -436,6 +493,7 @@ defineApp({
         { label: 'Make assets in Asset Lab', icon: 'image', disabled: !has('assetlab'), onClick: () => openIn('assetlab', { project: p.id }) },
         '-',
         { label: p.published ? 'Publish an update…' : 'Publish…', icon: 'upload', onClick: () => publishSheet(p.id) },
+        { label: 'Versions and notes…', icon: 'clock', onClick: () => versionsSheet(p.id) },
         p.published ? { label: 'Unpublish…', icon: 'x-circle', onClick: () => unpublish(p.id) } : null,
         { label: 'Export .html in Forge', icon: 'download', disabled: !has('forge'), onClick: () => exportIn(p) },
         '-',
@@ -480,12 +538,38 @@ defineApp({
         }, icon('more-horizontal')));
     }
 
+    /* the tick box a row gets while Select is on */
+    function pickBox(p) {
+      if (!S.selecting) return null;
+      return h('label.cr-pick', h('input', {
+        type: 'checkbox', checked: S.selected.has(p.id), 'aria-label': `Select ${short(title(p))}`, dataset: { pid: p.id },
+        onchange: e => { if (e.target.checked) S.selected.add(p.id); else S.selected.delete(p.id); paintSelBar(); },
+      }));
+    }
+    const selBar = h('div.cr-selbar', { role: 'toolbar', 'aria-label': 'Selected games' });
+    function paintSelBar() {
+      clear(selBar);
+      const n = S.selected.size;
+      selBar.hidden = !S.selecting;
+      if (!S.selecting) return;
+      selBar.append(
+        h('b.cr-selbar__n', { text: n ? `${n} selected` : 'Pick games with the boxes' }),
+        h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: () => { const vis = visibleIds(); if (vis.every(id => S.selected.has(id))) S.selected.clear(); else vis.forEach(id => S.selected.add(id)); paintContent(); } }, h('span', { text: 'All shown' })),
+        h('div.grow'),
+        btn('download', 'Export', () => exportSelected(), '', { disabled: !n, dataset: { act: 'sel-export' } }),
+        btn('bookmark', 'Collect…', e => collectSelected(e.currentTarget), '', { disabled: !n, dataset: { act: 'sel-collect' } }),
+        btn('trash', 'Delete', () => deleteSelected(), '.btn--ghost', { disabled: !n, dataset: { act: 'sel-delete' } }),
+        btn('x', 'Done', () => { S.selecting = false; S.selected.clear(); paintBar(); paintContent(); }, '.btn--ghost'));
+    }
+    const visibleIds = () => [...content.querySelectorAll('.cr-row[data-pid]')].map(el => el.dataset.pid);
+
     function gameRow(p, st) {
       const t = title(p);
       const played = st.playedMap.get(p.id);
       const meta = [`v${verN(p)}`, plural(p.versions.length, 'version'), sourceLabel(p), p.updatedAt ? `edited ${ago(p.updatedAt)}` : null,
         played ? `played ${ago(played.at)}` : null].filter(Boolean).join(' · ');
       return h('li.cr-row', { dataset: { pid: p.id }, oncontextmenu: e => { e.preventDefault(); rowMenu(p, e.clientX, e.clientY); } },
+        pickBox(p),
         h('button.cr-row__art', { type: 'button', tabindex: '-1', 'aria-hidden': 'true', onclick: () => openIn('forge', { project: p.id }) }, thumbEl(p)),
         h('div.cr-row__main',
           h('div.cr-row__top',
@@ -505,6 +589,7 @@ defineApp({
       const played = st.playedMap.get(p.id);
       const cat = String(pub.category || 'other');
       return h('li.cr-row.cr-row--pub', { dataset: { pid: p.id }, oncontextmenu: e => { e.preventDefault(); rowMenu(p, e.clientX, e.clientY); } },
+        pickBox(p),
         h('button.cr-row__art', { type: 'button', tabindex: '-1', 'aria-hidden': 'true', onclick: () => openIn('forge', { project: p.id }) }, thumbEl(p)),
         h('div.cr-row__main',
           h('div.cr-row__top',
@@ -520,7 +605,7 @@ defineApp({
           ups.length ? h('ol.cr-hist', { 'aria-label': `Update history of ${short(t)}` },
             shown.map(u => h('li',
               h('b', { text: `v${(Number(u.version) || 0) + 1}` }),
-              h('span.cr-hist__n', { text: String(u.note || 'Updated').slice(0, 140) }),
+              h('span.cr-hist__n', { text: `${String(u.note || 'Updated').slice(0, 140)}${p.versions[u.version] ? ` · version by ${by(p.versions[u.version].by)}` : ''}` }),
               h('time', { dateTime: iso(u.at), text: whenFull(u.at) })))) : null,
           ups.length > 3 ? h('button.cr-link.cr-hist__more', {
             type: 'button', dataset: { fk: `hist:${p.id}` }, 'aria-expanded': String(all),
@@ -638,7 +723,34 @@ defineApp({
           h('p.cr-note', { text: 'Counts appear here once you have a game. They are this device’s only — StaticOS has no server, so there are no views, followers or ratings to show.' }),
         ];
       }
-      return [quickActions(), kpis(st), h('div.cr-cols', recentCard(), jamCard())];
+      return [quickActions(), kpis(st), nextSteps(st), h('div.cr-cols', recentCard(), jamCard())];
+    }
+
+    /* ---- next steps: a checklist per game, read from real data ---- */
+    function nextSteps(st) {
+      const inJam = jamEntryIds(store.get('portal.jam', null));
+      const games = [...list].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      const rows = games.map(p => ({
+        p,
+        items: [
+          { id: 'thumb', done: !!thumbOf(p), text: 'Has a thumbnail', todo: 'No thumbnail yet', act: 'Take one', run: () => takeThumb(p) },
+          { id: 'tested', done: st.playedMap.has(p.id), text: 'Has been run on this device', todo: 'Never run on this device', act: 'Play it', run: () => openIn('forge', { project: p.id }) },
+          { id: 'jam', done: inJam.has(p.id), text: 'Entered in this week’s jam', todo: 'Not in this week’s jam', act: 'Open Jam', run: () => openIn('jam', { project: p.id }) },
+        ],
+      }));
+      const open = rows.filter(r => r.items.some(i => !i.done));
+      const shown = open.slice(0, 3);
+      return h('section.cr-sec.cr-next', { 'aria-labelledby': `${U}-next` },
+        h('div.cr-sec__head', h('h3.cr-h', { id: `${U}-next`, text: 'Next steps' }),
+          open.length > shown.length ? h('span.cr-fine', { text: `${open.length - shown.length} more game${open.length - shown.length === 1 ? '' : 's'} have steps left` }) : null),
+        shown.length ? h('ul.cr-nextlist', shown.map(r => h('li.cr-nextgame', { dataset: { pid: r.p.id } },
+          h('b.cr-nextgame__t', { text: title(r.p) }),
+          h('ul.cr-checks', r.items.map(i => h(`li.cr-check${i.done ? '.is-done' : ''}`, { dataset: { check: i.id, done: i.done ? '1' : '0' } },
+            icon(i.done ? 'check-circle' : 'circle'),
+            h('span', { text: i.done ? i.text : i.todo }),
+            i.done ? null : btn(null, i.act, i.run, '.btn--ghost', { dataset: { fk: `next:${r.p.id}:${i.id}` } })))))))
+          : h('div.cr-soft', icon('check-circle'), h('span', { text: 'Every game has a thumbnail, has been run here and is in this week’s jam.' })),
+        h('p.cr-note', { text: 'Read from this device: thumbnails Forge or this app took, games you have run here, and your jam entries.' }));
     }
 
     function viewList(kind, st) {
@@ -659,7 +771,7 @@ defineApp({
           btn('edit-3', 'See drafts', () => go('drafts'), '.btn--primary'));
       }
       if (!ps.length) return empty('search', 'No matches', `Nothing in ${label} matches “${S.q}”.`);
-      return h('ul.cr-list', { 'aria-label': label }, ps.map(p => (kind === 'published' ? pubRow(p, st) : gameRow(p, st))));
+      return [h('ul.cr-list', { 'aria-label': label }, ps.map(p => (kind === 'published' ? pubRow(p, st) : gameRow(p, st))))];
     }
 
     function viewUpdates() {
@@ -767,6 +879,289 @@ defineApp({
           { disabled: !has('assetlab'), dataset: { fk: `al:${key}` }, title: aud ? `Open Asset Lab for “${short(title(p))}”` : `Edit ${short(name)} in Asset Lab` }));
     }
 
+    /* ---- art and sounds: the person's own files ---- */
+    const ALIB = kv('assets');
+    const dataUrlOf = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(r.error || new Error('read failed')); r.readAsDataURL(blob); });
+    async function loadMedia() {
+      const seq = ++mseq;
+      const art = [];
+      try {
+        vfs.walk(`${vfs.HOME}/Pictures`, (n, path) => {
+          if (n.type !== 'file' || n.seed || n.name.startsWith('.') || !/\.(png|jpe?g|gif|webp)$/i.test(n.name)) return;
+          art.push({ src: 'file', key: `f:${path}`, path, name: n.name, size: Number(n.size) || 0, at: Date.parse(n.mtime) || 0, kind: artKind(n.name) });
+        });
+      } catch (err) { /* no Pictures folder */ }
+      const sounds = [];
+      try {
+        const all = await ALIB.all();
+        for (const v of all) {
+          if (!v || v.app !== 'assetlab' || typeof v.id !== 'string') continue;
+          if (v.kind === 'sprite' && safeImg(v.png)) art.push({ src: 'lab', key: `s:${v.id}`, id: v.id, name: String(v.name || 'sprite').slice(0, 80), png: v.png, at: v.updatedAt || 0, kind: 'sprite',
+            meta: `${v.sprite?.w || '?'}×${v.sprite?.h || '?'}${v.sprite?.frames?.length > 1 ? ` · ${v.sprite.frames.length} frames` : ''}` });
+          else if (v.kind === 'sound' && safeAudio(v.wav)) sounds.push({ key: `a:${v.id}`, id: v.id, name: String(v.name || 'sound').slice(0, 80), wav: v.wav, at: v.updatedAt || 0, dur: Number(v.dur) || 0, jingle: !!v.jingle });
+        }
+      } catch (err) { /* the library is unavailable */ }
+      if (dead || seq !== mseq) return;
+      art.sort((a, b) => b.at - a.at);
+      sounds.sort((a, b) => b.at - a.at);
+      M = { art: art.slice(0, MEDIA_CAP), sounds: sounds.slice(0, MEDIA_CAP), artTotal: art.length };
+      if (S.sec === 'art' || S.sec === 'sounds') paintContent(); else paintSide(list ? stats(list) : null);
+    }
+    const loadMediaSoon = () => { clearTimeout(mediaT); mediaT = setTimeout(() => { mediaT = 0; if (!dead) loadMedia(); }, 250); };
+
+    /* put a file's picture or sound into a game as an asset (never replaces one) */
+    async function addToGame(item, p, kind) {
+      try {
+        let dataUrl, name = item.name;
+        if (item.src === 'file') {
+          const blob = await media.blobOf(item.path);
+          if (!blob) throw new Error('the file has no picture in it');
+          if (blob.size > 3 * 1024 * 1024) throw new Error('it is over 3 MB, too big for a game asset');
+          dataUrl = await dataUrlOf(blob);
+        } else dataUrl = kind === 'audio' ? item.wav : item.png;
+        if (kind === 'audio' && !/\.wav$/i.test(name)) name += '.wav';
+        if (kind !== 'audio' && item.src === 'lab' && !/\.png$/i.test(name)) name += '.png';
+        const taken = new Set(((await P.get(p.id))?.assets || []).map(a => String(a.name).toLowerCase()));
+        let final = name, i = 2;
+        while (taken.has(final.toLowerCase())) final = name.replace(/(\.[^.]*)?$/, m => `-${i++}${m || ''}`);
+        const a = await P.addAsset(p.id, { name: final, kind, dataUrl });
+        if (!a) throw new Error('that game is gone');
+        note({ icon: 'check-circle', title: `Added ${final} to “${short(title(p))}”`, message: 'It is in the game’s assets, ready to use in Studio.' });
+      } catch (err) { note({ icon: 'alert', title: 'Couldn’t add it', message: String(err?.message || err) }); }
+    }
+    function addMenu(item, kind, anchor) {
+      if (!list?.length) { note({ icon: 'info', title: 'No games yet', message: 'Make a game first, then add art or sounds to it.' }); return; }
+      const r = anchor.getBoundingClientRect();
+      const ps = [...list].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 12);
+      api.menu([{ header: true, label: 'Add to which game?' }, ...ps.map(p => ({ label: title(p), icon: 'gamepad', onClick: () => addToGame(item, p, kind) }))], r.left, r.bottom + 4);
+    }
+    function artTile(it) {
+      const prev = h('div.cr-asset__prev');
+      if (it.src === 'lab') prev.append(h('img.is-px', { src: it.png, alt: '', draggable: 'false' }));
+      else {
+        prev.append(icon('image'));
+        media.urlOf(it.path).then(u => { if (!dead && u && prev.isConnected) { prev.replaceChildren(h('img', { src: u, alt: '', decoding: 'async', draggable: 'false' })); } }).catch(() => {});
+      }
+      const kindLabel = ART_KINDS.find(k => k.id === it.kind)?.label.replace(/s$/, '') || 'Picture';
+      return h('li.cr-asset', { dataset: { art: it.key, kind: it.kind } },
+        prev,
+        h('div.cr-asset__meta',
+          h('b', { text: it.name, title: it.name }),
+          h('small', h('span', { text: [kindLabel, it.src === 'lab' ? it.meta : it.size ? fmt.fmtBytes(it.size) : null].filter(Boolean).join(' · ') })),
+          h('small', h('span', { text: it.src === 'lab' ? 'In the Asset Lab library' : 'In Pictures' }))),
+        h('div.cr-acts',
+          it.src === 'lab' ? btn('external-link', 'Asset Lab', () => openIn('assetlab', { tab: 'library' }), '.btn--ghost', { disabled: !has('assetlab') })
+            : btn('image', 'Open', () => api.openFile(it.path), '.btn--ghost'),
+          btn('plus', 'Add to a game', e => addMenu(it, 'image', e.currentTarget), '', { dataset: { fk: `addart:${it.key}` } })));
+    }
+    function viewArt() {
+      if (!M) return h('div.cr-loading', h('div.spinner'), h('span', { text: 'Reading your pictures…' }));
+      const all = M.art;
+      const count = id => (id === 'all' ? all.length : all.filter(x => x.kind === id).length);
+      countEl.textContent = plural(all.length, 'picture');
+      if (!all.length) {
+        return empty('image', 'No art yet', 'Drawings saved from Static Paint, collages, comics and GIFs from Picture Tools, pumpkins, and sprites saved in Asset Lab show up here.',
+          btn('image', 'Open Asset Lab', () => openIn('assetlab'), '.btn--primary', { disabled: !has('assetlab') }),
+          btn('edit-3', 'Open Paint', () => openIn('paint'), '', { disabled: !has('paint') }));
+      }
+      let shown = S.art === 'all' ? all : all.filter(x => x.kind === S.art);
+      if (S.q) shown = shown.filter(x => x.name.toLowerCase().includes(S.q));
+      const seg = h('div.cr-seg', { role: 'group', 'aria-label': 'Kind of art' }, ART_KINDS.filter(k => k.id === 'all' || count(k.id)).map(k => h(`button.cr-seg__b${S.art === k.id ? '.is-on' : ''}`, {
+        type: 'button', 'aria-pressed': String(S.art === k.id), dataset: { fk: `art:${k.id}` },
+        onclick: () => { S.art = k.id; remember(); paintContent(true); },
+      }, h('span', { text: k.label }), h('small', { text: String(count(k.id)) }))));
+      return [seg, shown.length ? h('ul.cr-assets', shown.map(artTile)) : empty('search', 'No matches', S.q ? `No picture matches “${S.q}”.` : 'Nothing of that kind yet.'),
+        h('p.cr-note', { text: 'These are your own files: pictures in your Pictures folder and sprites in Asset Lab’s library. The sample pictures that come with StaticOS are left out.' })];
+    }
+    function soundTile(it) {
+      const on = audio?.key === it.key;
+      return h('li.cr-asset', { dataset: { snd: it.key } },
+        h('div.cr-asset__prev.cr-asset__prev--aud',
+          h('button.cr-play', { type: 'button', dataset: { fk: `aud:${it.key}`, name: it.name }, 'aria-pressed': String(on), 'aria-label': `${on ? 'Stop' : 'Play'} ${it.name}`, onclick: e => toggleAudio(it.key, it.wav, e.currentTarget) }, icon(on ? 'pause' : 'play'))),
+        h('div.cr-asset__meta',
+          h('b', { text: it.name, title: it.name }),
+          h('small', h('span', { text: [it.jingle ? 'Jingle' : 'Sound', it.dur ? `${it.dur.toFixed(2)} s` : null, fmt.fmtBytes(approxBytes(it.wav))].filter(Boolean).join(' · ') })),
+          h('small', h('span', { text: 'In the Asset Lab library' }))),
+        h('div.cr-acts',
+          btn('external-link', 'Asset Lab', () => openIn('assetlab', { tab: 'library' }), '.btn--ghost', { disabled: !has('assetlab') }),
+          btn('plus', 'Add to a game', e => addMenu(it, 'audio', e.currentTarget), '', { dataset: { fk: `addsnd:${it.key}` } })));
+    }
+    function viewSounds() {
+      if (!M) return h('div.cr-loading', h('div.spinner'), h('span', { text: 'Reading your sounds…' }));
+      countEl.textContent = plural(M.sounds.length, 'sound');
+      if (!M.sounds.length) {
+        return empty('volume', 'No sounds yet', 'Sound effects and jingles you save in Asset Lab show up here, ready to play or add to a game.',
+          btn('volume', 'Open Asset Lab', () => openIn('assetlab', { tab: 'sound' }), '.btn--primary', { disabled: !has('assetlab') }));
+      }
+      const shown = S.q ? M.sounds.filter(x => x.name.toLowerCase().includes(S.q)) : M.sounds;
+      return [shown.length ? h('ul.cr-assets', shown.map(soundTile)) : empty('search', 'No matches', `No sound matches “${S.q}”.`)];
+    }
+
+    /* ---- export and import: every game in one file ---- */
+    const stampDay = () => new Date().toISOString().slice(0, 10);
+    function bundleOf(ps) {
+      const thumbs = getMap('portal.forge.thumbs'), info = getMap('portal.forge.info');
+      return {
+        format: BUNDLE_FORMAT, v: 1, at: Date.now(), from: 'Static Creator',
+        games: ps.map(p => ({
+          id: p.id, name: p.name, prompt: p.prompt || '', createdAt: p.createdAt, updatedAt: p.updatedAt, source: p.source, creator: p.creator || null,
+          versions: p.versions.map(v => ({ html: v.html, note: v.note, at: v.at, by: v.by })), head: p.head,
+          assets: (p.assets || []).map(a => ({ name: a.name, kind: a.kind, dataUrl: a.dataUrl, ...(a.sheet ? { sheet: a.sheet } : {}) })),
+          thumb: safeImg(thumbs[p.id]) || null, info: info[p.id] && typeof info[p.id] === 'object' ? info[p.id] : null,
+        })),
+      };
+    }
+    function saveJson(obj, name) {
+      const blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = h('a', { href: url, download: name });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      later(() => URL.revokeObjectURL(url), 8000);
+      return blob.size;
+    }
+    function exportGames(ps, label) {
+      if (!ps.length) { note({ icon: 'info', title: 'No games to export yet' }); return; }
+      const name = `staticos-games-${stampDay()}.json`;
+      const size = saveJson(bundleOf(ps), name);
+      note({ icon: 'download', title: `Saved ${name}`, message: `${label} (${fmt.fmtBytes(size)}). Open Static Creator on another device and choose Backup › Import games to bring them in.` });
+      announce(`Exported ${plural(ps.length, 'game')}.`);
+    }
+    function fileMenu(x, y) {
+      if (dead) return;
+      api.menu([
+        { header: true, label: 'Your games, in one file' },
+        { label: `Export every game${list?.length ? ` (${list.length})` : ''}`, icon: 'download', disabled: !list?.length, onClick: () => exportGames(list, plural(list.length, 'game')) },
+        { label: 'Import games from a file…', icon: 'upload', onClick: () => importIn.click() },
+      ], x, y);
+    }
+    async function importFile(file) {
+      try {
+        if (file.size > BUNDLE_MAX) throw new Error(`that file is ${fmt.fmtBytes(file.size)}; the most Creator reads is ${fmt.fmtBytes(BUNDLE_MAX)}`);
+        let raw;
+        try { raw = JSON.parse(await file.text()); } catch (err) { throw new Error('it is not a games file (the JSON can’t be read)'); }
+        if (!raw || raw.format !== BUNDLE_FORMAT || !Array.isArray(raw.games)) throw new Error('it is not a StaticOS games file');
+        const sum = { added: 0, same: 0, copy: 0, skipped: 0 };
+        const thumbs = { ...getMap('portal.forge.thumbs') }, info = { ...getMap('portal.forge.info') };
+        for (const g of raw.games.slice(0, GAME_CAP)) {
+          const r = await P.importFull(g).catch(() => null);
+          if (!r) { sum.skipped++; continue; }
+          sum[r.status]++;
+          if (r.status !== 'same') {
+            if (safeImg(g.thumb)) thumbs[r.project.id] = g.thumb;
+            if (g.info && typeof g.info === 'object' && !Array.isArray(g.info)) info[r.project.id] = { controls: String(g.info.controls || '').slice(0, 300), genre: String(g.info.genre || '').slice(0, 24) };
+          }
+        }
+        store.set('portal.forge.thumbs', thumbs);
+        store.set('portal.forge.info', info);
+        const bits = [sum.added && `${plural(sum.added, 'game')} added`, sum.copy && `${plural(sum.copy, 'copy', 'copies')} made of games with the same id`, sum.same && `${sum.same} already here`, sum.skipped && `${sum.skipped} skipped`].filter(Boolean);
+        note({ icon: sum.added || sum.copy ? 'check-circle' : 'info', title: bits.length ? 'Games imported' : 'Nothing to import', message: `${bits.join(', ') || 'The file had no games.'}.${raw.games.length > GAME_CAP ? ` Only the first ${GAME_CAP} were read.` : ''}` });
+        reload();
+      } catch (err) { note({ icon: 'alert', title: `“${short(file.name, 40)}” wasn’t imported`, message: `${String(err?.message || err)}.` }); }
+    }
+    const pickedGames = () => (list || []).filter(p => S.selected.has(p.id));
+    function exportSelected() { const ps = pickedGames(); exportGames(ps, plural(ps.length, 'selected game')); }
+    async function deleteSelected() {
+      const ps = pickedGames();
+      if (!ps.length) return;
+      const ok = await api.confirm({ title: `Delete ${plural(ps.length, 'game')}?`, message: `${ps.map(p => `“${short(title(p), 30)}”`).slice(0, 3).join(', ')}${ps.length > 3 ? ` and ${ps.length - 3} more` : ''} and all their versions and assets are removed from this device. This cannot be undone. Export them first if you may want them back.`, ok: 'Delete', danger: true });
+      if (!ok || dead) return;
+      for (const p of ps) { await P.remove(p.id).catch(() => {}); setPub(p.id, null); }
+      S.selected.clear();
+      announce(`Deleted ${plural(ps.length, 'game')}.`);
+      note({ icon: 'trash', title: `Deleted ${plural(ps.length, 'game')}` });
+      reload();
+    }
+    async function collectSelected(anchor) {
+      const ps = pickedGames();
+      if (!ps.length) return;
+      let C;
+      try { C = await import('../core/collections.js'); } catch (err) { note({ icon: 'alert', title: 'Collections aren’t available' }); return; }
+      if (dead) return;
+      const r = anchor.getBoundingClientRect();
+      const put = colId => {
+        let n = 0;
+        for (const p of ps) if (C.add(colId, { kind: 'creation', id: p.id, title: title(p), art: null })) n++;
+        note({ icon: 'bookmark', title: `Collected ${plural(n, 'game')}`, message: n < ps.length ? `${ps.length - n} were already in it.` : 'They are in the collection now.' });
+      };
+      api.menu([{ header: true, label: 'Collect into…' },
+        ...C.list().map(c => ({ label: c.name, icon: c.icon || 'bookmark', onClick: () => put(c.id) })),
+        '-',
+        { label: 'New collection…', icon: 'plus', onClick: async () => { const nm = await C.askName(api, {}); if (!nm || dead) return; const c = C.create(nm); if (c) put(c.id); } },
+      ], r.left, r.bottom + 4);
+    }
+
+    /* ---- one game's versions: the note each carries, and who wrote it ---- */
+    async function versionsSheet(pid) {
+      if (dead) return;
+      const p = await P.get(pid).catch(() => null);
+      if (dead) return;
+      if (!p || !Array.isArray(p.versions) || !p.versions.length) { note({ icon: 'alert', title: 'That game is gone' }); return; }
+      const rows = p.versions.map((v, i) => ({ v, i })).reverse();
+      const aiN = p.versions.filter(v => v.by === 'ai').length;
+      const card = h('div.cr-sheet__card', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': `${U}-vh` },
+        h('div.cr-sheet__head',
+          h('h2.cr-sheet__title', { id: `${U}-vh`, text: `Versions of “${short(title(p))}”` }),
+          h('div.grow'),
+          h('button.ibtn', { type: 'button', 'aria-label': 'Close', title: 'Close', onclick: () => closeSheet() }, icon('x'))),
+        h('p.cr-sheet__sub', { text: `${plural(p.versions.length, 'version')}: ${aiN} written by the AI, ${p.versions.length - aiN} by you or a restore. The note is what was saved with each one.` }),
+        h('ol.cr-vers', rows.map(({ v, i }) => h(`li.cr-ver${i === p.head ? '.is-head' : ''}`, { dataset: { v: String(i + 1), by: String(v.by || 'you') } },
+          h('b', { text: `v${i + 1}` }),
+          h('div.cr-ver__t', h('span', { text: String(v.note || 'No note').slice(0, 200) }), h('small', { text: `by ${by(v.by)} · ${whenFull(v.at)}${i === p.head ? ' · current' : ''}${p.published && p.published.version === i ? ' · published' : ''}` }))))),
+        h('div.cr-sheet__foot', h('button.btn.btn--ghost', { type: 'button', text: 'Close', onclick: () => closeSheet() }),
+          h('button.btn.btn--primary', { type: 'button', disabled: !has('forge'), onclick: () => { closeSheet(); openIn('forge', { project: p.id }); } }, icon('sparkles'), h('span', { text: 'Open in Forge' }))));
+      openSheet(card);
+    }
+
+    /* ---- a thumbnail, taken by running the game hidden for a moment ---- */
+    const thumbBusy = new Set();
+    async function snapGame(p) {
+      const html = P.current(p);
+      if (!html) return '';
+      const host = h('div', { 'aria-hidden': 'true', style: { position: 'fixed', left: '-10000px', top: '0', width: '640px', height: '360px', overflow: 'hidden', pointerEvents: 'none' } });
+      document.body.append(host);
+      let runner = null;
+      try {
+        const Sandbox = await import('../core/sandbox.js');
+        runner = Sandbox.run(host, html, { title: 'thumbnail' });
+        await new Promise(r => setTimeout(r, 1700));
+        if (dead) return '';
+        const url = await runner.snapshot(2500);
+        if (!url) return '';
+        return await new Promise(res => {
+          const img = new Image();
+          img.onload = () => {
+            try { const c = document.createElement('canvas'); c.width = 224; c.height = 126; const g = c.getContext('2d'); g.drawImage(img, 0, 0, 224, 126); res(c.toDataURL('image/jpeg', 0.8)); } catch (err) { res(''); }
+          };
+          img.onerror = () => res('');
+          img.src = url;
+        });
+      } finally { try { runner?.stop(); } catch (err) { /* gone */ } host.remove(); }
+    }
+    function keepThumb(pid, url) {
+      const m = { ...getMap('portal.forge.thumbs') };
+      delete m[pid];
+      m[pid] = url;
+      const keys = Object.keys(m);
+      for (const k of keys.slice(0, Math.max(0, keys.length - 60))) delete m[k];
+      store.set('portal.forge.thumbs', m);
+    }
+    /** For the Next steps button: take it and keep it. */
+    async function takeThumb(p) {
+      if (thumbBusy.has(p.id)) return;
+      thumbBusy.add(p.id);
+      note({ icon: 'image', title: `Taking a thumbnail of “${short(title(p), 30)}”`, message: 'Running the game for a moment…', timeout: 2500 });
+      try {
+        const url = await snapGame(p);
+        if (dead) return;
+        if (!url) { note({ icon: 'alert', title: 'No picture could be taken', message: 'The game has no canvas, or had not drawn anything after a moment.' }); return; }
+        keepThumb(p.id, url);
+        note({ icon: 'check-circle', title: 'Thumbnail saved', message: `“${short(title(p), 40)}” has one now.` });
+      } catch (err) { note({ icon: 'alert', title: 'No picture could be taken', message: String(err?.message || err) }); }
+      finally { thumbBusy.delete(p.id); }
+    }
+
     function viewAssets() {
       const all = [];
       for (const p of list) for (const a of (Array.isArray(p.assets) ? p.assets : [])) if (a && typeof a.id === 'string') all.push({ p, a });
@@ -860,6 +1255,8 @@ defineApp({
       updates: viewUpdates,
       assets: viewAssets,
       jams: viewJams,
+      art: viewArt,
+      sounds: viewSounds,
       profile: viewProfile,
     };
 
@@ -889,6 +1286,8 @@ defineApp({
         return;
       }
       const out = VIEWS[S.sec](st);
+      paintSelBar();
+      if (S.selecting && LISTS.includes(S.sec)) content.appendChild(selBar);
       for (const n of [out].flat()) if (n) content.appendChild(n);
       content.scrollTop = keep;
       if (fk) {
@@ -952,7 +1351,25 @@ defineApp({
       const cat = h('select.select.cr-in', { id: fid('k') }, CATEGORIES.map(c => h('option', { value: c, text: c.charAt(0).toUpperCase() + c.slice(1) })));
       cat.value = CATEGORIES.includes(pub?.category) ? pub.category : CATEGORIES.includes(info.genre) ? info.genre : 'arcade';
       const nIn = pub ? h('input.cr-in', { id: fid('n'), type: 'text', maxlength: '140', autocomplete: 'off', placeholder: 'What changed in this update?' }) : null;
-      const thumb = pubThumbOf(p);
+      let thumb = pubThumbOf(p);
+      const thumbBox = h('div.cr-pthumb');
+      const thumbNote = h('span.cr-f__h');
+      const paintThumb = () => { clear(thumbBox); thumbBox.append(thumb ? h('img', { src: thumb, alt: 'Thumbnail' }) : h('span', { text: 'No thumbnail yet' })); };
+      paintThumb();
+      thumbNote.textContent = 'Taken from the game itself: it runs hidden for a moment and its canvas is photographed. That works for games from Forge and from Studio alike.';
+      const thumbBtn = h('button.btn.btn--sm', { type: 'button', dataset: { act: 'take-thumb' }, onclick: async () => {
+        if (thumbBtn.disabled) return;
+        thumbBtn.disabled = true;
+        thumbNote.textContent = 'Running the game for a moment…';
+        try {
+          const fresh = await P.get(p.id);
+          const url = fresh ? await snapGame(fresh) : '';
+          if (dead) return;
+          if (url) { thumb = url; keepThumb(p.id, url); paintThumb(); thumbNote.textContent = 'Taken just now.'; }
+          else thumbNote.textContent = 'No picture could be taken: the game has no canvas, or had not drawn anything after a moment.';
+        } catch (err2) { thumbNote.textContent = `No picture could be taken (${String(err2?.message || err2)}).`; }
+        finally { thumbBtn.disabled = false; }
+      } }, icon('image'), h('span', { text: 'Take a thumbnail' }));
       const err = h('p.cr-sheet__err', { role: 'alert' });
       const vn = verN(p);
       const goBtn = h('button.btn.btn--primary', { type: 'submit' }, icon('upload'), h('span', { text: pub ? `Publish update (v${vn})` : `Publish v${vn}` }));
@@ -971,7 +1388,7 @@ defineApp({
             if (!fresh) throw new Error('it was deleted in another app');
             const res = await P.publish(fresh.id, {
               title: tt, description: dIn.value.trim(), controls: cIn.value.trim(), category: cat.value,
-              thumbnail: pubThumbOf(fresh) || null, note: nIn?.value.replace(/\s+/g, ' ').trim() || undefined,
+              thumbnail: thumb || pubThumbOf(fresh) || null, note: nIn?.value.replace(/\s+/g, ' ').trim() || undefined,
             });
             if (!res) throw new Error('it was deleted in another app');
             setPub(res.id, res.versions[res.head]?.id || null);
@@ -991,6 +1408,7 @@ defineApp({
           h('h2.cr-sheet__title', { id: fid('h'), text: pub ? `Update “${short(title(p))}”` : `Publish “${short(String(p.name || 'Untitled game'))}”` }),
           h('div.grow'),
           h('button.ibtn', { type: 'button', 'aria-label': 'Close', title: 'Close', onclick: () => closeSheet() }, icon('x'))),
+        h('p.cr-sheet__sub', { text: `v${vn}: “${String(p.versions[p.head]?.note || 'no note').slice(0, 100)}”, written by ${by(p.versions[p.head]?.by)}.` }),
         h('p.cr-sheet__sub', { text: `Publishing puts v${vn} in your Workshop on this device. StaticOS has no server, so nobody else can see it online — to share it, export it from Static Forge and send the file.` }),
         h('div.cr-form',
           h('div.cr-form__main',
@@ -1001,8 +1419,7 @@ defineApp({
             nIn ? field('n', 'Update note', nIn, 'Shown in the update history. Leave it empty and it says “Updated”.') : null),
           h('div.cr-form__side',
             h('span.cr-f__l', { text: 'Thumbnail' }),
-            h('div.cr-pthumb', thumb ? h('img', { src: thumb, alt: 'Thumbnail' }) : h('span', { text: 'No thumbnail yet' })),
-            h('span.cr-f__h', { text: 'Thumbnails are taken from the running game — use Publish in Static Forge to take a new one.' }))),
+            thumbBox, thumbBtn, thumbNote)),
         err,
         h('div.cr-sheet__foot', h('button.btn.btn--ghost', { type: 'button', text: 'Cancel', onclick: () => closeSheet() }), goBtn));
       if (dead) return;
@@ -1048,11 +1465,15 @@ defineApp({
     paint(true);
     revealSide(S.sec);
     load();
+    loadMedia();
 
     win.onReopen?.(o => { if (dead) return; const c = canon(o?.section); if (c) go(c); });
 
     offs.push(
       bus.on('projects:change', reload),
+      bus.on('fs:change', loadMediaSoon),
+      bus.on('media:change', loadMediaSoon),
+      bus.on('assets:change', loadMediaSoon),
       bus.on('game:launch', soon),
       store.sub('portal.forge.thumbs', soon),
       store.sub('portal.forge.pub', soon),
@@ -1066,6 +1487,7 @@ defineApp({
       if (dead) return;
       dead = true;
       clearTimeout(reloadT);
+      clearTimeout(mediaT);
       clearInterval(tickT);
       if (raf) cancelAnimationFrame(raf);
       raf = 0;

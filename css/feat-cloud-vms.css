@@ -21,3 +21,17 @@
 .cvm__instructions{color:var(--ink-2);font-size:var(--fs-11);text-decoration:underline;text-underline-offset:3px}
 .cvm__disclaimer{margin-top:auto;padding-top:var(--sp-1);font-size:var(--fs-11)}
 @media(max-width:620px){.cvm__grid{grid-template-columns:1fr}.cvm__download{align-items:flex-start;flex-direction:column}.cvm{gap:var(--sp-4)}}
+
+/* ==================================================================
+   Cloud VMs
+   ================================================================== */
+.cvm__badges{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px}
+.cvm__fact{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:var(--fs-10);
+  border:1px solid var(--line-1);background:var(--fill-0);color:var(--ink-1);
+}
+.cvm__fact a{color:inherit;text-decoration:underline}
+.cvm__check{font-size:var(--fs-10);color:var(--ink-3);margin:4px 0 0}
+.cvm__tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.cvm__reported{font-size:var(--fs-10);color:var(--ink-2)}
+

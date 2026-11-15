@@ -76,7 +76,7 @@
   padding-left:2px;
 }
 .beats__headsteps,.beats__cells{
-  flex:1;min-width:0;display:grid;grid-template-columns:repeat(16,1fr);gap:var(--sp-1);
+  flex:1;min-width:0;display:grid;grid-template-columns:repeat(var(--len,16),minmax(0,1fr));gap:var(--sp-1);
 }
 .beats__num{
   text-align:center;font-size:calc(9px * var(--fs-k,1));font-weight:600;color:var(--ink-4);
@@ -116,7 +116,7 @@
 }
 /* every downbeat (4n) sits a hair apart so the bar reads in 4s */
 .beats__cell.is-group,.beats__num.is-group{margin-left:5px}
-.beats__cell:nth-child(4n+1){background:var(--fill-1)}
+.beats__cell.is-beat{background:var(--fill-1)}
 .beats__cell:hover{border-color:var(--line-2);background:var(--fill-2)}
 .beats__cell.is-on{
   background:linear-gradient(160deg,var(--accent-soft),var(--accent));
@@ -128,6 +128,8 @@
   box-shadow:0 0 12px rgba(var(--accent-rgb)/.6),inset 0 0 0 2px #fff;
   transform:scale(1.04);
 }
+.beats__cell[data-level="1"]{opacity:.55}
+.beats__cell[data-level="3"]{box-shadow:0 0 0 1px var(--accent-soft),0 1px 6px rgba(var(--accent-rgb)/.55),inset 0 1px 0 rgba(255,255,255,.4)}
 .beats__cell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .beats__mute:focus-visible,.beats__tools .btn:focus-visible,.beats__play:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
@@ -223,3 +225,53 @@ body.is-mobile .beats__mutename{font-size:var(--fs-10)}
   .beats__cell,.beats__scrim,.beats__sheet{animation:none;transition:none}
   .beats__cell.is-on.is-play{transform:none}
 }
+
+/* ---- v2: shape, levels, tuning, melody, jam ----------------------- */
+.beats__tools2{gap:var(--sp-4)}
+.beats__lenctl{align-items:center;gap:var(--sp-2)}
+.beats__lennum{min-width:24px;text-align:center;font-weight:650;color:var(--ink-0);font-variant-numeric:tabular-nums}
+.beats__chip{height:24px;padding:0 var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-11);font-weight:580;color:var(--ink-2);background:var(--fill-1);border:1px solid var(--line-1)}
+.beats__chip.is-on{background:var(--accent);color:var(--accent-ink,#2a0310);border-color:transparent}
+.beats__chip:focus-visible,.beats__more:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.beats__posrow{display:flex;align-items:center;gap:var(--sp-2)}
+.beats__pulse{width:9px;height:9px;border-radius:50%;background:var(--fill-2);flex:0 0 auto}
+.beats__pulse.is-hit{animation:beats-pulse .22s ease-out}
+@keyframes beats-pulse{0%{background:var(--accent);box-shadow:0 0 0 4px rgba(var(--accent-rgb)/.35)}100%{background:var(--fill-2);box-shadow:none}}
+.beats__dens{width:72px}
+.beats__densval{font-size:var(--fs-10);color:var(--ink-3);min-width:28px}
+.beats__roomstat{font-size:var(--fs-11);color:var(--accent-soft)}
+.beats__rowtop{display:flex;align-items:center;gap:2px}
+.beats__more{height:20px;min-width:20px}
+.beats__more .icon{width:14px;height:14px}
+.beats__rowhead.is-locked .beats__mute .icon:last-child{color:var(--accent-soft)}
+.beats__tune{display:none;flex-direction:column;gap:2px}
+.beats__tune label{display:grid;grid-template-columns:34px 1fr 38px;align-items:center;gap:4px;font-size:calc(9px * var(--fs-k,1));color:var(--ink-3)}
+.beats__tval{font-size:calc(9px * var(--fs-k,1));color:var(--ink-2);text-align:right}
+.beats__rows.is-tuning .beats__tune{display:flex}
+.beats__sheetnote{font-size:var(--fs-11);color:var(--ink-2);margin:0;line-height:1.4}
+.beats__sheeterr{color:var(--danger,#ff8c9f)}
+.beats__jam{display:flex;flex-direction:column;gap:var(--sp-3)}
+.beats__code{font-family:var(--font-mono,var(--mono));font-size:var(--fs-18,18px);letter-spacing:.3em;font-weight:700;text-align:center;padding:var(--sp-3);border-radius:var(--r-md);background:var(--fill-1)}
+/* the piano roll */
+.beats__mel{flex:1;min-height:0;display:flex;flex-direction:column;padding:var(--sp-3) var(--sp-5);gap:var(--sp-2)}
+.beats__melbar{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap}
+.beats__melbar label{display:flex;align-items:center;gap:var(--sp-2)}
+.beats__melrange{font-size:var(--fs-11);color:var(--ink-1);min-width:62px;text-align:center}
+.beats__melhint{margin:0;font-size:var(--fs-11);color:var(--ink-3)}
+.beats__rollwrap{flex:1;min-height:0;overflow:auto;border-radius:var(--r-md);border:1px solid var(--line-1);background:var(--fill-0)}
+.beats__roll{display:flex;flex-direction:column;min-width:480px}
+.beats__rollrow{display:flex;align-items:stretch;border-bottom:1px solid var(--line-0)}
+.beats__rollrow.is-black{background:rgba(0,0,0,.18)}
+.beats__rolllab{flex:0 0 40px;font-size:calc(9px * var(--fs-k,1));color:var(--ink-3);padding:2px 4px;font-family:var(--font-mono,var(--mono))}
+.beats__rollcells{flex:1;display:grid;grid-template-columns:repeat(var(--len,16),minmax(0,1fr))}
+.beats__rcell{height:14px;border:0;border-left:1px solid var(--line-0);background:transparent;padding:0;touch-action:none}
+.beats__rcell.is-beat{border-left-color:var(--line-2)}
+.beats__rcell:hover{background:var(--fill-2)}
+.beats__rcell.is-note{background:linear-gradient(160deg,var(--accent-soft),var(--accent));border-left-color:rgba(255,255,255,.25)}
+.beats__rcell.is-note:not(.is-start){border-left-color:transparent}
+.fchoose{display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--sp-3);border:1px solid var(--line-1);border-radius:var(--r-md);background:var(--glass-2,var(--fill-1));max-height:240px;overflow:auto}
+.fchoose__head{display:flex;align-items:center;justify-content:space-between}
+.fchoose__list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.fchoose__item{display:flex;align-items:center;gap:var(--sp-2);width:100%;padding:4px 6px;border-radius:var(--r-xs);text-align:left;font-size:var(--fs-12)}
+.fchoose__item:hover{background:var(--fill-2)}
+.fchoose__empty{margin:0;font-size:var(--fs-11);color:var(--ink-3)}

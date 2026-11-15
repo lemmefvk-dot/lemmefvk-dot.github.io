@@ -1,0 +1,8 @@
+WEBVTT
+
+NOTE
+Captions for staticos-bubbles.mp4. This video has music and no speech (checked with whisper.cpp
+speech detection, which found no words), so the one caption says so.
+
+00:00:00.500 --> 00:00:06.500
+[Music, no speech in this video]

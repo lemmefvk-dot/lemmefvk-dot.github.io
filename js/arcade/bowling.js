@@ -18,7 +18,12 @@
 
    The throw is a physical simulation on a fixed 1/480 s step, so a
    throw plays out the same on any screen. Score = pins (0–300);
-   150 or more counts as a win. Follows the module contract in
+   150 or more counts as a win.
+
+   Two players (ctx.players 2) share one lane and take turns a frame
+   at a time, Player 1 first; in the tenth each throws all of their
+   balls before the other. The sheet has a row for each, the one up
+   is lit, and Player 2's ball is red. The higher total wins. Follows the module contract in
    ./index.js; stop() removes every listener, the loop and the
    audio context.
    ============================================================ */
@@ -37,10 +42,14 @@ export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
+    const two = ctx.players === 2;
     const S = {
       state: 'aim',                 /* aim | charge | roll | settle | sweep | over */
       paused: false,
-      rolls: [],
+      cards: [[], []],              /* each player's rolls (one player uses the first) */
+      who: 0,                       /* whose ball it is */
+      frameDone: false,             /* the last ball ended its player's frame */
+      get rolls() { return this.cards[this.who]; },
       standing: null,               /* pins standing before this ball: [{id,x,y}] or null for a full rack */
       world: P.newWorld(P.rack()),
       x0: 0, tx: 0, spin: 0,
@@ -59,7 +68,8 @@ export default {
     report();
 
     const st = () => R.state(S.rolls);
-    function report() { ctx.onScore(R.total(S.rolls)); }
+    function report() { ctx.onScore(two ? `${R.total(S.cards[0])} – ${R.total(S.cards[1])}` : R.total(S.rolls)); }
+    const allOver = () => (two ? S.cards.every(c => R.state(c).over) : st().over);
 
     /* ------------------------------ rules ------------------------------ */
     function prepareBall() {
@@ -117,6 +127,8 @@ export default {
       S.banner = msg; S.bannerT = reduced ? 2 : 2.4; S.bannerHue = hue;
       /* the pins left standing keep their places for the next ball */
       S.standing = after.over ? null : after.fresh ? null : P.standing(w);
+      /* two players take turns a frame at a time (the tenth: all of its balls, then the other player) */
+      S.frameDone = after.over || after.frame !== s.frame;
       report();
       if (roll === prevUp) {
         [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => snd.blip(f, 0.12, 'triangle', 1), i * 90));
@@ -125,9 +137,29 @@ export default {
       S.timer = reduced ? 0.5 : 1.4;
     }
 
+    /* after the sweep: the same player's next ball, the other player's frame, or the end */
+    function nextBall() {
+      if (allOver()) { endGame(); return; }
+      if (two && S.frameDone) {
+        const o = 1 - S.who;
+        if (!R.state(S.cards[o]).over) {
+          S.who = o; S.standing = null;
+          S.banner = `Player ${o + 1}`; S.bannerT = reduced ? 1.2 : 1.6; S.bannerHue = o ? 0 : 210;
+        }
+      }
+      prepareBall();
+    }
+
     function endGame() {
       S.state = 'over';
       draw();
+      if (two) {
+        const [a, b] = S.cards.map(c => R.total(c));
+        const winner = a === b ? 0 : a > b ? 1 : 2;
+        ctx.onEnd({ score: Math.max(a, b), won: true, winner,
+          detail: winner ? `Player ${winner} wins ${Math.max(a, b)}–${Math.min(a, b)} on one lane.` : `A tie on one lane: ${a}–${b}.` });
+        return;
+      }
       const score = R.total(S.rolls);
       const fr = R.frames(S.rolls);
       const strikes = fr.reduce((n, f) => n + f.marks.filter(m => m === 'X').length, 0);
@@ -165,7 +197,7 @@ export default {
       } else if (S.state === 'sweep') {
         S.timer -= dt;
         if (S.timer <= 0) {
-          if (st().over) endGame(); else prepareBall();
+          nextBall();
         }
       }
       if (S.bannerT > 0) S.bannerT = Math.max(0, S.bannerT - dt);
@@ -182,7 +214,7 @@ export default {
     const CM_W = P.LANE_W + 2 * P.GUTTER_W + 24;
     function box() {
       const w = sf.w, h = sf.h;
-      const sbH = clamp(h * 0.12, 46, 78);
+      const sbH = two ? clamp(h * 0.2, 84, 140) : clamp(h * 0.12, 46, 78);
       const area = { x: 0, y: sbH + 8, w, h: Math.max(60, h - sbH - 8) };
       const s = clamp(Math.min(area.h / 560, (w - 24) / CM_W), 0.1, 1.5);
       return { w, h, sbH, area, s, cx: w / 2 };
@@ -224,7 +256,7 @@ export default {
       }
       if (!S.started && S.state === 'aim') {
         const touch = coarse();
-        prompt(g, sf, touch ? 'Drag to aim · hold, then lift to throw' : 'Aim with ← →, hold Space to throw', touch ? 'Ten frames · beat 150 to win' : 'A D slide the ball · Q E hook · or use the mouse · beat 150 to win', HUE, b.area.y + b.area.h * 0.34);
+        prompt(g, sf, touch ? 'Drag to aim · hold, then lift to throw' : 'Aim with ← →, hold Space to throw', two ? 'Two players, one lane: a frame each, Player 1 first' : touch ? 'Ten frames · beat 150 to win' : 'A D slide the ball · Q E hook · or use the mouse · beat 150 to win', HUE, b.area.y + b.area.h * 0.34);
       }
     }
 
@@ -334,7 +366,8 @@ export default {
       g.fillStyle = 'rgba(0,0,0,.3)';
       g.beginPath(); g.arc(px + 2, py + 3, r, 0, 7); g.fill();
       const gr = g.createRadialGradient(px - r * 0.35, py - r * 0.35, r * 0.1, px, py, r);
-      gr.addColorStop(0, '#6aa0ff'); gr.addColorStop(0.55, '#1d3f9a'); gr.addColorStop(1, '#0a1740');
+      if (two && S.who === 1) { gr.addColorStop(0, '#ff8a7a'); gr.addColorStop(0.55, '#a1231b'); gr.addColorStop(1, '#40080a'); }
+      else { gr.addColorStop(0, '#6aa0ff'); gr.addColorStop(0.55, '#1d3f9a'); gr.addColorStop(1, '#0a1740'); }
       g.fillStyle = gr;
       g.beginPath(); g.arc(px, py, r, 0, 7); g.fill();
       /* finger holes turn with the roll */
@@ -413,15 +446,31 @@ export default {
       g.restore();
     }
 
+    /* the score sheet: one row, or a row for each player with the one up lit */
     function drawScore(g, b) {
-      const fr = R.frames(S.rolls), s = st();
-      const n = 11, pad = 8, gap = 3;
-      const bw = Math.min(70, (b.w - pad * 2 - gap * (n - 1)) / n), bh = b.sbH - 6;
-      const x0 = (b.w - (bw * n + gap * (n - 1))) / 2, y0 = 4;
+      if (!two) { drawSheet(g, b, S.rolls, 4, b.sbH - 6, true, null); return; }
+      const bh = (b.sbH - 10) / 2;
+      S.cards.forEach((c, i) => drawSheet(g, b, c, 4 + i * (bh + 4), bh, S.who === i && S.state !== 'over', i));
+    }
+    function drawSheet(g, b, rolls, y0, bh, up, who) {
+      const fr = R.frames(rolls), s = R.state(rolls);
+      const lab = who === null ? 0 : 1;
+      const n = 11 + lab, pad = 8, gap = 3;
+      const bw = Math.min(70, (b.w - pad * 2 - gap * (n - 1)) / n);
+      const x0 = (b.w - (bw * n + gap * (n - 1))) / 2 + lab * (bw + gap);
       g.save();
+      if (lab) {
+        const x = x0 - bw - gap, hue = who ? 0 : 210;
+        g.fillStyle = up ? hsl(hue, 80, 50, 0.35) : 'rgba(255,255,255,.06)';
+        g.strokeStyle = up ? hsl(hue, 100, 66, 0.95) : 'rgba(255,255,255,.18)';
+        g.lineWidth = up ? 2 : 1;
+        rr(g, x, y0, bw, bh, 6); g.fill(); g.stroke();
+        g.fillStyle = '#fff'; g.font = `800 ${Math.round(clamp(bh * 0.36, 10, 16))}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(`P${who + 1}`, x + bw / 2, y0 + bh / 2 + 1);
+      }
       for (let f = 0; f < 11; f++) {
         const x = x0 + f * (bw + gap);
-        const cur = f < 10 && !s.over && s.frame === f + 1;
+        const cur = up && f < 10 && !s.over && s.frame === f + 1;
         g.fillStyle = f === 10 ? 'rgba(255,200,90,.14)' : 'rgba(255,255,255,.08)';
         g.strokeStyle = cur ? hsl(HUE, 100, 62, 0.95) : 'rgba(255,255,255,.18)';
         g.lineWidth = cur ? 2 : 1;
@@ -431,7 +480,7 @@ export default {
           const F = fr[f];
           g.fillStyle = 'rgba(255,255,255,.4)';
           g.font = `600 ${Math.round(clamp(bw * 0.2, 8, 11))}px ${FONT}`;
-          g.fillText(String(f + 1), x + bw / 2, y0 + 8);
+          if (bh > 34) g.fillText(String(f + 1), x + bw / 2, y0 + 8);
           const cells = f === 9 ? 3 : 2, cw = bw / cells;
           g.font = `800 ${Math.round(clamp(bh * 0.3, 11, 17))}px ${FONT}`;
           F.marks.forEach((m, i) => {
@@ -446,10 +495,10 @@ export default {
         } else {
           g.fillStyle = 'rgba(255,255,255,.55)';
           g.font = `600 ${Math.round(clamp(bw * 0.2, 8, 11))}px ${FONT}`;
-          g.fillText('TOTAL', x + bw / 2, y0 + 8);
+          if (bh > 34) g.fillText('TOTAL', x + bw / 2, y0 + 8);
           g.fillStyle = '#ffd23f';
           g.font = `900 ${Math.round(clamp(bh * 0.46, 14, 26))}px ${FONT}`;
-          g.fillText(String(R.total(S.rolls)), x + bw / 2, y0 + bh * 0.62);
+          g.fillText(String(R.total(rolls)), x + bw / 2, y0 + bh * (bh > 34 ? 0.62 : 0.52));
         }
       }
       g.restore();
@@ -566,7 +615,7 @@ export default {
         const s = st(), w = S.world, b = box();
         return {
           state: S.state, paused: S.paused, time: S.time, over: S.state === 'over', reduced,
-          rolls: S.rolls.slice(), total: R.total(S.rolls), frame: s.frame, ball: s.ball, up: s.up, fresh: s.fresh,
+          rolls: S.rolls.slice(), total: R.total(S.rolls), two, who: S.who, cards: S.cards.map(c => c.slice()), totals: S.cards.map(c => R.total(c)), frame: s.frame, ball: s.ball, up: s.up, fresh: s.fresh,
           x0: S.x0, tx: S.tx, spin: S.spin, power: S.power, held: S.held, throws: S.throws, banner: S.banner,
           standing: w.pins.filter(p => !p.fallen && !p.gone).map(p => p.id),
           fallen: w.pins.filter(p => p.fallen).map(p => p.id),

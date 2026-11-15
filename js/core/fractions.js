@@ -6,10 +6,16 @@
    exactly 1/2 and 0.1 + 0.2 is exactly 3/10. No DOM, no eval.
 
    Input a student can type: 3/4   -2/5   5   2 3/4 (a mixed number)
-   -1 1/2   0.75 (a decimal, read exactly as 75/100).
+   -1 1/2   0.75 (a decimal, read exactly as 75/100)   75% or 12.5% (a
+   percent: per cent means out of 100)   3:4 (a ratio of whole numbers,
+   read as the fraction 3/4).
+
+   Every answer is also given as a percent (the exact decimal × 100,
+   repeating digits in brackets) and, when it is not negative, as a
+   ratio in lowest terms (19/12 is 19 : 12).
 
      calc('3/4', '+', '5/6')
-       -> { ok: true, answer: { n: 19n, d: 12n, text: '19/12', mixed: '1 7/12', decimal: '1.58(3)' },
+       -> { ok: true, answer: { n: 19n, d: 12n, text: '19/12', mixed: '1 7/12', decimal: '1.58(3)', percent: '158.(3)%', ratio: '19 : 12' },
             steps: [{ say, math }, …] }
      calc('1/2', '/', '0')  -> { ok: false, error: 'Cannot divide by zero: …' }
 
@@ -66,6 +72,14 @@ export function parse(input) {
     return { ...f, kind: 'fraction' };
   }
   if ((m = /^([+-]?)(\d+)$/.exec(s))) return { n: (m[1] === '-' ? -1n : 1n) * BigInt(m[2]), d: 1n, kind: 'integer' };
+  if ((m = /^([+-]?\d*\.?\d*)\s*%$/.exec(s)) && /\d/.test(m[1])) {
+    const p = parse(m[1]);
+    return { ...make(p.n, p.d * 100n), kind: 'percent', pct: m[1] };
+  }
+  if ((m = /^(\d+)\s*:\s*(\d+)$/.exec(s))) {
+    if (BigInt(m[2]) === 0n) fail('The second part of a ratio cannot be 0 here: as a fraction it would divide by zero.');
+    return { n: BigInt(m[1]), d: BigInt(m[2]), kind: 'ratio', a: BigInt(m[1]), b: BigInt(m[2]) };
+  }
   if ((m = /^([+-]?)(\d*)\.(\d*)$/.exec(s)) && (m[2] || m[3])) {
     if (m[3].length > MAX_DECIMALS) fail(`Use at most ${MAX_DECIMALS} decimal places.`);
     return { n: (m[1] === '-' ? -1n : 1n) * BigInt((m[2] || '0') + m[3]), d: 10n ** BigInt(m[3].length), kind: 'decimal', places: m[3].length };
@@ -124,6 +138,8 @@ export function calc(aText, op, bText) {
       if (x.kind === 'mixed') say(`Write ${label} as an improper fraction: ${abs(x.whole)} × ${x.partD} + ${x.partN} = ${abs(x.n)} parts of size 1/${x.partD}.`, `${typed(text)} = ${frac(x)}`);
       else if (x.kind === 'decimal') say(`Write ${label} as a fraction: ${x.places} decimal place${x.places === 1 ? '' : 's'} means over 1${'0'.repeat(x.places)}.`, `${typed(text)} = ${frac(x)}`);
       else if (x.kind === 'integer') say(`A whole number is a fraction over 1, so ${label} is ${x.n}/1.`, `${x.n} = ${x.n}/1`);
+      else if (x.kind === 'percent') say(`Write ${label} as a fraction: per cent means out of 100, so ${x.pct}% is ${x.pct}/100.`, `${typed(text)} = ${frac(x) === `${x.pct}/100` ? '' : `${x.pct}/100 = `}${frac(x)}`);
+      else if (x.kind === 'ratio') say(`A ratio ${x.a} : ${x.b} compares ${x.a} parts to ${x.b} parts; as a fraction (the first part over the second) it is ${x.a}/${x.b}.`, `${x.a} : ${x.b} = ${x.a}/${x.b}`);
     };
     if (!op) {
       if (typed(bText || '')) fail('Choose +, −, × or ÷ to use both numbers.');
@@ -173,9 +189,13 @@ function finish(raw, steps, say) {
   const z = reduce(raw);
   if (z.d !== 1n && abs(z.n) > z.d) say(`The top is bigger than the bottom, so as a mixed number: ${abs(z.n) / z.d} whole${abs(z.n) / z.d === 1n ? '' : 's'} and ${abs(z.n) % z.d}/${z.d} left over.`, `${frac(z)} = ${mixed(z)}`);
 }
+/** As a percent: the exact decimal of × 100. */
+export const percent = f => `${decimal({ n: f.n * 100n, d: f.d })}%`;
+/** As a ratio in lowest terms, for a value that is not negative (a negative ratio means nothing). */
+export const ratio = f => { const r = reduce(f); return r.n < 0n ? null : `${r.n} : ${r.d}`; };
 function result(raw, steps) {
   const r = reduce(raw);
-  return { ok: true, answer: { n: r.n, d: r.d, text: frac(r), mixed: mixed(r), decimal: decimal(r) }, steps };
+  return { ok: true, answer: { n: r.n, d: r.d, text: frac(r), mixed: mixed(r), decimal: decimal(r), percent: percent(r), ratio: ratio(r) }, steps };
 }
 
-export default { parse, calc, gcd, lcm, reduce, frac, mixed, decimal, MAX_DIGITS };
+export default { parse, calc, gcd, lcm, reduce, frac, mixed, decimal, percent, ratio, MAX_DIGITS };

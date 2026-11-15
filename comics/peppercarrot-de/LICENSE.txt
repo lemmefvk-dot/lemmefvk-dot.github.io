@@ -1,0 +1,13 @@
+Pepper&Carrot in German (Deutsch) by David Revoy
+Licence: CC BY 4.0
+Licence text: https://creativecommons.org/licenses/by/4.0/
+
+Licence evidence (checked 2026-11-08):
+Pepper&Carrot webcomics, translations and artworks are licensed under a Creative Commons Attribution 4.0 International license unless otherwise noted (eg. fan-arts)
+(quoted from https://www.peppercarrot.com/en/about/index.html#license)
+
+Attribution:
+Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). German translation: Alexandra Jordan, Helmar Suschka, Carlo Gandolfi, colognella, Julian Eric Ain, Philipp (hapit) Hemmer, Ret Samys, Martin Disch, Ulrich Greve, kate, credited in https://www.peppercarrot.com/0_sources/langs.json. Pages downscaled to 640 px wide for StaticOS.
+
+Source: https://www.peppercarrot.com/en/webcomics/index.html
+Notes: AI derivation prohibited (maker note on the same About page); no NFTs. The translation is part of the CC BY 4.0 work. Pages downscaled and re-encoded (a change).

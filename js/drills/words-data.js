@@ -6,6 +6,10 @@
    the order of how hard they usually are. They are the project's own
    lists (no word-list product was copied), in American spelling.
    Edit freely: the quiz reads whatever is here.
+
+   It is a short list: 40 words a level, 200 in all (BUILT_IN counts
+   them, and the Spelling tab says so), which is why the tab points
+   people at making their own lists from the words they get at school.
    ============================================================ */
 export const LEVELS = [
   { id: 'l1', name: 'Level 1 (grades 1 to 2)', words: ['because', 'friend', 'said', 'where', 'there', 'their', 'were', 'again', 'little', 'people', 'house', 'school', 'water', 'found', 'could', 'would', 'should', 'through', 'about', 'every', 'many', 'very', 'want', 'what', 'who', 'together', 'always', 'better', 'before', 'after', 'animal', 'family', 'mother', 'father', 'sister', 'brother', 'beautiful', 'favorite', 'morning', 'thank'] },
@@ -14,6 +18,9 @@ export const LEVELS = [
   { id: 'l4', name: 'Level 4 (grades 7 to 8)', words: ['accommodate', 'acquaintance', 'appearance', 'awkward', 'beneficial', 'boundary', 'bureaucracy', 'category', 'committee', 'communicate', 'competition', 'consequence', 'convenience', 'criticism', 'deceive', 'desperate', 'discipline', 'dissatisfied', 'eighth', 'especially', 'existence', 'familiar', 'fascinate', 'fluorescent', 'fulfill', 'gauge', 'grammar', 'harass', 'hierarchy', 'humorous', 'hypocrite', 'ignorance', 'jewelry', 'judgment', 'leisure', 'maintenance', 'mischievous', 'noticeable', 'pastime', 'tendency'] },
   { id: 'l5', name: 'Level 5 (grade 9 and up)', words: ['absence', 'acquire', 'aggressive', 'ambiguous', 'apparent', 'atmosphere', 'bankruptcy', 'catastrophe', 'cemetery', 'conscience', 'conscientious', 'correspondence', 'curriculum', 'dilemma', 'disappoint', 'embarrassment', 'entrepreneur', 'exaggerate', 'exhilarate', 'extraordinary', 'guidance', 'hindrance', 'idiosyncrasy', 'indispensable', 'irresistible', 'liaison', 'millennium', 'miscellaneous', 'occurrence', 'perseverance', 'phenomenon', 'privilege', 'pronunciation', 'questionnaire', 'rhythm', 'sacrilegious', 'separate', 'silhouette', 'surveillance', 'vacuum'] },
 ];
+
+/** How many words the built-in levels hold. */
+export const BUILT_IN = LEVELS.reduce((n, l) => n + l.words.length, 0);
 
 /** Clean a typed list: words separated by lines, commas or spaces; letters, apostrophes and hyphens only; no repeats. */
 export function parseList(text) {

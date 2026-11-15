@@ -20,6 +20,7 @@ import { icon } from '../core/icons.js';
 import { store } from '../core/store.js';
 import { thisChannel, STABLE_URL, when } from '../core/earlyaccess.js';
 import { signInDev } from './account.js';
+import { t as tr } from '../core/i18n.js';
 
 const isDev = () => !!store.get('session.user', null)?.dev;
 
@@ -31,9 +32,9 @@ export async function mountEarlyAccess(host) {
   const t = when(ch.built);
   const banner = h('div.ea-banner', { role: 'note' },
     icon('zap'),
-    h('b', { text: 'Early access build' }),
-    t ? h('span', { text: `built ${t}` }) : null,
-    h('a', { href: STABLE_URL, rel: 'noopener', text: 'Back to the stable site' }));
+    h('b', { text: tr('Early access build') }),
+    t ? h('span', { text: tr('built {t}', { t }) }) : null,
+    h('a', { href: STABLE_URL, rel: 'noopener', text: tr('Back to the stable site') }));
   document.body.appendChild(banner);
 
   let gate = null;
@@ -41,8 +42,8 @@ export async function mountEarlyAccess(host) {
   function openGate() {
     if (gate) return;
     const err = h('div.ea-gate__err', { role: 'alert' });
-    const pw = h('input.acct-field__in', { type: 'password', autocomplete: 'off', 'aria-label': 'Developer password' });
-    const go = h('button.btn.btn--primary', { type: 'submit' }, 'Continue');
+    const pw = h('input.acct-field__in', { type: 'password', autocomplete: 'off', 'aria-label': tr('Developer password') });
+    const go = h('button.btn.btn--primary', { type: 'submit' }, tr('Continue'));
     const form = h('form.ea-gate__form', {
       onsubmit: async e => {
         e.preventDefault();
@@ -50,14 +51,14 @@ export async function mountEarlyAccess(host) {
         go.disabled = true;
         try { await signInDev(pw.value); } catch (x) { err.textContent = x.message; go.disabled = false; pw.select(); }
       },
-    }, h('label.acct-field', h('span', { text: 'Developer password' }), pw), go);
+    }, h('label.acct-field', h('span', { text: tr('Developer password') }), pw), go);
     gate = h('div.ea-gate', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ea-gate-t' },
       h('div.ea-gate__card',
-        h('div.ea-gate__brand', icon('zap'), h('b', { text: 'StaticOS early access' })),
-        h('h1#ea-gate-t.ea-gate__t', { text: 'Early-access build' }),
-        h('p', { text: 'This is the early-access build for StaticOS developers. Sign in with the developer account to continue.' }),
+        h('div.ea-gate__brand', icon('zap'), h('b', { text: tr('StaticOS early access') })),
+        h('h1#ea-gate-t.ea-gate__t', { text: tr('Early-access build') }),
+        h('p', { text: tr('This is the early-access build for StaticOS developers. Sign in with the developer account to continue.') }),
         form, err,
-        h('p.ea-gate__small', 'This is a front door, not a vault. The password is checked in your browser against a one-way hash, and this page is public: nothing secret is behind it. ', h('a', { href: STABLE_URL, rel: 'noopener', text: 'Go to the stable site' }))));
+        h('p.ea-gate__small', tr('This is a front door, not a vault. The password is checked in your browser against a one-way hash, and this page is public: nothing secret is behind it. '), h('a', { href: STABLE_URL, rel: 'noopener', text: tr('Go to the stable site') }))));
     document.body.appendChild(gate);
     lift(true);
     setTimeout(() => pw.focus(), 30);

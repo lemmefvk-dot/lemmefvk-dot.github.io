@@ -253,3 +253,87 @@ body.reduce-motion .rd-play,body.reduce-motion .rd-eq{transition:none}
 :root[data-theme="light"] .rd-tag.is-error{background:rgba(200,30,55,.09)}
 :root[data-theme="light"] .rd-np,
 :root[data-theme="light"] .rd-np.is-idle{background:linear-gradient(180deg,rgba(var(--accent-rgb)/.06),transparent 80%),var(--fill-0)}
+
+/* ============================================================
+   Static Radio, bulk update: search and sort, sleep timer, song finds,
+   your own streams, the wake-up alarm, sending a station, quality
+   ============================================================ */
+.rd-tools{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4) var(--sp-1)}
+.rd-search{flex:1 1 180px;max-width:320px;height:28px}
+.rd-search input::-webkit-search-cancel-button{filter:grayscale(1);opacity:.6}
+.rd-sort{height:28px;font-size:var(--fs-11)}
+.rd-sort.hidden{display:none}
+.rd-alarmbtn{margin-left:auto}
+.rd-alarmbtn .icon{width:13px;height:13px}
+
+.rd-tag.is-trouble{background:rgba(255,190,60,.16);color:#ffc766}
+.rd-keep.is-on{background:var(--fill-accent-hi);border-color:var(--line-accent);color:var(--ink-0)}
+.rd-keep .icon{width:12px;height:12px}
+.rd-sleepbtn.is-on{color:var(--accent-soft)}
+.rd-np__sleep{display:flex;align-items:center;gap:var(--sp-2);margin-top:2px;font-size:var(--fs-10);color:var(--accent-soft)}
+.rd-np__sleep .icon{width:11px;height:11px}
+.rd-sleepnote{display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) var(--sp-3);border-radius:var(--r-md);background:var(--fill-0);font-size:var(--fs-10);color:var(--ink-2)}
+.rd-sleepnote .icon{width:12px;height:12px;color:var(--accent-soft)}
+
+.rd-foot__q{margin:0 0 var(--sp-3)}
+.rd-foot__lbl{font-size:var(--fs-10);font-weight:650;color:var(--ink-2)}
+.rd-foot__q .select{height:26px;font-size:var(--fs-11)}
+
+/* panels above the list */
+.rd-sheet{margin:var(--sp-3) var(--sp-4) 0;padding:var(--sp-4);border-radius:var(--r-lg);border:1px solid var(--line-1);
+  background:linear-gradient(135deg,rgba(var(--accent-rgb)/.10),transparent 65%),var(--fill-0);display:flex;flex-direction:column;gap:var(--sp-3);font-size:var(--fs-11)}
+.rd-sheet.hidden{display:none}
+.rd-sheet__head{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-12)}
+.rd-sheet__head .icon{width:14px;height:14px;color:var(--accent-soft)}
+.rd-sheet__row{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-3)}
+.rd-sheet__warn{display:flex;gap:var(--sp-3);margin:0;padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);line-height:1.5;color:var(--ink-1);
+  background:rgba(255,190,60,.10);border:1px solid rgba(255,190,60,.3)}
+.rd-sheet__warn .icon{width:14px;height:14px;flex:0 0 auto;margin-top:1px;color:#ffc766}
+.rd-days{display:flex;gap:var(--sp-1);flex-wrap:wrap}
+.rd-day{padding:3px 9px;border-radius:var(--r-pill);font-size:var(--fs-10);font-weight:600;color:var(--ink-2);background:var(--fill-1);border:1px solid var(--line-0)}
+.rd-day:hover{background:var(--fill-2);color:var(--ink-0)}
+.rd-day.is-on{background:var(--fill-accent-hi);border-color:var(--line-accent);color:var(--ink-0)}
+.rd-alarms{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--sp-2)}
+.rd-alarms li{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) var(--sp-3);border-radius:var(--r-md);background:var(--fill-1)}
+.rd-alarms b{font-variant-numeric:tabular-nums}
+.rd-alarms span{color:var(--ink-2)}
+.rd-keys{margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:var(--sp-2) var(--sp-5)}
+.rd-keys>div{display:grid;grid-template-columns:84px minmax(0,1fr);gap:var(--sp-3);align-items:center}
+.rd-keys dt,.rd-keys dd{margin:0}
+.rd-keys dd{color:var(--ink-2)}
+.rd-keys kbd{font-family:var(--mono);font-size:var(--fs-10);padding:1px 6px;border-radius:5px;background:var(--fill-2);border:1px solid var(--line-1);color:var(--ink-0)}
+.rd-sheet__list .ag-friend__list{margin-top:var(--sp-2)}
+
+/* your streams */
+.rd-mine{display:flex;flex-direction:column;gap:var(--sp-2);margin:0 var(--sp-2) var(--sp-4)}
+.rd-mine__row{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-3)}
+.rd-mine__row .field{height:28px;min-width:150px}
+.rd-mine__row .field.grow{flex:1 1 220px}
+.rd-mine__err{min-height:0;color:#ff97a7;font-size:var(--fs-11)}
+.rd-mine__err:empty{display:none}
+
+/* song finds */
+.rd-finds{display:flex;flex-direction:column;gap:2px}
+.rd-find{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) var(--sp-3);border-radius:var(--r-md)}
+.rd-find:hover{background:var(--fill-1)}
+.rd-find>.icon{width:14px;height:14px;color:var(--accent-soft);flex:0 0 auto}
+.rd-find__txt{display:flex;flex-direction:column;min-width:0;flex:1}
+.rd-find__txt b{font-size:var(--fs-12);font-weight:620;color:var(--ink-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd-find__txt small{font-size:var(--fs-11);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd-finds__foot{margin:var(--sp-3) var(--sp-2) 0}
+
+:root[data-theme="light"] .rd-tag.is-trouble{color:#9a6400;background:rgba(200,130,0,.10)}
+:root[data-theme="light"] .rd-mine__err{color:#b3213e}
+:root[data-theme="light"] .rd-sheet__warn{background:rgba(200,130,0,.09);border-color:rgba(200,130,0,.3)}
+:root[data-theme="light"] .rd-sheet__warn .icon{color:#9a6400}
+:root[data-theme="light"] .rd-sleepbtn.is-on,:root[data-theme="light"] .rd-np__sleep{color:color-mix(in srgb,var(--accent) 72%,#000)}
+@container rd (max-width: 600px){
+  .rd-tools{padding:var(--sp-3) var(--sp-3) var(--sp-1)}
+  .rd-sheet{margin:var(--sp-3) var(--sp-3) 0}
+  .rd-alarmbtn span{display:none}
+}
+
+/* more buttons in the bar: it wraps instead of squeezing the song title to nothing */
+.rd-np__bar{flex-wrap:wrap}
+.rd-np__txt{flex:1 1 200px}
+.rd-np__ctl{flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end}

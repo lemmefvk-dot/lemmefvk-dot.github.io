@@ -50,6 +50,9 @@ const r1 = n => Math.round(n * 10) / 10;
 const fin = (n, lo, hi) => typeof n === 'number' && Number.isFinite(n) && n >= lo && n <= hi;
 const KEYDIR = { ArrowUp: 0, ArrowRight: 1, ArrowDown: 2, ArrowLeft: 3, KeyW: 0, KeyD: 1, KeyS: 2, KeyA: 3 };
 const PH = { count: 0, play: 1, between: 2, over: 3 };
+/* a body for a watcher (./spectate.js 'snakes'): each cell index as two base-36 digits, head first */
+const code36 = cells => cells.map(c => c.toString(36).padStart(2, '0')).join('');
+const titled = n => (n === 'YOU' ? 'You' : n === 'CPU' ? 'Computer' : n);
 
 /* ------------------------------ drawing ------------------------------ */
 function geometry(sf) {
@@ -409,6 +412,12 @@ function board(el, ctx, net) {
       pause() { M.paused = true; loop.stop(); draw(); },
       resume() { M.paused = false; if (M.phase !== 'over') loop.start(); },
     }),
+    /* what a watcher may see: both snakes, the apple, rounds won (green is snake 0) */
+    spectate() {
+      const R = M.R;
+      return { k: 'snakes', w: COLS, h: ROWS, sn: R.snakes.map((s, i) => ({ b: code36(s.body), a: !!s.alive, c: i })), f: R.food,
+        sc: M.wins.slice(), pl: names.map(n => ({ n: titled(n) })), txt: M.over ? 'Match over' : `Round ${M.round} · ${M.wins[0]}–${M.wins[1]}`, over: !!M.over };
+    },
     peek() {
       const R = M.R;
       return {
@@ -597,6 +606,11 @@ function online(el, ctx) {
       window.removeEventListener('pointercancel', onUp);
       snd.close();
       sf.destroy();
+    },
+    /* what a watcher may see, as the host's board says it (green, the host, is snake 0) */
+    spectate() {
+      return { k: 'snakes', w: COLS, h: ROWS, sn: G.bodies.map((b, i) => ({ b: code36(b), a: !!G.alive[i], c: i })), f: G.food,
+        sc: G.wins.slice(), pl: names.map(n => ({ n: titled(n) })), txt: G.over ? 'Match over' : `Round ${G.round} · ${G.wins[0]}–${G.wins[1]}`, over: !!G.over };
     },
     peek() {
       return {

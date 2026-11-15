@@ -21,8 +21,13 @@
      · the cumulative GPA is the same sum over every semester at once
        (credit-weighted, not an average of semester GPAs)
    Nothing here makes a number up: no entered course, no GPA (null).
+
+   Also here: a few common grading scales to start from (PRESETS), grades
+   read from CSV or cells pasted from a spreadsheet (parseGrades), and
+   the GPA semester by semester for the trend chart (trend).
    ============================================================ */
 import { store } from './store.js';
+import { parseRows } from './flashcards.js';
 
 export const KEY = 'portal.gpa';
 export const LEVELS = [['regular', 'Regular'], ['honors', 'Honors'], ['ap', 'AP / IB']];
@@ -33,6 +38,16 @@ export const DEFAULT_SCALE = [
   ['D+', 67, 1.3], ['D', 63, 1.0], ['D-', 60, 0.7],
   ['F', 0, 0.0],
 ].map(([letter, min, points]) => ({ letter, min, points }));
+/* scales schools really use, to start from; every number stays editable */
+const scale = rows => rows.map(([letter, min, points]) => ({ letter, min, points }));
+export const PRESETS = [
+  { id: 'standard', name: 'Standard 4.0, with + and − (A+ counts 4.0)', scale: DEFAULT_SCALE },
+  { id: 'plus43', name: '4.0 with + and −, A+ counts 4.3', scale: scale([['A+', 97, 4.3], ['A', 93, 4.0], ['A-', 90, 3.7], ['B+', 87, 3.3], ['B', 83, 3.0], ['B-', 80, 2.7], ['C+', 77, 2.3], ['C', 73, 2.0], ['C-', 70, 1.7], ['D+', 67, 1.3], ['D', 63, 1.0], ['D-', 60, 0.7], ['F', 0, 0.0]]) },
+  { id: 'letters10', name: 'Whole letters, 10-point (A 90+, B 80+, C 70+, D 60+)', scale: scale([['A', 90, 4.0], ['B', 80, 3.0], ['C', 70, 2.0], ['D', 60, 1.0], ['F', 0, 0.0]]) },
+  { id: 'letters7', name: 'Whole letters, 7-point (A 93+, B 85+, C 77+, D 70+)', scale: scale([['A', 93, 4.0], ['B', 85, 3.0], ['C', 77, 2.0], ['D', 70, 1.0], ['F', 0, 0.0]]) },
+];
+/** Which preset a scale is exactly, or null. */
+export const presetOf = sc => PRESETS.find(p => p.scale.length === sc.length && p.scale.every((r, i) => r.letter === sc[i].letter && r.min === sc[i].min && r.points === sc[i].points)) || null;
 export const MAX_SEMESTERS = 30;
 export const MAX_COURSES = 30;
 
@@ -155,4 +170,59 @@ export function neededOnFinal(current, weight, target) {
   return { needed, status, formula };
 }
 
-export default { KEY, DEFAULT_SCALE, read, write, normalize, gradeOf, courseResult, gpaOf, semesterGpa, cumulativeGpa, neededOnFinal, fmt };
+/* ---------- the trend ---------- */
+/** Semester by semester, in your order: { id, name, gpa, cum } — cum is the cumulative GPA up to and including it. Null where nothing counts. */
+export function trend(data) {
+  const out = [];
+  const seen = [];
+  for (const s of data.semesters) {
+    seen.push(...s.courses);
+    out.push({ id: s.id, name: s.name, gpa: gpaOf(s.courses, data).gpa, cum: gpaOf(seen, data).gpa });
+  }
+  return out;
+}
+
+/* ---------- reading grades in ---------- */
+const COLS = {
+  name: ['course', 'class', 'subject', 'name', 'course name', 'title'],
+  credits: ['credits', 'credit', 'units', 'unit', 'hours', 'credit hours', 'weight'],
+  grade: ['grade', 'mark', 'score', 'letter', 'result', '%', 'percent'],
+  level: ['level', 'type', 'kind', 'honors', 'weighting'],
+  semester: ['semester', 'term', 'year', 'period'],
+};
+const levelOf = v => { const t = String(v || '').trim().toLowerCase(); return /^(h|hon|honors|honours)$/.test(t) ? 'honors' : /^(ap|ib|ap\/ib|ap \/ ib|ap or ib)$/.test(t) ? 'ap' : 'regular'; };
+/**
+ * Grades from CSV, or cells copied out of a spreadsheet (tab-separated). A first
+ * row naming the columns (course, credits, grade, level, semester) is read as a
+ * header in any order; without one the columns are course, credits, grade, then
+ * level. -> { rows: [{ semester, name, credits, grade, level }], skipped: [{ row, why }], header }
+ */
+export function parseGrades(text) {
+  const t = String(text || '');
+  const first = t.split(/\r?\n/, 1)[0] || '';
+  const delim = first.includes('\t') ? '\t' : first.includes(';') && !first.includes(',') ? ';' : ',';
+  let rows = parseRows(t, delim).map(r => r.map(x => String(x).trim()));
+  rows = rows.filter(r => r.some(x => x));
+  let col = { name: 0, credits: 1, grade: 2, level: 3, semester: -1 };
+  let header = false;
+  if (rows.length) {
+    const h = rows[0].map(x => x.toLowerCase());
+    const find = k => h.findIndex(x => COLS[k].includes(x));
+    if (find('name') >= 0 && find('grade') >= 0) {
+      header = true;
+      col = { name: find('name'), credits: find('credits'), grade: find('grade'), level: find('level'), semester: find('semester') };
+      rows = rows.slice(1);
+    }
+  }
+  const out = [], skipped = [];
+  rows.forEach((r, i) => {
+    const get = k => (col[k] >= 0 ? r[col[k]] || '' : '');
+    const name = get('name').slice(0, 60), grade = get('grade').replace(/\s+/g, '').slice(0, 8), credits = get('credits').slice(0, 6);
+    if (!name) { skipped.push({ row: i + 1 + (header ? 1 : 0), why: 'no course name' }); return; }
+    if (!grade) { skipped.push({ row: i + 1 + (header ? 1 : 0), why: `no grade for ${name}` }); return; }
+    out.push({ semester: get('semester').slice(0, 40), name, credits, grade, level: levelOf(get('level')) });
+  });
+  return { rows: out, skipped, header };
+}
+
+export default { KEY, DEFAULT_SCALE, PRESETS, presetOf, trend, parseGrades, read, write, normalize, gradeOf, courseResult, gpaOf, semesterGpa, cumulativeGpa, neededOnFinal, fmt };

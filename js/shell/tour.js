@@ -30,6 +30,7 @@ import { cover, covered } from '../core/cover.js';
 import * as L from '../core/layers.js';
 import { globalRows, keysText } from '../core/keymap.js';
 import { hasIcon } from '../core/icons.js';
+import { t } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-tour-css')) {
   const l = document.createElement('link');
@@ -49,36 +50,46 @@ const key = label => {
 };
 
 export const DESKTOP_STEPS = [
-  { id: 'topbar', sel: '.topbar', title: 'The top bar',
+  { id: 'topbar', sel: '.topbar', title: t('The top bar'),
     text: () => 'Menus for the app in front on the left, the clock in the middle, and quick controls on the right: sound, network, Control Centre and more.' },
-  { id: 'dock', sel: '.dock', title: 'The dock',
+  { id: 'dock', sel: '.dock', title: t('The dock'),
     text: () => 'Your favourite apps. Click one to open it, drag icons to reorder them, and a dot shows what is running.' },
-  { id: 'launcher', sel: '.dock__item[data-app="launcher"]', title: 'The launcher',
+  { id: 'launcher', sel: '.dock__item[data-app="launcher"]', title: t('The launcher'),
     text: () => `Every app in one place, with your recent files.${key('Open the launcher') ? ` From the keyboard: ${key('Open the launcher')}.` : ''}` },
-  { id: 'spotlight', sel: '.topbar__menu [data-key="Help"]', title: 'Search',
+  { id: 'spotlight', sel: '.topbar__menu [data-key="Help"]', title: t('Search'),
     text: () => `${key('Static Search') || 'Search'} finds apps, files, settings and games, and answers sums and unit conversions. It is also in the Help menu.` },
-  { id: 'windows', sel: '.win:not(.is-min) .light--max', title: 'Windows and snapping',
-    text: () => `Hover this green button for snap layouts, or press ${key('Snap layouts for the front window') || 'the snap shortcut'}. Drag a window to a screen edge to snap it.` },
-  { id: 'desktops', sel: '.tray-btn[data-pop="desk"], .topbar__menu [data-key="View"]', title: 'Desktops',
+  { id: 'windows', sel: '.win:not(.is-min) .light--max', title: t('Windows'),
+    text: () => 'Red closes a window, yellow tucks it into the dock and green zooms it. Drag the title bar to move a window and an edge to resize it.' },
+  { id: 'snap-layouts', sel: '.win:not(.is-min) .light--max', title: t('Snap layouts'),
+    text: () => `Hover the green button for snap layouts, or press ${key('Snap layouts for the front window') || 'the snap shortcut'}. Dragging a window to a screen edge snaps it too.` },
+  { id: 'tabs', sel: '.win:not(.is-min) .win__title', title: t('Window tabs'),
+    text: () => 'Drag a window by its title bar onto another window’s title bar and they become one frame with tabs. Drag a tab off to split it out again.' },
+  { id: 'reopen', sel: '.topbar__menu [data-key="Window"]', title: t('Reopen Closed Window'),
+    text: () => `Closed one by mistake? Window › Reopen Closed Window${key('Reopen the last closed window') ? ` (${key('Reopen the last closed window')})` : ''} brings it back where it was.` },
+  { id: 'desktops', sel: '.tray-btn[data-pop="desk"], .topbar__menu [data-key="View"]', title: t('Desktops'),
     text: () => `Keep different jobs on different desktops. ${key('Window overview') || 'The overview'} shows every window and lets you add a desktop (View › Show Overview).` },
-  { id: 'notifications', sel: '.tray-btn[data-tip="Notifications"], .tray-btn[data-tip="Do Not Disturb"]', title: 'Notification centre',
+  { id: 'notifications', sel: '.tray-btn[data-tip="Notifications"], .tray-btn[data-tip="Do Not Disturb"]', title: t('Notification centre'),
     text: () => 'Alerts land here, with an Achievements tab. Do Not Disturb silences most pop-ups but keeps the list.' },
-  { id: 'settings', sel: '.dock__item[data-app="settings"]', title: 'Settings',
+  { id: 'dnd', sel: '.tray-btn[data-tip="Notifications"], .tray-btn[data-tip="Do Not Disturb"]', title: t('Do Not Disturb schedules'),
+    text: () => 'Do Not Disturb can start and stop by itself at times you choose, such as school hours. Set them in Settings › Notifications.' },
+  { id: 'settings', sel: '.dock__item[data-app="settings"]', title: t('Settings'),
     text: () => 'Accent colour, wallpaper, dock, shortcuts, accessibility, Screen Time and more. You can run this tour again from there.' },
-  { id: 'play', sel: '.dock__item[data-app="play"]', title: 'Static Play',
+  { id: 'backup', sel: '.dock__item[data-app="settings"]', title: t('Back up your data'),
+    text: () => 'Everything you save lives in this browser. Settings › Privacy downloads a backup you can restore on another browser or link.' },
+  { id: 'play', sel: '.dock__item[data-app="play"]', title: t('Static Play'),
     text: () => 'The home for your games: pick up where you left off, discover something new, or let Quick Play choose.' },
 ];
 
 export const PHONE_STEPS = [
-  { id: 'm-home', sel: '.mob-home__grid', title: 'Your apps',
+  { id: 'm-home', sel: '.mob-home__grid', title: t('Your apps'),
     text: () => 'Tap an app to open it. It fills the screen, like on any phone.' },
-  { id: 'm-search', sel: '.mob-search', title: 'Search',
+  { id: 'm-search', sel: '.mob-search', title: t('Search'),
     text: () => 'Search apps, files and games from the home screen.' },
-  { id: 'm-dock', sel: '.mob-dock', title: 'Favourites',
+  { id: 'm-dock', sel: '.mob-dock', title: t('Favourites'),
     text: () => 'Your favourite apps stay in reach at the bottom of the home screen.' },
-  { id: 'm-status', sel: '.mob-status', title: 'Notifications and quick settings',
+  { id: 'm-status', sel: '.mob-status', title: t('Notifications and quick settings'),
     text: () => 'Tap the top of the screen, or swipe down from it, for notifications, sound and brightness.' },
-  { id: 'm-nav', sel: '.mob-nav', title: 'Getting around',
+  { id: 'm-nav', sel: '.mob-nav', title: t('Getting around'),
     text: () => 'Swipe up from the bar for Home, swipe sideways to switch apps, and the left button shows your recent apps.' },
 ];
 
@@ -155,9 +166,9 @@ export function mountTour(host) {
     const title = h('h2.tour__t', { id: 'tour-title' });
     const text = h('p.tour__p', { id: 'tour-text' });
     const count = h('span.tour__n', { 'aria-live': 'polite' });
-    const back = h('button.btn.btn--ghost.btn--sm', { type: 'button', text: 'Back', onclick: () => go(at - 1) });
+    const back = h('button.btn.btn--ghost.btn--sm', { type: 'button', text: t('Back'), onclick: () => go(at - 1) });
     const next = h('button.btn.btn--primary.btn--sm', { type: 'button', onclick: () => go(at + 1) });
-    const skip = h('button.tour__skip', { type: 'button', text: 'Skip', 'aria-label': 'Skip the tour', onclick: () => end() });
+    const skip = h('button.tour__skip', { type: 'button', text: t('Skip'), 'aria-label': t('Skip the tour'), onclick: () => end() });
     const card = h('div.tour__card', {
       role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'tour-title', 'aria-describedby': 'tour-text', tabindex: '-1',
     },

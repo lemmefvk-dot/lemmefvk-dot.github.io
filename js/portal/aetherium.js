@@ -32,19 +32,14 @@ export const config = {
   name: 'Staticum',
 };
 
-const clean = s => String(s || '').trim();
-const low = s => clean(s).toLowerCase();
+import { SKILLS, skill, clean, low, has, answer, runAction, fromAction } from './aetherium.kit.js';
+import { suggestFor } from './aetherium.life.js';
 
 /* ------------------------------------------------------------------ *
  *  skills
  *  match: (q, ctx) -> falsy | {score, params}
  *  run:   (params, ctx) -> answer
  * ------------------------------------------------------------------ */
-const SKILLS = [];
-const skill = def => { SKILLS.push(def); return def; };
-
-const has = (q, ...words) => words.some(w => q.includes(w));
-const answer = (say, extra = {}) => ({ say, kind: 'answer', chips: [], cards: [], did: null, ...extra });
 
 /* ---- greeting + identity ---------------------------------------- */
 skill({
@@ -83,6 +78,13 @@ skill({
         'Maths — "(12+8)*3.5", "18% of 240"',
         'Time — "what time is it", "what is the date"',
         'Media — "what is playing", "pause the music"',
+        'Reminders — "remind me at 4pm to hand in the essay", "timer 10 minutes"',
+        'Tasks — "add task finish essay due friday", "what\'s due today"',
+        'Focus — "start focus", "pause focus"; "do not disturb on", "set volume to 40"',
+        'Settings — "open sound settings", "open display settings"',
+        'Weather and screen time — "what\'s the weather", "screen time today"',
+        'Conversions — "convert 5 km to miles", "100 f in c"',
+        'Flashcards — "quiz me on my biology deck"',
       ],
     }],
     chips: [
@@ -114,8 +116,7 @@ skill({
   id: 'open-app',
   match: (q, ctx) => {
     if (!has(q, 'open', 'launch', 'start', 'run', 'show me')) return null;
-    /* the terminal is not a listed app — it lives in the Linux wallpaper —
-       but asking for it by name should still reach it */
+    /* asking for the terminal by name reaches it (a window, or the Linux wallpaper's) */
     if (/\b(terminal|shell|console)\b/.test(q)) return { score: 8, params: { app: { id: 'terminal', name: 'the terminal' } } };
     const apps = ctx.api.listApps();
     let best = null;
@@ -131,7 +132,8 @@ skill({
   run: ({ app }, ctx) => {
     const got = ctx.api.openApp(app.id);
     if (app.id === 'terminal' && !got) {
-      return answer('The terminal lives on the Linux drive — boot Linux (Settings › Desktop › Startup) and it is right on the wallpaper.', { kind: 'unsure' });
+      return answer('The terminal did not open. You can also switch to the Linux desktop in Settings › Desktop › Startup, where it sits right on the wallpaper.',
+        { kind: 'unsure', chips: [{ label: 'Open Settings', send: 'open settings' }] });
     }
     return answer(`Opened ${app.name}.`, { kind: 'action', did: `opened ${app.name}` });
   },
@@ -146,15 +148,6 @@ skill({
  * to keep that promise is to look.
  * ------------------------------------------------------------------ */
 
-const runAction = async (name, params, ctx) => {
-  const A = await import('./aetherium.actions.js');
-  return A.run(name, params, ctx);
-};
-
-/** Turn an action result into an answer, telling the truth either way. */
-const fromAction = (r, success) => (r.ok
-  ? answer(success(r), { kind: 'action', did: r.did, cards: r.data ? [] : [] })
-  : answer(r.detail || 'That did not work.', { kind: 'answer' }));
 
 skill({
   id: 'theme',
@@ -279,7 +272,7 @@ skill({
     const lines = {
       hal: 'I can do that, actually. There are no pod bays, which helps.',
       forty2: 'Forty-two. The hard part was always the question.',
-      dream: 'No. I match what you typed against eighteen skills and pick the best score. '
+      dream: 'No. I match what you typed against a list of skills and pick the best score. '
            + 'That is the whole of me, and I would rather say so than be flattering about it.',
       pasta: 'It is on the wordmark, so it must be true.',
       made: 'Adriel, mostly at night. I am a few hundred lines of pattern matching that can '
@@ -473,7 +466,7 @@ skill({
       status: airing ? 'Currently Airing' : '',
       sort: 'score', perPage: 6,
     });
-    if (!res.items.length) return answer(`Nothing in the 7,963-title catalogue matches "${term}".`, { kind: 'unsure' });
+    if (!res.items.length) return answer(`Nothing in the anime catalogue matches "${term}".`, { kind: 'unsure' });
     return answer(
       airing ? 'Currently airing, highest rated first:'
         : topRated ? 'Top rated in the catalogue:'
@@ -490,7 +483,8 @@ skill({
 });
 
 /* ---- appearance --------------------------------------------------- */
-const ACCENTS = ['aether', 'violet', 'azure', 'mint', 'amber', 'cherri'];
+/* the first accent is stored as 'aether' and called "static" to the person */
+const ACCENTS = ['static', 'violet', 'azure', 'mint', 'amber', 'cherri'];
 skill({
   id: 'look',
   match: q => {
@@ -504,7 +498,7 @@ skill({
   run: ({ theme, accent, density }, ctx) => {
     const root = document.documentElement;
     if (theme) { ctx.api.store.set('prefs.theme', theme); root.dataset.theme = theme; }
-    if (accent) { ctx.api.store.set('prefs.accent', accent); root.dataset.accent = accent; }
+    if (accent) { const id = accent === 'static' ? 'aether' : accent; ctx.api.store.set('prefs.accent', id); root.dataset.accent = id; }
     if (density) { ctx.api.store.set('prefs.density', density); root.dataset.density = density; }
     const what = theme ? `${theme} mode` : accent ? `the ${accent} accent` : `${density} density`;
     return answer(`Switched to ${what}.`, { kind: 'action', did: `set ${what}`,
@@ -517,22 +511,27 @@ skill({
   id: 'system',
   match: q => (has(q, 'system', 'cpu', 'memory', 'ram', 'gpu', 'disk', 'storage', 'uptime', 'battery', 'status', 'spec')
     ? { score: 7, params: { q } } : null),
-  run: ({ q }, ctx) => {
+  run: async ({ q }, ctx) => {
+    /* Only what the browser reports: it never says what CPU, GPU or disk a
+       person has, or how busy they are. System Monitor shows the same facts. */
     const sys = ctx.api.store.get('system');
-    const live = ctx.api.store.get('live');
+    const M = await import('../core/metrics.js');
     if (has(q, 'uptime')) {
-      const s = sys.uptimeBase + Math.floor(performance.now() / 1000);
-      return answer(`Up ${Math.floor(s / 3600)} hours, ${Math.floor((s % 3600) / 60)} minutes.`);
+      const s = Math.floor(performance.now() / 1000);
+      return answer(`This session has been open for ${Math.floor(s / 3600)} hours, ${Math.floor((s % 3600) / 60)} minutes. A web page can't see how long the computer has been on.`);
     }
-    return answer('Here is what the machine is doing right now:', {
+    const hw = M.hardware(), heap = M.heap(), st = await M.storage();
+    const NA = 'not available to a web page';
+    return answer('Here is what the browser lets me see:', {
       cards: [{
         title: sys.os, icon: 'activity',
         lines: [
-          `CPU ${Math.round(live.cpu)}% · ${sys.cpu}`,
-          `GPU ${Math.round(live.gpu)}% · ${sys.gpu}`,
-          `Memory ${Math.round(live.ram)}% of ${sys.ramTotal} GB`,
-          `Disk ${sys.diskUsed} GB used of ${sys.diskTotal} GB`,
-          `Display ${sys.resolution} · ${sys.wm}`,
+          `Processor: ${hw.cores ? `${hw.cores} logical cores` : NA}`,
+          `Graphics: ${NA}`,
+          `Memory: ${navigator.deviceMemory ? `${navigator.deviceMemory} GB or more (rounded by the browser)` : NA}`,
+          heap ? `JS heap: ${M.formatBytes(heap.used)} of ${M.formatBytes(heap.limit)}` : `JS heap: ${NA} (only Chromium reports it)`,
+          st ? `Storage for this site: ${M.formatBytes(st.used)} of ${M.formatBytes(st.quota)}` : `Storage: ${NA}`,
+          `Display: ${hw.screen}`,
         ],
       }],
       chips: [{ label: 'Open System Monitor', send: 'open system monitor' }],
@@ -613,13 +612,20 @@ export async function ask(text, ctx) {
   let best = null;
   for (const s of SKILLS) {
     let m = null;
-    try { m = s.match(q, ctx); } catch (err) { m = null; }
+    try { m = await s.match(q, ctx); } catch (err) { m = null; }
     if (m && (!best || m.score > best.m.score)) best = { s, m };
   }
 
   if (best) {
-    try { return await best.s.run(best.m.params || {}, ctx, text); }
-    catch (err) {
+    try {
+      const res = await best.s.run(best.m.params || {}, ctx, text);
+      /* an answer with no follow-ups of its own gets ones that follow what it just did */
+      if (res && !(res.chips && res.chips.length)) {
+        try { res.chips = suggestFor(best.s.id, res, ctx); } catch (err) { res.chips = []; }
+      }
+      if (res) res.skill = best.s.id;
+      return res;
+    } catch (err) {
       return { say: `That skill failed: ${err.message}`, kind: 'unsure', chips: [], cards: [], did: null };
     }
   }

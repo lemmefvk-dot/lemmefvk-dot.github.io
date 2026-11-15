@@ -25,6 +25,7 @@
    At most zip.MAX_TOTAL bytes and zip.MAX_ENTRIES entries are
    unpacked, and never more than the browser says it has room for.
 
+     zipBlob(dir, names, { onProgress })    -> { blob, name, size, files, folders, skipped }  (not saved)
      compress(dir, names, { onProgress })  -> { path, name, size, files, folders, skipped }
      extract(zipPath, { here, onProgress }) -> { dir, folder, files, folders, skipped, bytes }
      listing(zipPath)                       -> { entries, comment, size }
@@ -67,9 +68,9 @@ const isHollow = n => n.type === 'file' && !media.isMedia(n) && !hasText(n) && (
 const dateOf = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? new Date() : d; };
 
 /* ---------------- compress ---------------- */
-export async function compress(dir, names, { onProgress } = {}) {
-  const why = fileimport.importBlock(dir);
-  if (why) throw new ZipError('blocked', why);
+/* Walk the chosen files and folders and build the archive's bytes. Shared by
+   compress (which saves them beside the originals) and zipBlob (which doesn't). */
+async function build(dir, names, onProgress) {
   const roots = [...new Set(names)].map(name => ({ name, n: vfs.node(at(dir, name)) })).filter(r => r.n);
   if (!roots.length) throw new ZipError('empty', 'Nothing to compress — select files or folders first.');
 
@@ -102,6 +103,20 @@ export async function compress(dir, names, { onProgress } = {}) {
   skipped.push(...made.skipped);
   if (!made.count) throw new ZipError('empty', 'Nothing could be compressed — none of it has content in this browser.');
   const want = roots.length === 1 ? `${roots[0].name}.zip` : 'Archive.zip';
+  return { made, want, files, folders, skipped };
+}
+
+/** The zip of a folder (or files) as a Blob, not saved anywhere: Static Drop sends it.
+    -> { blob, name, size, files, folders, skipped } */
+export async function zipBlob(dir, names, { onProgress } = {}) {
+  const { made, want, files, folders, skipped } = await build(dir, names, onProgress);
+  return { blob: made.blob, name: want, size: made.blob.size, files, folders, skipped };
+}
+
+export async function compress(dir, names, { onProgress } = {}) {
+  const why = fileimport.importBlock(dir);
+  if (why) throw new ZipError('blocked', why);
+  const { made, want, files, folders, skipped } = await build(dir, names, onProgress);
   const saved = await media.save(dir, want, made.blob);
   return { path: saved.path, name: vfs.baseName(saved.path), size: made.blob.size, files, folders, skipped, deflated: made.deflated, stored: made.stored };
 }
@@ -201,4 +216,4 @@ export async function extract(zipPath, { here = false, onProgress } = {}) {
   return { dir, folder: here ? null : target, files, folders, skipped, bytes: done };
 }
 
-export default { compress, extract, listing, isZip, mimeFor, uniqueIn, ZipError };
+export default { zipBlob, compress, extract, listing, isZip, mimeFor, uniqueIn, ZipError };

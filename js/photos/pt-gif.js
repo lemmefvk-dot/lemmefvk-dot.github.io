@@ -9,6 +9,13 @@
    frames per second and the width; frames are read by seeking the video to
    each moment, so a 5 s clip at 10 fps is 50 pictures.
 
+   Captions (top and bottom, in the meme font), Boomerang (forwards then
+   backwards, so it loops without a jump) and Speed (0.25x to 4x) are
+   applied to the frames that were read, so changing them is quick; only
+   the size, the frame rate and the pictures or clip need the pictures
+   read again. Opened with { paths: [...] } (Camera's burst) it starts with
+   those pictures picked, in order.
+
    The file is written by js/core/gif.js (palette by median cut, optional
    dithering, LZW, a loop-forever block, and "only what changed" frames).
    The size shown while you adjust is a guess from encoding the first few
@@ -16,12 +23,20 @@
    ============================================================ */
 import { pickerView, blobOfSource, bitmapOf, sizeOfBitmap, sourceOfPath, picturesDir, saveBlob, stemOf, clamp } from './pt-common.js';
 import { encodeGif, estimateGifSize } from '../core/gif.js';
+import { MEME_FONT } from './pt-meme.js';
 import * as media from '../core/media.js';
 import vfs from '../core/vfs.js';
+import { t } from '../core/i18n.js';
 
 const MAX_FRAMES = 200;
 const MAX_W = 640;
 const tick = () => new Promise(r => setTimeout(r, 0));
+
+/** Forwards, then back without repeating either end, so the loop has no stutter. Two frames already ping-pong. */
+export function boomerangOf(frames, on) {
+  if (!on || frames.length < 3) return frames;
+  return [...frames, ...frames.slice(1, -1).reverse()];
+}
 
 function once(el, evt, ms) {
   return new Promise((res, rej) => {
@@ -45,18 +60,18 @@ export function listVideos() {
 
 export function mountGif({ api, root, opts }) {
   const { h, icon } = api;
-  const O = { mode: 'pictures', delay: 200, width: 320, fps: 10, start: 0, end: 5, dither: false, optimize: true, colors: 256 };
-  const S = { alive: true, seq: 0, timer: 0, frames: [], dim: null, video: null, vurl: null, vdur: 0, play: 0, busy: false, est: null, note: '' };
+  const O = { mode: 'pictures', delay: 200, width: 320, fps: 10, start: 0, end: 5, dither: false, optimize: true, colors: 256, top: '', bottom: '', boomerang: false, speed: 1 };
+  const S = { alive: true, seq: 0, timer: 0, fxTimer: 0, base: null, frames: [], dim: null, video: null, vurl: null, vdur: 0, play: 0, busy: false, est: null, note: '' };
   const fmtBytes = api.fmt.fmtBytes;
 
   /* ---------- stage ---------- */
-  const cv = h('canvas.pt-gif__cv', { 'aria-label': 'Preview of the GIF', role: 'img' });
-  const empty = h('div.pt__empty', icon('film'), h('b', { text: 'Pick pictures or a video' }),
-    h('small', { text: 'Choose on the right. The preview plays the frames the way the GIF will, and nothing is saved until you press Make GIF.' }));
+  const cv = h('canvas.pt-gif__cv', { 'aria-label': t('Preview of the GIF'), role: 'img' });
+  const empty = h('div.pt__empty', icon('film'), h('b', { text: t('Pick pictures or a video') }),
+    h('small', { text: t('Choose on the right. The preview plays the frames the way the GIF will, and nothing is saved until you press Make GIF.') }));
   const paper = h('div.pt-gif__paper', { hidden: true }, cv);
   const result = h('div.pt-gif__result', { hidden: true });
   const foot = h('div.pt__foot', { role: 'status', 'aria-live': 'polite' });
-  const prog = h('progress.pt-conv__progress', { max: 1, value: 0, hidden: true, 'aria-label': 'Progress' });
+  const prog = h('progress.pt-conv__progress', { max: 1, value: 0, hidden: true, 'aria-label': t('Progress') });
   const main = h('div.pt__col', h('div.pt__stage.pt-gif__stage', empty, paper, result), h('div.pt-conv__progwrap', prog), foot);
 
   /* ---------- preview loop ---------- */
@@ -148,7 +163,7 @@ export function mountGif({ api, root, opts }) {
   async function rebuild() {
     const seq = ++S.seq;
     stopPlay();
-    S.frames = []; S.dim = null; S.note = '';
+    S.frames = []; S.dim = null; S.note = ''; S.base = null;
     makeBtn.disabled = true;
     const want = O.mode === 'pictures' ? sources().length : (S.video ? 1 : 0);
     empty.hidden = want > 0;
@@ -161,14 +176,62 @@ export function mountGif({ api, root, opts }) {
     catch (err) { if (seq === S.seq && S.alive) { prog.hidden = true; S.note = `Couldn’t read the frames: ${err?.message || err}`; paintInfo(); } return; }
     if (!S.alive || seq !== S.seq || !r) return;
     prog.hidden = true;
-    S.frames = r.frames; S.dim = { w: r.w, h: r.h };
+    S.base = { frames: r.frames, w: r.w, h: r.h };
     S.note = r.capped ? `Only the first ${MAX_FRAMES} frames are used. Lower the frames per second or shorten the clip.` : '';
-    cv.width = r.w; cv.height = r.h;
+    await applyFx(seq);
+  }
+
+  /* ---------- captions, boomerang and speed: made from the frames already read ---------- */
+  function fitLine(g, text, W) {
+    let px = Math.round(W * 0.12);
+    g.font = `${px}px ${MEME_FONT}`;
+    while (g.measureText(text).width > W * 0.94 && px > 8) { px -= 2; g.font = `${px}px ${MEME_FONT}`; }
+    return px;
+  }
+  function captioned(frames, W, H) {
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round'; g.miterLimit = 2;
+    const lines = [[O.top.trim().toUpperCase(), 0.11], [O.bottom.trim().toUpperCase(), 0.89]].filter(l => l[0]);
+    const out = frames.map(f => {
+      g.putImageData(new ImageData(f.data, W, H), 0, 0);
+      for (const [text, y] of lines) {
+        const px = fitLine(g, text, W);
+        g.lineWidth = Math.max(2, px * 0.14); g.strokeStyle = '#000'; g.fillStyle = '#fff';
+        g.strokeText(text, W / 2, H * y); g.fillText(text, W / 2, H * y);
+      }
+      return { data: g.getImageData(0, 0, W, H).data, delay: f.delay };
+    });
+    c.width = c.height = 0;
+    return out;
+  }
+  async function applyFx(seq = S.seq) {
+    if (!S.base) return;
+    clearTimeout(S.fxTimer);
+    stopPlay();
+    const { w, h: hh } = S.base;
+    let frames = S.base.frames.map(f => ({ data: f.data, delay: f.delay }));
+    if (O.top.trim() || O.bottom.trim()) {
+      try { await document.fonts.load(`100px ${MEME_FONT}`); } catch (e) { /* the fallbacks draw */ }
+      if (!S.alive || seq !== S.seq) return;
+      frames = captioned(frames, w, hh);
+    }
+    frames = boomerangOf(frames, O.boomerang);
+    frames = frames.map(f => ({ data: f.data, delay: Math.max(20, Math.round(f.delay / O.speed)) }));
+    if (!S.alive || seq !== S.seq) return;
+    S.frames = frames; S.dim = { w, h: hh };
+    cv.width = w; cv.height = hh;
     playPreview();
     await tick();
     estimate(seq);
     paintInfo();
     makeBtn.disabled = false;
+  }
+  function scheduleFx() {
+    if (!S.base) return;
+    clearTimeout(S.fxTimer);
+    S.est = null;
+    S.fxTimer = setTimeout(() => applyFx(), 160);
   }
   const encOpts = () => ({ width: S.dim.w, height: S.dim.h, frames: S.frames, loop: true, colors: O.colors, dither: O.dither, optimize: O.optimize });
   function estimate(seq) {
@@ -194,7 +257,7 @@ export function mountGif({ api, root, opts }) {
       const blob = new Blob([bytes], { type: 'image/gif' });
       const first = sources()[0];
       const base = O.mode === 'video' ? stemOf(S.video?.name || 'clip') : (first ? stemOf(first.name) : 'animation');
-      const path = await saveBlob(api, 'Picture Tools', picturesDir(), `${base}.gif`, blob, { title: 'GIF saved' });
+      const path = await saveBlob(api, 'Picture Tools', picturesDir(), `${base}.gif`, blob, { title: t('GIF saved') });
       if (!S.alive) return;
       S.est = blob.size;
       lastPath = path;
@@ -210,8 +273,10 @@ export function mountGif({ api, root, opts }) {
     resultUrl = URL.createObjectURL(blob);
     result.hidden = false;
     result.dataset.path = path;
-    result.replaceChildren(h('img', { src: resultUrl, alt: 'The saved GIF', draggable: 'false' }),
-      h('small', { text: `Saved as ${vfs.baseName(path)} in ~/Pictures · ${fmtBytes(blob.size)}` }));
+    result.replaceChildren(h('img', { src: resultUrl, alt: t('The saved GIF'), draggable: 'false' }),
+      h('small', { text: `Saved as ${vfs.baseName(path)} in ~/Pictures · ${fmtBytes(blob.size)}` }),
+      h('div.pt__actions', h('button.btn.btn--sm', { type: 'button', onclick: () => api.openApp('photos', { path }) }, icon('image'), h('span', { text: t('Open in Photos') })),
+        h('button.btn.btn--sm', { type: 'button', onclick: () => api.openApp('drop', { send: [path] }) }, icon('send'), h('span', { text: t('Send with Drop') }))));
   }
 
   /* ---------- options ---------- */
@@ -220,29 +285,29 @@ export function mountGif({ api, root, opts }) {
       onclick: () => { set(id); for (const b of btns) b.setAttribute('aria-checked', String(b.dataset.v === get())); } }, label));
     return h('div.pt__seg', { role: 'radiogroup', 'aria-label': name }, btns);
   };
-  const num = (label, key, min, max, step, onset) => {
+  const num = (label, key, min, max, step, onset, soft) => {
     const input = h('input', { type: 'number', min, max, step, value: String(O[key]), 'aria-label': label,
-      oninput: () => { const v = Number(input.value); if (!Number.isFinite(v)) return; O[key] = clamp(v, min, max); onset?.(); schedule(); } });
+      oninput: () => { const v = Number(input.value); if (!Number.isFinite(v)) return; O[key] = clamp(v, min, max); onset?.(); (soft ? scheduleFx : schedule)(); } });
     return { input, row: h('label.pt__line', h('span', { text: label }), input) };
   };
 
-  const picker = pickerView(api, { multi: true, label: 'Pictures for the GIF', onChange: () => { if (O.mode === 'pictures') schedule(); } });
-  const delay = num('Delay (ms)', 'delay', 20, 5000, 10);
+  const picker = pickerView(api, { multi: true, label: t('Pictures for the GIF'), onChange: () => { if (O.mode === 'pictures') schedule(); } });
+  const delay = num('Delay (ms)', 'delay', 20, 5000, 10, () => { if (S.base) for (const f of S.base.frames) f.delay = O.delay; }, true);
   const picGroup = h('div.pt__group', picker.el, delay.row,
-    h('small.pt__hint', { text: 'One frame per picture, in the order you picked them (the badge shows the order).' }));
+    h('small.pt__hint', { text: t('One frame per picture, in the order you picked them (the badge shows the order).') }));
 
   const vids = listVideos();
-  const vlist = h('div.pt-gif__vids', { role: 'listbox', 'aria-label': 'Videos' },
+  const vlist = h('div.pt-gif__vids', { role: 'listbox', 'aria-label': t('Videos') },
     vids.length ? vids.map(v => h('button.pt-gif__vid', { type: 'button', role: 'option', 'aria-selected': 'false', dataset: { name: v.name }, onclick: () => chooseVideo(v) },
-      icon('film'), h('span', { text: v.name }))) : h('small.pt__hint', { text: 'No videos in ~/Videos yet. Record the screen with Recorder, or use “From computer…”.' }));
-  const vfile = h('input', { type: 'file', accept: 'video/*', hidden: true, 'aria-label': 'Choose a video from this computer',
+      icon('film'), h('span', { text: v.name }))) : h('small.pt__hint', { text: t('No videos in ~/Videos yet. Record the screen with Recorder, or use “From computer…”.') }));
+  const vfile = h('input', { type: 'file', accept: 'video/*', hidden: true, 'aria-label': t('Choose a video from this computer'),
     onchange: () => { const f = vfile.files?.[0]; vfile.value = ''; if (f) chooseVideo({ key: `file:${f.name}`, name: f.name, file: f }); } });
   const start = num('Start (s)', 'start', 0, 36000, 0.1);
   const end = num('End (s)', 'end', 0.1, 36000, 0.1);
   const fps = num('Frames/s', 'fps', 1, 30, 1);
-  const vidInfo = h('small.pt__hint', { text: 'Choose a video.' });
+  const vidInfo = h('small.pt__hint', { text: t('Choose a video.') });
   const vidGroup = h('div.pt__group', { hidden: true }, vlist,
-    h('button.btn.btn--sm', { type: 'button', onclick: () => vfile.click() }, icon('upload'), h('span', { text: 'From computer…' })), vfile,
+    h('button.btn.btn--sm', { type: 'button', onclick: () => vfile.click() }, icon('upload'), h('span', { text: t('From computer…') })), vfile,
     start.row, end.row, fps.row, vidInfo);
 
   async function chooseVideo(v) {
@@ -279,20 +344,30 @@ export function mountGif({ api, root, opts }) {
   const modeSeg = seg('Make it from', [['pictures', 'Pictures'], ['video', 'Video']], () => O.mode, id => {
     O.mode = id; picGroup.hidden = id !== 'pictures'; vidGroup.hidden = id !== 'video'; schedule();
   });
-  const wSel = h('select', { 'aria-label': 'Width', onchange: () => { O.width = Number(wSel.value); schedule(); } },
-    [160, 240, 320, 480, 640].map(w => h('option', { value: String(w), text: `${w} px wide`, selected: w === O.width })));
-  const colorsSel = h('select', { 'aria-label': 'Colours', onchange: () => { O.colors = Number(colorsSel.value); schedule(); } },
+  const wSel = h('select', { 'aria-label': t('Width'), onchange: () => { O.width = Number(wSel.value); schedule(); } },
+    [160, 240, 320, 480, 640].map(w => h('option', { value: String(w), text: t('{w} px wide', { w }), selected: w === O.width })));
+  const colorsSel = h('select', { 'aria-label': t('Colours'), onchange: () => { O.colors = Number(colorsSel.value); schedule(); } },
     [[256, '256 colours (best)'], [128, '128 colours'], [64, '64 colours'], [32, '32 colours (smallest)']].map(([n, l]) => h('option', { value: String(n), text: l })));
-  const ditherBox = h('input', { type: 'checkbox', 'aria-label': 'Dithering', onchange: () => { O.dither = ditherBox.checked; schedule(); } });
-  const optBox = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Only store what changes between frames', onchange: () => { O.optimize = optBox.checked; schedule(); } });
-  const makeBtn = h('button.btn.btn--primary', { type: 'button', disabled: true, onclick: () => make() }, icon('film'), h('span', { text: 'Make GIF' }));
+  const ditherBox = h('input', { type: 'checkbox', 'aria-label': t('Dithering'), onchange: () => { O.dither = ditherBox.checked; schedule(); } });
+  const optBox = h('input', { type: 'checkbox', checked: true, 'aria-label': t('Only store what changes between frames'), onchange: () => { O.optimize = optBox.checked; schedule(); } });
+  /* captions, boomerang, speed */
+  const topIn = h('input', { type: 'text', maxlength: 60, placeholder: t('Top caption'), 'aria-label': t('Top caption'), dataset: { fk: 'gif-top' }, oninput: () => { O.top = topIn.value; scheduleFx(); } });
+  const botIn = h('input', { type: 'text', maxlength: 60, placeholder: t('Bottom caption'), 'aria-label': t('Bottom caption'), dataset: { fk: 'gif-bottom' }, oninput: () => { O.bottom = botIn.value; scheduleFx(); } });
+  const boomBox = h('input', { type: 'checkbox', 'aria-label': t('Boomerang'), dataset: { fk: 'gif-boomerang' }, onchange: () => { O.boomerang = boomBox.checked; scheduleFx(); } });
+  const SPEEDS = [0.25, 0.5, 1, 1.5, 2, 4];
+  const speedSel = h('select', { 'aria-label': t('Speed'), dataset: { fk: 'gif-speed' }, onchange: () => { O.speed = Number(speedSel.value); scheduleFx(); } },
+    SPEEDS.map(v => h('option', { value: String(v), text: v === 1 ? t('Normal speed') : `${v}× ${v < 1 ? 'slower' : 'faster'}`, selected: v === 1 })));
+  const makeBtn = h('button.btn.btn--primary', { type: 'button', disabled: true, onclick: () => make() }, icon('film'), h('span', { text: t('Make GIF') }));
   const side = h('div.pt__side',
     modeSeg, picGroup, vidGroup,
-    h('div.pt__group', h('b.pt__label', { text: 'Size and quality' }), wSel, colorsSel,
-      h('label.pt__check', ditherBox, h('span', { text: 'Dithering (smoother gradients, bigger file)' })),
-      h('label.pt__check', optBox, h('span', { text: 'Only store what changes between frames (smaller file)' }))),
+    h('div.pt__group', h('b.pt__label', { text: t('Captions and motion') }),
+      h('label.pt__line', h('span', { text: t('Top') }), topIn), h('label.pt__line', h('span', { text: t('Bottom') }), botIn),
+      h('label.pt__check', boomBox, h('span', { text: t('Boomerang (plays forwards, then backwards)') })), speedSel),
+    h('div.pt__group', h('b.pt__label', { text: t('Size and quality') }), wSel, colorsSel,
+      h('label.pt__check', ditherBox, h('span', { text: t('Dithering (smoother gradients, bigger file)') })),
+      h('label.pt__check', optBox, h('span', { text: t('Only store what changes between frames (smaller file)') }))),
     h('div.pt__actions', makeBtn),
-    h('small.pt__hint', { text: 'The GIF repeats forever and is saved in ~/Pictures. The size shown is an estimate until you make it.' }));
+    h('small.pt__hint', { text: t('The GIF repeats forever and is saved in ~/Pictures. The size shown is an estimate until you make it.') }));
   root.append(h('div.pt__split', main, side));
   paintInfo();
 
@@ -302,11 +377,12 @@ export function mountGif({ api, root, opts }) {
     modeSeg.querySelector('[data-v="video"]').click();
     chooseVideo({ key: p, name: vfs.baseName(p), path: p });
   } else if (p) { const s = sourceOfPath(p); if (s) picker.pick(s); }
+  if (Array.isArray(opts?.paths)) for (const q of opts.paths) { const s = sourceOfPath(q); if (s) picker.pick(s); }
 
   return () => {
     S.alive = false;
     S.seq++;
-    clearTimeout(S.timer); stopPlay();
+    clearTimeout(S.timer); clearTimeout(S.fxTimer); stopPlay();
     picker.destroy();
     if (resultUrl) URL.revokeObjectURL(resultUrl);
     if (S.vurl && S.video?.file) URL.revokeObjectURL(S.vurl);

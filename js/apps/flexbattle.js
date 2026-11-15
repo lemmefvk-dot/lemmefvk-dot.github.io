@@ -36,9 +36,17 @@
    the match or leave at any time.
 
    MESSAGES (validated in ./flexrules.js): chat · msig and av (the
-   camera link, as in Watch Together) · go (host starts) · fx { r } (I
-   sent my photo) · vd { r, k, what, lo, hi, cf } (my guess) · end ·
-   rm (rematch).
+   camera link, as in Watch Together) · go { rounds, secs, th } (host
+   starts: 1, 3 or 5 rounds, an optional timer per round, optional theme
+   per round) · fx { r } (I sent my photo) · vd { r, k, what, lo, hi, cf }
+   (my guess) · end · rm (rematch) · rx { e } (a reaction while the guesses
+   are shown).
+
+   Also: invite a friend from the friends list (the room code goes down
+   the private friend channel; core/friendinvite.js), a win/loss record by
+   name (kept on this device; names aren't verified, so it is a tally for
+   fun and says so), and a recap card with the totals and every round
+   that can be copied or saved as a picture (it holds no photos).
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import { openPair, iceServers } from '../core/pair.js';
@@ -49,6 +57,7 @@ import * as llm from '../portal/llm.js';
 import * as AIM from '../portal/aimodel.js';
 import * as F from './flexrules.js';
 import { blocked, MESSAGE as KEEP_PLAYFUL } from './flexfilter.js';
+import { invitePanel } from '../core/friendinvite.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-together-css')) {
   const l = document.createElement('link');
@@ -63,6 +72,7 @@ const CHAT_BURST = 5;
 const CHAT_WINDOW = 5000;
 const RESEND = 3000;
 const SNAP_W = 640;
+const REC_KEY = 'prefs.flexRecord';
 const JOIN_ERR = {
   invalid: 'That isn’t a room code: codes are 6 letters and numbers, like K7QM2X.',
   nobody: 'No Flex Battle room answered that code. Check it, and that your friend still has the room open.',
@@ -107,6 +117,19 @@ const CSS = `
 .fx-win .big{font:900 var(--fs-22,22px)/1 var(--font,system-ui);letter-spacing:.12em;color:#ffd666}
 .fx-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;text-align:left;width:100%}
 .fx-list li{padding:4px 8px;border-radius:8px;background:var(--fill-0)}
+.fx{position:relative}
+.fx-theme{padding:1px 9px;border-radius:99px;background:rgba(255,214,102,.16);border:1px solid #ffd666;color:#ffd666;font-weight:700}
+.fx-timer{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ink-0)}
+.fx-timer[data-low="true"]{color:#ffb3bf}
+.fx-rx{display:flex;gap:4px;flex-wrap:wrap}
+.fx-rx__b{height:28px;min-width:34px;border-radius:99px;border:1px solid var(--line-1);background:var(--fill-0);cursor:pointer;font-size:calc(15px * var(--fs-k,1));line-height:1}
+.fx-rx__b:hover,.fx-rx__b:focus-visible{border-color:var(--accent)}
+.fx-fly{position:absolute;bottom:12%;z-index:5;font-size:calc(30px * var(--fs-k,1));pointer-events:none;animation:fx-fly 2.5s ease-out forwards}
+.fx-fly[data-mine="1"]{filter:drop-shadow(0 0 6px var(--accent))}
+@keyframes fx-fly{0%{transform:translateY(0) scale(.7);opacity:0}15%{opacity:1}100%{transform:translateY(-240px) scale(1.2);opacity:0}}
+@media (prefers-reduced-motion:reduce){.fx-fly{animation:none;opacity:1;bottom:40%}}
+.fx-recap{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:12px;background:var(--fill-0);border:1px dashed var(--line-1);width:100%;text-align:left}
+.fx-invite{padding:0}
 @container (max-width:520px){.fx-cols{grid-template-columns:1fr}}
 `;
 
@@ -130,8 +153,17 @@ defineApp({
       dead: false, room: null, roomOffs: [], err: '', joinCode: '',
       chat: [], chatSent: [], g: null, flex: { stage: 'idle', url: '', err: '', need: null }, ctl: null, peerSending: -1,
     };
-    const fresh = () => ({ phase: 'lobby', round: 1, mine: [null, null, null], theirs: [null, null, null], snapM: [null, null, null], snapT: [null, null, null], recapUntil: 0, ended: '', rmMe: false, rmThem: false });
+    const blank = n => Array.from({ length: n }, () => null);
+    const fresh = (o = {}) => {
+      const n = o.rounds || F.ROUNDS;
+      return { phase: 'lobby', round: 1, rounds: n, secs: o.secs || 0, th: o.th || [], deadline: 0, mine: blank(n), theirs: blank(n), snapM: blank(n), snapT: blank(n), recapUntil: 0, ended: '', rmMe: false, rmThem: false, counted: false };
+    };
     S.g = fresh();
+    S.setup = { rounds: F.ROUNDS, secs: 0, themes: false };      /* the host's choices in the lobby */
+    S.inviteOpen = false;
+    const flies = new Set();
+    const timers = new Set();
+    const recOf = () => api.store.get(REC_KEY) || {};
     const A = {
       av: null, cam: null, mic: null, camHidden: false, muted: false, busy: { cam: false, mic: false }, err: '', canRetry: false, link: 'idle',
       remote: { cam: 0, mic: 0 }, stream: new MediaStream(), lastSent: 0, needTap: false,
@@ -153,6 +185,7 @@ defineApp({
     const cols = h('div.fx-cols', h('div.fx-col', meTile, meCard), h('div.fx-col', frTile, frCard));
 
     const roomBar = h('div.wt-room');
+    const invHost = h('div.fx-invite', { hidden: true });
     const camBtn = h('button.btn.btn--sm.wt-cam', { type: 'button', 'aria-pressed': 'false', onclick: () => (A.cam ? turnOff('cam') : turnOn('cam')) }, icon('video'), h('span', { text: 'Camera' }));
     const micBtn = h('button.btn.btn--sm.wt-mic', { type: 'button', 'aria-pressed': 'false', onclick: () => (A.mic ? turnOff('mic') : turnOn('mic')) }, icon('mic'), h('span', { text: 'Mic' }));
     const camHideBtn = h('button.btn.btn--sm.wt-camhide', { type: 'button', hidden: true, onclick: () => { A.camHidden = !A.camHidden; if (A.cam) A.cam.enabled = !A.camHidden; sendAv(); paint(); } });
@@ -181,7 +214,7 @@ defineApp({
     const side = h('aside.wt-side',
       h('div.wt-side__h', icon('message-circle'), h('b', { text: 'Chat' })), log, chatForm,
       h('p.wt-fine', { text: 'Flex Battle runs over StaticOS’s live connection, a free public server. Messages are sealed with the room code, but anyone who has the code can join and read the chat, so treat it like a password. Names aren’t verified.' }));
-    const main = h('div.fx', roomBar, avBar, intro, lobby, cols, play, end, gameFine);
+    const main = h('div.fx', roomBar, invHost, avBar, intro, lobby, cols, play, end, gameFine);
     root.appendChild(h('div.app.app--col', h('div.wt', main, side)));
     cols.hidden = true; gameFine.hidden = true;
 
@@ -247,23 +280,24 @@ defineApp({
       S.peerSending = -1;
     }
     /* snapshots are dropped when their round ends, and all of them when the match does */
-    function dropSnaps(r) { if (r === undefined) { S.g.snapM = [null, null, null]; S.g.snapT = [null, null, null]; } else { S.g.snapM[r] = null; S.g.snapT[r] = null; } }
+    function dropSnaps(r) { if (r === undefined) { S.g.snapM = blank(S.g.rounds); S.g.snapT = blank(S.g.rounds); } else { S.g.snapM[r] = null; S.g.snapT[r] = null; } }
 
     function onMsg({ t, m }) {
       const G = g();
       if (t === 'chat') { addChat({ who: peerName(), hue: S.room?.peer?.color, text: blocked(m.tx) ? '[hidden: that word isn’t allowed here]' : m.tx }); return; }
       if (t === 'msig') { if (paired()) { if (!A.av) makeAv(); A.av.handle(m); } return; }
       if (t === 'av') { A.remote = m; paint(); return; }
-      if (t === 'go') { if (S.room?.role === 'guest' && G.phase === 'lobby') begin(); return; }
+      if (t === 'go') { if (S.room?.role === 'guest' && G.phase === 'lobby') begin(m); return; }
+      if (t === 'rx') { if (G.phase === 'end' || G.recapUntil) fly(m.e, false); return; }
       if (t === 'fx') {
-        if (G.phase !== 'play' || G.theirs[m.r - 1] || m.r < G.round) return;
+        if (G.phase !== 'play' || m.r > G.rounds || G.theirs[m.r - 1] || m.r < G.round) return;
         S.peerSending = m.r;
         G.snapT[m.r - 1] = grab(remoteVideo, 320, 0.7);
         paint();
         return;
       }
       if (t === 'vd') {
-        if (G.phase !== 'play' || G.theirs[m.r - 1]) return;
+        if (G.phase !== 'play' || m.r > G.rounds || G.theirs[m.r - 1]) return;
         const { r, ...v } = m;
         G.theirs[r - 1] = F.cleanVerdict(v);
         if (S.peerSending === r) S.peerSending = -1;
@@ -275,21 +309,78 @@ defineApp({
     }
 
     /* ---------- the game ---------- */
-    function begin() { S.g = { ...fresh(), phase: 'play' }; S.flex = { stage: 'idle', url: '', err: '', need: null }; S.peerSending = -1; paint(); }
-    function startMatch() { if (S.room?.role !== 'host' || !paired() || g().phase !== 'lobby') return; S.room.send('go'); begin(); }
+    function begin(o = {}) {
+      S.g = { ...fresh(o), phase: 'play' };
+      if (S.g.secs) S.g.deadline = performance.now() + S.g.secs * 1000;
+      S.flex = { stage: 'idle', url: '', err: '', need: null }; S.peerSending = -1; paint();
+    }
+    function pickThemes(n) {
+      const idx = F.THEMES.map((_, i) => i);
+      for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+      return idx.slice(0, n);
+    }
+    function startMatch() {
+      if (S.room?.role !== 'host' || !paired() || g().phase !== 'lobby') return;
+      const o = { rounds: S.setup.rounds, secs: S.setup.secs, th: S.setup.themes ? pickThemes(S.setup.rounds) : [] };
+      S.room.send('go', o); begin(o);
+    }
     function endMatch() { if (g().phase !== 'play') return; if (paired()) S.room.send('end'); g().phase = 'end'; g().ended = 'me'; dropSnaps(); try { S.ctl?.abort(); } catch (e) { /* done */ } S.flex = { stage: 'idle', url: '', err: '', need: null }; paint(); }
+    /* a finished match (not one ended early) adds to the tally against this name; kept on this device only */
+    function countMatch() {
+      const G = g();
+      G.counted = true;
+      if (G.ended || !paired()) return;
+      const w = F.winner(G.mine, G.theirs);
+      api.store.set(REC_KEY, F.bump(recOf(), peerName(), w));
+      paintEnd();
+    }
+    function recordLine(nm) {
+      const r = recOf()[String(nm).slice(0, 24)];
+      if (!r) return `First match against ${nm} on this device.`;
+      return `You against ${nm}: ${r.w} ${r.w === 1 ? 'win' : 'wins'}, ${r.l} ${r.l === 1 ? 'loss' : 'losses'}${r.t ? `, ${r.t} ${r.t === 1 ? 'tie' : 'ties'}` : ''}. Kept on this device, by name; names aren’t verified.`;
+    }
+
+    /* ---------- reactions while the guesses are shown ---------- */
+    let lastRx = 0, rxSeen = [];
+    function react(e) {
+      const G = g();
+      if (!F.REACTIONS.includes(e) || !(G.phase === 'end' || G.recapUntil)) return;
+      const now = performance.now();
+      if (now - lastRx < 400) return;
+      lastRx = now;
+      if (paired()) S.room.send('rx', { e });
+      fly(e, true);
+    }
+    function fly(e, mine) {
+      const now = performance.now();
+      rxSeen = rxSeen.filter(t => now - t < 2000);
+      if (!mine) { if (rxSeen.length >= 8) return; rxSeen.push(now); }
+      if (flies.size >= 12) return;
+      const el = h('span.fx-fly', { 'aria-hidden': 'true', style: { left: `${10 + Math.random() * 80}%` }, dataset: { mine: mine ? '1' : '0' }, text: e });
+      main.appendChild(el);
+      flies.add(el);
+      const t = setTimeout(() => { flies.delete(el); timers.delete(t); el.remove(); }, 2600);
+      timers.add(t);
+    }
+    const rxBar = h('div.fx-rx', { role: 'group', 'aria-label': 'Reactions', hidden: true }, F.REACTIONS.map(e => h('button.fx-rx__b', { type: 'button', 'data-rx': e, 'aria-label': `React ${e}`, onclick: () => react(e) }, e)));
+
     function askRematch() { g().rmMe = true; if (paired()) S.room.send('rm'); if (g().rmThem) rematch(); else paint(); }
-    function rematch() { begin(); }
+    /* the same settings; themes move on by a fixed step so both devices pick the same new ones without another message */
+    function rematch() { const G = g(); begin({ rounds: G.rounds, secs: G.secs, th: G.th.map(i => (i >= 0 ? (i + G.rounds) % F.THEMES.length : -1)) }); }
     const done = r => !!(g().mine[r - 1] && g().theirs[r - 1]);
     function tick() {
       const G = g();
+      if (G.phase === 'end' && !G.counted) countMatch();
       if (G.phase !== 'play') return;
+      /* time is up: a round nobody flexed in is a pass, on each device, by the same clock */
+      if (G.secs && G.deadline && !G.mine[G.round - 1] && S.flex.stage !== 'sending' && performance.now() >= G.deadline) { sys('Time is up: this round is a pass.'); pass(); return; }
+      if (G.secs && G.deadline && !G.recapUntil) paintTimer();
       if (done(G.round)) {
         if (!G.recapUntil) { G.recapUntil = performance.now() + recapMs; paint(); }
         else if (performance.now() >= G.recapUntil) {
           dropSnaps(G.round - 1);
           G.recapUntil = 0;
-          if (G.round >= F.ROUNDS) { G.phase = 'end'; G.ended = ''; dropSnaps(); } else G.round++;
+          if (G.round >= G.rounds) { G.phase = 'end'; G.ended = ''; dropSnaps(); } else { G.round++; if (G.secs) G.deadline = performance.now() + G.secs * 1000; }
           S.flex = { stage: 'idle', url: '', err: '', need: null };
           paint();
         }
@@ -444,15 +535,27 @@ defineApp({
       };
       card(meCard, true); card(frCard, false);
     }
+    function paintTimer() {
+      const el = head.querySelector('[data-fx=timer]');
+      if (!el) return;
+      const G = g(), left = Math.max(0, (G.deadline - performance.now()) / 1000);
+      el.textContent = G.mine[G.round - 1] ? 'You’re done' : `Time left: ${F.mmss(left)}`;
+      el.dataset.low = String(left < 10 && !G.mine[G.round - 1]);
+    }
     function paintPanel() {
       const G = g(), r = G.round, nm = peerName();
-      head.replaceChildren(h('b', { text: `Round ${r} of ${F.ROUNDS}` }),
+      const theme = G.th[r - 1] >= 0 && G.th[r - 1] !== undefined ? F.THEMES[G.th[r - 1]] : '';
+      head.replaceChildren(h('b', { text: `Round ${r} of ${G.rounds}` }),
+        theme ? h('span.fx-theme', { dataset: { fx: 'theme' }, text: `Theme: ${theme}` }) : null,
+        G.secs ? h('span.fx-timer', { dataset: { fx: 'timer' }, role: 'timer', text: '' }) : null,
         h('span.fx-tot', { text: `Totals so far, the AI’s guesses added up: you ${tot(G.mine).n ? F.range(tot(G.mine).lo, tot(G.mine).hi) : '$0'} · ${nm} ${tot(G.theirs).n ? F.range(tot(G.theirs).lo, tot(G.theirs).hi) : '$0'}`, dataset: { fx: 'totals' } }));
       const kids = [];
       const F1 = S.flex;
       if (G.recapUntil) {
         const s = Math.max(0, Math.ceil((G.recapUntil - performance.now()) / 1000));
-        kids.push(h('span', { role: 'status', text: r >= F.ROUNDS ? `Totals in ${s}…` : `Next round in ${s}…` }));
+        kids.push(h('span', { role: 'status', text: r >= G.rounds ? `Totals in ${s}…` : `Next round in ${s}…` }));
+        if (theme) kids.push(h('span.fx-fine', { text: 'The AI doesn’t check the theme; it only guesses what each item is. The theme is for you two to judge.' }));
+        kids.push(rxBar);
       } else if (G.mine[r - 1]) {
         kids.push(h('span', { role: 'status', text: `Waiting for ${nm} to flex…` }));
       } else if (F1.need) {
@@ -477,6 +580,45 @@ defineApp({
       }
       kids.push(h('button.btn.btn--sm', { type: 'button', dataset: { fx: 'endmatch' }, onclick: endMatch }, h('span', { text: 'End the match' })));
       panel.replaceChildren(...kids);
+      paintTimer();
+      rxBar.hidden = !(paired() && G.recapUntil);
+    }
+    /* the recap card: the totals and every round as text, to copy or save as a picture. It carries no photos and no faces. */
+    function recapLines(G, nm, a, b, w) {
+      const lines = [`Flex Battle: ${myName()} vs ${nm}`, w === 'tie' ? 'Too close to call' : `${w === 'me' ? myName() : nm} wins by the AI’s guesses`,
+        `${myName()}: ${a.n ? F.range(a.lo, a.hi) : '$0'}`, `${nm}: ${b.n ? F.range(b.lo, b.hi) : '$0'}`];
+      for (let i = 0; i < G.rounds; i++) {
+        const t = G.th[i] >= 0 && G.th[i] !== undefined ? ` (${F.THEMES[G.th[i]]})` : '';
+        const f = v => (!v ? '-' : v.k === 'ok' ? `${v.what} ${F.range(v.lo, v.hi)}` : v.k === 'skip' ? 'not an item' : 'pass');
+        lines.push(`Round ${i + 1}${t}: ${myName()} ${f(G.mine[i])} | ${nm} ${f(G.theirs[i])}`);
+      }
+      lines.push('For fun; scores are self-reported. The AI only guesses.');
+      return lines;
+    }
+    function recapCard(G, nm, a, b, w) {
+      const lines = recapLines(G, nm, a, b, w);
+      const copy = async () => {
+        try { await navigator.clipboard.writeText(lines.join('\n')); api.notify({ app: 'Flex Battle', icon: 'copy', title: 'Recap copied', message: 'Paste it anywhere.' }); }
+        catch (e) { api.notify({ app: 'Flex Battle', icon: 'info', title: 'Couldn’t copy', message: 'Copying was blocked here.' }); }
+      };
+      const save = () => {
+        const c = document.createElement('canvas'); c.width = 900; c.height = 120 + lines.length * 34;
+        const x = c.getContext('2d');
+        x.fillStyle = '#1b1020'; x.fillRect(0, 0, c.width, c.height);
+        x.fillStyle = '#ffd666'; x.font = '700 30px system-ui, sans-serif'; x.fillText(lines[0].slice(0, 60), 32, 56);
+        x.fillStyle = '#fff'; x.font = '22px system-ui, sans-serif';
+        lines.slice(1).forEach((l, i) => x.fillText(l.slice(0, 90), 32, 100 + i * 34));
+        c.toBlob(blob => {
+          if (!blob) return;
+          const u = URL.createObjectURL(blob);
+          const aEl = h('a', { href: u, download: 'flex-battle-recap.png' });
+          document.body.appendChild(aEl); aEl.click(); aEl.remove();
+          setTimeout(() => URL.revokeObjectURL(u), 4000);
+        }, 'image/png');
+      };
+      return h('div.fx-recap', { dataset: { fx: 'recap' }, 'aria-label': 'Recap card' }, h('b', { text: 'Recap card' }), h('div', lines.slice(1, 4).map(l => h('div', { text: l }))),
+        h('div.fx-row', h('button.btn.btn--sm', { type: 'button', dataset: { fx: 'copy-recap' }, onclick: copy }, icon('copy'), h('span', { text: 'Copy recap' })),
+          h('button.btn.btn--sm', { type: 'button', dataset: { fx: 'save-recap' }, onclick: save }, icon('download'), h('span', { text: 'Save as picture' }))));
     }
     function paintEnd() {
       const G = g(), nm = peerName();
@@ -486,13 +628,17 @@ defineApp({
       if (G.ended) kids.push(h('span.fx-fine', { text: `${G.ended === 'me' ? 'You' : nm} ended the match early, so these are the totals so far.` }));
       kids.push(h('span', { text: `${myName()}: the AI’s guesses added up to ${a.n ? F.range(a.lo, a.hi) : '$0'}` }),
         h('span', { text: `${nm}: the AI’s guesses added up to ${b.n ? F.range(b.lo, b.hi) : '$0'}` }),
+        h('span.fx-fine', { dataset: { fx: 'forfun' }, text: 'For fun; scores are self-reported.' }),
         h('span.fx-fine', { text: 'Totals are the AI’s guesses added up, not real values. ' + F.GUESS_LINE }));
+      if (!G.ended) kids.push(h('span.fx-fine', { dataset: { fx: 'record' }, text: recordLine(nm) }));
       const rows = [];
-      for (let i = 0; i < F.ROUNDS; i++) for (const [who, v] of [[myName(), G.mine[i]], [nm, G.theirs[i]]]) {
+      for (let i = 0; i < G.rounds; i++) for (const [who, v] of [[myName(), G.mine[i]], [nm, G.theirs[i]]]) {
         if (!v) continue;
         rows.push(h('li', { text: `Round ${i + 1}, ${who}: ` + (v.k === 'ok' ? `AI guess: ${v.what}, roughly ${F.range(v.lo, v.hi)}, confidence ${v.cf}` : v.k === 'skip' ? 'Only items can be flexed (nothing scored)' : 'passed') }));
       }
       kids.push(h('ul.fx-list', { 'aria-label': 'Every guess' }, rows));
+      kids.push(recapCard(G, nm, a, b, w), rxBar);
+      rxBar.hidden = !paired();
       kids.push(h('div.fx-row',
         h('button.btn.btn--primary', { type: 'button', dataset: { fx: 'rematch' }, disabled: G.rmMe || !paired(), onclick: askRematch }, h('span', { text: G.rmMe ? `Waiting for ${nm}…` : G.rmThem ? `${nm} wants a rematch: accept` : 'Rematch' })),
         h('button.btn', { type: 'button', dataset: { fx: 'leave' }, onclick: () => { sys('You left the room'); closeRoom(true); paint(); } }, h('span', { text: 'Leave' }))));
@@ -510,12 +656,20 @@ defineApp({
         if (S.err) kids.push(h('p.wt-err', { role: 'alert', text: S.err }));
       } else {
         const ph = room.phase;
-        if (room.role === 'host') kids.push(h('span.wt-room__k', { text: 'Room' }), h('span.wt-code', { 'aria-label': `Room code ${spaced(room.code)}`, dataset: { code: room.code } }, [...room.code].map(c => h('span', { text: c, 'aria-hidden': 'true' }))));
+        if (room.role === 'host') kids.push(h('span.wt-room__k', { text: 'Room' }), h('span.wt-code', { 'aria-label': `Room code ${spaced(room.code)}`, dataset: { code: room.code } }, [...room.code].map(c => h('span', { text: c, 'aria-hidden': 'true' }))),
+          h('button.btn.btn--sm', { type: 'button', dataset: { fx: 'invite' }, 'aria-expanded': String(S.inviteOpen), onclick: () => toggleInvite() }, icon('send'), h('span', { text: 'Invite a friend' })));
         else kids.push(h('span.wt-room__k', { text: `Room ${room.code}` }));
         kids.push(h('span.wt-room__st', { dataset: { phase: ph }, text: ph === 'paired' ? `With ${peerName()}` : ph === 'waiting' ? 'Waiting for your friend…' : ph === 'joining' ? 'Joining…' : 'Connecting…' }),
           h('button.btn.btn--sm.wt-leave', { type: 'button', dataset: { fx: 'leave-room' }, onclick: () => { sys('You left the room'); closeRoom(true); paint(); } }, h('span', { text: 'Leave' })));
       }
       roomBar.replaceChildren(...kids);
+      invHost.hidden = !(room && room.role === 'host' && S.inviteOpen);
+    }
+    async function toggleInvite() {
+      if (!S.room || S.room.role !== 'host') return;
+      S.inviteOpen = !S.inviteOpen;
+      if (S.inviteOpen) { invHost.hidden = false; invHost.replaceChildren(await invitePanel({ h, icon, kind: 'flex', code: S.room.code })); }
+      if (!S.dead) paintRoom();
     }
     function paintAv() {
       const on = paired();
@@ -557,8 +711,13 @@ defineApp({
       end.hidden = !(pr && G.phase === 'end');
       if (!lobby.hidden) {
         const host = S.room.role === 'host', both = !!A.cam && !A.camHidden && A.remote.cam === 1;
+        const set = host ? h('div.fx-row', { dataset: { fx: 'setup' } },
+          h('label', { text: 'Rounds ' }, h('select', { 'data-fx': 'rounds', 'aria-label': 'Rounds', onchange: e => { S.setup.rounds = Number(e.target.value); } }, F.ROUND_CHOICES.map(n => h('option', { value: String(n), text: String(n), selected: n === S.setup.rounds })))),
+          h('label', { text: 'Timer ' }, h('select', { 'data-fx': 'secs', 'aria-label': 'Time per round', onchange: e => { S.setup.secs = Number(e.target.value); } }, F.TIMER_CHOICES.map(n => h('option', { value: String(n), text: n ? `${n} seconds` : 'none', selected: n === S.setup.secs })))),
+          h('label', h('input', { type: 'checkbox', 'data-fx': 'themes', checked: S.setup.themes, onchange: e => { S.setup.themes = e.target.checked; } }), h('span', { text: ' Theme rounds (“something blue”)' }))) : null;
         lobby.replaceChildren(h('h2', { text: `You and ${peerName()}` }),
-          h('div', { text: 'Each of you: press Camera to turn your camera on (and Mic if you want to talk). Then the host starts three rounds: in each, hold up one item, tap Flex it, check the preview, and send it to the AI.' }),
+          h('div', { text: 'Each of you: press Camera to turn your camera on (and Mic if you want to talk). Then the host starts the match: in each round, hold up one item, tap Flex it, check the preview, and send it to the AI.' }),
+          set, h('span.fx-fine', { dataset: { fx: 'record' }, text: recordLine(peerName()) }),
           host ? h('button.btn.btn--primary', { type: 'button', dataset: { fx: 'start' }, disabled: !both, onclick: startMatch }, icon('play'), h('span', { text: both ? 'Start the match' : 'Waiting for both cameras…' }))
             : h('span', { role: 'status', text: 'Waiting for the host to start…' }));
       }
@@ -576,17 +735,21 @@ defineApp({
         totals: { me: tot(G.mine), them: tot(G.theirs) }, winner: G.phase === 'end' ? F.winner(G.mine, G.theirs) : null, peerSending: S.peerSending,
         chat: S.chat.map(m => (m.sys ? `· ${m.text}` : `${m.who}: ${m.text}`)), stats: S.room?.stats?.() || null,
         av: { cam: !!A.cam, mic: !!A.mic, camHidden: A.camHidden, muted: A.muted, link: A.link, err: A.err, remote: { ...A.remote }, remoteVideoTracks: A.stream.getVideoTracks().length },
-        recap: !!G.recapUntil,
+        recap: !!G.recapUntil, rounds: G.rounds, secs: G.secs, th: G.th, record: recOf(),
       };
     };
+    const fromOpts = o => { if (o && o.join && !S.room) { S.joinCode = normalizeCode(o.join).slice(0, 6); paint(); setTimeout(() => roomBar.querySelector('.wt-join button')?.focus({ preventScroll: true }), 40); } };
+    if (ctx.win && ctx.win.onReopen) ctx.win.onReopen(fromOpts);
+    fromOpts(ctx.opts);
     const el = root.querySelector('.fx');
     el.fxPeek = peek;
     el.fxRoom = () => S.room;                 /* play-tests only */
-    el.fxHook = cmd => { if (cmd && cmd.recapMs) recapMs = cmd.recapMs; return true; };
+    el.fxHook = cmd => { if (cmd && cmd.recapMs) recapMs = cmd.recapMs; if (cmd && cmd.expire && g().secs) g().deadline = performance.now() - 1; return true; };
 
     return () => {
       S.dead = true;
       clearInterval(tickT);
+      for (const t of timers) clearTimeout(t);
       closeRoom(true);
     };
   },

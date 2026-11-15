@@ -1,0 +1,79 @@
+/* ==================================================================
+   Shell layouts — a taskbar instead of the Dock, and a Start menu
+   instead of the launcher panel. Both are options: the Dock and the
+   panel stay the default and none of this applies until
+   Settings › Dock turns it on (js/core/appearance.js puts the choice
+   on <html> as data-shell and data-launcher).
+
+     data-shell="taskbar"     the bar along the whole bottom edge
+     data-launcher="start"    the Start menu (js/shell/launcher.js)
+
+   Phone mode (body.is-mobile) has its own dock and is left alone.
+   ================================================================== */
+
+/* the windows' usable height follows --dock-h (js/core/wm.js), so a slimmer
+   bar gives them the room back. "html:root" outranks the density rules. */
+html:root[data-shell="taskbar"]:not(:has(body.is-mobile)){--dock-h:44px}
+
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock{
+  left:0;right:0;bottom:0;width:100%;max-width:none;transform:none;
+  height:var(--dock-h);padding:0 var(--sp-3);gap:2px;align-items:center;
+  border-radius:0;border-width:1px 0 0 0;
+  box-shadow:0 -6px 24px rgba(0,0,0,.28);
+}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock.is-autohide:not(:hover):not(:focus-within){transform:translateY(calc(100% + 4px));opacity:0}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock.is-autohide::before{left:0;right:0;width:auto}
+
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item{
+  flex-direction:row;align-items:center;gap:8px;
+  width:auto;height:calc(var(--dock-h) - 10px);padding:0 6px;border-radius:var(--r-sm);
+  transform:none !important;transition:background var(--t-fast);
+}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item:hover{background:var(--fill-1)}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item.is-active{background:var(--fill-2)}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item .glyph{--gs:26px}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item:hover .glyph,
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item:active .glyph{transform:none;box-shadow:none}
+
+/* a name beside the apps that are open; pinned ones that aren't stay icons */
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__tip{
+  position:static;transform:none;opacity:1;display:none;
+  padding:0;max-width:132px;overflow:hidden;text-overflow:ellipsis;
+  background:none;border:0;box-shadow:none;
+  font-size:var(--fs-11);font-weight:560;color:var(--ink-1);
+}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item.is-running .dock__tip,
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item[data-app="launcher"] .dock__tip{display:block}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item[data-app="launcher"] .dock__tip{font-size:0}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item[data-app="launcher"] .dock__tip::after{content:'Start';font-size:var(--fs-11);font-weight:640;color:var(--ink-0)}
+
+/* the open-app marker becomes an underline along the foot of the button */
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__dot{
+  position:absolute;left:8px;right:8px;bottom:1px;width:auto;height:2px;border-radius:2px;
+}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__badge{top:2px;right:2px}
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__sep{align-self:center;height:60%;margin:0 var(--sp-2)}
+/* the Trash sits at the far end, like a tray */
+:root[data-shell="taskbar"] body:not(.is-mobile) .dock .dock__item[data-app="trash"]{margin-left:auto}
+
+/* ---- the Start menu ------------------------------------------------ */
+.launcher.launcher--start{
+  left:var(--sp-3);top:auto;bottom:calc(var(--dock-h) + var(--sp-3));
+  width:min(660px,calc(100vw - 24px));
+  height:min(580px,calc(100vh - var(--topbar-h) - var(--dock-h) - 32px));max-height:none;
+  transform-origin:bottom left;
+}
+.launcher--start .launcher__scroll{display:flex;flex-direction:column}
+.stm{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(0,1.3fr);gap:var(--sp-5);min-height:0;flex:1}
+.stm__apps{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line-0);padding-right:var(--sp-4)}
+.stm__apps > .label{padding:var(--sp-3) 0 var(--sp-3)}
+.stm__list{display:flex;flex-direction:column;gap:1px;overflow-y:auto;min-height:0;max-height:min(440px,calc(100vh - var(--topbar-h) - var(--dock-h) - 200px))}
+.stm__letter{position:sticky;top:0;z-index:1;padding:var(--sp-2) var(--sp-3);font-size:var(--fs-10);font-weight:700;color:var(--accent-soft);background:var(--fill-1);border-radius:var(--r-xs)}
+.stm__side{min-width:0;overflow-y:auto}
+.stm__side .launcher__grid{grid-template-columns:repeat(4,1fr)}
+.stm__side .launcher__recs{grid-template-columns:1fr}
+.launcher--start .stm__side .launcher__head:first-child{padding-top:var(--sp-3)}
+@media (max-width:760px){
+  .stm{grid-template-columns:1fr}
+  .stm__apps{display:none}
+}

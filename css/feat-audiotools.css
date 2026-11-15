@@ -135,6 +135,19 @@
 .sb-vol{flex:1}
 .sb-volout{min-width:34px;text-align:right;font-variant-numeric:tabular-nums}
 .sb-edit__acts{display:flex;align-items:center;gap:var(--sp-2);margin-top:var(--sp-2)}
+.sb{position:relative}
+.sb-midi[aria-pressed="true"]{background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0)}
+.sb-drop{position:absolute;inset:0;z-index:5;display:grid;place-items:center;pointer-events:none;background:color-mix(in srgb,var(--bg-1,#000) 70%,transparent);
+  border:2px dashed var(--accent-soft);border-radius:var(--r-lg);font-size:var(--fs-13);font-weight:650;color:var(--ink-0)}
+.sb-drop[hidden]{display:none}
+.sb-pad.is-dragging{opacity:.45}
+.sb-pad.is-over{outline:2px dashed var(--accent-soft);outline-offset:2px}
+.sb-pad.is-loop .sb-pad__sub::before{content:"\21BB  "}
+.sb-two{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-3)}
+.sb-sec .input{width:100%}
+.sb-shape{display:flex;flex-direction:column;gap:var(--sp-3)}
+.sb-dur{font-size:var(--fs-10);color:var(--ink-3)}
+.sb-edit__acts{flex-wrap:wrap}
 @media (max-width:620px){
   .sb-body{flex-direction:column}
   .sb-edit{flex:0 0 auto;max-width:none;border-left:0;border-top:1px solid var(--line-0);max-height:55%}

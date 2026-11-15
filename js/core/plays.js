@@ -86,4 +86,7 @@ export function top(n = 6) {
     .map(({ _i, ...r }) => r);
 }
 
-export default { record, recent, count, total, top, countedSince };
+/** Every game ever launched on this device, as a Set of 'kind:id' (not capped at the newest 80). */
+export const playedKeys = () => new Set(Object.keys(read().distinct || {}));
+
+export default { record, recent, count, total, top, countedSince, playedKeys };

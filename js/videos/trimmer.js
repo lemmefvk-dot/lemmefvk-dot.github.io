@@ -19,6 +19,11 @@
      The original is only replaced if "Replace the original" is ticked and
      confirmed; then the file is swapped for the trimmed WebM.
 
+   Static Recorder has a trimmer too (with a caption and a GIF). The two are
+   linked both ways: "Caption or GIF in Recorder" here opens the video there,
+   and the Recorder's "Frame-accurate trim in Videos" opens this panel. Both
+   cut through core/videocut.js, so a cut comes out the same from either.
+
    Why WebM: a web page can only write video through MediaRecorder, and
    MediaRecorder writes WebM everywhere; MP4 (H.264/AAC) needs an encoder
    that browsers don't offer to pages in a portable way. The trimmed copy
@@ -100,7 +105,11 @@ export function openTrimmer({ api, host, path, onOpenFile, onClose }) {
       prevBtn, btn('◀ frame', 'Playhead back one frame', () => seekTo((video.currentTime || 0) - 1 / T.fps)), btn('frame ▶', 'Playhead forward one frame', () => seekTo((video.currentTime || 0) + 1 / T.fps)),
       h('label', h('span', { text: 'Frame rate' }), fpsSel),
       h('span', { text: 'Playhead ' }), atOut, h('span', { text: ' · Length ' }), lenOut),
-    h('div.vtrim__row', h('label', replaceBox, h('span', { text: 'Replace the original (asks first)' })), h('span.grow'), cancelBtn, saveBtn),
+    h('div.vtrim__row', h('label', replaceBox, h('span', { text: 'Replace the original (asks first)' })), h('span.grow'),
+      /* Static Recorder has the other half of the video tools: a caption burnt in, and a GIF from the cut */
+      api.getApp?.('recorder') ? h('button.btn.btn--sm.vtrim__rec', { type: 'button', title: 'Open this video in Static Recorder to caption it or make a GIF', onclick: () => api.openApp('recorder', { path }) },
+        icon('type'), h('span', { text: 'Caption or GIF in Recorder' })) : null,
+      cancelBtn, saveBtn),
     prog, status,
     h('div.vtrim__note', { text: 'The trimmed video is saved as WebM. A web page can only write video through the browser’s recorder, and browsers write WebM everywhere but can’t write MP4 in a portable way. WebM plays in every current browser and phone. The trimmed part is re-encoded as it plays, so saving takes as long as the clip, and sound is kept. Your original is not changed unless you tick Replace.' }));
   host.appendChild(panel);

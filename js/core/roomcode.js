@@ -33,7 +33,7 @@ export const isCode = s => CODE_RE.test(String(s || ''));
 /** Pull a room code out of whatever was typed or pasted ("abc-234", an invite line, a link…). */
 export function normalizeCode(input) {
   const s = String(input ?? '').toUpperCase().slice(0, 600);
-  const m = /(?:ROOM|DROP|WATCH|DRAW|QUIZ|LIST|NOTE)=([A-Z0-9]{6})\b/.exec(s);
+  const m = /(?:ROOM|DROP|WATCH|DRAW|QUIZ|LIST|NOTE|CHAT)=([A-Z0-9]{6})\b/.exec(s);
   if (m) return m[1];
   const flat = s.replace(/[\s\-_.·]/g, '');
   if (flat.length <= CODE_LEN) return flat;

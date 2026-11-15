@@ -15,6 +15,10 @@
      None        a hard cut
    Pictures are cropped to fill the frame.
 
+   Each slide can have its own time and a caption (a line along the bottom
+   while that slide is up). "Seconds each" is the default for slides that
+   don't set their own, so the show is as long as the slides added up.
+
    Rendering: the same drawing code paints a canvas; captureStream() feeds a
    MediaRecorder, so the video is WebM (see js/core/videocut.js for why
    browsers can't write MP4 portably). The clock is real time: the render
@@ -27,6 +31,7 @@ import { pickerView, blobOfSource, bitmapOf, sizeOfBitmap, sourceOfPath, saveBlo
 import * as VC from '../core/videocut.js';
 import * as media from '../core/media.js';
 import vfs from '../core/vfs.js';
+import { t } from '../core/i18n.js';
 
 const SIZES = [[640, 360, '640 × 360'], [1280, 720, '1280 × 720 (HD)'], [1920, 1080, '1920 × 1080 (Full HD)']];
 const TRANS = [['fade', 'Crossfade'], ['slide', 'Slide'], ['zoom', 'Zoom (Ken Burns)'], ['none', 'None']];
@@ -36,6 +41,10 @@ const FPS = 30;
 const ease = p => p * p * (3 - 2 * p);
 
 export const totalSeconds = (n, dur) => n * dur;
+/** How long slide i is up: its own time (o.durs[i]) or the default (o.dur). */
+export const slideDur = (o, i) => (o.durs && o.durs[i] > 0 ? o.durs[i] : o.dur);
+/** The whole show, with each slide's own time. */
+export const showLength = (n, o) => { let t = 0; for (let i = 0; i < n; i++) t += slideDur(o, i); return t; };
 
 /** Paint the show at time t. slides: canvases already cropped to W×H.  o: { dur, trans, title } */
 export function drawShow(g, W, H, slides, t, o) {
@@ -44,23 +53,43 @@ export function drawShow(g, W, H, slides, t, o) {
   g.fillStyle = '#000';
   g.fillRect(0, 0, W, H);
   if (!n) return;
-  const total = totalSeconds(n, o.dur);
+  const total = showLength(n, o);
   t = clamp(t, 0, total);
-  const i = Math.min(n - 1, Math.floor(t / o.dur));
-  const local = t - i * o.dur;
-  const tr = o.trans === 'none' ? 0 : Math.min(TR_LEN, o.dur / 2);
-  const put = (img, loc, dx, alpha) => {
-    const k = o.trans === 'zoom' ? 1 + KB * clamp(loc / o.dur, 0, 1) : 1;
+  let i = 0, start = 0;
+  while (i < n - 1 && t >= start + slideDur(o, i)) { start += slideDur(o, i); i++; }
+  const local = t - start;
+  const dur = slideDur(o, i);
+  const tr = o.trans === 'none' ? 0 : Math.min(TR_LEN, dur / 2);
+  const put = (img, loc, dx, alpha, d = dur) => {
+    const k = o.trans === 'zoom' ? 1 + KB * clamp(loc / d, 0, 1) : 1;
     g.globalAlpha = alpha;
     g.drawImage(img, dx + (W - W * k) / 2, (H - H * k) / 2, W * k, H * k);
     g.globalAlpha = 1;
   };
-  if (tr > 0 && i < n - 1 && local > o.dur - tr) {
-    const p = ease(clamp((local - (o.dur - tr)) / tr, 0, 1));
-    const into = local - (o.dur - tr);
-    if (o.trans === 'slide') { put(slides[i], local, -p * W, 1); put(slides[i + 1], 0, (1 - p) * W, 1); }
-    else { put(slides[i], local, 0, 1); put(slides[i + 1], into, 0, p); }
+  if (tr > 0 && i < n - 1 && local > dur - tr) {
+    const p = ease(clamp((local - (dur - tr)) / tr, 0, 1));
+    const into = local - (dur - tr);
+    const nd = slideDur(o, i + 1);
+    if (o.trans === 'slide') { put(slides[i], local, -p * W, 1); put(slides[i + 1], 0, (1 - p) * W, 1, nd); }
+    else { put(slides[i], local, 0, 1); put(slides[i + 1], into, 0, p, nd); }
   } else put(slides[i], local, 0, 1);
+  const cap = String(o.caps?.[i] || '').trim();
+  if (cap) {
+    const a = clamp(Math.min(local / 0.3, (dur - local) / 0.3), 0, 1);
+    g.save();
+    g.globalAlpha = a;
+    let size = Math.round(H * 0.06);
+    const font = px => `600 ${px}px "Inter", system-ui, sans-serif`;
+    g.font = font(size);
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    while (g.measureText(cap).width > W * 0.9 && size > 10) { size -= 2; g.font = font(size); }
+    g.lineWidth = Math.max(3, size / 6); g.lineJoin = 'round';
+    g.strokeStyle = 'rgba(0,0,0,.8)';
+    g.strokeText(cap, W / 2, H * 0.92);
+    g.fillStyle = '#fff';
+    g.fillText(cap, W / 2, H * 0.92);
+    g.restore();
+  }
   const title = String(o.title || '').trim();
   if (title) {
     const span = Math.min(total, Math.max(2, Math.min(o.dur, 4)));
@@ -94,29 +123,31 @@ function listMusic() {
 export function mountSlideshow({ api, root, opts }) {
   const { h, icon } = api;
   const O = { dur: 3, trans: 'fade', title: '', size: 0, music: '', vol: 80 };
-  const S = { alive: true, seq: 0, slides: [], timer: 0, playing: false, t0: 0, from: 0, raf: 0, audio: null, rendering: null, resultUrl: '' };
+  const per = new Map();         /* a slide's own { dur, cap }, by picture */
+  const S = { alive: true, seq: 0, slides: [], keys: [], timer: 0, playing: false, t0: 0, from: 0, raf: 0, audio: null, rendering: null, resultUrl: '' };
   const fmtBytes = api.fmt.fmtBytes;
   const dims = () => ({ W: SIZES[O.size][0], H: SIZES[O.size][1] });
   const canCapture = VC.canCut();
 
   /* ---------- stage ---------- */
-  const cv = h('canvas.pt-ss__cv', { width: 640, height: 360, role: 'img', 'aria-label': 'Slideshow preview' });
-  const empty = h('div.pt__empty', icon('film'), h('b', { text: 'Pick pictures for the slideshow' }),
-    h('small', { text: 'Choose them on the right, in the order you want them shown. Then press Play to preview, and Make video to save it.' }));
+  const cv = h('canvas.pt-ss__cv', { width: 640, height: 360, role: 'img', 'aria-label': t('Slideshow preview') });
+  const empty = h('div.pt__empty', icon('film'), h('b', { text: t('Pick pictures for the slideshow') }),
+    h('small', { text: t('Choose them on the right, in the order you want them shown. Then press Play to preview, and Make video to save it.') }));
   const paper = h('div.pt-ss__paper', { hidden: true }, cv);
-  const playBtn = h('button.ibtn', { type: 'button', 'aria-label': 'Play the preview', title: 'Play / pause', disabled: true, onclick: () => togglePlay() }, icon('play'));
-  const scrub = h('input', { type: 'range', min: 0, max: 1000, value: 0, 'aria-label': 'Preview position', disabled: true,
+  const playBtn = h('button.ibtn', { type: 'button', 'aria-label': t('Play the preview'), title: t('Play / pause'), disabled: true, onclick: () => togglePlay() }, icon('play'));
+  const scrub = h('input', { type: 'range', min: 0, max: 1000, value: 0, 'aria-label': t('Preview position'), disabled: true,
     oninput: () => { const was = S.playing; stopPlay(); showAt(Number(scrub.value) / 1000 * total()); if (was) startPlay(); } });
   const clock = h('span.pt-ss__clock', { text: '0:00 / 0:00' });
   const bar = h('div.pt-ss__bar', playBtn, scrub, clock);
-  const prog = h('progress.pt-conv__progress', { max: 1, value: 0, hidden: true, 'aria-label': 'Rendering progress' });
+  const prog = h('progress.pt-conv__progress', { max: 1, value: 0, hidden: true, 'aria-label': t('Rendering progress') });
   const progText = h('div.pt__foot', { role: 'status', 'aria-live': 'polite' });
   const result = h('div.pt-gif__result', { hidden: true });
   const main = h('div.pt__col', h('div.pt__stage.pt-ss__stage', empty, h('div.pt-ss__box', paper, bar), result), h('div.pt-conv__progwrap', prog), progText);
 
-  const total = () => totalSeconds(S.slides.length, O.dur);
+  const total = () => showLength(S.slides.length, drawOpts());
+  const secs = t => +t.toFixed(1);
   const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-  const drawOpts = () => ({ dur: O.dur, trans: O.trans, title: O.title });
+  const drawOpts = () => ({ dur: O.dur, trans: O.trans, title: O.title, durs: S.keys.map(k => per.get(k)?.dur), caps: S.keys.map(k => per.get(k)?.cap) });
   function showAt(t) {
     const { W, H } = dims();
     if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
@@ -180,19 +211,21 @@ export function mountSlideshow({ api, root, opts }) {
     stopPlay();
     const list = picker.selected();
     const { W, H } = dims();
-    const slides = [];
+    const slides = [], keys = [], names = [];
     progText.textContent = list.length ? 'Reading the pictures…' : '';
     for (const src of list) {
       try {
         const bmp = await bitmapOf(await blobOfSource(src));
         if (!S.alive || seq !== S.seq) return;
         slides.push(cover(bmp, W, H));
+        keys.push(src.key); names.push(src.name);
         bmp.close?.();
       } catch (err) { progText.textContent = `Skipped ${src.name}: ${err?.message || err}`; }
     }
     if (!S.alive || seq !== S.seq) return;
     for (const c of S.slides) c.width = c.height = 0;
-    S.slides = slides;
+    S.slides = slides; S.keys = keys;
+    paintSlideRows(names);
     empty.hidden = slides.length > 0;
     paper.hidden = !slides.length;
     bar.hidden = !slides.length;
@@ -200,7 +233,7 @@ export function mountSlideshow({ api, root, opts }) {
     makeBtn.disabled = !slides.length || !canCapture || !!S.rendering;
     if (slides.length) {
       showAt(0);
-      progText.textContent = `${slides.length} slide${slides.length === 1 ? '' : 's'} · ${total()} s · ${W}×${H}${O.music ? ' · with music' : ''}`;
+      progText.textContent = `${slides.length} slide${slides.length === 1 ? '' : 's'} · ${secs(total())} s · ${W}×${H}${O.music ? ' · with music' : ''}`;
     } else cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
   }
 
@@ -286,7 +319,7 @@ export function mountSlideshow({ api, root, opts }) {
       if (/webm/.test(mime)) blob = await VC.withDuration(blob, Math.min(ran, T * 1000 + 200));
       const ext = /mp4/.test(mime) ? 'mp4' : 'webm';
       const name = `${(O.title.trim() || 'Slideshow').replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 60)}.${ext}`;
-      const path = await saveBlob(api, 'Picture Tools', `${vfs.HOME}/Videos`, name, blob, { title: 'Slideshow saved' });
+      const path = await saveBlob(api, 'Picture Tools', `${vfs.HOME}/Videos`, name, blob, { title: t('Slideshow saved') });
       const node = vfs.node(path);
       if (node && node.kind !== 'video') { node.kind = 'video'; api.bus.emit('fs:change', vfs.parentPath(path), path); }
       if (!S.alive) return;
@@ -309,42 +342,75 @@ export function mountSlideshow({ api, root, opts }) {
     result.hidden = false;
     result.dataset.path = path;
     result.replaceChildren(h('small', { text: `Saved as ${vfs.baseName(path)} in ~/Videos` }),
-      h('button.btn.btn--sm', { type: 'button', onclick: () => api.openApp('videos', { path }) }, icon('play'), h('span', { text: 'Play in Videos' })));
+      h('button.btn.btn--sm', { type: 'button', onclick: () => api.openApp('videos', { path }) }, icon('play'), h('span', { text: t('Play in Videos') })));
   }
 
   /* ---------- options ---------- */
-  const picker = pickerView(api, { multi: true, label: 'Pictures for the slideshow', onChange: () => schedule() });
-  const durIn = h('input', { type: 'number', min: 1, max: 30, step: 0.5, value: String(O.dur), 'aria-label': 'Seconds per slide',
-    oninput: () => { const v = Number(durIn.value); if (!(v >= 1)) return; O.dur = clamp(v, 1, 30); if (S.slides.length) { stopPlay(); showAt(0); progText.textContent = `${S.slides.length} slides · ${total()} s`; } } });
-  const transSel = h('select', { 'aria-label': 'Transition', onchange: () => { O.trans = transSel.value; if (S.slides.length) showAt(Number(scrub.value) / 1000 * total()); } },
+  const picker = pickerView(api, { multi: true, label: t('Pictures for the slideshow'), onChange: () => schedule() });
+  const durIn = h('input', { type: 'number', min: 1, max: 30, step: 0.5, value: String(O.dur), 'aria-label': t('Seconds per slide'),
+    oninput: () => { const v = Number(durIn.value); if (!(v >= 1)) return; O.dur = clamp(v, 1, 30); if (S.slides.length) { stopPlay(); showAt(0); progText.textContent = `${S.slides.length} slides · ${secs(total())} s`; } } });
+  const transSel = h('select', { 'aria-label': t('Transition'), onchange: () => { O.trans = transSel.value; if (S.slides.length) showAt(Number(scrub.value) / 1000 * total()); } },
     TRANS.map(([v, l]) => h('option', { value: v, text: l })));
-  const titleIn = h('input', { type: 'text', maxlength: 80, placeholder: 'Optional title', 'aria-label': 'Title text',
+  const titleIn = h('input', { type: 'text', maxlength: 80, placeholder: t('Optional title'), 'aria-label': t('Title text'),
     oninput: () => { O.title = titleIn.value; if (S.slides.length && !S.playing) showAt(Number(scrub.value) / 1000 * total()); } });
-  const sizeSel = h('select', { 'aria-label': 'Video size', onchange: () => { O.size = Number(sizeSel.value); schedule(); } },
+  const sizeSel = h('select', { 'aria-label': t('Video size'), onchange: () => { O.size = Number(sizeSel.value); schedule(); } },
     SIZES.map(([, , l], i) => h('option', { value: String(i), text: l })));
   const music = listMusic();
-  const musicSel = h('select', { 'aria-label': 'Music', onchange: () => { O.music = musicSel.value; if (S.audio) { S.audio.pause(); S.audio.dataset.src = ''; } } },
-    h('option', { value: '', text: music.length ? 'No music' : 'No music (nothing in ~/Music yet)' }),
+  const musicSel = h('select', { 'aria-label': t('Music'), onchange: () => { O.music = musicSel.value; if (S.audio) { S.audio.pause(); S.audio.dataset.src = ''; } } },
+    h('option', { value: '', text: music.length ? t('No music') : t('No music (nothing in ~/Music yet)') }),
     music.map(m => h('option', { value: m.path, text: m.name })));
   const volOut = h('output', { text: `${O.vol}%` });
-  const volIn = h('input', { type: 'range', min: 0, max: 100, step: 1, value: O.vol, 'aria-label': 'Music volume',
+  const volIn = h('input', { type: 'range', min: 0, max: 100, step: 1, value: O.vol, 'aria-label': t('Music volume'),
     oninput: () => { O.vol = Number(volIn.value); volOut.textContent = `${O.vol}%`; if (S.audio) S.audio.volume = O.vol / 100; } });
-  const makeBtn = h('button.btn.btn--primary', { type: 'button', disabled: true, onclick: () => render() }, icon('film'), h('span', { text: 'Make video' }));
-  const cancelBtn = h('button.btn', { type: 'button', hidden: true, onclick: () => { if (S.rendering) S.rendering.stop = true; } }, h('span', { text: 'Cancel' }));
+  const makeBtn = h('button.btn.btn--primary', { type: 'button', disabled: true, onclick: () => render() }, icon('film'), h('span', { text: t('Make video') }));
+  const cancelBtn = h('button.btn', { type: 'button', hidden: true, onclick: () => { if (S.rendering) S.rendering.stop = true; } }, h('span', { text: t('Cancel') }));
+  /* each slide's own time and caption */
+  const slideRows = h('div.pt-ss__slides', { role: 'list', 'aria-label': t('Each slide') });
+  function paintSlideRows(names = []) {
+    slideRows.replaceChildren(...S.keys.map((key, i) => {
+      const own = per.get(key) || {};
+      const sec = h('input', { type: 'number', min: 1, max: 60, step: 0.5, placeholder: String(O.dur), value: own.dur ? String(own.dur) : '', 'aria-label': `Seconds for slide ${i + 1}`, dataset: { slide: String(i + 1), k: 'dur' },
+        oninput: () => {
+          const v = Number(sec.value);
+          const cur = per.get(key) || {};
+          if (sec.value === '' || !(v >= 1)) delete cur.dur; else cur.dur = clamp(v, 1, 60);
+          per.set(key, cur);
+          refreshShow();
+        } });
+      const cap = h('input', { type: 'text', maxlength: 90, placeholder: t('Caption'), value: own.cap || '', 'aria-label': `Caption for slide ${i + 1}`, dataset: { slide: String(i + 1), k: 'cap' },
+        oninput: () => { const cur = per.get(key) || {}; cur.cap = cap.value; per.set(key, cur); refreshShow(); } });
+      return h('div.pt-ss__slide', { role: 'listitem', dataset: { slide: String(i + 1) } },
+        h('span.pt-ss__n', { text: String(i + 1), title: names[i] || '' }), cap, sec, h('span.pt-ss__s', { text: 's' }));
+    }));
+    slideRows.hidden = !S.keys.length;
+    slideHead.hidden = !S.keys.length;
+  }
+  /* a slide's time or caption changed: the show may now be a different length */
+  function refreshShow() {
+    if (!S.slides.length) return;
+    const was = S.playing;
+    if (was) stopPlay();
+    const t = clamp(Number(scrub.value) / 1000 * total(), 0, total());
+    showAt(t);
+    progText.textContent = `${S.slides.length} slide${S.slides.length === 1 ? '' : 's'} · ${secs(total())} s`;
+  }
+  const slideHead = h('b.pt__label', { text: t('Each slide: caption and seconds'), hidden: true });
   const side = h('div.pt__side',
     picker.el,
-    h('div.pt__group', h('b.pt__label', { text: 'Slides' }),
-      h('label.pt__line', h('span', { text: 'Seconds each' }), durIn),
-      h('label.pt__line', h('span', { text: 'Transition' }), transSel),
-      h('label.pt__line', h('span', { text: 'Title' }), titleIn),
-      h('label.pt__line', h('span', { text: 'Size' }), sizeSel)),
-    h('div.pt__group', h('b.pt__label', { text: 'Music' }), musicSel,
-      h('label.pt__slider', h('span', { text: 'Volume' }), volIn, volOut)),
-    canCapture ? null : h('small.pt__warn', { role: 'note', text: 'This browser can’t turn a canvas into video, so slideshows can be previewed but not saved.' }),
+    h('div.pt__group', h('b.pt__label', { text: t('Slides') }),
+      h('label.pt__line', h('span', { text: t('Seconds each') }), durIn),
+      h('label.pt__line', h('span', { text: t('Transition') }), transSel),
+      h('label.pt__line', h('span', { text: t('Title') }), titleIn),
+      h('label.pt__line', h('span', { text: t('Size') }), sizeSel)),
+    h('div.pt__group', slideHead, slideRows),
+    h('div.pt__group', h('b.pt__label', { text: t('Music') }), musicSel,
+      h('label.pt__slider', h('span', { text: t('Volume') }), volIn, volOut)),
+    canCapture ? null : h('small.pt__warn', { role: 'note', text: t('This browser can’t turn a canvas into video, so slideshows can be previewed but not saved.') }),
     h('div.pt__actions', makeBtn, cancelBtn),
-    h('small.pt__hint', { text: 'The video is WebM. Browsers can only write WebM reliably (MP4 needs an encoder most browsers don’t expose to web pages), and every current browser and phone plays WebM. It is saved in ~/Videos and renders in real time, so a 30 second show takes 30 seconds.' }));
+    h('small.pt__hint', { text: t('The video is WebM. Browsers can only write WebM reliably (MP4 needs an encoder most browsers don’t expose to web pages), and every current browser and phone plays WebM. It is saved in ~/Videos and renders in real time, so a 30 second show takes 30 seconds.') }));
   root.append(h('div.pt__split', main, side));
   bar.hidden = true;
+  slideRows.hidden = true;
 
   const first = opts?.path && sourceOfPath(opts.path);
   if (first) picker.pick(first);

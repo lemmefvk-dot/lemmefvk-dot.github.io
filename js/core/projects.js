@@ -19,7 +19,8 @@
    API (all async): list(), get(id), create({...}), commit(id, html, note, by),
    undo(id), redo(id), restore(id, versionIndex), rename(id, name),
    duplicate(id), remix(id, name, { html, prompt, note }?), remove(id), publish(id, meta),
-   unpublish(id), addAsset(id, asset), removeAsset(id, assetId),
+   unpublish(id), addAsset(id, asset), setAssetSheet(id, assetId, sheet), removeAsset(id, assetId),
+   importFull(raw) (a whole game with history and assets from a file; checked, never overwrites),
    current(p) -> the html at head.
    Emits bus 'projects:change' { id, kind } after every write.
    ============================================================ */
@@ -65,6 +66,45 @@ export async function create({ name = 'Untitled game', prompt = '', html = '', s
   await put(p);
   emit(p.id, event === 'import' ? 'import' : 'create');
   return p;
+}
+
+/* A whole game, history and assets, arriving from a file (Static Creator's "Export every game"). Everything is
+   checked and capped, nothing is run, and nothing is overwritten: a game whose id is taken keeps the id it
+   has and this one gets a new id, unless the game already here is the very same (the head matches), in
+   which case it is skipped.
+   -> { status: 'added' | 'copy' | 'same', project } | null for something that is not a game */
+const IMPORT_HTML_MAX = 2 * 1024 * 1024;
+const IMPORT_ASSET_MAX = 8 * 1024 * 1024;
+export async function importFull(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const all = Array.isArray(raw.versions) ? raw.versions : [];
+  const vs = all.filter(v => v && typeof v === 'object' && typeof v.html === 'string' && v.html.length <= IMPORT_HTML_MAX);
+  if (!vs.length) return null;
+  const head = Number.isInteger(raw.head) && raw.head >= 0 && raw.head < all.length ? all[raw.head] : null;
+  const keep = vs.slice(-MAX_VERSIONS);
+  const headIdx = head && keep.includes(head) ? keep.indexOf(head) : keep.length - 1;
+  const str = (v, n) => String(v ?? '').slice(0, n);
+  const num = v => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : Date.now());
+  const existing = typeof raw.id === 'string' && raw.id ? await get(raw.id) : null;
+  if (existing && current(existing) === keep[headIdx].html) return { status: 'same', project: existing };
+  const id = typeof raw.id === 'string' && /^[\w-]{1,80}$/.test(raw.id) && !existing ? raw.id : uid('game');
+  const p = {
+    id, name: str(raw.name, 120) || 'Untitled game', prompt: str(raw.prompt, 1200),
+    createdAt: num(raw.createdAt), updatedAt: Date.now(),
+    source: ['forge', 'studio', 'remix'].includes(raw.source) ? raw.source : 'forge',
+    remixOf: null, creator: str(raw.creator, 60) || who(),
+    versions: keep.map(v => ({ id: uid('v'), html: v.html, note: str(v.note, 200) || 'Imported', at: num(v.at), by: ['ai', 'you', 'revert'].includes(v.by) ? v.by : 'you' })),
+    head: headIdx,
+    assets: (Array.isArray(raw.assets) ? raw.assets : []).slice(0, 100)
+      .filter(a => a && typeof a === 'object' && typeof a.dataUrl === 'string' && a.dataUrl.length <= IMPORT_ASSET_MAX
+        && (a.kind === 'audio' ? /^data:audio\//i : /^data:image\//i).test(a.dataUrl))
+      .map(a => ({ id: uid('a'), name: str(a.name, 80) || 'asset', kind: a.kind === 'audio' ? 'audio' : 'image', dataUrl: a.dataUrl,
+        ...(a.kind !== 'audio' && a.sheet && typeof a.sheet === 'object' && !Array.isArray(a.sheet) ? { sheet: a.sheet } : {}) })),
+    published: null,
+  };
+  await put(p);
+  emit(p.id, 'import');
+  return { status: existing ? 'copy' : 'added', project: p };
 }
 
 /** A new version on top of head. Anything that had been undone is dropped,
@@ -178,7 +218,19 @@ export async function addAsset(id, asset) {
   const p = await get(id);
   if (!p) return null;
   const a = { id: uid('a'), name: String(asset.name || 'asset'), kind: asset.kind === 'audio' ? 'audio' : 'image', dataUrl: String(asset.dataUrl || '') };
+  if (a.kind === 'image' && asset.sheet && typeof asset.sheet === 'object') a.sheet = asset.sheet;
   p.assets = [...(p.assets || []), a];
+  await put(p);
+  emit(id, 'asset');
+  return a;
+}
+
+/** Attach sprite-sheet data (frame boxes, clips) to an image asset; null takes it off. */
+export async function setAssetSheet(id, assetId, sheet) {
+  const p = await get(id);
+  const a = p && (p.assets || []).find(x => x.id === assetId && x.kind === 'image');
+  if (!a) return null;
+  if (sheet && typeof sheet === 'object') a.sheet = sheet; else delete a.sheet;
   await put(p);
   emit(id, 'asset');
   return a;
@@ -193,4 +245,4 @@ export async function removeAsset(id, assetId) {
   return p;
 }
 
-export default { list, get, create, commit, undo, redo, restore, rename, duplicate, remix, remove, publish, unpublish, addAsset, removeAsset, current };
+export default { list, get, create, commit, undo, redo, restore, rename, duplicate, remix, remove, publish, unpublish, addAsset, setAssetSheet, removeAsset, importFull, current };

@@ -26,6 +26,10 @@
 import { GAMES, MOVIES, GAME_CATEGORIES, MOVIE_CATEGORIES, PROXY_LINKS, POSITIONS } from './catalog.js';
 import * as bigCatalog from './anime.data.js';
 import * as gameCatalog from './games.data.js';
+import * as cloudCatalog from './cloud.catalog.js';
+import * as collectionsMod from '../core/collections.js';
+import * as playsMod from '../core/plays.js';
+import { store } from '../core/store.js';
 
 export { GAMES, MOVIES, GAME_CATEGORIES, MOVIE_CATEGORIES, PROXY_LINKS, POSITIONS };
 
@@ -141,6 +145,50 @@ let robloxMod = null;
 import('./roblox.data.js').then(m => { robloxMod = m; }).catch(() => { robloxMod = null; });
 const robloxRows = () => (robloxMod && robloxMod.isLoaded() ? robloxMod.all() : []);
 
+/* A search folds in every catalogue that is small enough to fetch once:
+   the games, Roblox and the cloud-gaming list. A failed fetch only leaves
+   that catalogue out. */
+let warmP = null;
+const warm = () => warmP || (warmP = Promise.allSettled([
+  gameCatalog.load(), cloudCatalog.load(),
+  import('./roblox.data.js').then(m => { robloxMod = m; return m.load(); }),
+]));
+
+/** Things on THIS device that match: favourites, play history, collections, creations. */
+async function libraryHits(low) {
+  const out = [];
+  const has = t => String(t || '').toLowerCase().includes(low);
+  const favs = Array.isArray(store.get('portal.games.favs')) ? store.get('portal.games.favs') : [];
+  for (const id of favs) {
+    const g = gameCatalog.byId(id);
+    if (g && has(g.title)) out.push({ title: `${g.title} — in your favorites`, url: `static://games/${g.id}`, kind: 'library', icon: 'heart',
+      snippet: 'A game you hearted in Static Games. It is in your Library under Favorites.', score: 3.6 });
+  }
+  const seen = new Set();
+  for (const r of playsMod.recent(80)) {
+    if (!has(r.title)) continue;
+    const url = r.kind === 'web' ? `static://games/${r.id}` : 'static://library/history';
+    if (r.kind === 'web' && favs.includes(r.id)) continue;
+    if (seen.has(url + r.id)) continue;
+    seen.add(url + r.id);
+    out.push({ title: `${r.title} — you played this`, url, kind: 'library', icon: 'clock',
+      snippet: `Last launched ${new Date(r.at).toLocaleDateString()} on this device.`, score: 3.4 });
+  }
+  for (const c of collectionsMod.list()) {
+    if (!has(c.name)) continue;
+    out.push({ title: `${c.name} — your collection`, url: `static://library/collections/${encodeURIComponent(c.id)}`, kind: 'library', icon: c.icon || 'layers',
+      snippet: c.rule ? 'A smart collection: a rule that is worked out when you open it.' : `${c.items.length} ${c.items.length === 1 ? 'item' : 'items'} you collected.`, score: 3.7 });
+  }
+  try {
+    const P = await import('../core/projects.js');
+    for (const p of await P.list()) {
+      if (has(p.name)) out.push({ title: `${p.name} — your creation`, url: 'static://library/created', kind: 'library', icon: 'sparkles',
+        snippet: 'A game you made in Forge or Studio.', score: 3.5 });
+    }
+  } catch (e) { /* projects unreadable: leave them out */ }
+  return out;
+}
+
 export async function searchWeb(q, { page = 1 } = {}) {
   const query = String(q || '').trim();
   const t0 = performance.now();
@@ -153,8 +201,18 @@ export async function searchWeb(q, { page = 1 } = {}) {
   }
   if (config.simulateOutage) throw new ProviderError('network', 'Could not reach the proxy.');
 
+  await warm();
   const low = query.toLowerCase();
   const hits = [];
+  hits.push(...await libraryHits(low));
+  if (cloudCatalog.isLoaded()) {
+    for (const g of cloudCatalog.search(query).items.slice(0, 3)) {
+      const on = cloudCatalog.where(g).map(w => w.service.short);
+      hits.push({ title: `${g.t} — where to play in the cloud`, url: `static://cloud?q=${encodeURIComponent(g.t)}`, kind: 'cloud', icon: 'cast',
+        snippet: `${on.length ? `Listed on ${on.join(', ')}.` : 'Listed by a cloud service.'} Static only finds it: each service opens on its own site, with your own account.`,
+        score: 2.8 + rel(low, g.t) });
+    }
+  }
 
   const gameRows = gameCatalog.isLoaded() ? gameCatalog.all() : GAMES;
   for (const g of gameRows) {
@@ -181,7 +239,7 @@ export async function searchWeb(q, { page = 1 } = {}) {
   const rbx = robloxRows();
   for (const r of rbx) {
     if (!matches(low, [r.name, r.creator, ...(r.cats || [])])) continue;
-    const playing = r.playing ? `${fmtPlays(r.playing)} playing now · ` : '';
+    const playing = r.playing ? `${fmtPlays(r.playing)} playing ${r.live ? 'live' : 'at the last sync'} · ` : '';
     const rated = r.rating ? `${r.rating}% rated · ` : '';
     hits.push({
       title: `${r.name} — Roblox`,
@@ -192,7 +250,7 @@ export async function searchWeb(q, { page = 1 } = {}) {
     });
   }
 
-  /* The 7,963-title anime catalogue is a 7.9 MB fetch, so unified search only
+  /* The anime catalogue is a 7.9 MB fetch, so unified search only
      folds it in once something else has already loaded it (the Anime page, or
      a previous anime search). The Anime tab loads it deliberately. */
   if (bigCatalog.isLoaded('anime')) {
@@ -298,6 +356,38 @@ export function embedFor(rec, opts = {}) {
 
 export const fmtPlays = n => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n);
 
+/* length, mass, volume, speed, data and time, each to a base unit */
+const UNITS = {
+  length: { m: 1, km: 1000, cm: 0.01, mm: 0.001, mi: 1609.344, mile: 1609.344, miles: 1609.344, ft: 0.3048, foot: 0.3048, feet: 0.3048, in: 0.0254, inch: 0.0254, inches: 0.0254, yd: 0.9144 },
+  mass: { kg: 1, g: 0.001, mg: 1e-6, lb: 0.45359237, lbs: 0.45359237, oz: 0.028349523125, st: 6.35029318 },
+  volume: { l: 1, ml: 0.001, gal: 3.785411784, qt: 0.946352946, pt: 0.473176473, cup: 0.2365882365, floz: 0.0295735295625 },
+  speed: { mph: 0.44704, kmh: 0.2777777778, kph: 0.2777777778, 'km/h': 0.2777777778, 'm/s': 1, ms: 1, kn: 0.5144444444 },
+  data: { b: 1, kb: 1e3, mb: 1e6, gb: 1e9, tb: 1e12, kib: 1024, mib: 1048576, gib: 1073741824 },
+  time: { s: 1, sec: 1, min: 60, h: 3600, hr: 3600, hour: 3600, hours: 3600, day: 86400, days: 86400, week: 604800, weeks: 604800 },
+};
+const UNIT_NAME = { mile: 'mi', miles: 'mi', foot: 'ft', feet: 'ft', inch: 'in', inches: 'in', lbs: 'lb', kph: 'km/h', kmh: 'km/h', ms: 'm/s', hr: 'h', hour: 'h', hours: 'h', sec: 's', days: 'days', weeks: 'weeks' };
+function unitAnswer(q) {
+  const m = q.trim().toLowerCase().match(/^(-?[\d.]+)\s*([a-z/]+)\s*(?:to|in|into|as)\s*([a-z/]+)$/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (!Number.isFinite(n)) return null;
+  const [, , from, to] = m;
+  if (from === to) return null;
+  /* temperature has its own formula, including kelvin */
+  const temp = { c: v => v, f: v => (v - 32) * 5 / 9, k: v => v - 273.15 };
+  const back = { c: v => v, f: v => v * 9 / 5 + 32, k: v => v + 273.15 };
+  if (temp[from] && temp[to] && (from === 'k' || to === 'k')) {
+    return { kind: 'convert', label: `${formatNumber(n)} ${from.toUpperCase()}`, value: `${formatNumber(back[to](temp[from](n)))} ${to.toUpperCase()}` };
+  }
+  for (const table of Object.values(UNITS)) {
+    if (table[from] && table[to]) {
+      const out = n * table[from] / table[to];
+      return { kind: 'convert', label: `${formatNumber(n)} ${UNIT_NAME[from] || from}`, value: `${formatNumber(Math.round(out * 1e6) / 1e6)} ${UNIT_NAME[to] || to}` };
+    }
+  }
+  return null;
+}
+
 /** Calculator / unit answers — the "instant answer" card above results. */
 function instantAnswer(q) {
   const expr = q.replace(/\s+/g, '');
@@ -311,6 +401,10 @@ function instantAnswer(q) {
     const out = t[2] === t[4] ? n : t[2] === 'c' ? n * 9 / 5 + 32 : (n - 32) * 5 / 9;
     return { kind: 'convert', label: `${n}°${t[2].toUpperCase()}`, value: `${formatNumber(out)}°${t[4].toUpperCase()}` };
   }
+  const pc = q.toLowerCase().match(/^(-?[\d.]+)\s*%\s*of\s*(-?[\d.]+)$/);
+  if (pc) return { kind: 'calc', label: q, value: formatNumber(parseFloat(pc[1]) * parseFloat(pc[2]) / 100) };
+  const u = unitAnswer(q);
+  if (u) return u;
   if (/^(time|what time is it)$/i.test(q)) {
     return { kind: 'time', label: 'Current time', value: new Date().toLocaleTimeString() };
   }
@@ -394,7 +488,7 @@ export function formatNumber(v) {
 
 function related(q) {
   const base = q.trim().toLowerCase();
-  return ['unblocked', 'free online', 'no download', '2 player', 'full movie', 'hd']
+  return ['free online', 'no download', '2 player', 'full movie', 'hd']
     .map(s => `${base} ${s}`).slice(0, 6);
 }
 
@@ -473,7 +567,7 @@ export async function trending() {
   return {
     games: filterList(GAMES, { category: 'featured' }).slice(0, 6),
     movies: filterList(MOVIES, { category: 'trending' }).slice(0, 6),
-    queries: ['slope unblocked', 'retro bowl', 'dune part two', 'arcane season 2', '2 player games', 'eaglercraft'],
+    queries: ['slope', 'retro bowl', 'dune part two', 'arcane season 2', '2 player games', 'eaglercraft'],
   };
 }
 
@@ -494,7 +588,7 @@ export async function resolve(target, opts = {}) {
       if (g && g.embed) return { kind: 'embed', url: g.embed, open: g.open, direct: true };
     }
     return { kind: d?.kind || 'unavailable', url: d?.url, reason: d?.reason
-      || 'The proxy did not return a source for this.' };
+      || 'No source came back for this.' };
   }
   if (config.simulateOutage) throw new ProviderError('network', 'Could not reach the proxy.');
 
@@ -523,9 +617,7 @@ export async function resolve(target, opts = {}) {
     return {
       kind: 'unavailable',
       ids: idsOf(row),
-      reason: 'Static holds the catalogue, not the video. Wire a source into '
-            + 'providers.resolve() \u2014 every record already carries its MAL, TMDB, '
-            + 'IMDb and AniList ids, which is all a player needs.',
+      reason: 'Static keeps the catalogue, not the video. Watch it on an official streaming service.',
     };
   }
 
@@ -538,8 +630,7 @@ export async function resolve(target, opts = {}) {
   /* Everything else (arbitrary web pages) needs the proxy. */
   return {
     kind: 'unavailable',
-    reason: 'Static does not host this. Streaming it needs the Static proxy, which is not '
-          + 'connected yet \u2014 set providers.config.endpoint and config.mode = "proxy".',
+    reason: 'Static does not host this.',
   };
 }
 

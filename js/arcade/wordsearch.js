@@ -18,6 +18,20 @@
    A word you find is struck through in the list and stays coloured
    in the grid. Finding every word ends the round.
 
+   Your own words: "Your words…" in the theme list opens a box to type
+   or paste a list (a spelling list, a topic for class). Each word is
+   cleaned to A–Z; words too short or too long for the grid, repeats,
+   palindromes, words hidden inside another of the list and words the
+   word games block are left out, and the box says how many and why.
+   The list is kept on this device for next time. A round on your own
+   words keeps no best time (a list of four short words would win
+   every time).
+
+   Timer: with the Timer on, the clock counts down from 2, 3 or 4
+   minutes (by size) from the moment the grid is dealt. Find them all
+   in time and it's a normal win; when time runs out the round ends
+   with the words you found.
+
    Score = seconds from the first selection to the last word, lower
    is better. The best time per size is kept on this device
    (portal.arcadePuzzles.wordsearch). The clock stops while paused
@@ -29,9 +43,46 @@ import { ownsKey, randomSeed } from './kit.js';
 import { CSS as BASE, load, save, fmtTime, reducedMotion, bag, clock } from './puzzlekit.js';
 import { THEMES, SIZES } from './wordsearch.data.js';
 import { makeGrid, lineCells } from './wordsearchlogic.js';
+import { isBlocked } from './wordfilter.js';
 
 const GAME = 'wordsearch';
+const CUSTOM = 'custom';
+const MAX_WORDS = 30;
+/* the Timer's minutes by size */
+export const LIMIT = { small: 120, medium: 180, large: 240 };
 const themeById = id => THEMES.find(t => t.id === id) || null;
+const rev = s => [...s].reverse().join('');
+
+/** a typed list -> { words, dropped: { short, long, repeat, palindrome, inside, blocked, extra } } for a grid of n */
+export function cleanList(text, n) {
+  const dropped = { short: 0, long: 0, repeat: 0, palindrome: 0, inside: 0, blocked: 0, extra: 0 };
+  const raw = String(text ?? '').split(/[\s,;]+/).map(w => w.toUpperCase().replace(/[^A-Z]/g, '')).filter(Boolean);
+  const out = [];
+  for (const w of raw) {
+    if (w.length < 3) { dropped.short++; continue; }
+    if (w.length > n) { dropped.long++; continue; }
+    if (out.includes(w)) { dropped.repeat++; continue; }
+    if (w === rev(w)) { dropped.palindrome++; continue; }
+    if (isBlocked(w.toLowerCase())) { dropped.blocked++; continue; }
+    out.push(w);
+  }
+  /* a word inside another (either way) would be found twice: the shorter one goes */
+  const keep = out.filter(w => !out.some(o => o !== w && o.length >= w.length && (o.includes(w) || o.includes(rev(w)))));
+  dropped.inside = out.length - keep.length;
+  dropped.extra = Math.max(0, keep.length - MAX_WORDS);
+  return { words: keep.slice(0, MAX_WORDS), dropped };
+}
+const droppedText = d => {
+  const parts = [];
+  if (d.short) parts.push(`${d.short} shorter than 3 letters`);
+  if (d.long) parts.push(`${d.long} too long for this grid`);
+  if (d.repeat) parts.push(`${d.repeat} repeated`);
+  if (d.palindrome) parts.push(`${d.palindrome} that read the same both ways`);
+  if (d.inside) parts.push(`${d.inside} hidden inside a longer one`);
+  if (d.blocked) parts.push(`${d.blocked} the word games don’t use`);
+  if (d.extra) parts.push(`${d.extra} past the ${MAX_WORDS}-word limit`);
+  return parts.length ? `Left out: ${parts.join(', ')}.` : '';
+};
 
 const CSS = `${BASE}
 .pz-ws__main{flex:1 1 auto;min-height:0;width:100%;display:flex;gap:var(--sp-4,12px);align-items:stretch;justify-content:center}
@@ -51,9 +102,24 @@ const CSS = `${BASE}
 .pz-ws__card{position:absolute;inset:0;display:grid;place-items:center;z-index:4;background:rgba(10,8,16,.78);border-radius:8px;text-align:center;padding:16px}
 .pz-ws__card b{display:block;font-size:22px;margin-bottom:6px;color:#fff}
 .pz-ws__card span{font-size:13px;color:var(--ink-2,#bbb)}
+.pz-ws__own{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;gap:8px;padding:14px;background:rgba(12,9,18,.95);border-radius:8px}
+.pz-ws__own b{font-size:15px;color:#fff}
+.pz-ws__own p{margin:0;font-size:12px;line-height:1.45;color:var(--ink-2,#bbb)}
+.pz-ws__own textarea{flex:1 1 auto;min-height:90px;resize:none;font:600 14px/1.4 var(--mono,ui-monospace,monospace);color:#fff;background:var(--fill-1,rgba(255,255,255,.06));border:1px solid var(--line-1,rgba(255,255,255,.14));border-radius:8px;padding:8px 10px;text-transform:uppercase}
+.pz-ws__own textarea:focus-visible{outline:2px solid var(--ga);outline-offset:1px}
+.pz-ws__own div{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.pz-ws__own .pz-ws__err{color:#ffb4b4;min-height:1.2em}
+.pz__read.is-low{color:#ff8a8a}
 .pz__sel{font:600 var(--fs-12,12px)/1 var(--font,system-ui);color:var(--ink-1,#ddd);background:var(--fill-1,rgba(255,255,255,.06));border:1px solid var(--line-1,rgba(255,255,255,.1));padding:7px 8px;border-radius:var(--r-md,11px)}
 @container (max-width:620px){.pz-ws__main{flex-direction:column;gap:6px}.pz-ws__list{width:100%;flex-direction:row;flex-wrap:wrap;gap:3px 12px;max-height:30%;align-self:stretch}.pz-ws__list h4{width:100%;margin:0}}
 .pz:not(.is-reduced) .pz-ws__c.is-found{transition:background .25s}
+/* the Arcade's "Larger text" (ctx.bigText): the grid's letters and the word list about a third bigger */
+.pz.is-big .pz-ws__c{font-size:calc(100cqw / var(--n) * .66)}
+.pz.is-big .pz-ws__list{width:210px}
+.pz.is-big .pz-ws__list li{font-size:18px}
+.pz.is-big .pz-ws__list h4{font-size:14px}
+.pz.is-big .pz__foot{font-size:15px}
+@container (max-width:620px){.pz.is-big .pz-ws__list{width:100%}}
 `;
 
 export default {
@@ -65,15 +131,20 @@ export default {
     let dead = false, paused = false;
     const sv = load(GAME);
     const bests = { ...(sv.best || {}) };
-    const prefs = { theme: themeById(sv.theme) ? sv.theme : 'animals', size: SIZES[sv.size] ? sv.size : 'medium' };
-    let G = null;                       /* the round: { n, rows, words:[{..., found}], seed, theme, size, done } */
+    let own = Array.isArray(sv.custom) ? sv.custom.filter(w => typeof w === 'string' && /^[A-Z]{3,14}$/.test(w)).slice(0, MAX_WORDS) : [];
+    const prefs = { theme: themeById(sv.theme) || (sv.theme === CUSTOM && own.length >= 3) ? sv.theme : 'animals', size: SIZES[sv.size] ? sv.size : 'medium', timed: sv.timed === true };
+    const ownTheme = () => ({ id: CUSTOM, name: 'Your words', words: own });
+    let G = null;                       /* the round: { n, rows, words:[{..., found}], seed, theme, size, done, limit } */
     let sel = null;                     /* { cells: [[x,y]…] } while selecting */
     let anchor = null, cur = [0, 0];     /* keyboard selection */
     let msg = '';
     let nodes = [], listEls = [];
 
     /* ---------- chrome ---------- */
-    const themeSel = h('select.pz__sel', { 'aria-label': 'Theme' }, THEMES.map(t => h('option', { value: t.id, text: t.name })));
+    const themeSel = h('select.pz__sel', { 'aria-label': 'Theme' }, THEMES.map(t => h('option', { value: t.id, text: t.name })),
+      h('option', { value: CUSTOM, text: 'Your words…' }));
+    const timerBtn = h('button.pz__btn', { type: 'button', 'aria-pressed': 'false', dataset: { act: 'timer' }, title: 'Beat the clock: 2, 3 or 4 minutes by size' }, icon('clock'), h('span', { text: 'Timer' }));
+    const editBtn = h('button.pz__btn', { type: 'button', dataset: { act: 'words' }, title: 'Type your own word list', hidden: true }, icon('edit-3'), h('span.pz__long', { text: 'Edit words' }));
     const sizeBtns = Object.entries(SIZES).map(([k, s]) => h('button', { type: 'button', dataset: { size: k }, 'aria-pressed': 'false', title: `${s.n}×${s.n}, ${s.words} words` }, s.name));
     const seg = h('div.pz__seg', { role: 'group', 'aria-label': 'Grid size' }, sizeBtns);
     const timeV = h('span', { text: '0:00' });
@@ -82,7 +153,7 @@ export default {
     const leftV = h('span', { text: '' });
     const leftRead = h('div.pz__read', { title: 'Words left', 'aria-label': 'Words left' }, icon('search'), leftV);
     const newBtn = h('button.pz__btn', { type: 'button', title: 'A new random grid' }, icon('refresh'), h('span.pz__long', { text: 'New grid' }));
-    const top = h('div.pz__top', themeSel, seg, leftRead, timeRead, bestV, newBtn);
+    const top = h('div.pz__top', themeSel, editBtn, seg, timerBtn, leftRead, timeRead, bestV, newBtn);
     const board = h('div.pz-ws__board', { role: 'grid', tabindex: '0', 'aria-label': 'Word search grid' });
     const bw = h('div.pz-ws__bw', board);
     const list = h('ul.pz-ws__list', { 'aria-label': 'Words to find' });
@@ -92,8 +163,17 @@ export default {
     const root = h('div.pz' + (reduced ? '.is-reduced' : ''), { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } },
       h('style', { text: CSS }), top, main, foot, live);
     el.appendChild(root);
+    /* ctx.bigText is a getter: read when the game opens and on every new grid */
+    const big = () => root.classList.toggle('is-big', !!ctx.bigText);
+    big();
 
-    const clk = clock(s => { timeV.textContent = fmtTime(s); });
+    /* with the Timer on the readout counts down, and time running out ends the round */
+    const clk = clock(s => {
+      const lim = G?.limit || 0;
+      timeV.textContent = lim ? fmtTime(Math.max(0, Math.ceil(lim - s))) : fmtTime(s);
+      timeRead.classList.toggle('is-low', !!lim && lim - s <= 15);
+      if (lim && s >= lim && !G.done) timeUp();
+    });
     const say = m => { msg = m; live.textContent = ''; live.textContent = m; paintFoot(); };
     const paintFoot = () => foot.replaceChildren(msg
       ? h('span', { text: msg })
@@ -101,16 +181,68 @@ export default {
 
     /* ---------- the round ---------- */
     function deal(seed = randomSeed(), theme = prefs.theme, size = prefs.size) {
-      const t = themeById(theme) || THEMES[0], S = SIZES[size] || SIZES.medium;
-      const g = makeGrid(t, S.n, S.words, seed);
-      G = { ...g, size, words: g.words.map(w => ({ ...w, found: false, hue: 0 })), done: false, found: 0 };
+      const S = SIZES[size] || SIZES.medium;
+      let t = theme === CUSTOM ? ownTheme() : themeById(theme) || THEMES[0];
+      /* your own list: the words that fit this size, as many as the size holds */
+      let count = S.words, g = null;
+      if (t.id === CUSTOM) {
+        const fit = own.filter(w => w.length <= S.n);
+        count = Math.min(S.words, fit.length);
+        if (count < 3) { openOwn(`Fewer than 3 of your words fit a ${S.n}×${S.n} grid. Add some shorter ones, or pick a larger size.`); t = themeById(prefs.theme === CUSTOM ? 'animals' : prefs.theme) || THEMES[0]; count = S.words; }
+        else t = { ...t, words: fit };
+      }
+      big();
+      try { g = makeGrid(t, S.n, count, seed); } catch (err) {
+        openOwn(`Those words don’t fit in a ${S.n}×${S.n} grid together. Try a larger size, or fewer long words.`);
+        t = THEMES[0]; count = S.words; g = makeGrid(t, S.n, count, seed);
+      }
+      G = { ...g, theme: t.id, size, words: g.words.map(w => ({ ...w, found: false, hue: 0 })), done: false, found: 0, limit: prefs.timed ? LIMIT[size] || 180 : 0 };
       prefs.theme = t.id; prefs.size = size;
-      save(GAME, { theme: prefs.theme, size: prefs.size });
+      save(GAME, { theme: prefs.theme, size: prefs.size, timed: prefs.timed });
       sel = null; anchor = null; cur = [0, 0]; msg = '';
       paused = false; bw.querySelector('.pz__cover')?.remove(); bw.querySelector('.pz-ws__card')?.remove();
-      clk.stop(); clk.secs = 0; timeV.textContent = '0:00';
+      clk.stop(); clk.secs = 0;
       build(); paint();
-      say(`${t.name}: find ${g.words.length} words, in any of 8 directions.`);
+      /* a timed round starts with the grid, so nobody can study it for free */
+      if (G.limit) clk.start(); else timeV.textContent = '0:00';
+      say(`${t.name}: find ${g.words.length} words, in any of 8 directions${G.limit ? `, in ${G.limit / 60} minutes` : ''}.`);
+    }
+    function timeUp() {
+      if (!G || G.done) return;
+      G.done = true; clk.stop(); anchor = null; sel = null; drag = null;
+      timeV.textContent = '0:00';
+      paint();
+      bw.appendChild(h('div.pz-ws__card', h('div', h('b', { text: 'Time’s up!' }),
+        h('span', { text: `You found ${G.found} of ${G.words.length} words in ${G.limit / 60} minutes.` }))));
+      say(`Time’s up: ${G.found} of ${G.words.length} found.`);
+      onEnd({ score: null, won: false, detail: `Timer · found ${G.found} of ${G.words.length} words in ${G.limit / 60} minutes · ${G.theme === CUSTOM ? 'Your words' : THEMES.find(t => t.id === G.theme)?.name} ${SIZES[G.size].name}` });
+    }
+    /* ---------- your own word list ---------- */
+    function openOwn(err = '') {
+      bw.querySelector('.pz-ws__own')?.remove();
+      const n = (SIZES[prefs.size] || SIZES.medium).n;
+      const ta = h('textarea', { 'aria-label': 'Your words', spellcheck: 'false', placeholder: 'One word per line, or separated by commas', text: own.join('\n') });
+      const note = h('p.pz-ws__err', { 'aria-live': 'polite', text: err });
+      const done = () => box.remove();
+      const use = h('button.pz__btn', { type: 'button', dataset: { act: 'use-words' } }, icon('check'), h('span', { text: 'Make the grid' }));
+      const cancel = h('button.pz__btn', { type: 'button', dataset: { act: 'cancel-words' } }, h('span', { text: 'Cancel' }));
+      const box = h('div.pz-ws__own', { role: 'dialog', 'aria-label': 'Your own words' },
+        h('b', { text: 'Your own words' }),
+        h('p', { text: `Up to ${MAX_WORDS} words of 3 to ${n} letters (A–Z) for this ${n}×${n} grid. A grid uses up to ${(SIZES[prefs.size] || SIZES.medium).words} of them. They stay on this device.` }),
+        ta, note, h('div', cancel, use));
+      use.addEventListener('click', () => {
+        const r = cleanList(ta.value, n);
+        if (r.words.length < 3) { note.textContent = `${r.words.length ? `Only ${r.words.length} word${r.words.length === 1 ? '' : 's'} can be used` : 'No words can be used yet'}: a grid needs at least 3. ${droppedText(r.dropped)}`.trim(); return; }
+        own = r.words;
+        save(GAME, { custom: own });
+        done();
+        deal(randomSeed(), CUSTOM, prefs.size);
+        const left = droppedText(r.dropped);
+        if (left) say(`${msg} ${left}`);
+      });
+      cancel.addEventListener('click', () => { done(); themeSel.value = G ? G.theme : prefs.theme; board.focus({ preventScroll: true }); });
+      bw.appendChild(box);
+      requestAnimationFrame(() => { if (!dead) ta.focus({ preventScroll: true }); });
     }
     function build() {
       board.style.setProperty('--n', G.n);
@@ -136,8 +268,12 @@ export default {
       });
       G.words.forEach((w, i) => listEls[i].classList.toggle('is-found', w.found));
       leftV.textContent = `${G.words.length - G.found} left`;
-      bestV.textContent = bests[G.size] != null ? `Best ${SIZES[G.size].name}: ${fmtTime(bests[G.size])}` : '';
+      bestV.textContent = G.theme === CUSTOM ? 'Your words: no best time' : bests[G.size] != null ? `Best ${SIZES[G.size].name}: ${fmtTime(bests[G.size])}` : '';
       sizeBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.size === G.size)));
+      timerBtn.setAttribute('aria-pressed', String(prefs.timed));
+      editBtn.hidden = G.theme !== CUSTOM;
+      timeRead.title = G.limit ? 'Time left' : 'Time';
+      timeRead.setAttribute('aria-label', G.limit ? 'Time left' : 'Time');
       themeSel.value = G.theme;
     }
     const cellsOf = w => Array.from({ length: w.word.length }, (_, i) => [w.x + w.dx * i, w.y + w.dy * i]);
@@ -171,16 +307,19 @@ export default {
     function win() {
       G.done = true; clk.stop();
       const secs = Math.max(1, Math.round(clk.secs));
+      const mine = G.theme === CUSTOM;
       const prev = bests[G.size];
-      const fresh = prev == null || secs < prev;
+      const fresh = !mine && (prev == null || secs < prev);
       if (fresh) bests[G.size] = secs;
       save(GAME, { best: bests });
       paint();
+      timeV.textContent = fmtTime(secs);
       bw.appendChild(h('div.pz-ws__card', h('div', h('b', { text: 'All found!' }),
-        h('span', { text: `${G.words.length} words in ${fmtTime(secs)}${fresh ? (prev == null ? ' — your first ' : ' — a new best for ') + SIZES[G.size].name : ''}.` }))));
+        h('span', { text: `${G.words.length} words in ${fmtTime(secs)}${G.limit ? ` with ${fmtTime(G.limit - secs)} to spare` : ''}${fresh ? (prev == null ? ' — your first ' : ' — a new best for ') + SIZES[G.size].name : ''}.` }))));
       say(`All ${G.words.length} words found in ${fmtTime(secs)}.`);
       onScore(secs);
-      onEnd({ score: secs, won: true, detail: `${THEMES.find(t => t.id === G.theme)?.name} · ${SIZES[G.size].name} ${G.n}×${G.n}` });
+      onEnd({ score: secs, won: true, detail: `${mine ? 'Your words' : THEMES.find(t => t.id === G.theme)?.name} · ${SIZES[G.size].name} ${G.n}×${G.n}${G.limit ? ' · Timer' : ''}`,
+        ...(mine ? { assisted: 'Your own word list doesn’t change your best' } : {}) });
     }
     const can = () => !dead && !paused && G && !G.done;
     const begin = () => { if (!clk.running && can()) clk.start(); };
@@ -238,6 +377,7 @@ export default {
     const MOVE = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
     L.on(window, 'keydown', e => {
       if (!can() || !ownsKey(root, e)) return;
+      if (e.target?.closest?.('textarea,input') || bw.querySelector('.pz-ws__own')) return;    /* typing a word list */
       const k = e.key;
       if (MOVE[k]) {
         e.preventDefault(); keyboardUsed = true;
@@ -258,7 +398,13 @@ export default {
       }
     });
 
-    L.on(themeSel, 'change', () => { if (!dead) deal(randomSeed(), themeSel.value, prefs.size); });
+    L.on(themeSel, 'change', () => {
+      if (dead) return;
+      if (themeSel.value === CUSTOM && own.filter(w => w.length <= (SIZES[prefs.size] || SIZES.medium).n).length < 3) { openOwn(); return; }
+      deal(randomSeed(), themeSel.value, prefs.size);
+    });
+    L.on(editBtn, 'click', () => { if (!dead) openOwn(); });
+    L.on(timerBtn, 'click', () => { if (dead) return; prefs.timed = !prefs.timed; deal(randomSeed(), G ? G.theme : prefs.theme, prefs.size); });
     L.on(seg, 'click', e => { const b = e.target.closest?.('button[data-size]'); if (b && !dead) deal(randomSeed(), prefs.theme, b.dataset.size); });
     L.on(newBtn, 'click', () => { if (!dead) deal(); });
 
@@ -284,7 +430,7 @@ export default {
         if (dead || !paused) return;
         paused = false;
         bw.querySelector('.pz__cover')?.remove();
-        if (!G.done && clk.secs > 0) clk.start();
+        if (!G.done && (clk.secs > 0 || G.limit)) clk.start();
       },
       /* a read-only snapshot for automated play-tests */
       peek: () => G && ({
@@ -292,10 +438,13 @@ export default {
         words: G.words.map(w => ({ word: w.word, x: w.x, y: w.y, dx: w.dx, dy: w.dy, found: w.found })),
         found: G.found, total: G.words.length, done: G.done, paused, secs: clk.secs, best: { ...bests }, anchor: anchor && anchor.slice(), cur: cur.slice(),
         struck: listEls.map((li, i) => (li.classList.contains('is-found') ? G.words[i].word : null)).filter(Boolean),
+        bigText: root.classList.contains('is-big'), limit: G.limit, timed: prefs.timed, own: own.slice(), msg,
+        shown: timeV.textContent,
       }),
-      /* test hook — nothing in the game calls it: deal({ seed, theme, size }) */
+      /* test hook — nothing in the game calls it: deal({ seed, theme, size }) · time(secs: set the clock) */
       hook(cmd, arg) {
         if (cmd === 'deal') deal(arg.seed, arg.theme || prefs.theme, arg.size || prefs.size);
+        else if (cmd === 'time') clk.secs = arg;
         return true;
       },
     };

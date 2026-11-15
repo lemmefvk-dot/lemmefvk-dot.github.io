@@ -53,10 +53,32 @@ function fortress() {
   return [...tower(0), ...tower(9), ...block(0, 3, 8, 2, 3), ...block(1, 3, 8, 2, 3), ...block(0, 3, 8, 0, 0), ...block(0, 3, 8, 5, 5)];
 }
 
+function courtyard() {
+  /* a square with an open middle, a second storey and four corner towers */
+  const hole = (o, c0, c1, r0, r1) => o.filter(p => !(p.x >= c0 * 2 && p.x <= c1 * 2 && p.y >= r0 * 2 && p.y <= r1 * 2));
+  return [
+    ...hole(block(0, 0, 9, 0, 7), 3, 6, 3, 4),
+    ...hole(block(1, 1, 8, 1, 6), 3, 6, 2, 5),
+    ...block(2, 1, 2, 1, 2), ...block(2, 7, 8, 1, 2), ...block(2, 1, 2, 5, 6), ...block(2, 7, 8, 5, 6),
+  ];
+}
+function butterfly() {
+  /* two wings and a raised body */
+  const left = { 0: [0, 3], 1: [0, 4], 2: [1, 5], 3: [3, 5], 4: [3, 5], 5: [1, 5], 6: [0, 4], 7: [0, 3] };
+  const right = Object.fromEntries(Object.entries(left).map(([r, [a, b]]) => [r, [13 - b, 13 - a]]));
+  return [
+    ...grid(0, 0, left), ...grid(0, 0, right), ...block(0, 6, 7, 1, 6),
+    ...block(1, 3, 4, 1, 6), ...block(1, 9, 10, 1, 6), ...block(1, 6, 7, 2, 5),
+    ...block(2, 6, 7, 3, 4),
+  ];
+}
+
 export const LAYOUTS = {
   turtle: { name: 'Turtle', blurb: 'The classic: 144 tiles', make: turtle },
   pyramid: { name: 'Pyramid', blurb: 'A stepped hill: 136 tiles', make: pyramid },
   fortress: { name: 'Fortress', blurb: 'Two towers and a wall', make: fortress },
+  courtyard: { name: 'Courtyard', blurb: 'An open square with four corner towers: 120 tiles', make: courtyard },
+  butterfly: { name: 'Butterfly', blurb: 'Two wings and a raised body: 116 tiles', make: butterfly },
 };
 export const layoutIds = Object.keys(LAYOUTS);
 
@@ -140,11 +162,27 @@ export function dealOn(tiles, pairs, seed) {
   }
   return null;
 }
+/** does playing `order` (pairs of tile indexes, first move first) clear the board, every pair free and matching when taken? */
+export function verifyOrder(tiles, faces, order) {
+  const gone = new Uint8Array(tiles.length);
+  for (const [a, b] of order) {
+    if (a === b || gone[a] || gone[b] || !matches(faces[a], faces[b]) || !isFree(tiles, a, gone) || !isFree(tiles, b, gone)) return false;
+    gone[a] = gone[b] = 1;
+  }
+  return gone.every(Boolean);
+}
+/** a deal of a layout that is proved solvable: its `order` is replayed by verifyOrder before it is
+    returned, and a deal that fails (or a dealer that gets stuck) is dealt again from the next seed */
 export function deal(layoutId, seed) {
   const tiles = LAYOUTS[layoutId].make();
-  const rand = rng(seed ^ 0x9e3779b9);
-  const pool = shuffle(pairPool(), rand).slice(0, tiles.length / 2);
-  return dealOn(tiles, pool, seed);
+  for (let k = 0; k < 16; k++) {
+    const s = (seed + k * 0x9e3779b1) >>> 0;
+    const rand = rng(s ^ 0x9e3779b9);
+    const pool = shuffle(pairPool(), rand).slice(0, tiles.length / 2);
+    const d = dealOn(tiles, pool, s);
+    if (d && verifyOrder(d.tiles, d.faces, d.order)) return { ...d, retries: k };
+  }
+  return null;
 }
 
 /** turn the faces left on the board back into pairs (for a shuffle) */

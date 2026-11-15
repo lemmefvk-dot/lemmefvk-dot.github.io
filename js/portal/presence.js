@@ -16,11 +16,16 @@
      start()  ·  stop()  ·  running()
      online() -> [{ id, name, color, status, playing, seen }]
      onChange(fn) -> unsubscribe
+     appearingOffline() · setAppearOffline(on)   the quick "Appear offline" switch
+
+   Appear offline is the Invisible status behind one switch: the public
+   list and your friends (js/core/friends.js) both stop hearing from this
+   device, and switching it off puts back the status you had before.
    ============================================================ */
 import * as live from './live.js';
 import { store } from '../core/store.js';
 import { bus } from '../core/bus.js';
-import { me, clean } from '../core/identity.js';
+import { me, clean, setStatus as setIdentityStatus } from '../core/identity.js';
 
 const TOPIC = 'presence';
 const HEARTBEAT_MS = 20_000;
@@ -124,9 +129,26 @@ export function stop() {
   emit();
 }
 
+const K_PREV = 'portal.presence.prev';            /* the status to put back when "Appear offline" is switched off */
+export const appearingOffline = () => me().status === 'invisible';
+/** The quick switch. -> whether this device now appears offline */
+export function setAppearOffline(want) {
+  const now = appearingOffline();
+  if (!!want === now) return now;
+  if (want) {
+    store.set(K_PREV, me().status);
+    setIdentityStatus('invisible');
+    if (on) live.publish(TOPIC, JSON.stringify({ id: me().id, name: me().name, bye: true }));      /* the list drops you now, not in a minute */
+  } else {
+    const prev = store.get(K_PREV);
+    setIdentityStatus(['online', 'away', 'busy'].includes(prev) ? prev : 'online');
+  }
+  beat();
+  return appearingOffline();
+}
 export const running = () => on;
 export const online = () => [...peers.values()].sort((a, b) => a.name.localeCompare(b.name));
 export function onChange(fn) { subs.add(fn); return () => subs.delete(fn); }
 export function nudge() { beat(); }
 
-export default { start, stop, running, online, onChange, nudge };
+export default { start, stop, running, online, onChange, nudge, appearingOffline, setAppearOffline };

@@ -53,7 +53,7 @@ export function thinker() {
     await new Promise(r => setTimeout(r, 30));
     if (dead) return null;
     const { answer } = await import('./think.js');
-    const limit = { 1: 300, 2: 600, 3: 900 }[q.level] || 600;
+    const limit = { 1: 300, 2: 600, 3: 900, 4: 1200 }[q.level] || 600;
     try { return { ok: true, ...answer({ ...q, timeMs: limit }) }; } catch (err) { console.error('[arcade] think', err); return null; }
   }
 

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flight of the Amazon Queen: licence and source</title><style>:root{color-scheme:dark}body{margin:0 auto;max-width:720px;padding:32px 20px 64px;background:#0c0913;color:#e1d6e6;font:16px/1.6 system-ui,sans-serif}
+h1{font-size:28px;line-height:1.2;color:#fff;margin:0 0 4px}h2{font-size:20px;color:#fff;margin:32px 0 8px}a{color:#9fd8ff}code{font-size:.88em;overflow-wrap:anywhere;color:#d4f0c8}
+.sub{color:#b5a9bd;margin:0 0 24px}li{margin:8px 0}</style></head>
+<body>
+<h1>StaticOS Free Classics: Flight of the Amazon Queen</h1>
+<p class="sub">John Passfield and Steve Stamatiadis, 1995. Licence and source for the copy on StaticOS’s Free Classics shelf.</p>
+<p><b>Flight of the Amazon Queen</b> was made by John Passfield and Steve Stamatiadis in 1995. They released it as freeware, and it
+    runs here on <a href="https://www.scummvm.org/">ScummVM</a>, by The ScummVM Team. StaticOS did not make this game and does not own it,
+    and neither its authors nor the ScummVM Team have anything to do with StaticOS.</p>
+<h2 id="licence">Licences</h2>
+<ul>
+      <li><b>The game’s data:</b> its authors’ freeware licence, in <a href="readme.txt">readme.txt</a>.</li>
+      <li><b>The engine:</b> GNU General Public License, version 3 or later: <a href="../scummvm/COPYING.txt">COPYING.txt</a>, with its authors in
+      <a href="../scummvm/COPYRIGHT.txt">COPYRIGHT.txt</a>. Parts of ScummVM’s tree are under other licences: <a href="../scummvm/LICENSES/COPYING.Apache.txt">Apache</a>, <a href="../scummvm/LICENSES/COPYING.BSD.txt">BSD</a>, <a href="../scummvm/LICENSES/COPYING.BSL.txt">BSL</a>, <a href="../scummvm/LICENSES/COPYING.GLAD.txt">GLAD</a>, <a href="../scummvm/LICENSES/COPYING.ISC.txt">ISC</a>, <a href="../scummvm/LICENSES/COPYING.LGPL.txt">LGPL</a>, <a href="../scummvm/LICENSES/COPYING.LUA.txt">LUA</a>, <a href="../scummvm/LICENSES/COPYING.MIT.txt">MIT</a>, <a href="../scummvm/LICENSES/COPYING.MKV.txt">MKV</a>, <a href="../scummvm/LICENSES/COPYING.MPL.txt">MPL</a>, <a href="../scummvm/LICENSES/COPYING.OFL.txt">OFL</a>, <a href="../scummvm/LICENSES/COPYING.TINYGL.txt">TINYGL</a>, <a href="../scummvm/LICENSES/CatharonLicense.txt.txt">CatharonLicense.txt</a>.</li>
+      <li><b>Libraries built into the engine:</b> <a href="../THIRD-PARTY-NOTICES.txt">SDL, Emscripten’s runtime</a>.</li>
+    </ul>
+<h2 id="data">The game’s files</h2>
+    <p><a href="FOTAQ_Floppy.zip"><code>FOTAQ_Floppy.zip</code></a> is the official download from <a href="https://www.scummvm.org/games/">scummvm.org/games</a>,
+    byte for byte, with its readme inside. It is not modified. SHA-256 <code>2e59de85f708cdb32bf85c85b394ac091c05f7647e856b71f5b3ae73fde761e0</code>, which matches what scummvm.org publishes.
+    <code>queen.tbl</code>, which the engine needs beside it, is ScummVM’s own <code>dists/engine-data/queen.tbl</code>, gzipped (<a href="../scummvm/data/queen.tbl.gz">here</a>).</p>
+    <p>The licence beside it, <a href="readme.txt">readme.txt</a>, is copied out of the zip so it can be read here. It says: “1) You may distribute this game for free on any medium, provided this Readme and all associated copyright notices and disclaimers are left intact.”
+    The game may not be sold. All game content is © John Passfield and Steven Stamatiadis.</p>
+<h2 id="source">Source code</h2>
+<p>This engine is ScummVM <a href="https://github.com/scummvm/scummvm/tree/v2026.4.0">tag v2026.4.0</a>,
+    commit <code>7d2709da5136866589f7602f5f5a7b17de03420e</code>, with one patch, built with Emscripten 4.0.10 (emsdk commit d7b4130688bfa348392b921ab04015aa15c4f154): the <b>free</b> build of
+    <code>build-scummvm-more.sh</code>, with only the queen, lure and drascula engines in it.</p>
+    <ul>
+      <li><a href="../scummvm/source/scummvm-v2026.4.0-classics.tar.gz">The source both of StaticOS’s further ScummVM builds were made from (20.3 MB), hosted here</a>: the tag
+      without the engines neither build uses. The engine was built from exactly this file.</li>
+      <li><a href="../scummvm/source/scummvm-sandbox.patch">Our patch</a>: it lets the engine run in a sandboxed frame. We modified the engine on 2026-10-31.</li>
+      <li><a href="../scummvm/source/build.sh">The exact build script</a>, with every configure flag and how the tarball is made from the tag,
+      and <a href="../scummvm/source/pkg-config-shim.py">its small helper</a>.</li>
+      <li>The full upstream tree, with every engine: <a href="https://github.com/scummvm/scummvm/archive/refs/tags/v2026.4.0.tar.gz">v2026.4.0.tar.gz</a>.</li>
+    </ul>
+</body></html>

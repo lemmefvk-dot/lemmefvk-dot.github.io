@@ -9,6 +9,15 @@
    Score: 1 point per square placed, plus 10 for one line cleared,
    30 for two at once, 60 for three, 100 for four … (10 × n(n+1)/2).
 
+   Modes. Classic is the above. Endless never ends by itself: when
+   nothing in the tray fits, the board is wiped and you carry on with
+   your score, until you press Finish. 90 seconds: as many points as
+   you can before the clock runs out (it starts with your first shape
+   and stands still while the Arcade's window isn't the one in front).
+   Only Classic changes the Arcade's best; 90 seconds keeps its own
+   best here (portal.arcadePuzzles.blocks), and Endless, having no
+   end, keeps none. A shared round and the online race are Classic.
+
    Controls
    · mouse / touch — drag a shape from the tray onto the grid (on a
      touch screen it rides above your finger so you can see where it
@@ -33,8 +42,23 @@
    loop only while something moves. Follows ./index.js's contract.
    ============================================================ */
 
+import { load as loadSaved, save as saveSaved } from './puzzlekit.js';
+
 const HUE = 230;
 const N = 10;
+export const MODES = { classic: 'Classic', endless: 'Endless', timed: '90 seconds' };
+export const TIMED_MS = 90_000;
+const MODE_CSS = `
+.arc-bf{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:2;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;align-items:center;max-width:calc(100% - 20px)}
+.arc-bf button{height:30px;padding:0 11px;border-radius:999px;font:700 11px/1 Inter,ui-sans-serif,system-ui,sans-serif;color:#dfe4ff;cursor:pointer;
+  background:rgba(8,10,24,.8);border:1px solid hsla(230,100%,72%,.3)}
+.arc-bf button[aria-pressed="true"]{background:hsla(230,100%,62%,.34);border-color:hsla(230,100%,78%,.85);color:#fff}
+.arc-bf button[hidden]{display:none}
+.arc-bf button:focus-visible{outline:2px solid hsl(230 100% 78%);outline-offset:2px}
+.arc-bf span{font:800 13px/1 "JetBrains Mono",ui-monospace,Menlo,monospace;color:#f2f4ff;padding:0 6px;min-width:3.4em;text-align:center}
+.arc-bf span.is-low{color:#ff8a9a}
+.arc-bf small{font:600 11px/1.2 Inter,ui-sans-serif,system-ui,sans-serif;color:rgba(223,228,255,.7)}
+`;
 const RACE_MS = 180_000;
 const GRACE_MS = 4000;             /* moves still in flight when the clock runs out */
 const SEND_BACK = 8;               /* each move message repeats the last few moves */
@@ -153,8 +177,15 @@ export default {
     const NET = ctx.online && typeof ctx.online.send === 'function' ? ctx.online : null;
     const snd = sounder(ctx);
     const now = () => performance.now() / 1000;
-    const seed = NET ? NET.seed >>> 0 : (crypto.getRandomValues(new Uint32Array(1))[0] >>> 0);
-    const st = newGame(seed);
+    /* an online race's shared seed, else the shell's (ctx.seed: a Beat-this link or the weekly challenge gives everyone the same shapes) */
+    const seed = NET ? NET.seed >>> 0 : Number.isInteger(ctx.seed) ? ctx.seed >>> 0 : (crypto.getRandomValues(new Uint32Array(1))[0] >>> 0);
+    let st = newGame(seed);
+    /* the mode: Classic for a race or a shared round */
+    const fixedMode = !!NET || !!ctx.shared;
+    const saved = loadSaved('blocks');
+    let mode = !fixedMode && MODES[saved.mode] ? saved.mode : 'classic';
+    let timedBest = Number.isFinite(saved.timedBest) ? saved.timedBest : null;
+    const T = { used: 0, at: 0, on: false, wipes: 0 };   /* the 90 seconds: time used, running since */
     const S = {
       sel: 0, cur: { r: 3, c: 3 }, kbd: false,
       drag: null, hover: null, back: null,
@@ -172,6 +203,72 @@ export default {
     const sprites = new Map();
     ctx.onScore(0);
     selectNext(-1);
+
+    /* ------------------------------ modes ------------------------------ */
+    const modeEl = fixedMode ? null : mk('div', 'arc-bf');
+    const modeCss = fixedMode ? null : document.createElement('style');
+    const modeBtns = [], clockEl = mk('span', '', ''), noteEl = mk('small', '', '');
+    let finishBtn = null;
+    if (modeEl) {
+      modeCss.textContent = MODE_CSS;
+      el.appendChild(modeCss);
+      for (const [k, name] of Object.entries(MODES)) {
+        const b = mk('button', '', name);
+        b.type = 'button'; b.dataset.mode = k;
+        b.title = k === 'classic' ? 'Until nothing fits' : k === 'endless' ? 'Never stuck: a full board is wiped and you play on, until you finish' : 'As many points as you can in 90 seconds';
+        b.addEventListener('click', () => { setMode(k); el.closest('[tabindex]')?.focus({ preventScroll: true }); });
+        modeBtns.push(b); modeEl.appendChild(b);
+      }
+      finishBtn = mk('button', '', 'Finish');
+      finishBtn.type = 'button'; finishBtn.dataset.act = 'finish';
+      finishBtn.title = 'End this Endless round with your score';
+      finishBtn.addEventListener('click', () => { if (!S.ended) finish(); });
+      modeEl.append(clockEl, noteEl, finishBtn);
+      el.appendChild(modeEl);
+    }
+    const timeUsed = () => T.used + (T.on ? performance.now() - T.at : 0);
+    const timedLeft = () => Math.max(0, TIMED_MS - timeUsed());
+    /* the 90 seconds only run while this window is the one in front and the page is showing */
+    function clockRuns() {
+      const win = el.closest('.win');
+      return !document.hidden && (!win || win.classList.contains('is-active'));
+    }
+    function tickClock() {
+      if (mode !== 'timed' || S.ended || !st.placed) return;
+      const run = clockRuns();
+      if (run && !T.on) { T.on = true; T.at = performance.now(); }
+      else if (!run && T.on) { T.used += performance.now() - T.at; T.on = false; }
+      paintModes();
+      if (timedLeft() <= 0) finish();
+    }
+    function paintModes() {
+      if (!modeEl) return;
+      modeBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+      finishBtn.hidden = mode !== 'endless' || S.ended;
+      if (mode === 'timed') {
+        const s = Math.ceil(timedLeft() / 1000);
+        clockEl.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        clockEl.classList.toggle('is-low', s <= 10);
+        noteEl.textContent = timedBest !== null ? `best ${timedBest}` : st.placed ? '' : 'starts with your first shape';
+      } else if (mode === 'endless') {
+        clockEl.textContent = '';
+        noteEl.textContent = T.wipes ? `${T.wipes} wipe${T.wipes === 1 ? '' : 's'}` : 'never stuck';
+      } else { clockEl.textContent = ''; noteEl.textContent = ''; }
+    }
+    /* a new game of another mode, in the same round (the same shapes: the same seed) */
+    function setMode(m) {
+      if (S.ended || m === mode || !MODES[m]) return;
+      mode = m;
+      saveSaved('blocks', { mode });
+      st = newGame(seed);
+      Object.assign(T, { used: 0, at: 0, on: false, wipes: 0 });
+      Object.assign(S, { sel: 0, cur: { r: 3, c: 3 }, drag: null, hover: null, back: null, pops: [], clears: [], flashes: [], floats: [], overAt: 0, hint: true });
+      selectNext(-1);
+      ctx.onScore(0);
+      paintModes();
+      kick(0.3);
+    }
+    paintModes();
 
     /* ------------------------------ moves ------------------------------ */
     function selectNext(from) {
@@ -225,6 +322,18 @@ export default {
       else clampCursor();
       if (from === 'drag') { S.cur = { r, c }; clampCursor(); }
       if (NET) sendMoves();
+      if (mode === 'timed') tickClock();
+      /* Endless: a board with no room is wiped, and play goes on */
+      if (st.out && mode === 'endless') {
+        const L = layout();
+        for (let i = 0; i < N * N; i++) if (st.board[i]) S.clears.push({ i, v: st.board[i], t0: t + 0.25 + (i % N) * 0.012 });
+        st.board.fill(0);
+        st.out = !anyFits(st);
+        T.wipes++;
+        S.floats.push({ text: 'Board wiped', sub: 'no room left: play on', x: L.bx + L.B / 2, y: L.by + L.B / 2, t0: t + 0.2 });
+        snd.blip(260, 0.2, 'triangle', 0.6, 520);
+        paintModes();
+      }
       if (st.out) {
         S.overAt = t + (reduced ? 0.6 : 1.1);
         setTimeout(() => snd.blip(330, 0.35, 'sawtooth', 0.7, 110), 180);
@@ -303,7 +412,21 @@ export default {
       S.ended = true;
       S.drag = null;
       const detail = `${st.lines} line${st.lines === 1 ? '' : 's'} cleared · ${st.placed} shapes placed`;
-      if (!R) { draw(); ctx.onEnd({ score: st.score, detail }); return; }
+      if (!R) {
+        if (T.on) { T.used += performance.now() - T.at; T.on = false; }
+        paintModes();
+        draw();
+        if (mode === 'classic') { ctx.onEnd({ score: st.score, detail }); return; }
+        if (mode === 'timed') {
+          const fresh = timedBest === null || st.score > timedBest;
+          if (fresh) { timedBest = st.score; saveSaved('blocks', { timedBest }); }
+          ctx.onEnd({ score: st.score, assisted: 'Only Classic changes your Arcade best; 90 seconds keeps its own',
+            detail: `90 seconds${st.out && timedLeft() > 0 ? ' (no room left first)' : ''} · ${detail}${fresh ? ' · its best yet' : ` · its best ${timedBest}`}` });
+          return;
+        }
+        ctx.onEnd({ score: st.score, assisted: 'Endless has no end, so it doesn’t change your best', detail: `Endless · ${detail} · ${T.wipes} wipe${T.wipes === 1 ? '' : 's'}` });
+        return;
+      }
       /* the last move message may have been lost: say how many moves there were, a few times */
       beat();
       setTimeout(beat, 700);
@@ -324,6 +447,7 @@ export default {
       draw();
       if (!S.ended) {
         if (!R && st.out && t >= S.overAt) finish();
+        if (mode === 'timed') tickClock();
         if (R) {
           const left = timeLeft();
           if (st.out && R.them.out && t >= S.overAt) finish();
@@ -335,14 +459,16 @@ export default {
       }
       const busy = S.drag || S.back || S.pops.length || S.clears.length || S.flashes.length || S.floats.length
         || (S.shakeAt >= 0 && t - S.shakeAt < 0.3) || (S.badAt >= 0 && t - S.badAt < 0.5)
-        || (!S.ended && (R || st.out));
+        || (!S.ended && (R || st.out || (mode === 'timed' && st.placed > 0)));
       if (!busy && t > until) loop.stop();
     });
     function kick(extra = 0.05) { until = Math.max(until, now() + extra); loop.start(); }
 
     /* ------------------------------ layout ------------------------------ */
     function layout() {
-      const W = sf.w, H = sf.h;
+      /* room at the top for the mode row */
+      const top = modeEl ? 46 : 0;
+      const W = sf.w, H = sf.h - top;
       const pad = clamp(Math.min(W, H) * 0.045, 10, 26);
       const race = !!R;
       const hint = H > 300 ? 22 : 0;
@@ -355,13 +481,13 @@ export default {
       const B = Math.max(120, side ? bB : bA);
       const L = { side, B, cell: B / N, pad, hint };
       if (side) {
-        const ox = (W - B * kB) / 2, oy = (H - hint - B) / 2;
+        const ox = (W - B * kB) / 2, oy = top + (H - hint - B) / 2;
         L.bx = ox; L.by = oy;
         const tx = ox + B * 1.05, tw = B * 0.3;
         L.slots = [0, 1, 2].map(i => ({ x: tx, y: oy + (i * B) / 3, w: tw, h: B / 3 }));
         if (race) L.race = { x: tx + tw + B * 0.06, y: oy, w: B * 0.36, h: B, mini: B * 0.36 };
       } else {
-        const ox = (W - B) / 2, oy = (H - hint - B * kA) / 2;
+        const ox = (W - B) / 2, oy = top + (H - hint - B * kA) / 2;
         L.bx = ox; L.by = oy + (race ? B * 0.26 : 0);
         const ty = L.by + B * 1.05, th = B * 0.3;
         L.slots = [0, 1, 2].map(i => ({ x: ox + (i * B) / 3, y: ty, w: B / 3, h: th }));
@@ -845,7 +971,14 @@ export default {
         sf.cv.removeEventListener('pointercancel', onCancel);
         snd.close();
         sprites.clear();
+        modeEl?.remove(); modeCss?.remove();
         sf.destroy();
+      },
+      /* test hook — nothing in the game calls it: time(ms used of the 90 seconds) · board(100 '0'/'1', cells filled) */
+      hook(cmd, arg) {
+        if (cmd === 'time' && mode === 'timed') { T.used = Number(arg) || 0; if (T.on) T.at = performance.now(); tickClock(); }
+        else if (cmd === 'board' && typeof arg === 'string' && arg.length === N * N) { for (let i = 0; i < N * N; i++) st.board[i] = arg[i] === '1' ? 1 : 0; st.out = !anyFits(st); kick(0.2); }
+        return true;
       },
       /* a read-only snapshot for automated play-tests (CSS px inside the canvas) */
       peek: () => {
@@ -856,6 +989,7 @@ export default {
           cells: st.tray.map(id => (id === null ? null : SHAPES[id].cells.map(c => c.slice()))),
           score: st.score, lines: st.lines, placed: st.placed, out: st.out, ended: S.ended,
           sel: S.sel, cur: { ...S.cur }, kbd: S.kbd, moves: st.moves,
+          mode, chooser: !!modeEl, wipes: T.wipes, timeLeft: mode === 'timed' ? timedLeft() : null, clockRunning: T.on, timedBest,
           geo: { bx: L.bx, by: L.by, cell: L.cell, slots: L.slots.map(s => ({ x: s.x, y: s.y, w: s.w, h: s.h })) },
           race: R ? { them: R.them.score, theirMoves: R.them.moves.length / 2, theirOut: R.them.out, left: timeLeft(), voided: R.voided, seed } : null,
         };
@@ -863,6 +997,13 @@ export default {
     };
   },
 };
+
+function mk(tag, cls, ...kids) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  for (const k of kids) n.append(k);
+  return n;
+}
 
 /* ---- module kit (the same few helpers in every built-in Arcade game) ---- */
 

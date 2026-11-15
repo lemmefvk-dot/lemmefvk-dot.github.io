@@ -21,7 +21,7 @@
                  colors, params, art(g, w, h), game }]
    template(id), buildDoc(t, values?), readParams(html),
    writeParams(html, values), paramValues(info), cleanValue(p, v),
-   halloweenSeason(date), artUrl(t)
+   halloweenSeason(date), winterSeason(date), artUrl(t)
    ============================================================ */
 import { buildDoc, readParams, writeParams, paramValues, cleanValue } from './doc.js';
 import neonBreaker from './games/neon-breaker.js';
@@ -38,24 +38,29 @@ import gemHopper from './games/gem-hopper.js';
 import starLane from './games/star-lane.js';
 import glowGrid from './games/glow-grid.js';
 import beatLanes from './games/beat-lanes.js';
+import sledRun from './games/sled-run.js';
+import snowmanWorks from './games/snowman-works.js';
+import { isSpookySeason, seasonOn } from '../core/season.js';
 
-/* Halloween first: during the season Forge shows these three on top */
+/* Halloween first: during the season Forge shows these three on top; the two winter games
+   get their own strip from Dec 1 to Jan 1 and stay in the list all year */
 export const TEMPLATES = [
   hauntedHouse, zombieSurvival, candyCollector,
   neonBreaker, caveGlider, rockSplitter, runawaySnake, fruitCatcher, towerStack,
   coastDash, gemHopper, starLane, glowGrid, beatLanes,
+  sledRun, snowmanWorks,
 ];
 
 export { buildDoc, readParams, writeParams, paramValues, cleanValue };
 
 export const template = id => TEMPLATES.find(t => t.id === id) || null;
 
-/** Oct 24 – Nov 1 on this device's own calendar. */
-export function halloweenSeason(date = new Date()) {
-  const m = date.getMonth();
-  const d = date.getDate();
-  return (m === 9 && d >= 24) || (m === 10 && d === 1);
-}
+/** Oct 24 – Nov 1 on this device's own calendar (core/season.js decides). */
+export const halloweenSeason = (date = new Date()) => isSpookySeason(date);
+
+/** December 1 – January 1, and only while the person has not switched Winter
+    off in Settings (core/season.js seasonOn: also true while Winter is on trial). */
+export const winterSeason = (date = new Date()) => seasonOn('winter', date);
 
 /* card art, drawn once per session in StaticOS's own page (decoration only:
    no game code runs outside the sandbox) */
@@ -75,4 +80,4 @@ export function artUrl(t, w = 320, h = 180) {
   return url;
 }
 
-export default { TEMPLATES, template, buildDoc, readParams, writeParams, paramValues, cleanValue, halloweenSeason, artUrl };
+export default { TEMPLATES, template, buildDoc, readParams, writeParams, paramValues, cleanValue, halloweenSeason, winterSeason, artUrl };

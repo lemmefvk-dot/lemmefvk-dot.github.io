@@ -7,10 +7,21 @@
    helper. Every result prints the sum it came from; a course that
    can't be counted is listed with the reason instead of guessed at.
    The arithmetic is in js/core/gpa.js.
+
+   What if: a scratch copy to try grades on. Every change in it stays
+   in this window and is thrown away on leaving — nothing is saved,
+   and the real GPA stays next to the what-if one. Grades can be read
+   in from CSV, cells pasted from a spreadsheet, or a Static Sheets
+   file (its values, worked out as Sheets would). The trend chart is
+   each semester's GPA and the cumulative one; the transcript prints
+   what was entered, and says it is not an official one.
    ============================================================ */
 import * as GP from '../core/gpa.js';
+import { vfs } from '../core/vfs.js';
+import { printSheet, printedOn } from './print.js';
 
-const TABS = [['gpa', 'GPA'], ['final', 'Final exam'], ['scale', 'Grade scale']];
+const TABS = [['gpa', 'GPA'], ['final', 'Final exam'], ['scale', 'Grade scale'], ['import', 'Import']];
+const SVG = 'http://www.w3.org/2000/svg';
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 export function mountGpa(host, ctx) {
@@ -19,12 +30,24 @@ export function mountGpa(host, ctx) {
   const S = {
     data: GP.read(), tab: 'gpa', dead: false,
     fin: { current: '', weight: '', target: '' },
-    scaleIssue: '',
+    scaleIssue: '', whatIf: false,
+    imp: { text: '', file: '', sem: '', note: '' },
   };
   const root = h('div.st-gpa');
   host.appendChild(root);
 
-  function mutate(fn) { const d = GP.read(); fn(d); S.data = GP.write(d); }
+  /* in What if, every change lands on the scratch copy and nothing is written */
+  function mutate(fn) {
+    if (S.whatIf) { fn(S.data); S.data = GP.normalize(S.data); return; }
+    const d = GP.read(); fn(d); S.data = GP.write(d);
+  }
+  function setWhatIf(on) {
+    S.whatIf = on;
+    S.data = on ? GP.normalize(JSON.parse(JSON.stringify(GP.read()))) : GP.read();
+    S.scaleRows = null;
+    if (S.tab === 'import' && on) S.tab = 'gpa';
+    render();
+  }
   const sem = () => S.data.semesters.find(s => s.id === S.data.activeId) || null;
 
   /* ---------- actions ---------- */
@@ -77,10 +100,19 @@ export function mountGpa(host, ctx) {
     const r = GP.semesterGpa(s, S.data);
     const cum = GP.cumulativeGpa(S.data);
     const skipped = r.rows.filter(x => !x.counted && (x.course.name || x.course.grade || x.course.credits));
+    if (S.whatIf) {
+      const real = GP.read();
+      const rc = GP.cumulativeGpa(real).gpa, wc = cum.gpa;
+      const diff = rc !== null && wc !== null ? Math.round((wc - rc) * 100) / 100 : null;
+      resultsBox.append(h('div.st-whatif__cmp', { dataset: { fk: 'what-if-cmp' } },
+        h('span', { text: `Your real cumulative GPA: ${GP.fmt(rc)}` }), h('b', { text: `What if: ${GP.fmt(wc)}` }),
+        diff !== null ? h('small', { text: diff === 0 ? 'no change' : `${diff > 0 ? '+' : '−'}${GP.fmt(Math.abs(diff))}` }) : null));
+    }
     resultsBox.append(
-      resultCard(`${s.name} GPA`, r, 'sem', skipped.length ? h('ul.st-skipped', { dataset: { fk: 'skipped' } }, skipped.map(x => h('li', { text: `${x.course.name || 'Untitled course'}: not counted. ${x.why}.` }))) : null),
-      resultCard(`Cumulative GPA${S.data.semesters.length > 1 ? ` (${S.data.semesters.length} semesters)` : ''}`, cum, 'cum'),
+      resultCard(`${S.whatIf ? 'What if: ' : ''}${s.name} GPA`, r, 'sem', skipped.length ? h('ul.st-skipped', { dataset: { fk: 'skipped' } }, skipped.map(x => h('li', { text: `${x.course.name || 'Untitled course'}: not counted. ${x.why}.` }))) : null),
+      resultCard(`${S.whatIf ? 'What if: c' : 'C'}umulative GPA${S.data.semesters.length > 1 ? ` (${S.data.semesters.length} semesters)` : ''}`, cum, 'cum'),
       h('p.st-note', { dataset: { fk: 'rule' }, text: `${S.data.weighted ? `Weighted: honors add +${S.data.bonus.honors} and AP/IB add +${S.data.bonus.ap} to a course’s points (not to an F). ` : 'Unweighted: honors and AP/IB courses count like any other. '}GPA = Σ(points × credits) ÷ Σ credits. The cumulative GPA is over every course at once, not an average of semester GPAs.` }));
+    resultsBox.append(trendChart());      /* each change shows on the chart at once */
   }
 
   /* ---------- the GPA tab ---------- */
@@ -120,6 +152,135 @@ export function mountGpa(host, ctx) {
     wrap.append(resultsBox);
     paintResults();
     return wrap;
+  }
+
+  /* ---------- the trend ---------- */
+  function trendChart() {
+    const t = GP.trend(S.data).filter(x => x.gpa !== null);
+    if (!t.length) return h('div');
+    const W = 480, H = 200, L = 34, R = 12, T = 14, B = 34;
+    const top = Math.max(4, Math.ceil(Math.max(...t.flatMap(x => [x.gpa, x.cum].filter(v => v !== null))) * 2) / 2);
+    const X = i => (t.length === 1 ? L + (W - L - R) / 2 : L + i * (W - L - R) / (t.length - 1));
+    const Y = v => T + (H - T - B) * (1 - v / top);
+    const el = (n, a, kids = []) => { const e = document.createElementNS(SVG, n); for (const [k, v] of Object.entries(a)) e.setAttribute(k, String(v)); for (const k of kids) e.append(k); return e; };
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'st-trend__svg', role: 'img', 'aria-label': `GPA by semester: ${t.map(x => `${x.name} ${GP.fmt(x.gpa)} (cumulative ${GP.fmt(x.cum)})`).join(', ')}` });
+    for (let v = 0; v <= top + 1e-9; v += 1) {
+      svg.append(el('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), class: 'st-trend__grid' }));
+      const lab = el('text', { x: L - 6, y: Y(v) + 3, class: 'st-trend__ax', 'text-anchor': 'end' }); lab.textContent = v.toFixed(1); svg.append(lab);
+    }
+    const line = (key, cls) => { if (t.length > 1) svg.append(el('polyline', { points: t.map((x, i) => `${X(i)},${Y(x[key])}`).join(' '), class: cls })); t.forEach((x, i) => svg.append(el('circle', { cx: X(i), cy: Y(x[key]), r: key === 'gpa' ? 4 : 3, class: `${cls} st-trend__pt`, 'data-sem': x.id, 'data-v': GP.fmt(x[key]) }))); };
+    line('cum', 'st-trend__cum');
+    line('gpa', 'st-trend__sem');
+    t.forEach((x, i) => { const lab = el('text', { x: X(i), y: H - 12, class: 'st-trend__ax', 'text-anchor': t.length > 1 && i === 0 ? 'start' : t.length > 1 && i === t.length - 1 ? 'end' : 'middle' }); lab.textContent = x.name.length > 12 ? `${x.name.slice(0, 11)}…` : x.name; svg.append(lab); });
+    return h('section.st-res.st-trend', { 'aria-label': 'GPA by semester', dataset: { fk: 'trend' } },
+      h('div.st-res__top', h('small', { text: `${S.whatIf ? 'What if: ' : ''}GPA by semester` }),
+        h('span.st-trend__key', h('i.st-trend__k1'), h('small', { text: 'Semester' }), h('i.st-trend__k2'), h('small', { text: 'Cumulative' }))),
+      svg,
+      h('small.dim', { dataset: { fk: 'trend-list' }, text: t.map(x => `${x.name}: ${GP.fmt(x.gpa)} (cumulative ${GP.fmt(x.cum)})`).join(' · ') }));
+  }
+
+  /* ---------- a transcript to print ---------- */
+  function printTranscript() {
+    const d = S.data;
+    const who = (() => { const v = api.store.get('portal.identity'); return v && typeof v.name === 'string' ? v.name.trim().slice(0, 40) : ''; })();
+    const lv = v => (GP.LEVELS.find(([k]) => k === v) || [0, ''])[1];
+    const cum = GP.cumulativeGpa(d);
+    printSheet(h, `Transcript${who ? `: ${who}` : ''}`, `${S.whatIf ? 'WHAT IF — not your saved grades. ' : ''}Grades as entered in Static Study, ${d.weighted ? 'weighted' : 'unweighted'}. Not an official transcript.`, [
+      ...d.semesters.map(sm => {
+        const r = GP.semesterGpa(sm, d);
+        return [h('h2', { text: sm.name }),
+          sm.courses.length ? h('table', h('tr', ['Course', 'Credits', 'Grade', 'Level', 'Points'].map(x => h('th', { text: x }))),
+            r.rows.map(x => h('tr', h('td', { text: x.course.name || 'Untitled course' }), h('td', { text: x.course.credits }), h('td', { text: x.course.grade }), h('td', { text: lv(x.course.level) }),
+              h('td', { text: x.counted ? x.points.toFixed(2) : `not counted: ${x.why.toLowerCase()}` })))) : h('p', { text: 'No courses.' }),
+          h('p', { text: `Semester GPA: ${GP.fmt(r.gpa)} · ${Math.round(r.credits * 100) / 100} credits counted` })];
+      }).flat(),
+      h('h2', { text: `Cumulative GPA: ${GP.fmt(cum.gpa)}` }),
+      h('p.st-print__fine', { text: `${Math.round(cum.credits * 100) / 100} credits counted. Scale: ${d.scale.map(r => `${r.letter} ${r.min}%+ = ${r.points}`).join(', ')}.${d.weighted ? ` Honors +${d.bonus.honors}, AP/IB +${d.bonus.ap}.` : ''}` }),
+      h('p.st-print__fine', { text: printedOn() }),
+    ]);
+  }
+
+  /* ---------- reading grades in ---------- */
+  function sheetFiles() {
+    const out = [];
+    try { vfs.walk(vfs.HOME, (n, p) => { if (n.type === 'file' && /\.sheet$/i.test(n.name) && !p.startsWith(`${vfs.HOME}/Trash`) && out.length < 100) out.push({ path: p, name: n.name.replace(/\.sheet$/i, '') }); }, 6); } catch (e) { /* none */ }
+    return out;
+  }
+  async function fromSheet(path) {
+    const f = S.imp;
+    try {
+      const E = await import('../sheets/engine.js');
+      const book = E.Book.fromJSON(JSON.parse(vfs.read(path) || ''));
+      book.recalcAll();
+      const sh = book.sheets[0];
+      const ext = book.extentOf(sh.id);
+      const rows = [];
+      for (let r = 0; r <= ext.r && r < 400; r++) {
+        const cells = [];
+        for (let c = 0; c <= Math.min(ext.c, 12); c++) { const v = book.valueIn(sh.id, r, c); cells.push(v === null || v === undefined ? '' : String(E.toText(v)).replace(/[\t\n\r]+/g, ' ')); }
+        rows.push(cells.join('\t'));
+      }
+      f.text = rows.join('\n'); f.file = vfs.baseName ? vfs.baseName(path) : path.split('/').pop(); f.note = `Read the first sheet (“${sh.name}”) of ${f.file}: its values, as Sheets works them out.`;
+    } catch (err) {
+      f.note = `That file couldn’t be read as a Static Sheets file (${err.message || err}).`;
+    }
+    if (!S.dead) render();
+  }
+  function doImport() {
+    const f = S.imp;
+    const p = GP.parseGrades(f.text);
+    if (!p.rows.length) { f.note = 'No grades found: each row needs a course name and a grade.'; render(); return; }
+    let added = 0, updated = 0, full = 0;
+    const made = [];
+    mutate(d => {
+      for (const r of p.rows) {
+        let sm = r.semester ? d.semesters.find(x => x.name.toLowerCase() === r.semester.toLowerCase()) : d.semesters.find(x => x.id === (f.sem || d.activeId));
+        if (!sm) {
+          if (d.semesters.length >= GP.MAX_SEMESTERS) { full++; continue; }
+          sm = { id: GP.uid('s'), name: (r.semester || 'Imported').slice(0, 40), courses: [] };
+          d.semesters.push(sm); made.push(sm.name);
+        }
+        const had = sm.courses.find(c => c.name.toLowerCase() === r.name.toLowerCase());
+        if (had) { Object.assign(had, { grade: r.grade, credits: r.credits || had.credits, level: r.level }); updated++; continue; }
+        if (sm.courses.length >= GP.MAX_COURSES) { full++; continue; }
+        sm.courses.push(GP.normCourse(r)); added++;
+        d.activeId = sm.id;
+      }
+    });
+    S.imp = { text: '', file: '', sem: '', note: '' };
+    S.tab = 'gpa';
+    S.flash = `${S.whatIf ? 'What if: ' : ''}Imported ${plural(added, 'course')}${updated ? `, updated ${plural(updated, 'course')} that were already there` : ''}${made.length ? ` (new semester${made.length === 1 ? '' : 's'}: ${made.join(', ')})` : ''}${full ? `; ${full} didn’t fit` : ''}${p.skipped.length ? `; ${plural(p.skipped.length, 'row')} skipped (${p.skipped.slice(0, 3).map(x => x.why).join('; ')})` : ''}.`;
+    render();
+  }
+  function importTab() {
+    const f = S.imp;
+    const p = f.text.trim() ? GP.parseGrades(f.text) : null;
+    const ta = h('textarea.st-ta.st-ta--big', { rows: '7', placeholder: 'course,credits,grade,level,semester\nBiology,4,A-,honors,Fall 2025\nHistory,3,88,,Fall 2025', 'aria-label': 'Paste grades here', dataset: { fk: 'gimp-text' }, oninput: e => { f.text = e.target.value; paintPrev(); } });
+    ta.value = f.text;
+    const prev = h('div.st-preview', { role: 'status', dataset: { fk: 'gimp-preview' } });
+    const go = h('button.btn.btn--primary', { type: 'button', dataset: { fk: 'gimp-go' }, onclick: doImport }, icon('upload'), h('span', { text: 'Import' }));
+    function paintPrev() {
+      const q = f.text.trim() ? GP.parseGrades(f.text) : null;
+      const sems = q ? [...new Set(q.rows.map(r => r.semester).filter(Boolean))] : [];
+      prev.textContent = q ? `${plural(q.rows.length, 'course')} found${sems.length ? ` in ${plural(sems.length, 'semester')} (${sems.slice(0, 4).join(', ')})` : ''}${q.skipped.length ? `, ${plural(q.skipped.length, 'row')} skipped` : ''}${q.header ? ', header row read' : ''}.` : 'Choose a file or paste rows to see what is in them.';
+      go.disabled = !q || !q.rows.length;
+    }
+    paintPrev();
+    const file = h('input', { type: 'file', accept: '.csv,.tsv,.txt,text/csv,text/plain', 'aria-label': 'Choose a CSV file', dataset: { fk: 'gimp-file' },
+      onchange: async e => { const x = e.target.files && e.target.files[0]; if (!x) return; if (x.size > 2 * 1024 * 1024) { f.note = 'That file is over 2 MB; a list of grades is much smaller.'; render(); return; } f.text = await x.text(); f.file = x.name; f.note = ''; render(); } });
+    const sheets = sheetFiles();
+    const sheetSel = h('select.select.st-sel', { 'aria-label': 'Or a Static Sheets file', dataset: { fk: 'gimp-sheet' }, disabled: !sheets.length, onchange: e => { if (e.target.value) fromSheet(e.target.value); } },
+      h('option', { value: '', text: sheets.length ? 'Pick a .sheet file…' : 'No .sheet files yet' }), sheets.map(x => h('option', { value: x.path, text: x.name })));
+    const semSel = h('select.select.st-sel', { 'aria-label': 'Rows without a semester go into', dataset: { fk: 'gimp-sem' }, onchange: e => { f.sem = e.target.value; } },
+      S.data.semesters.map(x => h('option', { value: x.id, text: x.name, selected: x.id === (f.sem || S.data.activeId) })), h('option', { value: 'new', text: 'A new semester called Imported', selected: f.sem === 'new' || !S.data.semesters.length }));
+    return h('div.st-import',
+      h('p.st-hint', { text: 'One course per row: course, credits, grade (a letter or a percentage), then level (regular, honors, AP or IB) if you like. A first row naming the columns — course, credits, grade, level, semester — can put them in any order, and a semester column sends each row to that semester (made if it isn’t there). Copy the cells in Static Sheets or Google Sheets and paste them here, or pick a file.' }),
+      h('div.st-form__grid', h('label.st-f', h('span.st-f__l', { text: 'CSV file' }), file), h('label.st-f', h('span.st-f__l', { text: 'Or a Static Sheets file' }), sheetSel),
+        h('label.st-f', h('span.st-f__l', { text: 'Rows without a semester go into' }), semSel)),
+      f.file ? h('small.dim', { text: `From ${f.file}.` }) : null,
+      ta, prev,
+      f.note ? h('div.st-banner', { role: 'status', dataset: { fk: 'gimp-note' } }, icon('alert'), h('span', { text: f.note })) : null,
+      h('div.st-row', go, h('small.dim', { text: 'A course already in that semester gets the new grade; nothing else is removed.' })));
   }
 
   /* ---------- the final-exam helper ---------- */
@@ -181,6 +342,11 @@ export function mountGpa(host, ctx) {
       h('p.st-note', { text: 'A letter grade is looked up here. A percentage takes the highest row whose minimum it reaches. Change any number and every GPA updates.' }),
       tbl, issue,
       h('div.st-row',
+        h('label.st-inline', h('span', { text: 'Start from' }),
+          h('select.select.st-sel', { 'aria-label': 'Start from a common scale', dataset: { fk: 'sc-preset' }, onchange: e => { const pr = GP.PRESETS.find(x => x.id === e.target.value); if (!pr) return; S.scaleRows = null; S.scaleIssue = ''; mutate(d => { d.scale = pr.scale.map(r => ({ ...r })); }); render(); } },
+            h('option', { value: '', text: GP.presetOf(S.data.scale) ? 'A common scale…' : 'Your own scale (pick one to replace it)', selected: true }),
+            GP.PRESETS.map(pr => h('option', { value: pr.id, text: `${pr.name}${GP.presetOf(S.data.scale) === pr ? ' — in use' : ''}` }))))),
+      h('div.st-row',
         h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'sc-add' }, onclick: () => { rows.push({ letter: '', min: '', points: '' }); S.scaleIssue = ''; S.focusScale = true; render(); } }, icon('plus'), h('span', { text: 'Add row' })),
         h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'sc-reset' }, onclick: () => { S.scaleRows = null; S.scaleIssue = ''; mutate(d => { d.scale = GP.DEFAULT_SCALE.map(r => ({ ...r })); }); render(); } }, icon('rotate-ccw'), h('span', { text: 'Reset to the standard 4.0 scale' }))),
       h('div.st-form__grid', bonus('honors', 'Honors bonus (points)'), bonus('ap', 'AP / IB bonus (points)')),
@@ -196,8 +362,16 @@ export function mountGpa(host, ctx) {
       h('button', { type: 'button', role: 'tab', 'aria-selected': S.tab === v ? 'true' : 'false', class: S.tab === v ? 'is-on' : '', dataset: { gtab: v }, onclick: () => { S.tab = v; if (v === 'scale') S.scaleRows = null; render(); } }, h('span', { text: l }))));
     const mode = h('div.tabs.st-mode', { role: 'radiogroup', 'aria-label': 'GPA type' }, [[false, 'Unweighted'], [true, 'Weighted']].map(([on, l]) =>
       h('button', { type: 'button', role: 'radio', 'aria-checked': S.data.weighted === on ? 'true' : 'false', class: S.data.weighted === on ? 'is-on' : '', dataset: { fk: on ? 'weighted' : 'unweighted' }, onclick: () => setWeighted(on) }, h('span', { text: l }))));
-    root.append(h('div.app__bar', tabs, h('span.st-spacer'), S.tab === 'gpa' ? mode : null));
-    root.append(h('div.app__content.st-scroll', S.tab === 'gpa' ? gpaTab() : S.tab === 'final' ? finalTab() : scaleTab()));
+    root.append(h('div.app__bar', tabs, h('span.st-spacer'), S.tab === 'gpa' ? mode : null,
+      S.tab === 'gpa' && S.data.semesters.length ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'transcript' }, onclick: printTranscript }, icon('printer'), h('span', { text: 'Transcript' })) : null,
+      h('button.btn.btn--sm', { type: 'button', 'aria-pressed': S.whatIf ? 'true' : 'false', class: S.whatIf ? 'is-on' : '', dataset: { fk: 'what-if' }, title: 'Try other grades without changing your saved ones', onclick: () => setWhatIf(!S.whatIf) }, icon('sparkles'), h('span', { text: S.whatIf ? 'Leave What if' : 'What if…' }))));
+    const flash = S.flash ? h('div.st-flash', { role: 'status', dataset: { fk: 'gpa-flash' } }, icon('check'), h('span', { text: S.flash })) : null;
+    S.flash = '';
+    root.append(h('div.app__content.st-scroll', { class: S.whatIf ? 'is-whatif' : '' },
+      S.whatIf ? h('div.st-whatif', { role: 'status', dataset: { fk: 'what-if-banner' } }, icon('sparkles'), h('span', { text: 'What if: change any grade, credit, course or semester to see what it would do. Nothing here is saved; leave What if and your real grades are back exactly as they were.' }),
+        h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'what-if-leave' }, onclick: () => setWhatIf(false) }, h('span', { text: 'Leave' }))) : null,
+      flash,
+      S.tab === 'gpa' ? gpaTab() : S.tab === 'final' ? finalTab() : S.tab === 'import' ? importTab() : scaleTab()));
     if (S.tab === 'scale' && S.focusScale) {
       S.focusScale = false;
       const last = root.querySelector('.st-scale__r:last-child [data-fk="sc-letter"]');
@@ -209,5 +383,9 @@ export function mountGpa(host, ctx) {
   }
   render();
 
-  return { teardown() { S.dead = true; }, open() {} };
+  return {
+    teardown() { S.dead = true; },
+    /* search opens a semester */
+    open(o) { if (o && typeof o.semester === 'string' && S.data.semesters.some(x => x.id === o.semester)) { S.tab = 'gpa'; mutate(d => { d.activeId = o.semester; }); render(); } },
+  };
 }

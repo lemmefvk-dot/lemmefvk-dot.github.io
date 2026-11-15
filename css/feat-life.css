@@ -62,6 +62,25 @@
 .life-day:hover { border-color: var(--accent-soft); }
 .life-remind { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--fs-10); color: var(--ink-2); }
 .life-remind input { background: var(--bg-2); border: 1px solid var(--line-0); border-radius: var(--r-sm); height: 24px; color: var(--ink-0); padding: 0 var(--sp-2); }
+/* 12-week heatmap: weeks are columns, Sunday on top; shade = share of the day's scheduled habits ticked */
+.life-heat { margin: 0; display: flex; flex-direction: column; gap: 4px; max-width: 100%; overflow-x: auto; }
+.life-heat__months, .life-heat__grid { display: grid; grid-template-columns: repeat(12, 14px); gap: 3px; }
+.life-heat__months span { font-size: calc(9px * var(--fs-k,1)); color: var(--ink-3); white-space: nowrap; overflow: visible; }
+.life-heat__wk { display: grid; grid-template-rows: repeat(7, 14px); gap: 3px; }
+.life-heat__c { width: 14px; height: 14px; border-radius: 3px; background: transparent; border: 1px dashed var(--line-0); display: inline-block; }
+.life-heat__c[data-l="0"] { background: var(--fill-1); border: 1px solid var(--line-0); }
+.life-heat__c[data-l="1"] { background: color-mix(in srgb, var(--accent) 30%, transparent); border: 0; }
+.life-heat__c[data-l="2"] { background: color-mix(in srgb, var(--accent) 55%, transparent); border: 0; }
+.life-heat__c[data-l="3"] { background: color-mix(in srgb, var(--accent) 78%, transparent); border: 0; }
+.life-heat__c[data-l="4"] { background: var(--accent); border: 0; }
+.life-heat__c[data-l="f"] { border-color: transparent; }
+.life-heatall { display: flex; flex-direction: column; gap: var(--sp-3); }
+.life-heatall__head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.life-heatall__head b { font-size: var(--fs-12); color: var(--ink-0); }
+.life-heat__key { display: inline-flex; align-items: center; gap: 3px; }
+.life-heat__key small { color: var(--ink-3); font-size: var(--fs-10); margin: 0 4px; }
+.life-heatbox summary { cursor: pointer; color: var(--ink-2); font-size: var(--fs-10); }
+.life-heatbox .life-heat { margin-top: var(--sp-2); }
 .life-how { color: var(--ink-2); font-size: var(--fs-10); }
 .life-how summary { cursor: pointer; color: var(--ink-1); }
 .life-how ul { margin: var(--sp-2) 0 0; padding-left: 18px; line-height: 1.6; }
@@ -90,6 +109,17 @@
 .life-table thead th { color: var(--ink-3); font-weight: 560; }
 .life-budget { display: inline-flex; align-items: center; gap: 3px; }
 .life-budget input { width: 6.5em; height: 22px; text-align: right; background: var(--bg-2); border: 1px solid var(--line-0); border-radius: var(--r-sm); color: var(--ink-0); padding: 0 var(--sp-2); }
+.life-select { height: 28px; padding: 0 var(--sp-3); border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line-0); color: var(--ink-0); font: inherit; font-size: var(--fs-11); }
+.life-trendbox { border-radius: var(--r-md, 10px); overflow: hidden; border: 1px solid var(--line-0); background: var(--chart-surface); }
+.life-trend { display: block; width: 100%; height: 200px; }
+.life-goal, .life-goalform, .life-import { display: flex; flex-direction: column; gap: var(--sp-3); }
+.life-goal__top { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.life-goal__top b { color: var(--ink-0); font-size: var(--fs-12); flex: 0 1 auto; }
+.life-goal__top > span { color: var(--ink-3); font-size: var(--fs-10); flex: 1 1 auto; }
+.life-goal__bar { height: 10px; }
+.life-goal input[type="month"], .life-goalform input[type="month"] { background: var(--bg-2); border: 1px solid var(--line-0); border-radius: var(--r-sm); height: 26px; color: var(--ink-0); padding: 0 var(--sp-2); color-scheme: inherit; }
+.life-import b { color: var(--ink-0); font-size: var(--fs-12); }
+.life-skipped { margin: 0; padding-left: 18px; font-size: var(--fs-10); color: var(--ink-2); line-height: 1.6; }
 .life-entries { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .life-entries li { display: grid; grid-template-columns: 52px minmax(70px, 120px) 1fr auto auto; gap: var(--sp-3); align-items: center; padding: 3px 0; border-bottom: 1px solid var(--line-0); font-size: var(--fs-10); color: var(--ink-1); }
 .life-entries__date { color: var(--ink-3); font-variant-numeric: tabular-nums; }
@@ -136,6 +166,22 @@
 .life-step.is-done { opacity: .55; text-decoration: line-through; }
 .life-step.is-done .life-step__box { background: var(--accent); border-color: transparent; }
 @media (max-width: 640px) { .life-cook__body { grid-template-columns: 1fr; } }
+.life-cook__note { padding: var(--sp-3) var(--sp-5) 0; }
+.life-cook__body > .life-note { grid-column: 1 / -1; }
+.life-tbtns { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-2) 0 0 calc(1.1em + var(--sp-4) + var(--sp-3)); font-size: var(--fs-12); }
+.life-tbtn { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.life-tbtn__left { font-variant-numeric: tabular-nums; color: var(--ink-1); }
+.life-tbtn[data-state="running"] .life-tbtn__left { color: var(--accent-soft); font-weight: 650; }
+.life-tbtn[data-state="done"] .life-tbtn__left { color: #ff8c9f; font-weight: 650; }
+.life-tbtn [hidden] { display: none; }
+.life-shop { display: flex; flex-direction: column; gap: var(--sp-3); }
+.life-shop > b { color: var(--ink-0); font-size: var(--fs-12); }
+.life-shop__pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.life-shop__pick li { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--fs-11); color: var(--ink-1); }
+.life-shop__sv { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-10); color: var(--ink-3); }
+.life-shop__sv input { width: 4em; }
+.life-chk { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: pointer; }
+.life-shop__items { font-size: var(--fs-11); }
 
 /* ---- workout ---- */
 .life-wk__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--sp-3); }
@@ -150,4 +196,6 @@
 .life-wk__run .bar { width: min(420px, 90%); }
 .life-wk__ctl { justify-content: center; }
 .life-wk__run .life-form__row { justify-content: center; }
+.life-history { display: flex; flex-direction: column; gap: var(--sp-3); }
+.life-runs li { grid-template-columns: minmax(130px, auto) minmax(70px, 140px) 1fr auto auto; }
 .life .btn.is-on { color: var(--accent-soft); border-color: var(--line-accent); background: var(--fill-accent); }

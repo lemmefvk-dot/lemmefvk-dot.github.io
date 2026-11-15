@@ -22,12 +22,21 @@
      · the live channel (presence.js) for Games With Friends —
        only devices that said hello in the last minute.
    The catalogue has no co-op, team or party tags today, so those
-   sections say so instead of guessing. The catalogue lists no
+   sections say so instead of guessing: the sidebar shows each section's
+   real count (computed from the data, 0 included), and an empty section
+   says what would put a game in it. The catalogue lists no
    controls for almost every game, so the device filter only
    narrows where the data says something (Arcade `input`, a tag
    that names a control) and keeps the rest, marked "controls not
    listed". There are no player counts anywhere: StaticOS has no
    server that could count players.
+
+   WITH FRIENDS
+   "Play with a friend now" lists the Arcade's online games (room codes).
+   Next to each, the friends you have added who are online right now come
+   from js/core/friends.js, and "Invite to this game" opens a room and
+   sends its code to the friend you pick (friends.sendRoomInvite); they
+   choose whether to join. Friends and codes only, never strangers.
 
    LIVE, AND SAFE
    Opening Games With Friends starts presence (off by default,
@@ -62,6 +71,7 @@ import * as live from '../portal/live.js';
 import * as presence from '../portal/presence.js';
 import { me, tidy } from '../core/identity.js';
 import * as padmap from '../core/padmap.js';
+import { openRoomCode } from '../core/roominvite.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-multiplayer-css')) {
   const l = document.createElement('link');
@@ -143,6 +153,7 @@ const COPY = {
     kicker: 'On the same side',
     lede: 'Games where you work together instead of against each other.',
     empty: ['No co-op games are tagged yet', 'None of the games in the catalogue carry a co-op tag, and StaticOS won’t guess which ones might be. This section fills in by itself once publishers tag them.'],
+    needs: 'a web game in the catalogue whose own tags include “co-op” or “cooperative”, or a built-in Arcade game that two people play on the same side. There are none yet.',
   },
   pvp: {
     kicker: 'Head to head',
@@ -160,11 +171,13 @@ const COPY = {
     kicker: 'Everyone in',
     lede: 'Games for a whole room of people.',
     empty: ['The catalogue doesn’t tag party games yet', 'No game in the catalogue carries a party tag, so there is nothing honest to list here yet. You can still get a group together in Static Party.'],
+    needs: 'a web game whose own tags include “party”. Built-in Arcade games only play one friend per room, so none qualify yet.',
   },
   team: {
     kicker: 'Pick a side',
     lede: 'Games played in teams.',
     empty: ['No team games are tagged yet', 'None of the games in the catalogue carry a team tag, and StaticOS won’t guess which ones are. This section fills in by itself once publishers tag them.'],
+    needs: 'a web game whose own tags include “team” or “teams”. Arcade rooms have two seats, so none of the built-in games are team games.',
   },
   controller: {
     kicker: 'Pick up a pad',
@@ -531,6 +544,73 @@ defineApp({
       if (!presence.running()) presence.start();
     }
 
+    /* ============== friends (js/core/friends.js) ============== */
+    let FR = null;                 /* the module, once it has loaded and says it is available */
+    let frList = [];               /* friends added, online first */
+    let frQueued = 0;
+    const frOnline = () => frList.filter(f => f.presence !== 'offline');
+
+    /* One pass over what is on screen: the friends line on each online Arcade
+       game, the Invite buttons, and the summary above the "play now" row.
+       Names are the person's own nicknames for their friends, shown as text. */
+    function paintFriendBits() {
+      if (dead) return;
+      const have = !!FR && frList.length > 0;
+      const on = frOnline();
+      content.querySelectorAll('[data-fr="invite"]').forEach(b => { b.hidden = !have; });
+      content.querySelectorAll('[data-fr="game"]').forEach(p => {
+        p.hidden = !have;
+        if (!have) return;
+        const a = arcadeById(p.dataset.game);
+        const playing = a ? on.filter(f => f.game && String(f.game.title || f.game).toLowerCase() === a.title.toLowerCase()) : [];
+        const names = x => x.slice(0, 3).map(f => f.display).join(', ') + (x.length > 3 ? ` and ${x.length - 3} more` : '');
+        p.textContent = on.length
+          ? `${plural(on.length, 'friend')} online: ${names(on)}${playing.length ? `. ${names(playing)} ${playing.length === 1 ? 'is' : 'are'} playing it now` : ''}`
+          : 'None of your friends are online right now';
+      });
+      content.querySelectorAll('[data-fr="summary"]').forEach(p => {
+        p.textContent = !FR ? 'Add friends in Static Social to invite them from here.'
+          : !frList.length ? 'You have no friends added yet. Add one in Static Social, then invite them from here.'
+            : on.length ? `${plural(on.length, 'friend')} online right now: ${on.slice(0, 4).map(f => f.display).join(', ')}${on.length > 4 ? ` and ${on.length - 4} more` : ''}.`
+              : 'None of your friends are online right now. You can still make a room and send the code.';
+      });
+    }
+    const frSoon = () => { if (!frQueued && !dead) frQueued = requestAnimationFrame(() => { frQueued = 0; refreshFriends(); }); };
+    function refreshFriends() {
+      if (dead || !FR) return;
+      try { frList = FR.friends().slice().sort((a, b) => (a.presence === 'offline') - (b.presence === 'offline')); } catch (e) { frList = []; }
+      paintFriendBits();
+    }
+    import('../core/friends.js').then(F => {
+      if (dead || !F.available()) return;
+      FR = F;
+      offs.push(F.onChange(frSoon));
+      refreshFriends();
+    }).catch(() => { /* friends aren't in this copy */ });
+
+    /** Invite one friend to a game: open a room, send them its code. They press Join. */
+    function inviteMenu(it, anchor) {
+      if (!FR || !frList.length) { say('No friends to invite', 'Add a friend in Static Social first.', 'info'); return; }
+      menuLater(anchor, (x, y) => {
+        api.menu([
+          { header: true, label: `Invite to ${it.title}` },
+          ...frList.map(f => ({
+            label: f.display, icon: 'send', hint: f.presence === 'offline' ? 'offline' : f.presence,
+            onClick: async () => {
+              say(`Opening a ${it.title} room…`, 'The code goes to your friend when it is ready.', 'globe');
+              const code = await openRoomCode(it.id);
+              if (dead) return;
+              if (!code) { say('The room did not open', 'Open the game in the Arcade and make a room from there.', 'alert'); return; }
+              const res = await FR.sendRoomInvite(f.fp, { game: it.id, code });
+              if (dead) return;
+              if (res.ok) say(`Invited ${f.display}`, `Your room code ${code} was sent. They choose whether to join.`, 'send');
+              else say('Could not send the invite', `Your room is open. Give ${f.display} the code ${code} yourself.`, 'alert');
+            },
+          })),
+        ], x, y);
+      });
+    }
+
     /* ============== pieces ============== */
     const empty = (ic, title, text, ...extra) => h('div.empty.mp-empty', icon(ic), h('b', { text: title }), h('small', { text }),
       extra.filter(Boolean).length ? h('div.mp-empty__acts', extra.filter(Boolean)) : null);
@@ -606,12 +686,18 @@ defineApp({
           h('div.mp-tile__chips', inputChip(it, o.focus)),
           o.note ? h('p.mp-tile__note', { text: o.note }) : null,
           o.who ? h('p.mp-tile__who', icon('users'), h('span', { text: o.who })) : null,
+          it.kind === 'arcade' && it.a.online ? h('p.mp-tile__fr', { hidden: true, dataset: { fr: 'game', game: it.id } }) : null,
           h('div.mp-tile__acts',
             h('button.btn.btn--sm.btn--primary.mp-play', {
               type: 'button', dataset: fk('play'),
               'aria-label': o.same ? `Play ${it.title} — the same game` : net ? `Play ${it.title} with a friend online` : two ? `Play ${it.title} with 2 players on this device` : `Play ${it.title}`,
               onclick: e => { e.stopPropagation(); play(it, net ? 'online' : two ? 2 : undefined); },
             }, icon(net ? 'globe' : two ? 'users' : 'play', { fill: !two && !net }), h('span', { text: label })),
+            it.kind === 'arcade' && it.a.online ? h('button.btn.btn--sm.mp-invite', {
+              type: 'button', hidden: true, dataset: { fr: 'invite', game: it.id, ...(fk('invite') || {}) }, 'aria-haspopup': 'menu',
+              'aria-label': `Invite a friend to ${it.title}`,
+              onclick: e => { e.stopPropagation(); inviteMenu(it, e.currentTarget); },
+            }, icon('send'), h('span', { text: 'Invite to this game' })) : null,
             h('div.grow'),
             h('button.ibtn.mp-ib', {
               type: 'button', title: 'Add to collection', 'aria-label': `Add ${it.title} to a collection`, 'aria-haspopup': 'menu', dataset: fk('col'),
@@ -647,13 +733,13 @@ defineApp({
       return h('div.mp-hero__art', { 'aria-hidden': 'true', dataset: { n: String(cards.length) } }, cards);
     }
 
-    function hero(sec, arcs, webs, acts, facts) {
+    function hero(sec, arcs, webs, acts, facts, lede) {
       const meta = secMeta(sec), copy = COPY[sec];
       return h('section.mp-hero', { style: { '--h': String(meta.hue) }, 'aria-labelledby': 'mp-hero-t' },
         h('div.mp-hero__in',
           h('div.mp-hero__kick', icon(meta.icon), h('span', { text: copy.kicker })),
           h('h2.mp-hero__t', { id: 'mp-hero-t', text: meta.label }),
-          h('p.mp-hero__p', { text: copy.lede }),
+          h('p.mp-hero__p', { text: lede || copy.lede }),
           facts && facts.length ? h('div.mp-hero__facts', facts) : null,
           acts && acts.filter(Boolean).length ? h('div.mp-hero__acts', acts.filter(Boolean)) : null),
         collage(arcs, webs, meta));
@@ -814,7 +900,12 @@ defineApp({
       const facts = [];
       if (items.arcs.length) facts.push(fact('zap', plural(items.arcs.length, 'built-in game')));
       if (items.webs.length) facts.push(fact('globe', plural(items.webs.length, 'web game')));
-      content.appendChild(hero(sec, items.arcs, items.webs, heroActs(sec), facts));
+      const none = !all.length && !loading && !!copy.needs;
+      if (none) facts.push(fact('info', '0 games listed'));
+      content.appendChild(hero(sec, items.arcs, items.webs, heroActs(sec), facts, none ? 'Nothing is listed here yet. This page says why, and what would change that.' : null));
+
+      if (sec === 'online') content.appendChild(friendNow());
+      if (RECENT_SECS.has(sec)) content.appendChild(recentShelf());
 
       if (sec === 'controller') content.appendChild(bridgeCard());
       if (S.loadFailed && d.web) {
@@ -825,6 +916,7 @@ defineApp({
         if (loading) content.appendChild(loadingRow('Loading the games catalogue…'));
         else {
           const [t, x] = copy.empty || ['Nothing here yet', 'Nothing in the catalogue matches this section.'];
+          if (copy.needs) content.appendChild(h('p.mp-banner.mp-banner--soft.mp-needs', icon('info'), h('span', { text: `What would put a game here: ${copy.needs}` })));
           content.appendChild(empty(meta.icon, t, x,
             sec === 'party' ? btn('Open Static Party', 'sparkles', () => openOther('party', 'Static Party'), true) : null,
             sec === 'coop' ? btn('Browse 2 Player games', 'users', () => go('two'), true) : null,
@@ -865,6 +957,53 @@ defineApp({
         if (NO_BRIDGE.typing && arcadeById('typing')) content.appendChild(h('p.mp-banner.mp-banner--soft', icon('keyboard'), h('span', { text: NO_BRIDGE.typing })));
       }
       content.appendChild(footNote(sec));
+    }
+
+    /* ---------- recent co-op and versus games ---------- */
+    /* from this device's play history; a game counts as versus when it
+       plays against someone (an online Arcade game, two players, or a
+       multiplayer fighting game) and as co-op only if a tag says so */
+    function recentVersus() {
+      const out = [];
+      const seen = new Set();
+      for (const r of plays.recent(120)) {
+        if (out.length >= 8) break;
+        const k = `${r.kind}:${r.id}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        if (r.kind === 'arcade') {
+          const a = arcadeById(r.id);
+          if (a && (a.online || a.players.includes(2))) out.push({ it: arcItem(a), tag: 'Versus' });
+        } else if (r.kind === 'web' && S.ready) {
+          const g = catalogue.byId(r.id);
+          if (!g) continue;
+          if (tagMatches(g, COOP_RE)) out.push({ it: webItem(g), tag: 'Co-op' });
+          else if (is2(g) || (isMulti(g) && isFight(g))) out.push({ it: webItem(g), tag: 'Versus' });
+        }
+      }
+      return out;
+    }
+    const RECENT_SECS = new Set(['two', 'pvp', 'online', 'coop']);
+    function recentShelf() {
+      const rows = recentVersus();
+      return h('section.mp-shelf.mp-recent', { 'aria-label': 'Recent co-op and versus games' },
+        groupHead('Recent co-op and versus games', 'Played on this device, most recent first. Only games the catalogue or the Arcade marks as co-op or versus.', 'clock'),
+        rows.length ? grid(rows.map(({ it, tag }) => tile(it, { note: tag, online: true })), 'Recent co-op and versus games')
+          : h('p.mp-quiet', { text: S.ready ? 'None yet. Play an online or two-player game and it shows up here.' : 'Loading…' }));
+    }
+
+    /* ---------- play with a friend now ---------- */
+    function friendNow() {
+      const online = ARCADE.filter(a => a.online);
+      const row = h('div.mp-now__row', { role: 'list' }, online.map(a => h('button.mp-now__b', {
+        type: 'button', role: 'listitem', dataset: { game: a.id },
+        'aria-label': `Make a ${a.title} room to play a friend`,
+        onclick: () => { if (!has('arcade')) { missing('Static Arcade', a.title); return; } api.openApp('arcade', { game: a.id, online: true, host: true }); },
+      }, icon(a.icon), h('span', { text: a.title }))));
+      const line = h('p.mp-now__fr', { 'data-fr': 'summary' });
+      return h('section.mp-now', { 'aria-label': 'Play with a friend now' },
+        groupHead('Play with a friend now', `${plural(online.length, 'online game')} · press one to make a room, then send the code or use Invite on its card.`, 'globe'),
+        line, row);
     }
 
     function footNote(sec) {
@@ -1103,7 +1242,7 @@ defineApp({
       renderMe();
       V.shelf = h('section.mp-shelf');
       renderShelf();
-      content.append(heroEl, V.meBox, friendsDyn, honestyBlock(), V.shelf);
+      content.append(heroEl, V.meBox, friendNow(), friendsDyn, honestyBlock(), V.shelf);
       peopleSig = '';
       renderPeople(true);
     }
@@ -1147,6 +1286,7 @@ defineApp({
     /* the sidebar is built once and only its state changes, so the item
        you just pressed keeps focus */
     const sideItems = new Map();
+    const sideCounts = new Map();
     const sideDot = h('i.mp-side__dot', { 'aria-hidden': 'true', hidden: true });
     const meterB = h('b'), meterS = h('small');
     (function buildSide() {
@@ -1157,8 +1297,10 @@ defineApp({
           group = h('div.side__group', h('div.side__label', { text: s.group }));
           side.appendChild(group);
         }
+        const n = DEF[s.id] ? h('small.mp-side__n', { hidden: true }) : null;
         const item = h('button.side__item', { type: 'button', dataset: { sec: s.id }, onclick: () => go(s.id) },
-          icon(s.icon), h('span', { text: s.label }), s.id === 'friends' ? sideDot : null);
+          icon(s.icon), h('span', { text: s.label }), n, s.id === 'friends' ? sideDot : null);
+        if (n) sideCounts.set(s.id, n);
         sideItems.set(s.id, item);
         group.appendChild(item);
       }
@@ -1179,7 +1321,25 @@ defineApp({
     }
     win.onResize(foldSide);
 
+    /* each section's real count, from the same lists the sections show; blank
+       until the catalogue has loaded, because a web-game count before that
+       would be a lie */
+    function syncCounts() {
+      for (const [id, el] of sideCounts) {
+        const d = DEF[id];
+        if (d.web && !S.ready) { el.hidden = true; continue; }
+        const { arcs, webs } = sectionItems(id);
+        const n = arcs.length + webs.length;
+        el.hidden = false;
+        el.textContent = n.toLocaleString();
+        el.classList.toggle('is-zero', n === 0);
+        el.title = n ? plural(n, 'game') : 'No games yet';
+        sideItems.get(id).setAttribute('aria-label', `${secMeta(id).label}, ${n ? plural(n, 'game') : 'no games yet'}`);
+      }
+    }
+
     function syncSide() {
+      syncCounts();
       for (const [id, el] of sideItems) {
         const on = id === S.sec && !S.q;
         el.classList.toggle('is-on', on);
@@ -1203,6 +1363,7 @@ defineApp({
       else if (S.sec === 'friends') paintFriends();
       else paintSection();
       syncSide();
+      paintFriendBits();
       btnBack.disabled = !S.back.length;
       btnFwd.disabled = !S.fwd.length;
       win.setSubtitle(S.q ? 'Search' : secMeta(S.sec).label);

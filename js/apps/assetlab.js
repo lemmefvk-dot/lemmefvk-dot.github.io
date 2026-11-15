@@ -22,6 +22,20 @@
      keys 'assetlab:<id>'), next to one of your game projects' assets
      (projects.js), with add and remove.
 
+   More in the sprite editor: an ellipse tool; select a region to move,
+   copy, cut, paste or delete it (Ctrl+C / X / V, Delete); flip and
+   rotate (the selection, the frame, or every frame); outline and drop
+   shadow; replace one colour everywhere; five palettes (Sweetie 16 by
+   GrafxKid, free to use, and four original ones) and "snap to palette";
+   a 3×3 tile preview for seamless tiles; frame tags (Idle, Run, Jump)
+   that go into the sprite sheet's .json as tags:[{name,from,to}] (frame
+   numbers 0-based, inclusive: the shape Static Studio's reader takes);
+   dragging a frame to reorder it; and an import step for a picture (keep
+   its colours or reduce them to a palette, slice a sheet by cell size,
+   or read a sheet's .json for its frames and tags). Sound: Mutate and
+   Mix two sounds. A fourth tab, Jingle, is a 16-step tune maker saved
+   as a WAV. The pure parts live in core/pixelops.js.
+
    The AI sprite draft is experimental and says so. It sends ONLY the
    typed prompt, the 16-colour palette and one worked format example to
    the free model (llm.js), asks for 16 rows of 16 hex digits ("." =
@@ -58,6 +72,9 @@ import * as Projects from '../core/projects.js';
 import * as LLM from '../portal/llm.js';
 import { template as studioTemplate } from '../studio/templates.js';
 import { buildDoc } from '../studio/runtime.js';
+import { readSheet } from '../studio/sheet.js';
+import { fromDrop, extOf, fmtSize } from '../core/fileimport.js';
+import * as PX from '../core/pixelops.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-assetlab-css')) {
   const l = document.createElement('link');
@@ -76,6 +93,16 @@ export const PALETTE = [
   ['#29366f', 'navy blue'], ['#3b5dc9', 'blue'], ['#41a6f6', 'sky blue'], ['#73eff7', 'cyan'],
   ['#f4f4f4', 'white'], ['#94b0c2', 'light grey'], ['#566c86', 'slate grey'], ['#333c57', 'dark slate'],
 ];
+/* The palettes to pick from. Sweetie 16 is by GrafxKid and free to use (credited in the panel);
+   the other four were made for StaticOS. No commercial palette is copied. */
+export const PALETTES = [
+  { id: 'sweetie16', name: 'Sweetie 16', credit: 'Sweetie 16 by GrafxKid, free to use', colors: PALETTE },
+  { id: '1bit', name: '1-bit', credit: 'Black and white', colors: [['#000000', 'black'], ['#ffffff', 'white']] },
+  { id: '4tone', name: 'Four tone', credit: 'Four tones, made for StaticOS', colors: [['#0f1c26', 'deep blue-black'], ['#36596b', 'steel blue'], ['#8fb8a0', 'sage'], ['#eaf2cf', 'pale cream']] },
+  { id: 'dusk8', name: 'Dusk 8', credit: 'Eight dusk colours, made for StaticOS', colors: [['#14121f', 'night'], ['#3d2c5e', 'plum'], ['#8a3f6b', 'berry'], ['#d9604c', 'ember'], ['#f2a65a', 'amber'], ['#f6e3a1', 'butter'], ['#6bb5a5', 'seafoam'], ['#2b5d7a', 'deep sea']] },
+  { id: 'soft8', name: 'Soft 8', credit: 'Eight soft colours, made for StaticOS', colors: [['#2e2a3b', 'ink'], ['#6d5a8c', 'wisteria'], ['#e58fb1', 'rose'], ['#f5c6a5', 'peach'], ['#fbf0d0', 'cream'], ['#a3d9b1', 'mint'], ['#7cc4e8', 'sky'], ['#c7b8ea', 'lilac']] },
+];
+const palById = id => PALETTES.find(p => p.id === id) || PALETTES[0];
 const SIZES = [8, 16, 24, 32, 48, 64];
 const MAX_SIDE = 128;
 const MAX_FRAMES = 64;
@@ -94,6 +121,8 @@ const TOOLS = [
   { id: 'picker', label: 'Eyedropper', key: 'I' },
   { id: 'line', label: 'Line', key: 'L' },
   { id: 'rect', label: 'Rectangle', key: 'R', hint: 'hold Shift for a filled one' },
+  { id: 'ellipse', label: 'Ellipse', key: 'C', hint: 'hold Shift for a filled one' },
+  { id: 'select', label: 'Select', key: 'S', hint: 'drag a box; drag inside it to move it; Ctrl+C, X, V' },
 ];
 
 /* tool glyphs the shared icon set does not have — static SVG only */
@@ -104,6 +133,14 @@ const GLYPH = {
   picker: '<path d="M16.4 3.6a2.3 2.3 0 0 1 3.3 3.3l-2.1 2.1-3.3-3.3z"/><path d="M13.1 6.9l4 4"/><path d="M15.1 8.9 6.6 17.4 4 20l2.6-2.6"/><path d="M6.6 17.4 5.2 18.8"/>',
   line: '<path d="M6 18 18 6"/><rect x="3.5" y="15.5" width="5" height="5" rx="1"/><rect x="15.5" y="3.5" width="5" height="5" rx="1"/>',
   rect: '<rect x="4" y="5.5" width="16" height="13" rx="1.5"/>',
+  ellipse: '<ellipse cx="12" cy="12" rx="8.5" ry="6"/>',
+  select: '<rect x="4" y="5" width="16" height="14" rx="1" stroke-dasharray="3 2.4"/>',
+  flipH: '<path d="M12 3v18" stroke-dasharray="2 2.4"/><path d="M8.5 7 3.5 12l5 5z"/><path d="M15.5 7l5 5-5 5z"/>',
+  flipV: '<path d="M3 12h18" stroke-dasharray="2 2.4"/><path d="M7 8.5l5-5 5 5z"/><path d="M7 15.5l5 5 5-5z"/>',
+  rotate: '<path d="M20 12a8 8 0 1 1-2.7-6"/><path d="M20 4v4.5h-4.5"/>',
+  outline: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
+  shadow: '<rect x="4" y="4" width="11" height="11" rx="1.5"/><path d="M9 19h8a2 2 0 0 0 2-2V9"/>',
+  tile: '<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M9.2 3.5v17M14.8 3.5v17M3.5 9.2h17M3.5 14.8h17"/>',
   mirror: '<path d="M12 3v2.2M12 8.4v2.2M12 13.4v2.2M12 18.8V21"/><path d="M9 7.5 4 12l5 4.5z"/><path d="M15 7.5l5 4.5-5 4.5z"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
@@ -526,6 +563,31 @@ export const makePreset = id => {
   return normSound({ ...DEFAULT_SOUND, volume: 0.6, jumpAt: 0.5, vibSpeed: 8, ...p.make(), seed: 1 + Math.floor(Math.random() * 1e9) });
 };
 
+/** A small random nudge to every knob: amount 0.15 is "a bit different", 0.5 is "quite different". */
+export function mutateSound(p, amount = 0.15, rnd = Math.random) {
+  const q = normSound(p);
+  const out = { ...q };
+  for (const k of KNOBS) {
+    if (k.k === 'volume') continue;
+    const span = (rnd() - 0.5) * 2 * amount;
+    if (k.log) out[k.k] = q[k.k] * Math.exp(span * Math.log(k.max / k.min) * 0.5);
+    else if (k.step === 1) out[k.k] = rnd() < amount * 2 ? q[k.k] + (rnd() < 0.5 ? -1 : 1) * (1 + Math.floor(rnd() * 3)) : q[k.k];
+    else out[k.k] = q[k.k] + span * (k.max - k.min) * 0.5;
+  }
+  if (rnd() < amount * 0.6) out.wave = WAVES[Math.floor(rnd() * WAVES.length)].id;
+  out.seed = 1 + Math.floor(rnd() * 1e9);
+  return normSound(out);
+}
+/** Blend two sounds: t = 0 is a, t = 1 is b. Numbers are mixed (pitches by ratio); the wave comes from the nearer one. */
+export function mixSounds(a, b, t = 0.5) {
+  const x = normSound(a), y = normSound(b);
+  t = clamp(Number(t), 0, 1);
+  const out = { ...x, wave: t >= 0.5 ? y.wave : x.wave };
+  for (const k of KNOBS) out[k.k] = k.log ? x[k.k] * Math.pow(y[k.k] / x[k.k], t) : x[k.k] + (y[k.k] - x[k.k]) * t;
+  out.seed = ((x.seed * 31 + y.seed) % 999999937) + 1;
+  return normSound(out);
+}
+
 function mulberry(seed) {
   let a = seed >>> 0;
   return () => {
@@ -654,8 +716,8 @@ defineApp({
   g1: '#ff6fae', g2: '#c4246c',
   category: 'Create',
   keywords: ['sprite', 'pixel', 'pixel art', 'animation', 'spritesheet', 'png', 'draw', 'sound', 'sfx',
-    'sfxr', 'synth', 'wav', 'sound effect', 'game assets', 'forge'],
-  desc: 'Draw pixel sprites and make sound effects for your games',
+    'sfxr', 'synth', 'wav', 'sound effect', 'game assets', 'forge', 'jingle', 'palette', 'tile', 'sprite sheet'],
+  desc: 'Draw pixel sprites, make sound effects and jingles for your games',
   singleton: true,
   win: { w: 980, h: 640, minW: 400, minH: 440 },
   /* keys listed on the shortcut sheet (hold ⌘ / Ctrl): each one is bound below */
@@ -666,6 +728,8 @@ defineApp({
     ['I', 'Eyedropper'],
     ['L', 'Line'],
     ['R', 'Rectangle'],
+    ['C', 'Ellipse'],
+    ['S', 'Select a box (Mod+C / X / V copy, cut, paste)'],
     ['M', 'Mirror drawing on or off'],
     ['O', 'Onion skin on or off'],
     [', / .', 'Previous / next frame'],
@@ -703,8 +767,12 @@ defineApp({
 
     const S = {
       dead: false,
-      tab: ['sprite', 'sound', 'library'].includes(P0.tab) ? P0.tab : 'sprite',
-      doc: { w: 16, h: 16, frames: [{ id: uid('f'), px: blank(16, 16) }], cur: 0 },
+      tab: ['sprite', 'sound', 'jingle', 'library'].includes(P0.tab) ? P0.tab : 'sprite',
+      doc: { w: 16, h: 16, frames: [{ id: uid('f'), px: blank(16, 16) }], cur: 0, tags: [] },
+      palId: PALETTES.some(p => p.id === P0.palette) ? P0.palette : 'sweetie16',
+      sel: null, float: null, drag: null, clip: null, tile: !!P0.tile, scopeAll: !!P0.scopeAll, previewTag: -1,
+      jing: PX.normJingle(P0.jingle), jingName: 'jingle', jingLib: null, jbuf: null, jplay: null,
+      sndPast: [],
       past: [], future: [],
       tool: TOOLS.some(t => t.id === P0.tool) ? P0.tool : 'pencil',
       mirror: !!P0.mirror, grid: P0.grid !== false, onion: !!P0.onion, onionMode: ['prev', 'next', 'both'].includes(P0.onionMode) ? P0.onionMode : 'prev', onionOp: clamp(Math.round(+P0.onionOp) || 30, 10, 80),
@@ -728,6 +796,7 @@ defineApp({
     const TABS = [
       { id: 'sprite', label: 'Sprite', icon: 'image' },
       { id: 'sound', label: 'Sound', icon: 'volume' },
+      { id: 'jingle', label: 'Jingle', icon: 'music' },
       { id: 'library', label: 'Library', icon: 'layers' },
     ];
     const libCount = h('span.al-tab__n');
@@ -750,18 +819,21 @@ defineApp({
        the waveform (and the draft) always match what was typed */
     function setName(kind, v) {
       v = String(v || '').slice(0, 40);
-      if (kind === 'sound') { S.sndName = v; sndTitle.textContent = v.trim() || 'sound'; } else S.spriteName = v;
+      if (kind === 'sound') { S.sndName = v; sndTitle.textContent = v.trim() || 'sound'; } else if (kind === 'jingle') S.jingName = v; else S.spriteName = v;
       if (S.tab === kind && nameIn.value !== v) nameIn.value = v;
       touch();
     }
     const nameIn = h('input.al-name', {
       type: 'text', maxlength: '40', spellcheck: 'false', 'aria-label': 'Name',
-      oninput: e => setName(S.tab === 'sound' ? 'sound' : 'sprite', e.target.value),
+      oninput: e => setName(kindOfTab(), e.target.value),
       onblur: e => {
         if (e.target.value.trim() || S.tab === 'library') return;
-        setName(S.tab, S.tab === 'sound' ? 'sound' : 'sprite');
+        setName(kindOfTab(), kindOfTab());
       },
     });
+    const kindOfTab = () => (S.tab === 'sound' ? 'sound' : S.tab === 'jingle' ? 'jingle' : 'sprite');
+    const nameFor = k => (k === 'sound' ? S.sndName : k === 'jingle' ? S.jingName : S.spriteName);
+    const libFor = k => (k === 'sound' ? S.sndLib : k === 'jingle' ? S.jingLib : S.spriteLib);
     const nameWrap = h('label.al-namewrap', h('span.al-namewrap__ic'), nameIn);
     const acts = h('div.al-acts');
     /* shown when Asset Lab was opened for a game (from Studio): where
@@ -786,9 +858,10 @@ defineApp({
     const views = {
       sprite: h('div.al-view.al-sp', { id: 'al-view-sprite', role: 'tabpanel', 'aria-labelledby': 'al-tab-sprite' }),
       sound: h('div.al-view.al-snd', { id: 'al-view-sound', role: 'tabpanel', 'aria-labelledby': 'al-tab-sound' }),
+      jingle: h('div.al-view.al-jg', { id: 'al-view-jingle', role: 'tabpanel', 'aria-labelledby': 'al-tab-jingle' }),
       library: h('div.al-view.al-lib', { id: 'al-view-library', role: 'tabpanel', 'aria-labelledby': 'al-tab-library' }),
     };
-    const al = h('div.al', top, h('div.al-views', views.sprite, views.sound, views.library), status);
+    const al = h('div.al', top, h('div.al-views', views.sprite, views.sound, views.jingle, views.library), status);
     root.appendChild(h('div.app.app--col', al));
 
     function setTab(t) {
@@ -802,13 +875,15 @@ defineApp({
       });
       for (const [k, v] of Object.entries(views)) v.hidden = k !== t;
       nameWrap.hidden = t === 'library';
-      nameIn.value = t === 'sound' ? S.sndName : S.spriteName;
-      nameIn.setAttribute('aria-label', t === 'sound' ? 'Sound name' : 'Sprite name');
-      nameWrap.firstChild.replaceChildren(icon(t === 'sound' ? 'volume' : 'image'));
+      nameIn.value = nameFor(kindOfTab());
+      nameIn.setAttribute('aria-label', t === 'sound' ? 'Sound name' : t === 'jingle' ? 'Jingle name' : 'Sprite name');
+      nameWrap.firstChild.replaceChildren(icon(t === 'sound' ? 'volume' : t === 'jingle' ? 'music' : 'image'));
+      if (t !== 'jingle') stopJingle();
+      if (t === 'jingle') paintJingle();
       paintActs();
       paintInfo();
       if (t === 'sprite') { layout(); syncPreviewLoop(); } else stopPreviewLoop();
-      if (t === 'sound') { drawWave(); if (!S.buf) rerender(); }
+      if (t === 'sound') { drawWave(); if (!S.buf) rerender(); paintMixOptions(); }
       if (t === 'library') { refreshLib(); refreshProjects(); }
     }
 
@@ -829,6 +904,10 @@ defineApp({
         acts.append(
           actBtn('download', 'Export WAV', exportWav),
           actBtn('save', 'Save', e => openSheet('sound', e.currentTarget), '.btn--primary'));
+      } else if (S.tab === 'jingle') {
+        acts.append(
+          actBtn('download', 'Export WAV', exportJingleWav),
+          actBtn('save', 'Save', e => openSheet('jingle', e.currentTarget), '.btn--primary'));
       }
     }
 
@@ -836,7 +915,12 @@ defineApp({
       if (S.tab === 'sprite') {
         const { w, h: hh, frames, cur } = S.doc;
         const c = S.kbd || S.hover;
-        infoEl.textContent = `${w}×${hh} · frame ${cur + 1} of ${frames.length}${c ? ` · x ${c[0]}, y ${c[1]}` : ''}`;
+        const sb = S.float || S.sel;
+        infoEl.textContent = `${w}×${hh} · frame ${cur + 1} of ${frames.length}${c ? ` · x ${c[0]}, y ${c[1]}` : ''}${sb ? ` · selection ${sb.w}×${sb.h}` : ''}`;
+      } else if (S.tab === 'jingle') {
+        const n = S.jing.steps.reduce((c, m) => { let k = 0; for (let r = 0; r < PX.JINGLE_ROWS; r++) if (m & (1 << r)) k++; return c + k; }, 0);
+        const secs = PX.stepSeconds(S.jing) * PX.JINGLE_STEPS + 0.18;
+        infoEl.textContent = `${n} note${n === 1 ? '' : 's'} · ${fmtS(secs)} · 44.1 kHz · 16-bit mono WAV · ${kb(44 + Math.ceil(secs * SR) * 2)}`;
       } else if (S.tab === 'sound') {
         const b = S.buf;
         infoEl.textContent = b ? `${fmtS(b.duration)} · 44.1 kHz · 16-bit mono WAV · ${kb(44 + b.length * 2)}` : 'Rendering…';
@@ -852,8 +936,9 @@ defineApp({
       const d = S.doc;
       return {
         app: 'assetlab', kind: 'draft', at: Date.now(),
-        sprite: { w: d.w, h: d.h, frames: d.frames.map(f => f.px), cur: d.cur, name: S.spriteName, lib: S.spriteLib, fps: S.fps, src: S.fromAsset },
+        sprite: { w: d.w, h: d.h, frames: d.frames.map(f => f.px), cur: d.cur, tags: d.tags || [], name: S.spriteName, lib: S.spriteLib, fps: S.fps, src: S.fromAsset },
         sound: { params: S.snd, name: S.sndName, lib: S.sndLib },
+        jingle: { j: S.jing, name: S.jingName, lib: S.jingLib },
       };
     };
     const saveDraft = debounce(() => { LIB.set(DRAFT, draftData()).catch(() => {}); }, 700);
@@ -862,7 +947,7 @@ defineApp({
     /* ============================== SPRITE ============================== */
 
     /* ---- history ---- */
-    const snap = () => ({ w: S.doc.w, h: S.doc.h, frames: S.doc.frames.slice(), cur: S.doc.cur, name: S.spriteName, lib: S.spriteLib, src: S.fromAsset });
+    const snap = () => ({ w: S.doc.w, h: S.doc.h, frames: S.doc.frames.slice(), cur: S.doc.cur, tags: S.doc.tags || [], name: S.spriteName, lib: S.spriteLib, src: S.fromAsset });
     const trimHistory = () => { while (S.past.length > HISTORY) S.past.shift(); };
     /* a stroke passes keepFuture: its step is only kept (and redo only
        dropped, and the oldest step only trimmed) once it changed a pixel */
@@ -874,7 +959,8 @@ defineApp({
        entry (open, import, new, AI draft): only those put the name back,
        so undoing a stroke never reverts a rename typed in between */
     function applySnap(s) {
-      S.doc = { w: s.w, h: s.h, frames: s.frames.slice(), cur: clamp(s.cur, 0, s.frames.length - 1) };
+      S.doc = { w: s.w, h: s.h, frames: s.frames.slice(), cur: clamp(s.cur, 0, s.frames.length - 1), tags: s.tags || [] };
+      S.float = null; S.sel = null; S.drag = null;
       if (s.named || s.lib !== S.spriteLib) { S.spriteLib = s.lib; S.spriteName = s.name; S.fromAsset = s.src || null; if (S.tab === 'sprite') nameIn.value = s.name; }
       S.anchor = null;
       refreshSprite();
@@ -882,6 +968,7 @@ defineApp({
     }
     function undo() {
       if (S.stroke) return;
+      if (S.float) { cancelFloat(); say('Put the selection back.'); return; }
       if (!S.past.length) { say('Nothing to undo.'); return; }
       const s = S.past.pop();
       S.future.push({ ...snap(), named: s.named });
@@ -889,6 +976,7 @@ defineApp({
     }
     function redo() {
       if (S.stroke) return;
+      commitFloat();
       if (!S.future.length) { say('Nothing to redo.'); return; }
       const s = S.future.pop();
       S.past.push({ ...snap(), named: s.named });
@@ -896,9 +984,13 @@ defineApp({
     }
     /* a structural change (frames, size, load): one history step */
     function change(fn) {
+      commitFloat();
       const name = S.spriteName, lib = S.spriteLib, src = S.fromAsset;
       pushHistory();
+      /* tags follow the frames they cover through adds, deletes and drags */
+      const oldDoc = S.doc, oldTags = S.doc.tags, sets = PX.tagsToIds(oldTags, S.doc.frames);
       fn();
+      if (S.doc === oldDoc && S.doc.tags === oldTags && sets.length) S.doc.tags = PX.idsToTags(sets, S.doc.frames);
       if (S.spriteName !== name || S.spriteLib !== lib || S.fromAsset !== src) S.past[S.past.length - 1].named = true;
       S.doc.cur = clamp(S.doc.cur, 0, S.doc.frames.length - 1);
       refreshSprite();
@@ -935,6 +1027,7 @@ defineApp({
     });
 
     function setTool(id) {
+      if (id !== 'select') commitFloat();
       S.tool = id;
       S.anchor = null;
       setPref({ tool: id });
@@ -1020,11 +1113,20 @@ defineApp({
         const c = h('canvas.al-fr__cv', { width: String(w), height: String(hh), style: { width: Math.max(1, Math.round(w * k)) + 'px', height: Math.max(1, Math.round(hh * k)) + 'px' } });
         thumbs.set(f.id, c);
         drawThumb(f);
-        frameList.append(h('button.al-fr', {
-          type: 'button', class: i === cur ? 'is-on' : null,
+        const tagged = (S.doc.tags || []).filter(t => i >= t.from && i <= t.to).map(t => t.name);
+        const btn = h('button.al-fr', {
+          type: 'button', class: [i === cur ? 'is-on' : '', tagged.length ? 'has-tag' : ''].filter(Boolean).join(' ') || null,
           'aria-label': `Frame ${i + 1} of ${frames.length}`, 'aria-pressed': String(i === cur),
+          title: `Frame ${i + 1}${tagged.length ? ` · ${tagged.join(', ')}` : ''} — drag to move it`, draggable: 'true',
+          dataset: { i: String(i) },
           onclick: () => selectFrame(i),
-        }, h('span.al-fr__box', c), h('span.al-fr__i', { text: String(i + 1) })));
+          ondragstart: e => { S.dragFrame = i; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(i)); } catch (err) { /* ok */ } },
+          ondragover: e => { if (S.dragFrame == null) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; btn.classList.add('is-over'); },
+          ondragleave: () => btn.classList.remove('is-over'),
+          ondragend: () => { S.dragFrame = null; frameList.querySelectorAll('.is-over').forEach(x => x.classList.remove('is-over')); },
+          ondrop: e => { e.preventDefault(); const from = S.dragFrame; S.dragFrame = null; moveFrameTo(from, i); },
+        }, h('span.al-fr__box', c), h('span.al-fr__i', { text: String(i + 1) }), tagged.length ? h('span.al-fr__tag', { text: tagged[0].slice(0, 6) }) : null);
+        frameList.append(btn);
       });
       frCount.textContent = `${cur + 1} / ${frames.length}`;
       frOps.del.disabled = frames.length < 2;
@@ -1047,8 +1149,15 @@ defineApp({
       if (!c) return;
       c.getContext('2d').putImageData(new ImageData(f.px, S.doc.w, S.doc.h), 0, 0);
     }
+    function moveFrameTo(i, j) {
+      const n = S.doc.frames.length;
+      if (i == null || i === j || i < 0 || j < 0 || i >= n || j >= n) return;
+      change(() => { const f = S.doc.frames; const [x] = f.splice(i, 1); f.splice(j, 0, x); S.doc.cur = j; });
+      say(`Moved frame ${i + 1} to place ${j + 1}.`);
+    }
     function selectFrame(i) {
       if (S.stroke) return;
+      commitFloat();
       S.doc.cur = clamp(i, 0, S.doc.frames.length - 1);
       S.anchor = null;
       [...frameList.children].forEach((b, j) => { b.classList.toggle('is-on', j === S.doc.cur); b.setAttribute('aria-pressed', String(j === S.doc.cur)); });
@@ -1088,16 +1197,34 @@ defineApp({
       oninput: e => setColor(e.target.value, false),
       onchange: e => setColor(e.target.value, true),
     });
-    const palBtns = PALETTE.map(([hex, name], i) => h('button.al-sw', {
-      type: 'button', style: { '--c': hex }, title: `${name} ${hex}`,
-      'aria-label': `Colour ${i + 1}: ${name}`, onclick: () => setColor(hex, false),
-    }));
+    let palBtns = [];
+    const curPal = () => palById(S.palId).colors;
+    const palGrid = h('div.al-pal', { role: 'group' });
+    const palSel = h('select.al-select.al-palsel', { 'aria-label': 'Palette', onchange: e => { S.palId = e.target.value; setPref({ palette: S.palId }); paintPalette(); } },
+      PALETTES.map(p => h('option', { value: p.id, text: `${p.name} (${p.colors.length})`, selected: p.id === S.palId })));
+    const palCredit = h('p.al-fine.al-palcredit');
+    function paintPalette() {
+      const P = palById(S.palId);
+      palSel.value = P.id;
+      palGrid.setAttribute('aria-label', `Palette (${P.name})`);
+      palGrid.style.setProperty('--cols', String(Math.min(8, P.colors.length)));
+      palCredit.textContent = P.credit;
+      clear(palGrid);
+      palBtns = P.colors.map(([hex, name], i) => h('button.al-sw', {
+        type: 'button', style: { '--c': hex }, title: `${name} ${hex}`,
+        'aria-label': `Colour ${i + 1}: ${name}`, onclick: () => setColor(hex, false),
+      }));
+      palGrid.append(...palBtns);
+      paintColor();
+    }
     const recentRow = h('div.al-recent', { role: 'group', 'aria-labelledby': 'al-recent-l' });
     const colorSec = h('section.al-sec',
       h('h3.al-sec__h', { text: 'Colour' }),
       h('div.al-cur', curSw, h('div.al-cur__t', curName, curHex),
         h('label.al-pickbtn', { title: 'Custom colour' }, picker, icon('palette'), h('span', { text: 'Custom' }))),
-      h('div.al-pal', { role: 'group', 'aria-label': 'Palette (Sweetie 16)' }, palBtns),
+      palSel,
+      palGrid,
+      palCredit,
       h('div.al-recentrow', h('span.al-sec__sub', { id: 'al-recent-l', text: 'Recent' }), recentRow));
 
     function setColor(hex, remember) {
@@ -1116,10 +1243,10 @@ defineApp({
     function paintColor() {
       curSw.style.setProperty('--c', S.color);
       curHex.textContent = S.color.toUpperCase();
-      const named = PALETTE.find(p => p[0] === S.color);
+      const named = curPal().find(p => p[0] === S.color);
       curName.textContent = named ? named[1][0].toUpperCase() + named[1].slice(1) : 'Custom colour';
       picker.value = S.color;
-      palBtns.forEach((b, i) => { const on = PALETTE[i][0] === S.color; b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', String(on)); });
+      palBtns.forEach((b, i) => { const on = curPal()[i][0] === S.color; b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', String(on)); });
       [...recentRow.querySelectorAll('.al-sw')].forEach(b => b.classList.toggle('is-on', b.dataset.c === S.color));
     }
     function paintRecent() {
@@ -1135,6 +1262,9 @@ defineApp({
     /* ---- preview panel ---- */
     const pv = h('canvas.al-pv__cv', { 'aria-hidden': 'true' });
     const pvPlay = h('button.al-ib', { type: 'button', onclick: () => { S.playing = !S.playing; syncPreviewLoop(); paintPvCtl(); } });
+    const tileBtn = h('button.al-ib.al-tilebtn', { type: 'button', title: 'Tile preview: the sprite repeated 3×3, to check that it tiles without seams', 'aria-label': 'Tile preview 3×3',
+      onclick: () => { S.tile = !S.tile; setPref({ tile: S.tile }); paintPvCtl(); drawPreview(pvRaf ? S.pframe : S.doc.cur); } }, glyph('tile'));
+    const pvTmp = document.createElement('canvas');
     const fpsOut = h('output.al-pv__fps');
     const fpsIn = h('input.al-range', {
       type: 'range', min: '1', max: '24', step: '1', value: String(S.fps), 'aria-label': 'Frames per second',
@@ -1143,13 +1273,16 @@ defineApp({
     const pvSec = h('section.al-sec',
       h('h3.al-sec__h', { text: 'Preview' }),
       h('div.al-pv', h('div.al-pv__box', pv)),
-      h('div.al-pv__ctl', pvPlay, fpsIn, fpsOut));
+      h('div.al-pv__ctl', pvPlay, tileBtn, fpsIn, fpsOut));
     function paintPvCtl() {
       const many = S.doc.frames.length > 1;
       pvPlay.replaceChildren(icon(S.playing && many ? 'pause' : 'play', { fill: true }));
       pvPlay.setAttribute('aria-label', S.playing ? 'Pause preview' : 'Play preview');
       pvPlay.title = S.playing ? 'Pause' : 'Play';
       pvPlay.disabled = !many;
+      tileBtn.classList.toggle('is-on', S.tile);
+      tileBtn.setAttribute('aria-pressed', String(S.tile));
+      pvSec.classList.toggle('is-tile', S.tile);
       fpsOut.textContent = `${S.fps} fps`;
       fpsIn.style.setProperty('--p', `${((S.fps - 1) / 23) * 100}%`);
     }
@@ -1157,14 +1290,22 @@ defineApp({
     function drawPreview(i) {
       const { w, h: hh, frames } = S.doc;
       const f = frames[clamp(i, 0, frames.length - 1)];
-      if (pv.width !== w || pv.height !== hh) {
-        pv.width = w; pv.height = hh;
-        const k = Math.min(82 / w, 82 / hh);
+      const T = S.tile ? 3 : 1, cw = w * T, ch = hh * T;
+      if (pv.width !== cw || pv.height !== ch) {
+        pv.width = cw; pv.height = ch;
+        const lim = S.tile ? 132 : 82;
+        const k = Math.min(lim / cw, lim / ch);
         const s = k >= 1 ? Math.floor(k) : k;
-        pv.style.width = Math.round(w * s) + 'px';
-        pv.style.height = Math.round(hh * s) + 'px';
+        pv.style.width = Math.round(cw * s) + 'px';
+        pv.style.height = Math.round(ch * s) + 'px';
       }
-      pv.getContext('2d').putImageData(new ImageData(f.px, w, hh), 0, 0);
+      const px = S.float && i === S.doc.cur ? floatView() : f.px;
+      const g = pv.getContext('2d');
+      if (T === 1) { g.putImageData(new ImageData(px, w, hh), 0, 0); return; }
+      pvTmp.width = w; pvTmp.height = hh;
+      pvTmp.getContext('2d').putImageData(new ImageData(px, w, hh), 0, 0);
+      g.clearRect(0, 0, cw, ch);
+      for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) g.drawImage(pvTmp, a * w, b * hh);
     }
     function pvTick(t) {
       pvRaf = 0;
@@ -1175,7 +1316,8 @@ defineApp({
       const step = 1000 / S.fps;
       if (pvAcc >= step) {
         pvAcc %= step;
-        S.pframe = (S.pframe + 1) % S.doc.frames.length;
+        const tg = (S.doc.tags || [])[S.previewTag];
+        S.pframe = tg ? tg.from + ((clamp(S.pframe, tg.from, tg.to) - tg.from + 1) % (tg.to - tg.from + 1)) : (S.pframe + 1) % S.doc.frames.length;
         drawPreview(S.pframe);
       }
       pvRaf = requestAnimationFrame(pvTick);
@@ -1372,7 +1514,95 @@ defineApp({
       paintAI();
     }
 
-    const side = h('aside.al-side', colorSec, pvSec, aiSec);
+    /* ---- edit: flip, turn, outline, shadow, snap, replace, and the selection's own buttons ---- */
+    const eb = (g, label, aria, fn, extra = {}) => h('button.btn.btn--sm.al-eb', { type: 'button', title: aria, 'aria-label': aria, onclick: fn, ...extra }, glyph(g), h('span', { text: label }));
+    const scopeIn = h('input', { type: 'checkbox', checked: S.scopeAll, onchange: e => { S.scopeAll = e.target.checked; setPref({ scopeAll: S.scopeAll }); } });
+    const repSel = h('select.al-select.al-repsel', { 'aria-label': 'Colour to replace', onfocus: () => paintReplace(), onpointerdown: () => paintReplace() });
+    const repBtn = h('button.btn.btn--sm', { type: 'button', onclick: () => doReplace() }, h('span', { text: 'Replace everywhere' }));
+    const selBtns = [
+      h('button.btn.btn--sm', { type: 'button', 'aria-label': 'Copy the selection', onclick: () => copySel() }, icon('copy'), h('span', { text: 'Copy' })),
+      h('button.btn.btn--sm', { type: 'button', 'aria-label': 'Cut the selection', onclick: () => cutSel() }, h('span', { text: 'Cut' })),
+      h('button.btn.btn--sm', { type: 'button', 'aria-label': 'Paste', onclick: () => pasteClip() }, icon('clipboard'), h('span', { text: 'Paste' })),
+      h('button.btn.btn--sm', { type: 'button', 'aria-label': 'Delete the selection', onclick: () => deleteSel() }, icon('trash'), h('span', { text: 'Delete' })),
+    ];
+    const editSec = h('section.al-sec.al-edit', { 'aria-label': 'Edit' },
+      h('h3.al-sec__h', { text: 'Edit' }),
+      h('div.al-ebs', eb('flipH', 'Flip', 'Flip left-right', () => xform('fh')), eb('flipV', 'Flip', 'Flip up-down', () => xform('fv')), eb('rotate', 'Turn', 'Turn a quarter clockwise', () => xform('rot'))),
+      h('div.al-ebs', eb('outline', 'Outline', 'Add an outline in the current colour', () => decorate('outline')), eb('shadow', 'Shadow', 'Add a drop shadow', () => decorate('shadow'))),
+      h('label.al-check', scopeIn, h('span', { text: 'Every frame (not just this one)' })),
+      h('div.al-ebs.al-selbtns', { role: 'group', 'aria-label': 'Selection' }, selBtns),
+      h('div.al-reprow', repSel, repBtn),
+      h('button.btn.btn--sm.al-snap', { type: 'button', onclick: () => snapSprite() }, h('span', { text: 'Snap every colour to this palette' })));
+    function paintReplace() {
+      const used = [...PX.usedColors(S.doc.frames.map(f => f.px))].sort((a, b) => b[1] - a[1]);
+      const keep = repSel.value;
+      clear(repSel);
+      if (!used.length) repSel.append(h('option', { value: '', text: 'No colours yet' }));
+      for (const [hex, n] of used) repSel.append(h('option', { value: hex, text: `${hex.toUpperCase()} · ${n} px` }));
+      if (used.some(u => u[0] === keep)) repSel.value = keep;
+      repBtn.disabled = !used.length;
+    }
+    const paintReplaceSoon = debounce(() => paintReplace(), 250);
+    function doReplace() {
+      const from = repSel.value;
+      if (!isHex(from)) { say('Draw something first; there is no colour to replace yet.'); return; }
+      const to = S.color;
+      if (from === to) { say('That is already the current colour. Pick another colour first.'); return; }
+      let total = 0;
+      const next = S.doc.frames.map(f => { const r = PX.replaceColorPx(f.px, rgbaOf(from).slice(0, 3), rgbaOf(to)); total += r.count; return r.px; });
+      change(() => { S.doc.frames = S.doc.frames.map((f, i) => ({ id: f.id, px: next[i] })); });
+      say(`Replaced ${from.toUpperCase()} with ${to.toUpperCase()} in ${total} pixel${total === 1 ? '' : 's'}, in every frame.`);
+    }
+    function snapSprite() {
+      const cols = curPal().map(c => c[0]);
+      change(() => { S.doc.frames = S.doc.frames.map(f => ({ id: f.id, px: PX.snapPx(f.px, cols) })); });
+      say(`Every colour is now one of ${palById(S.palId).name}'s ${cols.length}. Ctrl+Z undoes it.`);
+    }
+
+    /* ---- tags: Idle, Run, Jump ... a name for a run of frames ---- */
+    const tagList = h('div.al-taglist', { role: 'list', 'aria-label': 'Frame tags' });
+    const tagName = h('input.al-in.al-tagname', { type: 'text', maxlength: String(PX.TAG_NAME_MAX), placeholder: 'Idle', 'aria-label': 'Tag name', spellcheck: 'false' });
+    const tagFrom = h('input.al-num', { type: 'number', min: '1', value: '1', 'aria-label': 'Tag: first frame' });
+    const tagTo = h('input.al-num', { type: 'number', min: '1', value: '1', 'aria-label': 'Tag: last frame' });
+    const tagSec = h('section.al-sec.al-tags', { 'aria-label': 'Frame tags' },
+      h('h3.al-sec__h', { text: 'Frame tags' }),
+      h('div.al-tagquick', ['Idle', 'Run', 'Jump'].map(n => h('button.al-chipbtn', { type: 'button', text: n, 'aria-label': `Name the tag ${n}`, onclick: () => { tagName.value = n; tagName.focus(); } }))),
+      h('form.al-tagform', { onsubmit: e => { e.preventDefault(); addTag(); } },
+        tagName, h('span.al-x', { text: 'frames' }), tagFrom, h('span.al-x', { text: 'to' }), tagTo,
+        h('button.btn.btn--sm', { type: 'submit' }, icon('plus'), h('span', { text: 'Tag' }))),
+      tagList,
+      h('p.al-fine', { text: 'Tags go into the sheet’s .json, and Static Studio uses Idle and Run by itself.' }));
+    function addTag() {
+      const name = tagName.value.replace(/\s+/g, ' ').trim().slice(0, PX.TAG_NAME_MAX);
+      const n = S.doc.frames.length;
+      const from = Math.round(+tagFrom.value), to = Math.round(+tagTo.value);
+      if (!name) { say('Give the tag a name first, like Idle.', 'err'); tagName.focus(); return; }
+      if (!(from >= 1 && to >= from && to <= n)) { say(`Frame numbers run 1 to ${n}, and the last can’t come before the first.`, 'err'); return; }
+      const rest = (S.doc.tags || []).filter(t => t.name.toLowerCase() !== name.toLowerCase());
+      change(() => { S.doc.tags = [...rest, { name, from: from - 1, to: to - 1 }].sort((a, b) => a.from - b.from); });
+      tagName.value = '';
+      say(`Tagged frames ${from}–${to} as ${name}.`);
+    }
+    function removeTag(i) {
+      const t = (S.doc.tags || [])[i];
+      if (!t) return;
+      change(() => { S.doc.tags = S.doc.tags.filter((_, k) => k !== i); });
+      if (S.previewTag === i) S.previewTag = -1;
+      say(`Removed the tag ${t.name}.`);
+    }
+    function paintTags() {
+      clear(tagList);
+      const tags = S.doc.tags || [];
+      if (S.previewTag >= tags.length) S.previewTag = -1;
+      tags.forEach((t, i) => tagList.append(h('div.al-tag', { role: 'listitem', dataset: { tag: t.name } },
+        h('button.al-tag__b', { type: 'button', 'aria-pressed': String(S.previewTag === i), class: S.previewTag === i ? 'is-on' : null, title: 'Preview just these frames',
+          onclick: () => { S.previewTag = S.previewTag === i ? -1 : i; S.pframe = tags[i].from; S.playing = true; paintTags(); paintPvCtl(); syncPreviewLoop(); drawPreview(S.previewTag >= 0 ? t.from : S.doc.cur); } },
+        h('b', { text: t.name }), h('small', { text: t.from === t.to ? `frame ${t.from + 1}` : `frames ${t.from + 1}–${t.to + 1}` })),
+        h('button.al-ib.al-ib--danger', { type: 'button', 'aria-label': `Remove the tag ${t.name}`, title: 'Remove', onclick: () => removeTag(i) }, icon('x')))));
+      tagTo.max = tagFrom.max = String(S.doc.frames.length);
+    }
+
+    const side = h('aside.al-side', colorSec, editSec, pvSec, tagSec, aiSec);
     const stageWrap = h('div.al-stagewrap', stageBar, stage);
     views.sprite.append(rail, stageWrap, frameBar, side);
 
@@ -1450,7 +1680,7 @@ defineApp({
         if (S.onionMode !== 'prev' && !(S.onionMode === 'both' && ni === pi)) g.drawImage(off(frames[ni].px), 0, 0, W, H);
         g.globalAlpha = 1;
       }
-      g.drawImage(off(frames[cur].px), 0, 0, W, H);
+      g.drawImage(off(S.float ? floatView() : frames[cur].px), 0, 0, W, H);
 
       if (S.grid && S.zoom >= 4) {
         const ink = major => { g.fillStyle = major ? 'rgba(255,255,255,.17)' : 'rgba(255,255,255,.075)'; };
@@ -1469,12 +1699,24 @@ defineApp({
         g.stroke();
         g.restore();
       }
+      const box = S.float ? { x: S.float.x, y: S.float.y, w: S.float.w, h: S.float.h } : (S.tool === 'select' ? S.sel : null);
+      if (box) {
+        const X = box.x * cell, Y = box.y * cell, BW = box.w * cell, BH = box.h * cell;
+        g.save();
+        g.lineWidth = Math.max(1, S.dpr);
+        g.strokeStyle = 'rgba(0,0,0,.8)';
+        g.strokeRect(X + .5, Y + .5, BW - 1, BH - 1);
+        g.strokeStyle = '#fff';
+        g.setLineDash([4 * S.dpr, 3 * S.dpr]);
+        g.strokeRect(X + .5, Y + .5, BW - 1, BH - 1);
+        g.restore();
+      }
       /* the cell under the pointer or keyboard cursor (and its mirror) */
       const c = S.stroke ? null : (S.kbd || S.hover);
       const mark = (x, y, strong) => {
         if (x < 0 || y < 0 || x >= w || y >= hh) return;
         const X = Math.round(x * cell), Y = Math.round(y * cell), s = Math.round(cell);
-        if ((S.tool === 'pencil' || S.tool === 'line' || S.tool === 'rect') && cell >= 3) {
+        if ((S.tool === 'pencil' || S.tool === 'line' || S.tool === 'rect' || S.tool === 'ellipse') && cell >= 3) {
           g.fillStyle = S.color; g.globalAlpha = 0.55; g.fillRect(X, Y, s, s); g.globalAlpha = 1;
         }
         const lw = Math.max(1, Math.round(S.dpr * (strong ? 2 : 1)));
@@ -1501,6 +1743,8 @@ defineApp({
       undoBtn.disabled = !S.past.length;
       redoBtn.disabled = !S.future.length;
       paintFrames();
+      paintTags();
+      paintReplace();
       paintPvCtl();
       syncPreviewLoop();
       paintInfo();
@@ -1549,6 +1793,7 @@ defineApp({
     function shape(st, x, y) {
       st.px.set(st.base);
       if (st.tool === 'line') linePts(st.start[0], st.start[1], x, y, (a, b) => plotM(st.px, a, b, st.c));
+      else if (st.tool === 'ellipse') PX.ellipsePts(st.start[0], st.start[1], x, y, st.filled, (a, b) => plotM(st.px, a, b, st.c));
       else rectPts(st.start[0], st.start[1], x, y, st.filled, (a, b) => plotM(st.px, a, b, st.c));
     }
     function pickAt(x, y) {
@@ -1560,6 +1805,7 @@ defineApp({
       say(`Picked ${S.color.toUpperCase()}.`);
     }
     function beginStroke(tool, x, y, { erase = false, filled = false } = {}) {
+      commitFloat();
       const { w, h: hh } = S.doc;
       if (x < 0 || y < 0 || x >= w || y >= hh) return false;
       /* redo survives until the stroke really changes something */
@@ -1584,7 +1830,7 @@ defineApp({
       x = clamp(x, -1, w); y = clamp(y, -1, hh);
       if (st.tool === 'pencil' || st.tool === 'eraser') {
         linePts(st.last[0], st.last[1], x, y, (a, b) => plotM(st.px, a, b, st.c));
-      } else if (st.tool === 'line' || st.tool === 'rect') {
+      } else if (st.tool === 'line' || st.tool === 'rect' || st.tool === 'ellipse') {
         shape(st, clamp(x, 0, w - 1), clamp(y, 0, hh - 1));
       }
       st.last = [x, y];
@@ -1609,6 +1855,169 @@ defineApp({
       schedule();
     }
 
+    /* ---- selection: a box you can move, copy, cut, paste and delete ----
+       Lifting a box does not touch the frame: the lifted pixels float above it (S.float) with the
+       spot they came from marked as a hole, and only placing them writes anything (one undo step). */
+    const rectOf = (ax, ay, bx, by) => {
+      const x0 = clamp(Math.min(ax, bx), 0, S.doc.w - 1), x1 = clamp(Math.max(ax, bx), 0, S.doc.w - 1);
+      const y0 = clamp(Math.min(ay, by), 0, S.doc.h - 1), y1 = clamp(Math.max(ay, by), 0, S.doc.h - 1);
+      return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+    };
+    function floatView() {
+      const f = S.float, { w, h: hh, frames, cur } = S.doc;
+      const px = frames[cur].px.slice();
+      if (f.hole) PX.clearPx(px, w, hh, f.hole);
+      PX.stampPx(px, w, hh, f.px, f.w, f.h, f.x, f.y);
+      return px;
+    }
+    function liftSelection() {
+      if (S.float || !S.sel) return;
+      const r = S.sel, { w, h: hh, frames, cur } = S.doc;
+      S.float = { px: PX.regionPx(frames[cur].px, w, hh, r), w: r.w, h: r.h, x: r.x, y: r.y, hole: { ...r } };
+    }
+    function commitFloat() {
+      const f = S.float;
+      if (!f) return;
+      S.float = null;
+      const { w, h: hh, frames, cur } = S.doc;
+      const base = frames[cur].px;
+      const px = base.slice();
+      if (f.hole) PX.clearPx(px, w, hh, f.hole);
+      PX.stampPx(px, w, hh, f.px, f.w, f.h, f.x, f.y);
+      S.sel = { x: f.x, y: f.y, w: f.w, h: f.h };
+      if (!equalPx(px, base)) {
+        pushHistory();
+        S.doc.frames[cur] = { id: frames[cur].id, px };
+        touch();
+        undoBtn.disabled = !S.past.length;
+        redoBtn.disabled = !S.future.length;
+      }
+      paintInfo();
+      schedule();
+    }
+    function cancelFloat() { S.float = null; schedule(); paintInfo(); }
+    function selDown(x, y) {
+      const fr = S.float ? { x: S.float.x, y: S.float.y, w: S.float.w, h: S.float.h } : S.sel;
+      if (fr && x >= fr.x && x < fr.x + fr.w && y >= fr.y && y < fr.y + fr.h) {
+        liftSelection();
+        S.drag = { kind: 'move', sx: x, sy: y, ox: S.float.x, oy: S.float.y };
+        return;
+      }
+      commitFloat();
+      const cx = clamp(x, 0, S.doc.w - 1), cy = clamp(y, 0, S.doc.h - 1);
+      S.sel = null;
+      S.drag = { kind: 'marq', ax: cx, ay: cy, moved: false };
+      paintInfo();
+      schedule();
+    }
+    function selMove(x, y) {
+      const d = S.drag;
+      if (!d) return;
+      if (d.kind === 'marq') {
+        const r = rectOf(d.ax, d.ay, x, y);
+        if (r.w > 1 || r.h > 1) d.moved = true;
+        S.sel = r;
+      } else {
+        const f = S.float;
+        f.x = clamp(d.ox + (x - d.sx), -(f.w - 1), S.doc.w - 1);
+        f.y = clamp(d.oy + (y - d.sy), -(f.h - 1), S.doc.h - 1);
+        S.sel = { x: f.x, y: f.y, w: f.w, h: f.h };
+      }
+      paintInfo();
+      schedule();
+    }
+    function selUp() {
+      const d = S.drag;
+      S.drag = null;
+      if (d && d.kind === 'marq' && !d.moved) { S.sel = null; paintInfo(); schedule(); }
+    }
+    function selPixels() {
+      if (S.float) return { px: S.float.px.slice(), w: S.float.w, h: S.float.h };
+      if (!S.sel) return null;
+      const { w, h: hh, frames, cur } = S.doc;
+      return { px: PX.regionPx(frames[cur].px, w, hh, S.sel), w: S.sel.w, h: S.sel.h };
+    }
+    function copySel() {
+      const c = selPixels();
+      if (!c) { say('Select something first: the Select tool (S), then drag a box.'); return false; }
+      S.clip = c;
+      say(`Copied ${c.w}×${c.h}. Ctrl+V pastes it.`);
+      return true;
+    }
+    function deleteSel() {
+      if (!S.float && !S.sel) return;
+      liftSelection();
+      S.float.px = blank(S.float.w, S.float.h);
+      commitFloat();
+    }
+    function cutSel() { if (copySel()) { deleteSel(); say('Cut. Ctrl+V pastes it back.'); } }
+    function pasteClip() {
+      commitFloat();
+      if (!S.clip) { say('Nothing to paste yet. Copy or cut a box first.'); return; }
+      setTool('select');
+      const c = S.clip;
+      const x = S.sel ? S.sel.x : 0, y = S.sel ? S.sel.y : 0;
+      S.float = { px: c.px.slice(), w: c.w, h: c.h, x, y, hole: null };
+      S.sel = { x, y, w: c.w, h: c.h };
+      paintInfo();
+      schedule();
+      say('Pasted. Drag it where you want it, then press Enter (or click outside). Esc cancels.');
+    }
+    function selectAll() { commitFloat(); setTool('select'); S.sel = { x: 0, y: 0, w: S.doc.w, h: S.doc.h }; paintInfo(); schedule(); }
+    function nudge(dx, dy) {
+      if (!S.sel && !S.float) return;
+      liftSelection();
+      const f = S.float;
+      f.x = clamp(f.x + dx, -(f.w - 1), S.doc.w - 1);
+      f.y = clamp(f.y + dy, -(f.h - 1), S.doc.h - 1);
+      S.sel = { x: f.x, y: f.y, w: f.w, h: f.h };
+      schedule();
+    }
+
+    /* ---- flip and turn: the floating box, the selection, a frame, or every frame ---- */
+    function xform(kind) {
+      const { w, h: hh } = S.doc;
+      const op = (px, pw, ph) => (kind === 'rot' ? PX.rotatePx(px, pw, ph) : PX.flipPx(px, pw, ph, kind === 'fh' ? 'h' : 'v'));
+      if (S.float || S.sel) {
+        const r = S.float || S.sel;
+        if (kind === 'rot' && r.w !== r.h) { say('A turn needs a square selection. Select a square, or clear the selection to turn the whole frame.'); return; }
+        liftSelection();
+        const f = S.float;
+        f.px = op(f.px, f.w, f.h);
+        if (kind === 'rot') [f.w, f.h] = [f.h, f.w];
+        schedule();
+        say(kind === 'rot' ? 'Turned the selection a quarter clockwise. Press Enter to place it.' : 'Flipped the selection. Press Enter to place it.');
+        return;
+      }
+      const wholeSprite = kind === 'rot' && w !== hh;
+      const all = S.scopeAll || wholeSprite;
+      change(() => {
+        const fr = S.doc.frames;
+        for (const i of (all ? fr.map((_, k) => k) : [S.doc.cur])) fr[i] = { id: fr[i].id, px: op(fr[i].px, w, hh) };
+        if (wholeSprite) { S.doc.w = hh; S.doc.h = w; S.fit = true; }
+      });
+      say(`${kind === 'rot' ? 'Turned' : 'Flipped'} ${all ? 'every frame' : 'this frame'}${wholeSprite ? `; the canvas is now ${S.doc.w}×${S.doc.h}` : ''}. Ctrl+Z undoes it.`);
+    }
+    function frameScope() { return S.scopeAll ? S.doc.frames.map((_, i) => i) : [S.doc.cur]; }
+    /* outline and drop shadow work on whole frames (this one, or all) */
+    function decorate(kind) {
+      const { w, h: hh } = S.doc;
+      const col = rgbaOf(S.color);
+      const dark = palById(S.palId).colors.map(c => c[0]).sort((a, b) => lum(a) - lum(b))[0];
+      let added = 0;
+      const idx = frameScope();
+      const next = new Map();
+      for (const i of idx) {
+        const r = kind === 'outline' ? PX.outlinePx(S.doc.frames[i].px, w, hh, col, false) : PX.shadowPx(S.doc.frames[i].px, w, hh, rgbaOf(dark), 1, 1);
+        added += r.count;
+        next.set(i, r.px);
+      }
+      if (!added) { say(kind === 'outline' ? 'Nothing to outline: the drawing is empty, or the edge is already against the canvas edge.' : 'No room for a shadow. Draw something with a free cell to its lower right.'); return; }
+      change(() => { next.forEach((px, i) => { S.doc.frames[i] = { id: S.doc.frames[i].id, px }; }); });
+      say(kind === 'outline' ? `Added an outline in ${S.color.toUpperCase()} (${added} pixel${added === 1 ? '' : 's'}).` : `Added a drop shadow in ${dark.toUpperCase()} (${added} pixel${added === 1 ? '' : 's'}).`);
+    }
+    const lum = hex => { const [r, g, b] = rgbaOf(hex); return 0.3 * r + 0.59 * g + 0.11 * b; };
+
     function cellAt(e) {
       const r = cv.getBoundingClientRect();
       return [Math.floor(((e.clientX - r.left) / r.width) * S.doc.w), Math.floor(((e.clientY - r.top) / r.height) * S.doc.h)];
@@ -1620,6 +2029,11 @@ defineApp({
       cv.focus({ preventScroll: true });
       S.kbd = null;
       const [x, y] = cellAt(e);
+      if (S.tool === 'select' && e.button === 0) {
+        selDown(x, y);
+        try { cv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
+        return;
+      }
       if (S.tool === 'picker' || (e.altKey && S.tool !== 'eraser')) { pickAt(x, y); schedule(); return; }
       const erase = e.button === 2;
       if (beginStroke(S.tool, x, y, { erase, filled: e.shiftKey })) {
@@ -1629,12 +2043,13 @@ defineApp({
     });
     listen(cv, 'pointermove', e => {
       const [x, y] = cellAt(e);
+      if (S.drag) { selMove(x, y); return; }
       if (S.stroke) { moveStroke(x, y); return; }
       const inside = x >= 0 && y >= 0 && x < S.doc.w && y < S.doc.h;
       const next = inside ? [x, y] : null;
       if (String(next) !== String(S.hover)) { S.hover = next; paintInfo(); schedule(); }
     });
-    const up = () => { if (S.stroke) endStroke(); };
+    const up = () => { if (S.drag) selUp(); if (S.stroke) endStroke(); };
     listen(cv, 'pointerup', up);
     listen(cv, 'pointercancel', up);
     listen(cv, 'lostpointercapture', up);
@@ -1662,10 +2077,13 @@ defineApp({
         if (!S.kbd) S.kbd = kbdStart();
         const [x, y] = S.kbd;
         if (S.tool === 'picker') { pickAt(x, y); return; }
-        if (S.tool === 'line' || S.tool === 'rect') {
-          if (!S.anchor) { S.anchor = [x, y]; say(`Start set at ${x}, ${y}. Move, then press Space again to draw the ${S.tool === 'line' ? 'line' : 'rectangle'}. Esc cancels.`); schedule(); return; }
+        if (S.float && e.key === 'Enter') { commitFloat(); return; }
+        if (['line', 'rect', 'ellipse', 'select'].includes(S.tool)) {
+          const noun = { line: 'line', rect: 'rectangle', ellipse: 'ellipse', select: 'selection' }[S.tool];
+          if (!S.anchor) { S.anchor = [x, y]; say(`Start set at ${x}, ${y}. Move, then press Space again to ${S.tool === 'select' ? 'make the selection' : `draw the ${noun}`}. Esc cancels.`); schedule(); return; }
           const [ax, ay] = S.anchor;
           S.anchor = null;
+          if (S.tool === 'select') { commitFloat(); S.sel = rectOf(ax, ay, x, y); say(`Selected ${S.sel.w}×${S.sel.h}.`); paintInfo(); schedule(); return; }
           if (beginStroke(S.tool, ax, ay, { filled: e.shiftKey })) { moveStroke(x, y); endStroke(); }
           return;
         }
@@ -1677,11 +2095,11 @@ defineApp({
 
     /* ---- import ---- */
     const importIn = h('input', {
-      type: 'file', accept: 'image/png,image/gif,image/webp,image/jpeg', hidden: true, 'aria-hidden': 'true', tabindex: '-1',
+      type: 'file', multiple: true, accept: 'image/png,image/gif,image/webp,image/jpeg,.json,application/json', hidden: true, 'aria-hidden': 'true', tabindex: '-1',
       onchange: async e => {
-        const file = e.target.files && e.target.files[0];
+        const files = [...(e.target.files || [])];
         e.target.value = '';
-        if (file) await importImage(file);
+        if (files.length) await importDialog(files);
       },
     });
     views.sprite.append(importIn);
@@ -1692,10 +2110,11 @@ defineApp({
     listen(views.sprite, 'dragleave', e => { if (!views.sprite.contains(e.relatedTarget)) views.sprite.classList.remove('is-drop'); });
     listen(views.sprite, 'drop', e => {
       views.sprite.classList.remove('is-drop');
-      const f = [...(e.dataTransfer?.files || [])].find(x => /^image\//.test(x.type));
-      if (!f) return;
+      const { files, folders } = fromDrop(e.dataTransfer);
+      const use = files.filter(x => /^image\//.test(x.type) || extOf(x.name) === 'json');
+      if (!use.length) { if (folders.length) { e.preventDefault(); say(`Folders can’t be imported (${folders[0]}). Drop the picture itself.`, 'err'); } return; }
       e.preventDefault();
-      importImage(f);
+      importDialog(use);
     });
     listen(window, 'paste', e => {
       if (S.dead || S.tab !== 'sprite' || S.sheet || (api.wm?.getActive && api.wm.getActive() !== win) || focusElsewhere()) return;
@@ -1704,8 +2123,140 @@ defineApp({
       const f = [...(e.clipboardData?.files || [])].find(x => /^image\//.test(x.type));
       if (!f) return;
       e.preventDefault();
-      importImage(new File([f], f.name && f.name !== 'image.png' ? f.name : 'pasted.png', { type: f.type }));
+      importDialog([new File([f], f.name && f.name !== 'image.png' ? f.name : 'pasted.png', { type: f.type })]);
     });
+
+    /* The import step: how to bring a picture in. Keep its colours or reduce them to a palette;
+       one image, a sheet sliced by cell size, or the frames a sheet's .json names (with its tags). */
+    async function importDialog(files) {
+      const img = files.find(f => /^image\//.test(f.type) || ['png', 'gif', 'webp', 'jpg', 'jpeg'].includes(extOf(f.name)));
+      const jf = files.find(f => extOf(f.name) === 'json');
+      if (!img) { say('Pick a picture (PNG, GIF, WebP or JPEG), and its sheet .json if it has one.', 'err'); return; }
+      let bmp;
+      try { bmp = await createImageBitmap(img); } catch (err) { say(`“${img.name}” could not be read as an image.`, 'err'); return; }
+      if (S.dead) { bmp.close?.(); return; }
+      let sheet = null;
+      const loadJson = async f => {
+        try {
+          const r = readSheet(await f.text());
+          if (r.ok) { sheet = r.sheet; return true; }
+          say(`“${f.name}” was skipped: ${r.error}`, 'err');
+        } catch (err) { say(`“${f.name}” could not be read.`, 'err'); }
+        return false;
+      };
+      if (jf) await loadJson(jf);
+      closeSheet();
+      const iw = bmp.width, ih = bmp.height;
+      const strip = iw % ih === 0 && iw / ih >= 2 && iw / ih <= MAX_FRAMES && ih <= MAX_SIDE;
+      const O = { colours: 'keep', palId: S.palId, layout: sheet ? 'json' : strip ? 'slice' : 'one', cw: strip ? ih : Math.min(iw, MAX_SIDE), ch: Math.min(ih, MAX_SIDE), skip: true };
+      const base = img.name.replace(/\.[^.]+$/, '').replace(/-(sheet|grid)$/, '');
+
+      function plan() {
+        if (O.layout === 'json' && sheet) {
+          const boxes = sheet.frames.slice(0, MAX_FRAMES).map(([x, y, w, h]) => ({ x, y, w, h }));
+          return { boxes, w: sheet.fw, h: sheet.fh, tags: sheet.tags, error: sheet.fw > MAX_SIDE || sheet.fh > MAX_SIDE ? `The sheet’s frames are bigger than ${MAX_SIDE} pixels.` : '', text: `${boxes.length} frame${boxes.length === 1 ? '' : 's'} of ${sheet.fw}×${sheet.fh} from the .json${sheet.tags.length ? `, tags ${sheet.tags.map(t => t.name).join(', ')}` : ''}` };
+        }
+        if (O.layout === 'slice') {
+          const cw = clamp(Math.round(+O.cw) || 1, 1, MAX_SIDE), ch = clamp(Math.round(+O.ch) || 1, 1, MAX_SIDE);
+          const cols = Math.floor(iw / cw), rows = Math.floor(ih / ch);
+          if (!cols || !rows) return { boxes: [], w: cw, h: ch, tags: [], error: 'A cell can’t be bigger than the picture.', text: '' };
+          const boxes = [];
+          for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) boxes.push({ x: c * cw, y: r * ch, w: cw, h: ch });
+          const cut = boxes.length > MAX_FRAMES;
+          return { boxes: boxes.slice(0, MAX_FRAMES), w: cw, h: ch, tags: [], error: '', text: `${Math.min(boxes.length, MAX_FRAMES)} cell${boxes.length === 1 ? '' : 's'} of ${cw}×${ch}${cut ? ` (the first ${MAX_FRAMES} of ${boxes.length})` : ''}${iw % cw || ih % ch ? `; ${iw % cw} px on the right and ${ih % ch} px at the bottom are left out` : ''}` };
+        }
+        const k = Math.min(1, MAX_SIDE / Math.max(iw, ih));
+        const w = Math.max(1, Math.round(iw * k)), h = Math.max(1, Math.round(ih * k));
+        return { boxes: [{ x: 0, y: 0, w: iw, h: ih }], w, h, tags: [], error: '', scaled: k < 1, text: k < 1 ? `One image, ${w}×${h} (scaled down from ${iw}×${ih}, since Asset Lab edits up to ${MAX_SIDE}×${MAX_SIDE})` : `One image, ${w}×${h}` };
+      }
+      const readBox = (b, dw, dh, smooth) => {
+        const c = document.createElement('canvas');
+        c.width = dw; c.height = dh;
+        const g = c.getContext('2d');
+        g.imageSmoothingEnabled = smooth;
+        g.drawImage(bmp, b.x, b.y, b.w, b.h, 0, 0, smooth ? dw : b.w, smooth ? dh : b.h);
+        return new Uint8ClampedArray(g.getImageData(0, 0, dw, dh).data);
+      };
+
+      const sum = h('div.al-imp__sum', { role: 'status', 'aria-live': 'polite' });
+      const msg = h('div.al-sheet__msg', { role: 'status' });
+      const seg = (name, items, get, set) => h('div.seg.al-seg', { role: 'radiogroup', 'aria-label': name },
+        items.map(([v, label, dis]) => h('button', { type: 'button', role: 'radio', text: label, dataset: { v }, disabled: !!dis,
+          class: get() === v ? 'is-on' : null, 'aria-checked': String(get() === v),
+          onclick: () => { set(v); refresh(); } })));
+      const palPick = h('select.al-select', { 'aria-label': 'Palette to reduce to', onchange: e => { O.palId = e.target.value; refresh(); } },
+        PALETTES.map(p => h('option', { value: p.id, text: `${p.name} (${p.colors.length})`, selected: p.id === O.palId })));
+      const cwIn = h('input.al-num', { type: 'number', min: '1', max: String(MAX_SIDE), value: String(O.cw), 'aria-label': 'Cell width', oninput: e => { O.cw = e.target.value; refresh(true); } });
+      const chIn = h('input.al-num', { type: 'number', min: '1', max: String(MAX_SIDE), value: String(O.ch), 'aria-label': 'Cell height', oninput: e => { O.ch = e.target.value; refresh(true); } });
+      const skipIn = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Skip empty cells', onchange: e => { O.skip = e.target.checked; } });
+      const jsonIn = h('input', { type: 'file', accept: '.json,application/json', hidden: true, 'aria-hidden': 'true', tabindex: '-1',
+        onchange: async e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f && await loadJson(f)) { O.layout = 'json'; refresh(); } } });
+      const colourRow = h('div.al-sheet__row'), layoutRow = h('div.al-sheet__row'), cellRow = h('div.al-sheet__line.al-imp__cells');
+      const goBtn = h('button.btn.btn--primary', { type: 'button', onclick: () => go() }, icon('upload'), h('span', { text: 'Import' }));
+      function refresh(keepFocus) {
+        const pl = plan();
+        if (!keepFocus) {
+          clear(colourRow);
+          colourRow.append(h('span.al-sheet__lbl', { text: 'Colours' }),
+            seg('Colours', [['keep', 'Keep its colours'], ['palette', 'Reduce to a palette']], () => O.colours, v => { O.colours = v; }),
+            O.colours === 'palette' ? palPick : null);
+          clear(layoutRow);
+          layoutRow.append(h('span.al-sheet__lbl', { text: 'Layout' }),
+            seg('Layout', [['one', 'One image'], ['slice', 'Slice into frames'], ['json', sheet ? 'Use the .json' : 'Use a .json', !sheet]], () => O.layout, v => { O.layout = v; }),
+            h('button.btn.btn--sm', { type: 'button', onclick: () => jsonIn.click() }, icon('upload'), h('span', { text: sheet ? 'Another .json' : 'Add the sheet’s .json' })), jsonIn);
+          clear(cellRow);
+          if (O.layout === 'slice') cellRow.append(h('span.al-x', { text: 'Cell' }), cwIn, h('span.al-x', { text: '×' }), chIn, h('label.al-check', skipIn, h('span', { text: 'Skip empty cells' })));
+        }
+        sum.textContent = pl.error || pl.text;
+        sum.dataset.kind = pl.error ? 'err' : 'ok';
+        goBtn.disabled = !!pl.error || !pl.boxes.length;
+      }
+      async function go() {
+        const pl = plan();
+        if (pl.error || !pl.boxes.length) return;
+        let frames = pl.boxes.map(b => readBox(b, pl.w, pl.h, !!pl.scaled));
+        if (O.layout === 'slice' && O.skip) { const kept = frames.filter(px => !isBlank(px)); if (kept.length) frames = kept; }
+        if (O.colours === 'palette') {
+          const cols = palById(O.palId).colors.map(c => c[0]);
+          frames = frames.map(px => PX.snapPx(px, cols));
+          S.palId = O.palId; setPref({ palette: S.palId }); paintPalette();
+        }
+        closeSheet();
+        let note;
+        if (O.layout === 'one' && !pl.scaled && pl.w === S.doc.w && pl.h === S.doc.h && !(S.doc.frames.length === 1 && isBlank(S.doc.frames[0].px)) && S.doc.frames.length < MAX_FRAMES) {
+          change(() => { S.doc.frames.splice(S.doc.cur + 1, 0, { id: uid('f'), px: frames[0] }); S.doc.cur += 1; });
+          note = `Imported “${img.name}” as frame ${S.doc.cur + 1}.`;
+        } else {
+          S.fit = true;
+          change(() => {
+            S.doc = { w: pl.w, h: pl.h, frames: frames.map(px => ({ id: uid('f'), px })), cur: 0, tags: PX.cleanTags(pl.tags, frames.length) };
+            S.spriteName = slug(base).slice(0, 24); S.spriteLib = null; S.fromAsset = null;
+          });
+          if (sheet && sheet.fps) { S.fps = clamp(Math.round(sheet.fps), 1, 24); fpsIn.value = String(S.fps); paintPvCtl(); }
+          note = `Imported “${img.name}”: ${pl.text}${O.colours === 'palette' ? `, reduced to ${palById(O.palId).name}` : ''}. Ctrl+Z goes back.`;
+        }
+        bmp.close?.();
+        if (S.tab === 'sprite') nameIn.value = S.spriteName;
+        say(note);
+      }
+      const closeBtn = h('button.al-ib', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => { bmp.close?.(); closeSheet(); } }, icon('x'));
+      const prev = h('canvas.al-imp__prev', { width: '1', height: '1', 'aria-hidden': 'true' });
+      try {
+        const k = Math.min(1, 96 / Math.max(iw, ih));
+        prev.width = Math.max(1, Math.round(iw * k)); prev.height = Math.max(1, Math.round(ih * k));
+        prev.getContext('2d').drawImage(bmp, 0, 0, prev.width, prev.height);
+      } catch (err) { /* decoration */ }
+      const card = h('div.al-sheet__card.al-imp', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'al-imp-title' },
+        h('div.al-sheet__head', h('span.al-sheet__ic', icon('upload')), h('h2#al-imp-title', { text: 'Import a picture' }), h('span.al-grow'), closeBtn),
+        h('div.al-imp__file', h('div.al-checker.al-imp__box', prev), h('div', h('b', { text: img.name }), h('small', { text: `${iw}×${ih} · ${fmtSize(img.size)}` }))),
+        colourRow, layoutRow, cellRow, sum, msg,
+        h('div.al-sheet__line', goBtn, h('button.btn', { type: 'button', onclick: () => { bmp.close?.(); closeSheet(); } }, h('span', { text: 'Cancel' }))));
+      const wrap = h('div.al-sheet', { onpointerdown: e => { if (e.target === wrap) { bmp.close?.(); closeSheet(); } } }, card);
+      al.appendChild(wrap);
+      S.sheet = { wrap, opener: null, paintProjects: () => {} };
+      refresh();
+      goBtn.focus();
+    }
 
     async function importImage(file, { asNew = false, source = null } = {}) {
       let bmp;
@@ -1766,7 +2317,7 @@ defineApp({
     }
 
     /* ---- export ---- */
-    const spriteFrames = () => S.doc.frames.map(f => f.px);
+    const spriteFrames = () => { commitFloat(); return S.doc.frames.map(f => f.px); };
     async function exportPng(kind, scale, mode = 'horizontal', withJson = false) {
       const { w, h: hh, frames, cur } = S.doc;
       const c = kind === 'sheet' ? sheetCanvas(spriteFrames(), w, hh, scale, mode) : frameCanvas(frames[cur].px, w, hh, scale);
@@ -1775,9 +2326,7 @@ defineApp({
         const name = `${slug(S.spriteName)}${kind === 'sheet' ? (mode === 'grid' ? '-grid' : '-sheet') : frames.length > 1 ? `-${cur + 1}` : ''}${scale > 1 ? `@${scale}x` : ''}.png`;
         download(blob, name);
         if (withJson) {
-          const L = sheetLayout(frames.length, w, hh, mode, scale);
-          const json = { image: name, layout: mode, size: { w: L.width, h: L.height }, frame: { w: w * scale, h: hh * scale },
-            columns: L.cols, rows: L.rows, fps: S.fps, frames: L.rects };
+          const json = PX.sheetJson({ name, mode, scale, w, h: hh, n: frames.length, fps: S.fps, tags: S.doc.tags });
           download(new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' }), name.replace(/\.png$/, '.json'));
         }
         say(`Downloaded ${name}${withJson ? ' and its .json' : ''} (${c.width}×${c.height}).`);
@@ -1825,6 +2374,58 @@ defineApp({
       h('h3.al-sec__h', { text: 'Presets' }),
       h('div.al-presets__list', { role: 'group', 'aria-label': 'Sound presets' }, presetBtns),
       h('p.al-fine', { text: 'Each click rolls a new variation, like sfxr. Everything is made in your browser.' }));
+
+    const mutBtn = h('button.al-preset', { type: 'button', 'aria-label': 'Mutate the sound', onclick: () => mutateNow() }, h('span.al-preset__ic', icon('shuffle')), h('span', { text: 'Mutate' }));
+    const backBtn = h('button.al-preset', { type: 'button', 'aria-label': 'Undo the last change', disabled: true, onclick: () => sndBack() }, h('span.al-preset__ic', icon('undo')), h('span', { text: 'Undo change' }));
+    const mixSel = h('select.al-select.al-mixsel', { 'aria-label': 'Sound to mix in' });
+    const mixAmt = h('input.al-range', { type: 'range', min: '10', max: '90', step: '5', value: '50', 'aria-label': 'How much of the other sound', oninput: () => { mixOut.textContent = `${mixAmt.value}%`; mixAmt.style.setProperty('--p', `${(mixAmt.value - 10) / 80 * 100}%`); } });
+    const mixOut = h('output.al-knob__v', { text: '50%' });
+    const mixBtn = h('button.al-preset', { type: 'button', 'aria-label': 'Mix the two sounds', onclick: () => mixNow() }, h('span.al-preset__ic', icon('layers')), h('span', { text: 'Mix' }));
+    const tweakCol = h('div.al-tweak',
+      h('h3.al-sec__h', { text: 'Tweak' }),
+      h('div.al-presets__list', { role: 'group', 'aria-label': 'Change the sound' }, mutBtn, backBtn),
+      h('h3.al-sec__h', { text: 'Mix two sounds' }),
+      mixSel, h('div.al-mixrow', mixAmt, mixOut), mixBtn,
+      h('p.al-fine', { text: 'Mutate nudges every control a little. Mix blends this sound with another, by the amount you choose.' }));
+    presetsCol.append(tweakCol);
+    function paintMixOptions() {
+      const keep = mixSel.value;
+      clear(mixSel);
+      mixSel.append(h('optgroup', { label: 'A fresh preset' }, PRESETS.map(p => h('option', { value: `p:${p.id}`, text: p.label }))));
+      const mine = S.lib.filter(i => i.kind === 'sound' && i.sound);
+      if (mine.length) mixSel.append(h('optgroup', { label: 'From your library' }, mine.map(i => h('option', { value: `l:${i.id}`, text: i.name }))));
+      if (keep && [...mixSel.options].some(o => o.value === keep)) mixSel.value = keep;
+    }
+    function applySnd(next, text) {
+      rememberSnd();
+      S.snd = next;
+      S.buf = null;
+      presetBtns.forEach(b => b.classList.remove('is-on'));
+      paintSnd();
+      touch();
+      rerender().then(b => { if (b && S.autoplay) playSound(); });
+      say(text);
+    }
+    function mutateNow() { applySnd(mutateSound(S.snd, 0.18), 'Mutated: every control moved a little. Undo change goes back.'); }
+    function mixNow() {
+      const v = mixSel.value || 'p:coin';
+      let other, label;
+      if (v.startsWith('l:')) {
+        const it = S.lib.find(i => i.id === v.slice(2));
+        if (!it || !it.sound) { say('That sound is not in your library any more.', 'err'); return; }
+        other = normSound(it.sound); label = `“${it.name}”`;
+      } else { other = makePreset(v.slice(2)); label = `a fresh ${PRESETS.find(p => p.id === v.slice(2))?.label.toLowerCase() || 'preset'}`; }
+      applySnd(mixSounds(S.snd, other, +mixAmt.value / 100), `Mixed in ${label} (${mixAmt.value}%). Undo change goes back.`);
+    }
+    function sndBack() {
+      const prev = S.sndPast.pop();
+      backBtn.disabled = !S.sndPast.length;
+      if (!prev) { say('Nothing to undo.'); return; }
+      S.snd = normSound(prev); S.buf = null;
+      paintSnd(); touch();
+      rerender();
+      say('Went back one change.');
+    }
 
     const waveCv = h('canvas.al-wave__cv', { 'aria-hidden': 'true' });
     const playhead = h('i.al-wave__head');
@@ -1897,7 +2498,9 @@ defineApp({
       if (playNow) rerender().then(b => { if (b && S.autoplay) playSound(); });
       else rerenderSoon();
     }
+    function rememberSnd() { S.sndPast.push({ ...S.snd }); if (S.sndPast.length > 20) S.sndPast.shift(); backBtn.disabled = false; }
     function usePreset(id) {
+      rememberSnd();
       S.snd = makePreset(id);
       /* a default or preset name follows the preset, and a new name means a
          new sound (not the saved one it was called after); a name you typed
@@ -2038,6 +2641,165 @@ defineApp({
       } catch (err) { say(err.message, 'err'); return ''; }
     }
 
+    /* =============================== JINGLE ===============================
+       16 steps by 8 notes, a tempo, a wave, a scale. The tune is worked out as samples
+       (core/pixelops.js renderJingle): what plays is what the WAV holds. */
+    const jcells = [];                     /* [row][step] -> button */
+    const jcols = [];                      /* step -> the buttons of that column */
+    const jTempo = h('input.al-range', { type: 'range', min: '60', max: '240', step: '5', 'aria-label': 'Tempo in beats per minute',
+      oninput: e => { S.jing.bpm = +e.target.value; jingleChanged(false); } });
+    const jTempoOut = h('output.al-knob__v');
+    const jScale = h('select.al-select', { 'aria-label': 'Scale', onchange: e => { S.jing.scale = e.target.value; jingleChanged(); } },
+      PX.SCALES.map(sc => h('option', { value: sc.id, text: sc.label })));
+    const jRoot = h('select.al-select', { 'aria-label': 'Key', onchange: e => { S.jing.root = +e.target.value; jingleChanged(); } },
+      [48, 50, 52, 53, 55, 57, 59, 60, 62, 64, 65, 67, 69, 71, 72].map(m => h('option', { value: String(m), text: `${PX.midiName(m)}` })));
+    const jWaves = PX.JINGLE_WAVES.map(wv => h('button.al-wv', { type: 'button', role: 'radio', dataset: { wave: wv }, text: wv[0].toUpperCase() + wv.slice(1),
+      onclick: () => { S.jing.wave = wv; jingleChanged(); } }));
+    const jLoop = h('input', { type: 'checkbox', 'aria-label': 'Loop', onchange: e => { S.jing.loop = e.target.checked; jingleChanged(false); } });
+    const jPlay = h('button.al-play', { type: 'button', 'aria-label': 'Play the jingle', title: 'Play (P)', onclick: () => (S.jplay ? stopJingle() : playJingle()) }, icon('play', { fill: true }));
+    const jGrid = h('div.al-jgrid', { role: 'group', 'aria-label': 'Jingle notes: 8 pitches by 16 steps. High notes are at the top.' });
+    for (let r = PX.JINGLE_ROWS - 1; r >= 0; r--) {
+      jcells[r] = [];
+      const row = h('div.al-jrow', { role: 'group' });
+      row.append(h('span.al-jname', { dataset: { row: String(r) }, 'aria-hidden': 'true' }));
+      for (let st = 0; st < PX.JINGLE_STEPS; st++) {
+        const b = h('button.al-jcell', { type: 'button', 'aria-pressed': 'false', dataset: { r: String(r), s: String(st) },
+          class: st % 4 === 0 ? 'is-beat' : null,
+          onclick: () => toggleCell(r, st),
+          onkeydown: e => {
+            const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
+            if (!d) return;
+            e.preventDefault();
+            const nr = clamp(r + d[1], 0, PX.JINGLE_ROWS - 1), ns = clamp(st + d[0], 0, PX.JINGLE_STEPS - 1);
+            jcells[nr][ns].focus();
+          } });
+        jcells[r][st] = b;
+        (jcols[st] = jcols[st] || []).push(b);
+        row.append(b);
+      }
+      jGrid.append(row);
+    }
+    const jClear = h('button.btn.btn--sm', { type: 'button', onclick: () => { rememberJ(); S.jing.steps = new Array(PX.JINGLE_STEPS).fill(0); jingleChanged(); say('Cleared.'); } }, icon('trash'), h('span', { text: 'Clear' }));
+    const jRand = h('button.btn.btn--sm', { type: 'button', onclick: () => surpriseJingle() }, icon('shuffle'), h('span', { text: 'Surprise me' }));
+    const jUndo = h('button.btn.btn--sm', { type: 'button', disabled: true, onclick: () => { const p = S.jPast.pop(); if (p) { S.jing.steps = p; jingleChanged(); } jUndo.disabled = !S.jPast.length; } }, icon('undo'), h('span', { text: 'Undo' }));
+    S.jPast = [];
+    const rememberJ = () => { S.jPast.push(S.jing.steps.slice()); if (S.jPast.length > 30) S.jPast.shift(); jUndo.disabled = false; };
+    views.jingle.append(h('div.al-jmain',
+      h('div.al-jbar',
+        h('label.al-jf', h('span', { text: 'Tempo' }), jTempo, jTempoOut),
+        h('label.al-jf', h('span', { text: 'Scale' }), jScale),
+        h('label.al-jf', h('span', { text: 'Key' }), jRoot),
+        h('div.al-jf', h('span', { text: 'Wave' }), h('div.al-waves', { role: 'radiogroup', 'aria-label': 'Jingle wave' }, jWaves))),
+      h('div.al-jgridwrap', jGrid),
+      h('div.al-jfoot', jPlay, h('label.al-check', jLoop, h('span', { text: 'Loop' })), h('span.al-grow'), jUndo, jClear, jRand),
+      h('p.al-fine', { text: 'Click squares to place notes. Rows are the notes of the scale, low at the bottom; there are 16 steps. Everything is made in your browser, and Export WAV saves exactly what you hear.' })));
+    function toggleCell(r, st) {
+      rememberJ();
+      S.jing.steps[st] ^= (1 << r);
+      jingleChanged();
+    }
+    function surpriseJingle() {
+      rememberJ();
+      const steps = new Array(PX.JINGLE_STEPS).fill(0);
+      let row = 2 + Math.floor(Math.random() * 3);
+      for (let st = 0; st < PX.JINGLE_STEPS; st++) {
+        if (st % 2 === 0 || Math.random() < 0.25) {
+          row = clamp(row + Math.floor(Math.random() * 5) - 2, 0, PX.JINGLE_ROWS - 1);
+          if (Math.random() < 0.85) steps[st] |= 1 << row;
+        }
+      }
+      S.jing.steps = steps;
+      jingleChanged();
+      say('A random tune. Change it however you like.');
+    }
+    function jingleChanged(repaintGrid = true) {
+      S.jbuf = null;
+      if (repaintGrid) paintJingle(); else paintJingleBar();
+      paintInfo();
+      touch();
+      if (S.jplay) playJingle();
+    }
+    function paintJingleBar() {
+      jTempo.value = String(S.jing.bpm);
+      jTempo.style.setProperty('--p', `${((S.jing.bpm - 60) / 180) * 100}%`);
+      jTempoOut.textContent = `${S.jing.bpm} bpm`;
+      jLoop.checked = S.jing.loop;
+    }
+    function paintJingle() {
+      paintJingleBar();
+      jScale.value = S.jing.scale;
+      jRoot.value = String(S.jing.root);
+      jWaves.forEach(b => { const on = b.dataset.wave === S.jing.wave; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); });
+      for (let r = 0; r < PX.JINGLE_ROWS; r++) {
+        const nm = PX.midiName(PX.rowMidi(S.jing, r));
+        jGrid.querySelector(`.al-jname[data-row="${r}"]`).textContent = nm;
+        for (let st = 0; st < PX.JINGLE_STEPS; st++) {
+          const on = !!(S.jing.steps[st] & (1 << r));
+          const b = jcells[r][st];
+          b.classList.toggle('is-on', on);
+          b.setAttribute('aria-pressed', String(on));
+          b.setAttribute('aria-label', `${nm}, step ${st + 1}`);
+        }
+      }
+      paintInfo();
+    }
+    const jingleSamples = () => PX.renderJingle(S.jing, SR);
+    const jingleBlob = () => new Blob([encodeWav(jingleSamples(), SR)], { type: 'audio/wav' });
+    async function exportJingleWav() {
+      try {
+        const blob = jingleBlob();
+        const name = `${slug(S.jingName)}.wav`;
+        download(blob, name);
+        say(`Downloaded ${name} (${kb(blob.size)}).`);
+        return name;
+      } catch (err) { say(err.message, 'err'); return ''; }
+    }
+    let jRaf = 0;
+    function stopJingle() {
+      if (S.jplay) { try { S.jplay.src.onended = null; S.jplay.src.stop(); } catch (err) { /* ended */ } S.jplay = null; }
+      if (jRaf) cancelAnimationFrame(jRaf);
+      jRaf = 0;
+      jPlay.classList.remove('is-playing');
+      jPlay.replaceChildren(icon('play', { fill: true }));
+      jPlay.setAttribute('aria-label', 'Play the jingle');
+      jcols.forEach(c => c.forEach(b => b.classList.remove('is-now')));
+    }
+    async function playJingle() {
+      if (store.get('prefs.muted', false) === true) { say('StaticOS is muted. Unmute to hear it; exporting still works.'); return; }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { say('This browser has no Web Audio playback. Export still works.', 'err'); return; }
+      stopJingle();
+      try {
+        if (!S.actx) S.actx = new AC();
+        if (S.actx.state === 'suspended') await S.actx.resume().catch(() => {});
+        if (S.dead) return;
+        const samples = jingleSamples();
+        const buf = S.actx.createBuffer(1, samples.length, SR);
+        buf.copyToChannel(samples, 0);
+        const src = S.actx.createBufferSource();
+        src.buffer = buf; src.loop = S.jing.loop;
+        const vol = S.actx.createGain();
+        vol.gain.value = clamp((store.get('prefs.volume', 62) ?? 62) / 100, 0, 1);
+        src.connect(vol).connect(S.actx.destination);
+        src.onended = () => { if (S.jplay && S.jplay.src === src) stopJingle(); };
+        src.start();
+        S.jplay = { src, t0: S.actx.currentTime };
+        jPlay.classList.add('is-playing');
+        jPlay.replaceChildren(icon('pause', { fill: true }));
+        jPlay.setAttribute('aria-label', 'Stop the jingle');
+        const sd = PX.stepSeconds(S.jing);
+        let lastStep = -1;
+        const tick = () => {
+          jRaf = 0;
+          if (!S.jplay || S.dead) return;
+          const st = Math.floor((S.actx.currentTime - S.jplay.t0) / sd) % PX.JINGLE_STEPS;
+          if (st !== lastStep) { lastStep = st; jcols.forEach((c, i) => c.forEach(b => b.classList.toggle('is-now', i === st))); }
+          jRaf = requestAnimationFrame(tick);
+        };
+        if (!reducedMotion()) tick();
+      } catch (err) { say(`Couldn't play: ${err.message}`, 'err'); }
+    }
+
     /* ============================== LIBRARY ============================== */
     const filterBtns = [['all', 'All'], ['sprite', 'Sprites'], ['sound', 'Sounds']].map(([id, label]) => h('button', {
       type: 'button', dataset: { f: id }, text: label, onclick: () => { S.libFilter = id; setPref({ libFilter: id }); paintLib(); },
@@ -2054,6 +2816,7 @@ defineApp({
       try { S.lib = await libList(); } catch (err) { S.lib = []; }
       if (S.dead) return;
       libCount.textContent = S.lib.length ? String(S.lib.length) : '';
+      paintMixOptions();
       paintLib();
       paintInfo();
     }
@@ -2118,7 +2881,7 @@ defineApp({
       items.forEach(item => {
         const meta = item.kind === 'sprite'
           ? `${item.sprite.w}×${item.sprite.h}${item.sprite.frames.length > 1 ? ` · ${item.sprite.frames.length} frames` : ''}`
-          : `${fmtS(item.dur || item.sound?.dur || 0)} · ${item.sound?.wave || 'sound'}`;
+          : `${fmtS(item.dur || item.sound?.dur || 0)} · ${item.jingle ? 'jingle' : item.sound?.wave || 'sound'}`;
         libGrid.append(h('article.al-card', { dataset: { id: item.id } },
           libThumb(item),
           h('div.al-card__body',
@@ -2242,12 +3005,18 @@ defineApp({
         const { w, h: hh, frames, fps } = item.sprite;
         S.fit = true;
         change(() => {
-          S.doc = { w, h: hh, frames: frames.map(px => ({ id: uid('f'), px: new Uint8ClampedArray(px) })), cur: 0 };
+          S.doc = { w, h: hh, frames: frames.map(px => ({ id: uid('f'), px: new Uint8ClampedArray(px) })), cur: 0, tags: PX.cleanTags(item.sprite.tags, frames.length) };
           S.spriteName = item.name; S.spriteLib = item.id; S.fromAsset = null;
         });
         if (fps) { S.fps = clamp(fps, 1, 24); fpsIn.value = String(S.fps); paintPvCtl(); }
         setTab('sprite');
         say(`Opened “${item.name}”. Ctrl+Z goes back to what you had.`);
+      } else if (item.jingle) {
+        S.jing = PX.normJingle(item.jingle);
+        S.jingName = item.name; S.jingLib = item.id; S.jbuf = null;
+        touch();
+        setTab('jingle');
+        say(`Opened “${item.name}”.`);
       } else {
         S.snd = normSound(item.sound);
         S.sndName = item.name; S.sndLib = item.id;
@@ -2320,11 +3089,23 @@ defineApp({
         const frames = S.doc.frames.map(f => f.px.slice());
         const png = await spriteDataUrl('sheet');
         const name = (S.spriteName || 'sprite').trim().slice(0, 40) || 'sprite';
-        await LIB.set(LIBKEY + id, { app: 'assetlab', id, kind: 'sprite', name, createdAt: prev?.createdAt || now, updatedAt: now, sprite: { w: S.doc.w, h: S.doc.h, frames, fps: S.fps }, png });
+        await LIB.set(LIBKEY + id, { app: 'assetlab', id, kind: 'sprite', name, createdAt: prev?.createdAt || now, updatedAt: now, sprite: { w: S.doc.w, h: S.doc.h, frames, fps: S.fps, tags: S.doc.tags || [] }, png });
         /* tell the rest of the OS — Static Downloads lists saved assets and
            had no way to know one had appeared (drafts stay silent) */
         api.bus.emit('assets:change', { kind: 'save', id, type: 'sprite' });
         S.spriteLib = id;
+        touch();
+        return name;
+      }
+      if (kind === 'jingle') {
+        const samples = PX.renderJingle(S.jing, SR);
+        const id = (!asCopy && S.jingLib) || uid('j');
+        const prev = S.lib.find(i => i.id === id);
+        const wav = await blobDataUrl(new Blob([encodeWav(samples, SR)], { type: 'audio/wav' }));
+        const name = (S.jingName || 'jingle').trim().slice(0, 40) || 'jingle';
+        await LIB.set(LIBKEY + id, { app: 'assetlab', id, kind: 'sound', name, createdAt: prev?.createdAt || now, updatedAt: now, jingle: { ...S.jing, steps: S.jing.steps.slice() }, wav, peaks: peaksOf(samples, 48), dur: samples.length / SR });
+        api.bus.emit('assets:change', { kind: 'save', id, type: 'sound' });
+        S.jingLib = id;
         touch();
         return name;
       }
@@ -2347,7 +3128,7 @@ defineApp({
       const n = S.doc.frames.length;
       let mode = isSprite && n > 1 ? 'sheet' : 'frame';
       const sName = h('input.al-in#al-sheet-name', {
-        type: 'text', maxlength: '40', value: isSprite ? S.spriteName : S.sndName, spellcheck: 'false',
+        type: 'text', maxlength: '40', value: nameFor(kind), spellcheck: 'false',
         oninput: e => setName(kind, e.target.value),
       });
       /* each section answers right under its own buttons, so the result
@@ -2395,7 +3176,7 @@ defineApp({
          update the one this came from (with "Save as a copy" beside it) */
       const libBtn = h('button.btn.btn--primary', { type: 'button', dataset: { k: 'lib' } });
       const copyBtn = h('button.btn', { type: 'button', dataset: { k: 'copy' } }, icon('copy'), h('span', { text: 'Save as a copy' }));
-      const libEntry = () => (isSprite ? S.spriteLib : S.sndLib);
+      const libEntry = () => libFor(kind);
       const paintLibBtns = () => {
         libBtn.replaceChildren(icon('save'), h('span', { text: libEntry() ? 'Update in library' : 'Save to library' }));
         copyBtn.hidden = !libEntry();
@@ -2444,10 +3225,11 @@ defineApp({
         addBtn.onclick = () => busy(addBtn, projMsg, async () => {
           const pid = sel.value;
           const p = S.projects.find(x => x.id === pid);
-          const base = slug(isSprite ? S.spriteName : S.sndName);
+          const base = slug(nameFor(kind));
           const asset = isSprite
-            ? { name: `${base}${mode === 'sheet' ? '-sheet' : ''}.png`, kind: 'image', dataUrl: await spriteDataUrl(mode) }
-            : { name: `${base}.wav`, kind: 'audio', dataUrl: await blobDataUrl(await wavBlob()) };
+            ? { name: `${base}${mode === 'sheet' ? '-sheet' : ''}.png`, kind: 'image', dataUrl: await spriteDataUrl(mode),
+              ...(mode === 'sheet' && n > 1 ? { sheet: PX.studioSheet({ name: `${base}-sheet.png`, mode: 'horizontal', scale: 1, w: S.doc.w, h: S.doc.h, n, fps: S.fps, tags: S.doc.tags }) } : {}) }
+            : { name: `${base}.wav`, kind: 'audio', dataUrl: await blobDataUrl(kind === 'jingle' ? jingleBlob() : await wavBlob()) };
           const { asset: a, renamed } = await addToProject(pid, asset);
           const open = api.getApp('studio')
             ? h('button.al-link', { type: 'button', onclick: () => { closeSheet(); api.openApp('studio', { project: pid }); } }, h('span', { text: 'Open in Static Studio' }), icon('arrow-right'))
@@ -2472,13 +3254,13 @@ defineApp({
 
       const dlBtn = h('button.btn', { type: 'button', dataset: { k: 'dl' } }, icon('download'), h('span', { text: isSprite ? 'Download PNG' : 'Download WAV' }));
       dlBtn.onclick = () => busy(dlBtn, dlMsg, async () => {
-        const nm = isSprite ? await exportPng(mode, 1) : await exportWav();
+        const nm = isSprite ? await exportPng(mode, 1) : kind === 'jingle' ? await exportJingleWav() : await exportWav();
         if (nm) note(dlMsg, `Downloaded ${nm}.`);
       });
 
       const closeBtn = h('button.al-ib', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => closeSheet() }, icon('x'));
       const card = h('div.al-sheet__card', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'al-sheet-title' },
-        h('div.al-sheet__head', h('span.al-sheet__ic', icon(isSprite ? 'image' : 'volume')), h('h2#al-sheet-title', { text: isSprite ? 'Save sprite' : 'Save sound' }), h('span.al-grow'), closeBtn),
+        h('div.al-sheet__head', h('span.al-sheet__ic', icon(isSprite ? 'image' : 'volume')), h('h2#al-sheet-title', { text: isSprite ? 'Save sprite' : kind === 'jingle' ? 'Save jingle' : 'Save sound' }), h('span.al-grow'), closeBtn),
         h('div.al-sheet__row', h('label.al-sheet__lbl', { for: 'al-sheet-name', text: 'Name' }), sName),
         modeRow,
         h('div.al-sheet__sec',
@@ -2532,6 +3314,19 @@ defineApp({
       if (S.tab === 'sprite') {
         if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
         if (mod && k === 'y') { e.preventDefault(); redo(); return; }
+        if (mod && k === 'c' && (S.sel || S.float)) { e.preventDefault(); copySel(); return; }
+        if (mod && k === 'x' && (S.sel || S.float)) { e.preventDefault(); cutSel(); return; }
+        if (mod && k === 'v' && S.clip) { e.preventDefault(); pasteClip(); return; }
+        if (mod && k === 'a') { e.preventDefault(); selectAll(); return; }
+        if (mod && (S.sel || S.float) && ['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(k)) {
+          e.preventDefault();
+          const st = e.shiftKey ? 4 : 1;
+          nudge(k === 'arrowleft' ? -st : k === 'arrowright' ? st : 0, k === 'arrowup' ? -st : k === 'arrowdown' ? st : 0);
+          return;
+        }
+        if (!mod && (k === 'delete' || k === 'backspace') && (S.sel || S.float)) { e.preventDefault(); deleteSel(); return; }
+        if (!mod && k === 'enter' && S.float) { e.preventDefault(); commitFloat(); return; }
+        if (!mod && k === 'escape' && (S.float || S.sel)) { e.preventDefault(); if (S.float) cancelFloat(); else { S.sel = null; paintInfo(); schedule(); } return; }
         if (mod || e.altKey) return;
         const tool = TOOLS.find(x => x.key.toLowerCase() === k);
         if (tool) { e.preventDefault(); setTool(tool.id); return; }
@@ -2545,6 +3340,9 @@ defineApp({
       } else if (S.tab === 'sound' && !mod && !e.altKey && k === 'p') {
         e.preventDefault();
         playSound();
+      } else if (S.tab === 'jingle' && !mod && !e.altKey && k === 'p') {
+        e.preventDefault();
+        if (S.jplay) stopJingle(); else playJingle();
       }
     });
 
@@ -2619,7 +3417,7 @@ defineApp({
     setTool(S.tool);
     setMirror(S.mirror);
     paintToggles();
-    paintColor();
+    paintPalette();
     paintRecent();
     paintAI();
     paintSnd();
@@ -2635,12 +3433,15 @@ defineApp({
       const sp = d.sprite;
       if (sp && sp.w >= 1 && sp.h >= 1 && sp.w <= MAX_SIDE && sp.h <= MAX_SIDE && Array.isArray(sp.frames) && sp.frames.length
         && sp.frames.every(px => px && px.length === sp.w * sp.h * 4)) {
-        S.doc = { w: sp.w, h: sp.h, frames: sp.frames.slice(0, MAX_FRAMES).map(px => ({ id: uid('f'), px: new Uint8ClampedArray(px) })), cur: clamp(sp.cur | 0, 0, Math.min(sp.frames.length, MAX_FRAMES) - 1) };
+        S.doc = { w: sp.w, h: sp.h, frames: sp.frames.slice(0, MAX_FRAMES).map(px => ({ id: uid('f'), px: new Uint8ClampedArray(px) })), cur: clamp(sp.cur | 0, 0, Math.min(sp.frames.length, MAX_FRAMES) - 1), tags: [] };
+        S.doc.tags = PX.cleanTags(sp.tags, S.doc.frames.length);
         S.spriteName = String(sp.name || 'sprite').slice(0, 40);
         S.spriteLib = typeof sp.lib === 'string' ? sp.lib : null;
         S.fromAsset = sp.src && typeof sp.src.project === 'string' && typeof sp.src.name === 'string' ? { project: sp.src.project, asset: String(sp.src.asset || ''), name: sp.src.name } : null;
         if (sp.fps) { S.fps = clamp(sp.fps | 0, 1, 24); fpsIn.value = String(S.fps); }
       }
+      const jg = d.jingle;
+      if (jg && jg.j) { S.jing = PX.normJingle(jg.j); S.jingName = String(jg.name || 'jingle').slice(0, 40); S.jingLib = typeof jg.lib === 'string' ? jg.lib : null; S.jbuf = null; }
       const so = d.sound;
       if (so && so.params) {
         S.snd = normSound(so.params);
@@ -2665,6 +3466,7 @@ defineApp({
       closeSheet();
       S.ai.ac?.abort();
       stopSound();
+      stopJingle();
       stopPreviewLoop();
       if (raf) cancelAnimationFrame(raf);
       raf = 0;

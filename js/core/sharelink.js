@@ -28,13 +28,17 @@
      decode(text)                          -> { ok, creation } | { ok:false, error, reason }
      linkFor(fragment)                     -> absolute link for this StaticOS
      supported()                           -> this browser can make/open links
+     packLink(param, data) / unpackLink(param, text)
+                                           -> the same packing for a small JSON
+                                              payload under its own #param=
+                                              (Calendar's #event=, Tasks' #tasklist=)
    ============================================================ */
 
 export const PARAM = 'creation';
 export const VERSION = '1';
 export const MAX_LINK = 64 * 1024;
 export const MAX_HTML = 2 * 1024 * 1024;
-const MAX = { name: 60, creator: 40, prompt: 600 };
+const MAX = { name: 60, creator: 40, prompt: 600, note: 140, controls: 300 };
 
 export const supported = () => typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
 
@@ -106,6 +110,10 @@ export async function encode(c = {}) {
     at: Date.now(),
     h: html,
   };
+  /* the version's note and how to play it travel too, when the sender has them (older links simply lack them) */
+  const nt = line(c.note, MAX.note), ct = line(c.controls, MAX.controls);
+  if (nt) payload.n = nt;
+  if (ct) payload.k = ct;
   let packed;
   try { packed = await deflate(new TextEncoder().encode(JSON.stringify(payload))); }
   catch (e) { return fail('error', `The game couldn’t be compressed (${e.message || e}).`); }
@@ -148,12 +156,52 @@ export async function decode(text) {
       name: line(json.t, MAX.name) || 'Shared game',
       creator: line(json.c, MAX.creator) || null,
       prompt: line(json.p, MAX.prompt) || '',
+      note: line(json.n, MAX.note) || '',
+      controls: line(json.k, MAX.controls) || '',
       at: Number.isFinite(at) && at > 0 && at < 8.64e15 ? at : null,
       html: json.h,
       bytes: new TextEncoder().encode(json.h).byteLength,
       chars: s.length,
     },
   };
+}
+
+/* ---- the same packing for small things other apps send: a Calendar event
+   (#event=), a Static Tasks list (#tasklist=). The receiving app checks every
+   field it reads back and shows what came before anything is added. ---- */
+const DATA_CAP = 256 * 1024;
+/** data (plain JSON) -> { ok, link, chars } | { ok:false, error } */
+export async function packLink(param, data, { max = MAX_LINK } = {}) {
+  if (!supported()) return fail('unsupported', 'This browser can’t pack things into a link.');
+  let packed;
+  try { packed = await deflate(new TextEncoder().encode(JSON.stringify({ v: 1, d: data }))); }
+  catch (e) { return fail('error', `It couldn’t be packed into a link (${e.message || e}).`); }
+  const base = typeof location !== 'undefined' ? `${location.origin}${location.pathname}` : '';
+  const link = `${base}#${param}=${VERSION}.${toB64url(packed)}`;
+  if (link.length > max) return fail('too-big', `That is too much for one link (${kb(link.length)}; a link can be ${kb(max)} at most).`);
+  return { ok: true, link, chars: link.length };
+}
+/** A #param= value (or a whole link) -> { ok, data } | { ok:false, error }. Reads only; runs nothing. */
+export async function unpackLink(param, text) {
+  let s = String(text || '').trim();
+  const at = s.indexOf(`${param}=`);
+  if (at >= 0) s = s.slice(at + param.length + 1);
+  s = s.split('&')[0];
+  if (!s) return fail('empty', 'This link is empty.');
+  if (s.length > MAX_LINK) return fail('too-big', 'This link is longer than a StaticOS link can be, so it wasn’t opened.');
+  const dot = s.indexOf('.');
+  if (dot <= 0 || s.slice(0, dot) !== VERSION) return fail('version', 'This link was made by a different version of StaticOS and can’t be read here.');
+  const body = s.slice(dot + 1);
+  if (!/^[A-Za-z0-9_-]+$/.test(body)) return fail('broken', 'This link is damaged — part of it may have been cut off when it was copied.');
+  if (!supported()) return fail('unsupported', 'This browser can’t open StaticOS links (it has no DecompressionStream).');
+  try {
+    const bytes = await inflate(fromB64url(body), DATA_CAP);
+    const json = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    if (!json || typeof json !== 'object' || json.v !== 1 || !('d' in json)) return fail('broken', 'This link doesn’t hold anything StaticOS can read.');
+    return { ok: true, data: json.d };
+  } catch (e) {
+    return fail(e && e.tooBig ? 'too-big' : 'broken', e && e.tooBig ? 'This link unpacks to far more than it should, so it wasn’t opened.' : 'This link is damaged — part of it may have been cut off when it was copied.');
+  }
 }
 
 /** Web addresses a game's code mentions. It can still reach the internet
@@ -168,4 +216,4 @@ export function externalHosts(html) {
   return [...out];
 }
 
-export default { encode, decode, linkFor, supported, externalHosts, PARAM, MAX_LINK, MAX_HTML };
+export default { encode, decode, linkFor, supported, externalHosts, packLink, unpackLink, PARAM, MAX_LINK, MAX_HTML };

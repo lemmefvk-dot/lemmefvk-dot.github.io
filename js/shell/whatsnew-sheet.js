@@ -23,6 +23,8 @@
 import api from '../core/api.js?v=ps5-cloud-proxy-v11';
 import { store } from '../core/store.js';
 import { covered } from '../core/cover.js';
+import * as WNB from '../core/wnbadge.js';
+import { t as tr } from '../core/i18n.js';
 
 const KEY = 'session.whatsNew';
 const PREF = 'prefs.whatsNewAfterUpdate';
@@ -69,6 +71,7 @@ export async function checkAfterUpdate(host) {
   const seen = rec.seen || (rec.build ? null : legacySeen) || null;
   if (!seen) {
     store.set(KEY, { build: stamp.build, seen: newest });
+    WNB.startFrom(newest);                  /* the What's New icon only says "New" for what comes after this */
     return 'first-visit';
   }
   const fresh = releases.filter(r => cmpVersion(r.version, seen) > 0);
@@ -77,6 +80,7 @@ export async function checkAfterUpdate(host) {
     return 'nothing-new';
   }
   /* shown or not, these releases count as seen: once means once */
+  WNB.startFrom(seen);                      /* the icon says "New" until What's New is opened */
   store.set(KEY, { build: stamp.build, seen: newest });
   if (store.get(PREF, true) === false) return 'opted-out';
   await whenUncovered();
@@ -98,7 +102,7 @@ function whenUncovered() {
 let open = null;
 
 /** Show the sheet for these releases (newest first). */
-export function showSheet(host, releases) {
+export function showSheet(host, releases, opts = {}) {
   if (!releases?.length) return null;
   ensureCss();
   open?.close();
@@ -133,7 +137,7 @@ export function showSheet(host, releases) {
         app ? h('button.wn-card__go', {
           type: 'button',
           onclick: () => openApp(app.id, x.opts),
-        }, h('span', { text: x.app === 'settings' ? 'Open Settings' : `Open ${app.name}` }), icon('arrow-right')) : null));
+        }, h('span', { text: x.app === 'settings' ? tr('Open Settings') : tr('Open {name}', { name: app.name }) }), icon('arrow-right')) : null));
   };
 
   const never = h('button.switch', {
@@ -145,7 +149,7 @@ export function showSheet(host, releases) {
       store.set(PREF, !on);
     },
   });
-  const gotIt = h('button.btn.btn--primary', { type: 'button', text: 'Got it', onclick: close });
+  const gotIt = h('button.btn.btn--primary', { type: 'button', text: tr('Got it'), onclick: close });
 
   const card = h('div.wn-sheet__card', {
     role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'wn-sheet-title', tabindex: '-1',
@@ -153,25 +157,25 @@ export function showSheet(host, releases) {
     h('header.wn-sheet__head',
       h('div.wn__badge', { 'aria-hidden': 'true' }, icon('sparkles')),
       h('div.wn-sheet__ht',
-        h('div.wn__kicker', { text: `Updated to StaticOS ${top.version}` }),
-        h('h2.wn-sheet__title#wn-sheet-title', { text: top.name ? `The ${top.name} update` : 'What’s new' }),
+        h('div.wn__kicker', { text: opts.kicker || tr('Updated to StaticOS {version}', { version: top.version }) }),
+        h('h2.wn-sheet__title#wn-sheet-title', { text: top.name ? tr('The {name} update', { name: top.name }) : tr('What’s new') }),
         top.summary ? h('p.wn-sheet__sum', { text: top.summary }) : null),
-      h('button.ibtn.wn-sheet__x', { type: 'button', 'aria-label': 'Close', onclick: close }, icon('x'))),
+      h('button.ibtn.wn-sheet__x', { type: 'button', 'aria-label': tr('Close'), onclick: close }, icon('x'))),
     h('div.wn-sheet__body',
       h('ul.wn-sheet__grid', (top.highlights || []).map(item)),
       older.length ? h('section.wn-sheet__older',
-        h('div.wn__kicker', { text: 'Also new since you last looked' }),
+        h('div.wn__kicker', { text: tr('Also new since you last looked') }),
         h('ul', older.map(r => h('li',
           h('span.wn__ver', { text: r.version }),
-          h('span', h('b', { text: r.name || `StaticOS ${r.version}` }), r.summary ? ` — ${r.summary}` : ''))))) : null,
+          h('span', h('b', { text: r.name || tr('StaticOS {version}', { version: r.version }) }), r.summary ? ` — ${r.summary}` : ''))))) : null,
       (top.notes || []).length ? h('section.wn-sheet__notes',
-        h('div.wn__kicker', { text: 'Smaller changes' }),
-        h('ul', top.notes.map(n => h('li', { text: n })))) : null),
+        h('div.wn__kicker', { text: tr('Smaller changes') }),
+        h('ul', top.notes.map(n => h('li', { text: typeof n === 'string' ? n : String(n?.text || '') })))) : null),
     h('footer.wn-sheet__foot',
-      h('label.wn-sheet__never', never, h('span#wn-never-l', { text: 'Don’t show this after updates' })),
+      h('label.wn-sheet__never', never, h('span#wn-never-l', { text: tr('Don’t show this after updates') })),
       h('div.grow'),
       api.getApp('whatsnew')
-        ? h('button.btn.btn--ghost', { type: 'button', text: 'All release notes', onclick: () => openApp('whatsnew') })
+        ? h('button.btn.btn--ghost', { type: 'button', text: tr('All release notes'), onclick: () => openApp('whatsnew') })
         : null,
       gotIt));
 

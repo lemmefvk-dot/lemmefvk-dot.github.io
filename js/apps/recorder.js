@@ -67,6 +67,8 @@ import * as media from '../core/media.js';
 import * as db from '../core/db.js';
 import * as VC from '../core/videocut.js';
 import { createFxPanel } from './recorder-fx.js';
+import * as FT from '../core/filetags.js';
+import { encodeGif } from '../core/gif.js';
 
 /* self-injected stylesheet, guarded so re-opening never double-adds it */
 if (typeof document !== 'undefined' && !document.getElementById('feat-recorder-css')) {
@@ -92,6 +94,21 @@ const LEVELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_
 const SPEEDS = [1, 1.5, 2, 0.75];
 const MIN_CUT = 0.5;                /* s — the shortest cut the editor makes */
 const NUDGE = 0.1, NUDGE_BIG = 1;   /* s per arrow key (and with Shift) in the editor */
+/* screen recording quality: the bits per second asked of the encoder come from the picture size and these.
+   What a minute of it really weighs is measured from a take (see measureRate) and shown; none of it is guessed. */
+const QUALITIES = [
+  { id: 'small', label: 'Small file', k: 0.03, min: 600_000, max: 3_000_000 },
+  { id: 'standard', label: 'Standard', k: 0.08, min: 1_500_000, max: 8_000_000 },
+  { id: 'high', label: 'High', k: 0.14, min: 3_000_000, max: 14_000_000 },
+  { id: 'best', label: 'Best', k: 0.2, min: 5_000_000, max: 20_000_000 },
+];
+const qualityOf = id => QUALITIES.find(q => q.id === id) || QUALITIES[1];
+const CAM_POS = [['bottom-right', 'Bottom right'], ['bottom-left', 'Bottom left'], ['top-right', 'Top right'], ['top-left', 'Top left']];
+const COUNT_FROM = 3;               /* the countdown before a screen recording starts */
+const RATE_FROM = 3000, RATE_FREEZE = 10000;   /* ms of a take the size-per-minute figure needs, and when it stops being refined */
+const GIF_MAX_S = 15, GIF_FPS = 10, GIF_WIDTH = 480;
+const MARKS_MAX = 200;
+const speechCtor = () => (typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition || null : null);
 const TYPES = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm', 'audio/ogg'];
 
 /* ---------------- small helpers ---------------- */
@@ -377,6 +394,8 @@ function normItem(o) {
     w: num(o.w), h: num(o.h),
     aud: o.aud === true,
     src: typeof o.src === 'string' && /^[\w-]{4,80}$/.test(o.src) ? o.src : '',
+    marks: (Array.isArray(o.marks) ? o.marks : []).filter(m => Number.isFinite(m) && m >= 0).map(Math.round).slice(0, MARKS_MAX),
+    tx: typeof o.tx === 'string' ? o.tx.slice(0, 600) : '',
   };
 }
 function normData(raw) {
@@ -384,8 +403,12 @@ function normData(raw) {
   const seen = new Set();
   const items = (Array.isArray(d.items) ? d.items : []).map(normItem)
     .filter(it => it && !seen.has(it.id) && seen.add(it.id));
+  const rates = {};
+  for (const q of QUALITIES) if (d.rates && Number.isFinite(d.rates[q.id]) && d.rates[q.id] > 0) rates[q.id] = Math.round(d.rates[q.id]);
   return { v: 1, items, deviceId: typeof d.deviceId === 'string' ? d.deviceId.slice(0, 300) : '', voice: d.voice !== false,
-    source: d.source === 'screen' ? 'screen' : 'voice', narrate: d.narrate === true };
+    source: d.source === 'screen' ? 'screen' : 'voice', narrate: d.narrate === true,
+    quality: qualityOf(d.quality).id, cam: d.cam === true, camPos: CAM_POS.some(c => c[0] === d.camPos) ? d.camPos : 'bottom-right',
+    count: d.count !== false, live: d.live === true, rates };
 }
 
 /* ======================================================================== */
@@ -423,7 +446,8 @@ defineApp({
       const next = fn(readData());
       writing = true;
       try {
-        store.set(STORE_KEY, { v: 1, items: next.items.map(x => ({ ...x })), deviceId: next.deviceId, voice: next.voice, source: next.source, narrate: next.narrate });
+        store.set(STORE_KEY, { v: 1, items: next.items.map(x => ({ ...x })), deviceId: next.deviceId, voice: next.voice, source: next.source, narrate: next.narrate,
+          quality: next.quality, cam: next.cam, camPos: next.camPos, count: next.count, live: next.live, rates: { ...next.rates } });
       } finally { writing = false; }
     }
 
@@ -439,6 +463,9 @@ defineApp({
       perm: '', permStatus: null,
       devices: [], deviceId: first.deviceId, voice: first.voice,
       source: first.source, narrate: first.narrate,   /* 'voice' | 'screen'; mic over a screen recording */
+      quality: first.quality, cam: first.cam, camPos: first.camPos, count: first.count, live: first.live, rates: first.rates,
+      countN: 0,                /* the number showing during the 3-2-1 */
+      search: '',               /* the list's search box */
       R: null,                  /* the take in progress */
       gen: 0, pendingAc: null,
       items: [],                /* the recordings on screen, newest first */
@@ -462,11 +489,16 @@ defineApp({
     const newBtn = h('button.side__item.rec-new', { type: 'button', title: 'New recording (R starts and stops)', onclick: () => showRecorder() },
       icon('mic'), h('span', { text: 'New recording' }), newTime);
     const countEl = h('span.rec-side__count');
+    const searchIn = h('input', { type: 'search', placeholder: 'Search names and tags', spellcheck: 'false', 'aria-label': 'Search recordings by name or tag',
+      oninput: e => { S.search = e.target.value.trim().toLowerCase(); paintList(); },
+      onkeydown: e => { if (e.key === 'Escape' && e.target.value) { e.preventDefault(); e.stopPropagation(); e.target.value = ''; S.search = ''; paintList(); } } });
+    const searchBox = h('label.field.rec-search', icon('search'), searchIn);
     const listEl = h('div.rec-list', { role: 'list', 'aria-label': 'Recordings' });
     const footEl = h('div.rec-side__foot');
     const side = h('aside.app__side.rec-side', { 'aria-label': 'Recordings' },
       h('div.side__group.rec-side__top', newBtn),
       h('div.rec-side__lbl', h('span.side__label', { text: 'Recordings' }), countEl),
+      searchBox,
       h('div.rec-side__scroll', listEl),
       footEl);
 
@@ -481,7 +513,8 @@ defineApp({
     /* Screen mode shows what is being shared instead of the waveform */
     const liveVid = h('video.rec-wave__vid', { muted: true, playsinline: true, autoplay: true, 'aria-hidden': 'true' });
     const livePh = h('div.rec-wave__ph', icon('monitor'), h('span', { text: 'What you share shows here while it records' }));
-    const liveWave = h('div.rec-wave.rec-wave--live', liveCv, liveVid, livePh);
+    const liveCount = h('div.rec-count', { hidden: true, 'aria-hidden': 'true' });
+    const liveWave = h('div.rec-wave.rec-wave--live', liveCv, liveVid, livePh, liveCount);
     const modeBtn = (id, ic, label) => h('button.rec-mode', { type: 'button', role: 'radio', dataset: { mode: id }, onclick: () => setSource(id) },
       icon(ic), h('span', { text: label }));
     const modes = h('div.rec-modes', { role: 'radiogroup', 'aria-label': 'What to record' },
@@ -510,6 +543,22 @@ defineApp({
       title: 'Also record your microphone over the screen recording, mixed with any sound you share.' },
     h('i.rec-voice__sw', { 'aria-hidden': 'true' }), h('span', { text: 'Narrate with microphone' }));
     const srcRow = h('div.rec-src', micField, voiceBtn, narrateBtn);
+    /* screen options: quality, the webcam bubble, the countdown; and the live transcript (both modes) */
+    const qualSel = h('select.select.rec-micsel', { 'aria-label': 'Screen recording quality', onchange: e => setOpt({ quality: e.target.value }) });
+    const qualField = h('label.rec-src__mic', icon('film'), qualSel);
+    const toggle = (label, title, fn) => h('button.rec-voice', { type: 'button', 'aria-pressed': 'false', title, onclick: fn },
+      h('i.rec-voice__sw', { 'aria-hidden': 'true' }), h('span', { text: label }));
+    const camBtn = toggle('Webcam bubble', 'Show your camera in a round bubble on the recording. The browser asks for the camera when you press Record.', () => setOpt({ cam: !S.cam }));
+    const camPosSel = h('select.select.rec-micsel', { 'aria-label': 'Webcam bubble corner', onchange: e => setOpt({ camPos: e.target.value }) },
+      CAM_POS.map(([v, l]) => h('option', { value: v, text: l })));
+    const countBtn = toggle('3-2-1 countdown', 'Count down before a screen recording starts, so you can get ready.', () => setOpt({ count: !S.count }));
+    const liveBtn = toggle('Live transcript', 'Turn what you say into text while you record. Off unless you turn it on.', () => setOpt({ live: !S.live }));
+    const optRow = h('div.rec-src.rec-src--opts', qualField, camBtn, camPosSel, countBtn, liveBtn);
+    const optNote = h('p.rec-optnote');
+    const markBtn = h('button.btn.btn--sm.rec-mark', { type: 'button', title: 'Drop a marker at this moment (M)', onclick: () => dropMarker() }, icon('pin'), h('span', { text: 'Marker' }));
+    const marksLive = h('div.rec-marks', { 'aria-label': 'Markers so far' });
+    const markRow = h('div.rec-markrow', { hidden: true }, markBtn, marksLive);
+    const txBox = h('div.rec-tx', { hidden: true }, h('b', { text: 'Live transcript' }), h('p', { 'aria-live': 'off' }));
 
     const bigGlyph = h('i.rec-big__glyph', { 'aria-hidden': 'true' });
     const bigBtn = h('button.rec-big', { type: 'button', onclick: () => onBig() }, bigGlyph, h('i.rec-big__spin', { 'aria-hidden': 'true' }));
@@ -525,7 +574,7 @@ defineApp({
     const noteEl = h('div.rec-note');
     const stage = h('div.rec-stage', modes, liveWave,
       h('div.rec-readout', stateEl, timeEl, factsEl),
-      meterEl, deck, srcRow, noteEl);
+      meterEl, markRow, txBox, deck, srcRow, optRow, optNote, noteEl);
     const errEl = h('div.rec-err');
     const recView = h('section.rec-view.rec-view--rec', { 'aria-label': 'Recorder' },
       recBar, h('div.app__content.rec-scroll', stage, errEl));
@@ -698,7 +747,7 @@ defineApp({
     }
 
     const rows = new Map();     /* id -> { el, main, name, meta, ic, key } */
-    let emptyEl = null;
+    let emptyEl = null, noneEl = null;
 
     function rowFor(it) {
       let r = rows.get(it.id);
@@ -720,7 +769,8 @@ defineApp({
       const on = S.sel === it.id && S.view === 'item';
       const playing = P.id === it.id && P.playing;
       const stem = stemOf(it.name);
-      const metaText = `${it.ms ? clock(it.ms) : '—'} · ${whenText(it.at, h24())}`;
+      const tagText = FT.tagsOf(it.node).join(', ');
+      const metaText = `${it.ms ? clock(it.ms) : '—'} · ${whenText(it.at, h24())}${tagText ? ` · ${tagText}` : ''}`;
       const key = `${stem}|${metaText}|${on}|${playing}|${it.kind}`;
       if (key !== r.key) {
         r.key = key;
@@ -738,9 +788,10 @@ defineApp({
     }
 
     function paintList() {
-      countEl.textContent = S.items.length ? String(S.items.length) : '';
+      const shown = listItems();
+      countEl.textContent = S.items.length ? (S.search ? `${shown.length} of ${S.items.length}` : String(S.items.length)) : '';
       listCount.textContent = S.items.length ? String(S.items.length) : '';
-      const alive = new Set(S.items.map(x => x.id));
+      const alive = new Set(shown.map(x => x.id));
       for (const id of [...rows.keys()]) if (!alive.has(id)) { rows.get(id).el.remove(); rows.delete(id); }
       let kids;
       if (!S.items.length) {
@@ -748,7 +799,11 @@ defineApp({
           h('b', { text: 'No recordings yet' }),
           h('small', { text: 'Press Record. Voice takes are saved to Music, screen recordings to Videos, on this device.' }));
         kids = [emptyEl];
-      } else kids = S.items.map(rowFor);
+      } else if (!shown.length) {
+        noneEl = noneEl || h('div.rec-empty', icon('search'), h('b', { text: 'Nothing matches' }), h('small'));
+        noneEl.lastChild.textContent = `No recording has “${S.search}” in its name or tags.`;
+        kids = [noneEl];
+      } else kids = shown.map(rowFor);
       /* move nothing already in place, so a focused row keeps its focus */
       kids.forEach((k, i) => { if (listEl.children[i] !== k) listEl.insertBefore(k, listEl.children[i] || null); });
       while (listEl.children.length > kids.length) listEl.lastElementChild.remove();
@@ -773,8 +828,9 @@ defineApp({
     function rowKey(e, id) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
-        const i = S.items.findIndex(x => x.id === id);
-        const next = S.items[i + (e.key === 'ArrowDown' ? 1 : -1)];
+        const vis = listItems();
+        const i = vis.findIndex(x => x.id === id);
+        const next = vis[i + (e.key === 'ArrowDown' ? 1 : -1)];
         if (next) rows.get(next.id)?.main.focus();
         else if (e.key === 'ArrowUp') newBtn.focus();
       } else if (e.key === 'Delete' || (e.key === 'Backspace' && (e.metaKey || e.ctrlKey))) {
@@ -801,6 +857,8 @@ defineApp({
         { label: 'Rename…', icon: 'edit-3', hint: 'F2', onClick: () => { select(id); startRename(); } },
         { label: 'Download', icon: 'download', onClick: () => download(it) },
         '-',
+        isVid ? { label: 'Frame-accurate trim in Videos', icon: 'crop', onClick: () => trimInVideos(it) }
+          : { label: 'Edit in Audio Editor', icon: 'sliders', onClick: () => editInAudio(it) },
         { label: isVid ? 'Play in Videos' : 'Play in Music', icon: isVid ? 'play' : 'music', onClick: () => openElsewhere(it) },
         { label: 'Show in Files', icon: 'folder-open', onClick: () => showInFiles(it) },
         '-',
@@ -890,6 +948,13 @@ defineApp({
         idle: 'Ready to record', asking: 'Waiting for the microphone…', recording: 'Recording',
         paused: 'Paused — the microphone is still on', saving: 'Saving…', error: '',
       })[ph] || '';
+      if (ph === 'asking' && S.countN > 0) stateText.textContent = `Starting in ${S.countN}…`;
+      liveCount.hidden = !(S.countN > 0);
+      liveCount.textContent = S.countN > 0 ? String(S.countN) : '';
+      markRow.hidden = !live;
+      markBtn.disabled = !live;
+      paintMarks();
+      paintTx();
       factsEl.textContent = factsLine();
       for (const b of modes.children) {
         const on = b.dataset.mode === (scr ? 'screen' : 'voice');
@@ -955,6 +1020,7 @@ defineApp({
         bits.push(R.hasAudio ? (R.mic && R.shared ? 'shared sound + microphone' : R.mic ? 'microphone' : 'shared sound') : 'no sound');
         bits.push(describeVideo(R.type, /mp4/.test(R.type) ? 'mp4' : 'webm'));
         bits.push(R.bytes ? `${bytes(R.bytes)} so far` : 'starting…');
+        if (R.rate) bits.push(`about ${bytes(R.rate)} a minute, measured over the first ${Math.round(R.rateSpan / 1000)} s`);
         return bits.join(' · ');
       }
       if (S.phase === 'saving' && screenMode()) return 'Writing the video to Videos';
@@ -980,7 +1046,7 @@ defineApp({
       return `${t ? describe(t, fb) : 'Audio'} · saved to Music · ${perm}`;
     }
 
-    let micKey = '';
+    let micKey = '', qualKey = '';
     function paintSource() {
       const busy = !!S.R || S.phase === 'asking' || S.phase === 'saving';
       const labelled = S.devices.filter(d => d.label && d.deviceId !== 'communications');
@@ -1010,6 +1076,36 @@ defineApp({
       voiceBtn.hidden = scr;
       narrateBtn.hidden = !scr;
       srcRow.hidden = !!S.problem && S.phase === 'error';
+      /* the screen options and the live transcript */
+      const sr = !!speechCtor();
+      optRow.hidden = srcRow.hidden;
+      qualField.hidden = !scr; camBtn.hidden = !scr; countBtn.hidden = !scr; camPosSel.hidden = !(scr && S.cam);
+      const qkey = JSON.stringify(S.rates);
+      if (qkey !== qualKey) {
+        qualKey = qkey;
+        clear(qualSel);
+        QUALITIES.forEach(q => qualSel.append(h('option', { value: q.id, text: S.rates[q.id] ? `${q.label} — about ${bytes(S.rates[q.id])} a minute` : q.label })));
+      }
+      qualSel.value = S.quality;
+      qualSel.disabled = busy;
+      camPosSel.value = S.camPos;
+      camPosSel.disabled = busy;
+      for (const [b, on] of [[camBtn, S.cam], [countBtn, S.count], [liveBtn, S.live && sr]]) {
+        b.setAttribute('aria-pressed', String(on));
+        b.classList.toggle('is-on', on);
+        b.disabled = busy;
+      }
+      liveBtn.disabled = busy || !sr;
+      liveBtn.title = sr ? 'Turn what you say into text while you record. Off unless you turn it on.' : 'This browser has no speech recognition.';
+      const q = qualityOf(S.quality);
+      const bits = [];
+      if (scr) bits.push(S.rates[q.id]
+        ? `A minute at “${q.label}” weighed about ${bytes(S.rates[q.id])} on your last take. It depends on what is on the screen, so it’s measured, not promised.`
+        : `How much a minute weighs depends on what is on the screen, so it’s measured from the first seconds of a real “${q.label}” take and shown here afterwards.`);
+      bits.push(sr
+        ? 'Live transcript: some browsers (Chrome and Edge, for example) send what the microphone hears to their own speech service to turn it into text. StaticOS itself sends nothing. It listens to the microphone, not to shared sound, and the text is saved as a .txt file beside the take.'
+        : 'This browser has no speech recognition, so there is no live transcript here.');
+      optNote.textContent = bits.join(' ');
     }
 
     function paintNotice() {
@@ -1190,6 +1286,7 @@ defineApp({
       newTime.textContent = R ? `${S.phase === 'paused' ? 'Paused' : '●'} ${clock(activeMs(R))}` : '';
       newBtn.classList.toggle('is-rec', !!R && S.phase === 'recording');
       win.setSubtitle(R ? `${S.phase === 'paused' ? 'Paused' : 'Recording'} ${clock(activeMs(R))}` : '');
+      if (R) measureRate(R);
       if (!recView.hidden) {
         factsEl.textContent = factsLine();
         if (R) paintNotice();
@@ -1225,6 +1322,177 @@ defineApp({
         const silent = R.zeroMs > 3000;
         if (silent !== S.silent) { S.silent = silent; paintNotice(); }
       }
+    }
+
+    /* ============================ options, markers, live transcript ============================ */
+    function setOpt(patch) {
+      if (S.R || S.phase === 'asking' || S.phase === 'saving') return;
+      Object.assign(S, patch);
+      writeData(d => ({ ...d, ...patch }));
+      paint();
+      say(patch.live !== undefined ? (S.live ? 'Live transcript on' : 'Live transcript off') : 'Saved');
+    }
+
+    let marksKey = '';
+    function paintMarks() {
+      const m = S.R ? S.R.marks : [];
+      const key = m.join(',');
+      if (key === marksKey) return;
+      marksKey = key;
+      clear(marksLive);
+      m.forEach((ms, i) => marksLive.append(h('span.rec-chip', { dataset: { ms: String(ms) }, text: `${i + 1} · ${clock(ms)}` })));
+    }
+    function dropMarker() {
+      const R = S.R;
+      if (!R || R.marks.length >= MARKS_MAX) return;
+      const ms = Math.round(activeMs(R));
+      R.marks.push(ms);
+      paintMarks();
+      say(`Marker ${R.marks.length} at ${clock(ms)}`);
+    }
+
+    /* the browser's own speech recognition: it hears the microphone itself, not this take's stream */
+    function startTranscript(R) {
+      const Ctor = speechCtor();
+      if (!Ctor) return;
+      let rec;
+      try { rec = new Ctor(); } catch (err) { return; }
+      const tx = { rec, lines: [], interim: '', on: true, running: false, err: '', endedRes: null };
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = navigator.language || 'en-US';
+      rec.onresult = e => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const r = e.results[i];
+          const text = String((r[0] && r[0].transcript) || '').trim();
+          if (!text) continue;
+          if (r.isFinal) tx.lines.push({ ms: Math.max(0, Math.round(activeMs(R))), text });
+          else interim += (interim ? ' ' : '') + text;
+        }
+        tx.interim = interim;
+        paintTx();
+      };
+      rec.onerror = e => {
+        tx.err = (e && e.error) || 'error';
+        if (/not-allowed|service-not-allowed/.test(tx.err)) {
+          tx.on = false;
+          S.notice = { tone: 'warn', text: `Live transcript stopped: the browser wouldn’t run speech recognition (${tx.err}). The recording goes on.` };
+          paintNotice();
+        }
+      };
+      rec.onend = () => {
+        tx.running = false;
+        if (tx.on && S.R === R && S.phase === 'recording') { try { rec.start(); tx.running = true; } catch (err) { /* already listening */ } }
+        else tx.endedRes?.();
+      };
+      R.tx = tx;
+      try { rec.start(); tx.running = true; } catch (err) { tx.on = false; }
+    }
+    function pauseTranscript(R) { if (R.tx?.running) { try { R.tx.rec.stop(); } catch (err) { /* idle */ } } }
+    function resumeTranscript(R) { if (R.tx?.on && !R.tx.running) { try { R.tx.rec.start(); R.tx.running = true; } catch (err) { /* already listening */ } } }
+    async function endTranscript(R) {
+      const tx = R.tx;
+      if (!tx) return;
+      tx.on = false;
+      if (tx.running) {
+        const done = new Promise(res => { tx.endedRes = res; setTimeout(res, 900); });
+        try { tx.rec.stop(); } catch (err) { tx.endedRes(); }
+        await done;
+      }
+      tx.rec.onresult = tx.rec.onend = tx.rec.onerror = null;
+    }
+    const txText = lines => lines.map(l => `[${clock(l.ms)}] ${l.text}`).join('\n');
+    function paintTx() {
+      const tx = S.R && S.R.tx;
+      txBox.hidden = !tx;
+      if (!tx) return;
+      const said = tx.lines.slice(-3).map(l => l.text).join(' ');
+      const text = [said, tx.interim].filter(Boolean).join(' ');
+      txBox.lastChild.textContent = text || (tx.on ? 'Listening…' : 'Stopped');
+    }
+
+    /* what a minute of a screen take weighs, from the chunks the recorder hands back (the first carries the file header, so it is skipped) */
+    function measureRate(R) {
+      if (R.kind !== 'video' || R.rateDone || R.samples.length < 3) return;
+      const a = R.samples[1], b = R.samples[R.samples.length - 1];
+      const span = b.ms - a.ms;
+      if (span < RATE_FROM || b.bytes <= a.bytes) return;
+      R.rate = ((b.bytes - a.bytes) / span) * 60000;
+      R.rateSpan = b.ms;
+      R.rateDone = span >= RATE_FREEZE;
+    }
+
+    /* the webcam bubble: the shared screen and the camera are drawn together on a canvas, and that canvas is what gets recorded */
+    async function startMixer(displayTrack, camTrack, settings, pos) {
+      const dv = document.createElement('video'), cm = document.createElement('video');
+      for (const [v, t] of [[dv, displayTrack], [cm, camTrack]]) {
+        v.muted = true;
+        v.playsInline = true;
+        v.srcObject = new MediaStream([t]);
+        v.play?.()?.catch?.(() => {});
+      }
+      let W = settings.width || 0, H = settings.height || 0;
+      if (!W || !H) {
+        const t0 = performance.now();
+        while (!dv.videoWidth && performance.now() - t0 < 1500) await new Promise(r => setTimeout(r, 40));
+        W = dv.videoWidth || 1280;
+        H = dv.videoHeight || 720;
+      }
+      W = Math.max(2, Math.round(W / 2) * 2);
+      H = Math.max(2, Math.round(H / 2) * 2);
+      const cvs = document.createElement('canvas');
+      cvs.width = W;
+      cvs.height = H;
+      const g = cvs.getContext('2d');
+      const D = Math.round(Math.min(W, H) * 0.26), M = Math.round(Math.min(W, H) * 0.04);
+      const cx = /left/.test(pos) ? M + D / 2 : W - M - D / 2;
+      const cy = /top/.test(pos) ? M + D / 2 : H - M - D / 2;
+      const draw = () => {
+        g.fillStyle = '#000';
+        g.fillRect(0, 0, W, H);
+        if (dv.videoWidth) {
+          const k = Math.min(W / dv.videoWidth, H / dv.videoHeight);
+          g.drawImage(dv, (W - dv.videoWidth * k) / 2, (H - dv.videoHeight * k) / 2, dv.videoWidth * k, dv.videoHeight * k);
+        }
+        if (cm.videoWidth) {
+          const sq = Math.min(cm.videoWidth, cm.videoHeight);
+          g.save();
+          g.beginPath();
+          g.arc(cx, cy, D / 2, 0, Math.PI * 2);
+          g.clip();
+          g.translate(cx + D / 2, cy - D / 2);
+          g.scale(-1, 1);                                   /* a mirror, as a webcam preview is */
+          g.drawImage(cm, (cm.videoWidth - sq) / 2, (cm.videoHeight - sq) / 2, sq, sq, 0, 0, D, D);
+          g.restore();
+          g.lineWidth = Math.max(2, D * 0.03);
+          g.strokeStyle = '#fff';
+          g.beginPath();
+          g.arc(cx, cy, D / 2, 0, Math.PI * 2);
+          g.stroke();
+        }
+      };
+      draw();
+      const stream = cvs.captureStream(30);
+      /* a worker keeps time when this tab is behind the window being shared (timers in a hidden tab are slowed down) */
+      let worker = null, timer = 0, wurl = '';
+      try {
+        wurl = URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),33)'], { type: 'text/javascript' }));
+        worker = new Worker(wurl);
+        worker.onmessage = draw;
+      } catch (err) { worker = null; }
+      timer = setInterval(draw, 33);          /* and an ordinary timer too: whichever ticks, the picture moves */
+      return {
+        track: stream.getVideoTracks()[0], w: W, h: H, bubble: { cx, cy, d: D },
+        stop() {
+          try { worker?.terminate(); } catch (err) { /* gone */ }
+          if (wurl) URL.revokeObjectURL(wurl);
+          clearInterval(timer);
+          dv.srcObject = null;
+          cm.srcObject = null;
+          stream.getTracks().forEach(t => t.stop());
+        },
+      };
     }
 
     /* ============================ recording ============================ */
@@ -1318,6 +1586,7 @@ defineApp({
 
     function cancelAsk() {
       S.gen++;
+      S.countN = 0;
       closeAc(S.pendingAc);
       S.pendingAc = null;
       S.phase = 'idle';
@@ -1400,7 +1669,7 @@ defineApp({
       if (!rec) { giveUp(recErr); return; }
       const now = performance.now();
       const R = {
-        rec, stream, track, ac, src: null, an: null, buf: null,
+        rec, stream, track, ac, src: null, an: null, buf: null, marks: [], samples: [], tx: null,
         chunks: [], bytes: 0, type: rec.mimeType || type || '', when: new Date(),
         activeMs: 0, segStart: now, levels: [], cur: null,
         settings: (track.getSettings && track.getSettings()) || {}, label: track.label || '',
@@ -1435,6 +1704,7 @@ defineApp({
         } catch (e) { R.an = null; }
       }
       S.R = R;
+      if (S.live) startTranscript(R);
       S.phase = 'recording';
       S.perm = 'granted';
       S.muted = !!track.muted;
@@ -1455,12 +1725,14 @@ defineApp({
         try { R.rec.pause(); } catch (err) { return; }
         R.activeMs += performance.now() - R.segStart;
         R.segStart = 0;
+        pauseTranscript(R);
         S.phase = 'paused';
         say('Paused');
       } else if (S.phase === 'paused') {
         try { R.rec.resume(); } catch (err) { return; }
         R.segStart = performance.now();
         S.phase = 'recording';
+        resumeTranscript(R);
         say('Recording');
       }
       paint();
@@ -1503,7 +1775,22 @@ defineApp({
           mic = await md.getUserMedia({ audio: { ...(S.deviceId ? { deviceId: S.deviceId } : {}), echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
         } catch (e) { micErr = e; }
       }
-      const stopAll = () => { display?.getTracks().forEach(t => t.stop()); mic?.getTracks().forEach(t => t.stop()); };
+      /* the camera, only now and only if asked for */
+      let cam = null, camErr = null;
+      if (display && S.cam && gen === S.gen && !S.dead) {
+        try { cam = await md.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }, audio: false }); } catch (e) { camErr = e; }
+      }
+      const stopAll = () => { display?.getTracks().forEach(t => t.stop()); mic?.getTracks().forEach(t => t.stop()); cam?.getTracks().forEach(t => t.stop()); };
+      /* 3-2-1: the take starts after it; Cancel (or the browser's Stop sharing) ends it with nothing recorded */
+      if (display && S.count && gen === S.gen && !S.dead) {
+        for (let n = COUNT_FROM; n > 0 && gen === S.gen && !S.dead; n--) {
+          S.countN = n;
+          paint();
+          say(String(n));
+          await new Promise(res => after(1000, res));
+        }
+        S.countN = 0;
+      }
       if (gen !== S.gen || S.dead) {
         stopAll();
         closeAc(ac);
@@ -1514,6 +1801,14 @@ defineApp({
       if (!display) { closeAc(ac); fail(screenProblem(err)); return; }
       const vtrack = display.getVideoTracks()[0];
       if (!vtrack) { stopAll(); closeAc(ac); fail(screenProblem(new DOMException('No video track', 'NotReadableError'))); return; }
+      if (vtrack.readyState === 'ended') {
+        stopAll();
+        closeAc(ac);
+        S.phase = 'idle';
+        S.notice = { tone: 'info', text: 'Sharing stopped before the recording began, so nothing was recorded.' };
+        paint();
+        return;
+      }
       /* every sound source mixed into one track: a recorder keeps only one */
       const sounds = [...display.getAudioTracks(), ...(mic ? mic.getAudioTracks() : [])];
       let an = null, buf = null, dest = null;
@@ -1535,17 +1830,27 @@ defineApp({
         } catch (e) { dest = null; an = null; }
       }
       const audioOut = dest ? dest.stream.getAudioTracks() : sounds.slice(0, 1);
-      const out = new MediaStream([vtrack, ...audioOut]);
-      const type = VC.videoRecorderType();
       const st = (vtrack.getSettings && vtrack.getSettings()) || {};
-      const vbps = Math.max(1_500_000, Math.min(8_000_000, Math.round((st.width || 1280) * (st.height || 720) * 30 * 0.08)));
+      /* with the webcam, a canvas (screen + round camera) is recorded instead of the screen track itself */
+      let mix = null;
+      if (cam) {
+        try { mix = await startMixer(vtrack, cam.getVideoTracks()[0], st, S.camPos); } catch (e) { mix = null; }
+        if (!mix) { cam.getTracks().forEach(t => t.stop()); cam = null; camErr = camErr || new DOMException('The camera picture couldn’t be mixed in', 'NotReadableError'); }
+        if (gen !== S.gen || S.dead) { mix?.stop(); stopAll(); closeAc(ac); return; }
+      }
+      const rtrack = mix ? mix.track : vtrack;
+      const out = new MediaStream([rtrack, ...audioOut]);
+      const type = VC.videoRecorderType();
+      const qual = qualityOf(S.quality);
+      const vbps = clamp(Math.round((mix ? mix.w : st.width || 1280) * (mix ? mix.h : st.height || 720) * 30 * qual.k), qual.min, qual.max);
       let rec = null, recErr = null;
       for (const o of [type ? { mimeType: type, videoBitsPerSecond: vbps, audioBitsPerSecond: 128000 } : { videoBitsPerSecond: vbps }, type ? { mimeType: type } : null, {}]) {
         if (!o) continue;
         try { rec = new MediaRecorder(out, o); break; } catch (e) { recErr = e; rec = null; }
       }
-      const all = new MediaStream([...display.getTracks(), ...(mic ? mic.getTracks() : []), ...(dest ? dest.stream.getTracks() : [])]);
+      const all = new MediaStream([...display.getTracks(), ...(mic ? mic.getTracks() : []), ...(cam ? cam.getTracks() : []), ...(dest ? dest.stream.getTracks() : [])]);
       const giveUp = e => {
+        mix?.stop();
         all.getTracks().forEach(t => t.stop());
         closeAc(ac);
         fail({ kind: 'failed', icon: 'alert', title: 'Recording couldn’t start',
@@ -1554,7 +1859,8 @@ defineApp({
       if (!rec) { giveUp(recErr); return; }
       const now = performance.now();
       const R = {
-        kind: 'video', rec, stream: all, track: vtrack, ac, an, buf, preview: new MediaStream([vtrack]),
+        kind: 'video', rec, stream: all, track: vtrack, ac, an, buf, preview: new MediaStream([rtrack]), mix,
+        marks: [], samples: [], rate: 0, rateSpan: 0, rateDone: false, quality: qual.id, cam: !!cam, tx: null,
         src: { disconnect: () => nodes.forEach(n => { try { n.disconnect(); } catch (e) { /* gone */ } }) },
         chunks: [], bytes: 0, type: rec.mimeType || type || '', when: new Date(),
         activeMs: 0, segStart: now, levels: [], cur: null,
@@ -1563,7 +1869,7 @@ defineApp({
         error: null, disp: -Infinity, hold: -Infinity, holdAt: 0, zeroMs: 0, lastNow: now,
       };
       R.stopped = new Promise(res => rec.addEventListener('stop', res, { once: true }));
-      R.onData = e => { if (e.data && e.data.size) { R.chunks.push(e.data); R.bytes += e.data.size; } };
+      R.onData = e => { if (e.data && e.data.size) { R.chunks.push(e.data); R.bytes += e.data.size; R.samples.push({ ms: activeMs(R), bytes: R.bytes }); } };
       R.onError = e => { R.error = e?.error || e; if (S.R === R) finish('error'); };
       R.onEnded = () => { if (S.R === R) finish('ended'); };
       R.onMute = () => {};
@@ -1581,7 +1887,9 @@ defineApp({
       S.silent = false;
       S.clipAt = 0;
       S.view = 'rec';
-      if (micErr) S.notice = { tone: 'warn', text: `Recording without narration — the microphone couldn’t start (${micProblem(micErr).title.toLowerCase()}).` };
+      if (S.live) startTranscript(R);
+      if (camErr) S.notice = { tone: 'warn', text: `Recording without the webcam bubble — the camera couldn’t start (${camErr.name || 'error'}).` };
+      else if (micErr) S.notice = { tone: 'warn', text: `Recording without narration — the microphone couldn’t start (${micProblem(micErr).title.toLowerCase()}).` };
       else if (!R.hasAudio) S.notice = { tone: 'info', text: 'Recording the picture only: nothing shared any sound. To include it, share a tab with “Share tab audio” ticked, or turn on narration.' };
       bus.emit('media:pause');
       paint();
@@ -1590,6 +1898,7 @@ defineApp({
     }
 
     function releaseMic(R) {
+      try { R.mix?.stop(); } catch (err) { /* already stopped */ }
       R.track.removeEventListener('ended', R.onEnded);
       R.track.removeEventListener('mute', R.onMute);
       R.track.removeEventListener('unmute', R.onMute);
@@ -1611,6 +1920,7 @@ defineApp({
       R.segStart = 0;
       if (R.cur !== null) { R.levels.push(R.cur); R.cur = null; }
       try { if (R.rec.state !== 'inactive') R.rec.stop(); } catch (err) { /* already stopped */ }
+      const txDone = endTranscript(R);    /* speech recognition listens on its own: it stops with the take */
       releaseMic(R);                      /* the browser's microphone light goes out here */
       S.muted = false;
       S.silent = false;
@@ -1624,6 +1934,7 @@ defineApp({
       clearTimeout(wait);
       R.rec.removeEventListener('dataavailable', R.onData);
       R.rec.removeEventListener('error', R.onError);
+      await txDone;
 
       const isVid = R.kind === 'video';
       const what = isVid ? 'video' : 'audio';
@@ -1687,19 +1998,36 @@ defineApp({
         bus.emit('fs:change', vfs.parentPath(saved.path), saved.path);
       }
       const mime = blob.type || kind.mime;
+      /* a transcript, as a text file beside the take */
+      let txPath = '';
+      const spoken = R.tx ? R.tx.lines.filter(l => l.ms <= len + 500) : [];
+      if (spoken.length) {
+        const base = stemOf(vfs.baseName(saved.path));
+        let nm = `${base}.txt`, k = 2;
+        while (vfs.node(`${vfs.parentPath(saved.path)}/${nm}`)) nm = `${base} ${k++}.txt`;
+        txPath = `${vfs.parentPath(saved.path)}/${nm}`;
+        vfs.write(txPath, `${txText(spoken)}\n`);
+      }
+      /* what a minute of this quality weighed, measured on this take */
+      if (isVid && R.rate > 0) {
+        writeData(d => ({ ...d, rates: { ...d.rates, [R.quality]: Math.round(R.rate) } }));
+        S.rates = readData().rates;
+      }
+      const marks = R.marks.filter(m => m <= len + 500).map(m => Math.min(m, Math.round(len)));
       addItem(isVid ? {
         id: saved.id, kind: 'video', path: saved.path, ms: len, size: blob.size, mime, fmt: describeVideo(mime, kind.ext),
-        at: R.when.toISOString(), peaks: encodePeaks(resample(R.levels, PEAKS)), w: R.w, h: R.h, aud: R.hasAudio, mic: R.mic,
+        at: R.when.toISOString(), peaks: encodePeaks(resample(R.levels, PEAKS)), w: R.w, h: R.h, aud: R.hasAudio, mic: R.mic, marks, tx: txPath,
       } : {
         id: saved.id, path: saved.path, ms: len, size: blob.size, mime, fmt: describe(mime, kind.ext),
         at: R.when.toISOString(), peaks: info?.peaks || encodePeaks(resample(R.levels, PEAKS)),
-        rate: R.settings.sampleRate || 0, ch: R.settings.channelCount || 0, mic: shortLabel(R.label),
+        rate: R.settings.sampleRate || 0, ch: R.settings.channelCount || 0, mic: shortLabel(R.label), marks, tx: txPath,
       });
       const fname = vfs.baseName(saved.path);
       const volatile = db.persistent === false;
       if (!S.dead) {
         S.phase = 'idle';
-        S.notice = volatile ? { tone: 'warn', text: 'This browser isn’t keeping files between visits (a private window?), so download the recordings you want to keep.' } : null;
+        S.notice = volatile ? { tone: 'warn', text: 'This browser isn’t keeping files between visits (a private window?), so download the recordings you want to keep.' }
+          : R.tx && !spoken.length ? { tone: 'info', text: 'The live transcript heard no words, so no text file was made.' } : null;
         reconcile();
         select(saved.id, { focusPlay: hadFocus || appEl.contains(document.activeElement) });
         say(`Saved ${stemOf(fname)}, ${lengthText(len)}, to ${isVid ? 'Videos' : 'Music'}`);
@@ -1844,6 +2172,11 @@ defineApp({
       if (!it || itemView.hidden) return;
       paintTitle(it);
       const isVid = it.kind === 'video';
+      paintTags(it);
+      paintMarkCard(it);
+      paintTxCard(it);
+      audioEditBtn.hidden = isVid;
+      trimVidBtn.hidden = !isVid;
       player.hidden = isVid;
       editor.hidden = !isVid;
       if (isVid) fx.hide(); else fx.show(it);
@@ -2192,6 +2525,8 @@ defineApp({
       cancelBtn.hidden = !busy;
       progEl.hidden = !busy;
       exportBtn.hidden = busy;
+      gifBtn.hidden = busy;
+      gifBtn.disabled = !ready;
       editor.classList.toggle('is-exporting', busy);
       /* the timeline */
       shadeL.style.width = pct(E.a);
@@ -2202,6 +2537,7 @@ defineApp({
       capBand.hidden = !hasCap;
       capBand.style.left = pct(E.cap.from);
       capBand.style.width = `calc(${pct(E.cap.to)} - ${pct(E.cap.from)})`;
+      paintTicks(it);
       capBand.title = hasCap ? `Caption ${VC.clockText(E.cap.from, true)}–${VC.clockText(E.cap.to, true)}` : '';
       hIn.style.left = pct(E.a);
       hOut.style.left = pct(E.b);
@@ -2248,7 +2584,7 @@ defineApp({
       const f = E.exp ? E.exp.frac : 0;
       progFill.style.width = `${(f * 100).toFixed(1)}%`;
       progEl.setAttribute('aria-valuenow', String(Math.round(f * 100)));
-      progEl.dataset.label = `Exporting… ${Math.round(f * 100)}%`;
+      progEl.dataset.label = `${E.exp && E.exp.gif ? 'Making the GIF' : 'Exporting'}… ${Math.round(f * 100)}%`;
     }
 
     /* the filmstrip: real frames from the file, rebuilt when the width changes */
@@ -2406,6 +2742,184 @@ defineApp({
     }
     const tildeOf = p => (p === vfs.HOME ? '~' : p.startsWith(`${vfs.HOME}/`) ? `~${p.slice(vfs.HOME.length)}` : p);
 
+    /* ============================ tags, markers, transcript, GIF, links to the other tools ============================ */
+    const listItems = () => {
+      const q = S.search;
+      if (!q) return S.items;
+      return S.items.filter(it => stemOf(it.name).toLowerCase().includes(q) || FT.tagsOf(it.node).some(t => t.toLowerCase().includes(q)));
+    };
+
+    const tagId = `rec-tags-${Math.random().toString(36).slice(2, 8)}`;
+    const tagList = h('div.rec-tags__list');
+    const tagData = h('datalist', { id: tagId });
+    const tagIn = h('input.rec-tags__in', { type: 'text', list: tagId, placeholder: 'Add a tag', 'aria-label': 'Add a tag to this recording', maxlength: '30', autocomplete: 'off', spellcheck: 'false',
+      onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); addTag(tagIn.value); } else if (e.key === 'Escape') { e.stopPropagation(); tagIn.value = ''; tagIn.blur(); } },
+      oninput: () => tagIn.removeAttribute('aria-invalid') });
+    const tagRow = h('div.rec-tags', h('span.rec-tags__lbl', icon('tag'), h('span', { text: 'Tags' })), tagList, tagIn,
+      h('button.btn.btn--sm', { type: 'button', onclick: () => addTag(tagIn.value) }, h('span', { text: 'Add' })), tagData);
+    function addTag(raw) {
+      const it = current();
+      const name = String(raw || '').trim();
+      if (!it || !name) return;
+      if (!FT.def(name)) {
+        const problem = FT.nameProblem(name);
+        if (problem) { tagIn.setAttribute('aria-invalid', 'true'); say(problem); S.notice = { tone: 'warn', text: problem }; return; }
+        FT.create(name, 'gray');
+      }
+      const tag = FT.def(name).name;
+      if (FT.hasTag(it.node, tag)) { tagIn.value = ''; return; }
+      FT.add(it.path, tag);
+      tagIn.value = '';
+      say(`Tagged ${tag}`);
+    }
+    let tagKey = '';
+    function paintTags(it) {
+      const tags = FT.tagsOf(it.node);
+      const key = JSON.stringify([it.id, tags, FT.defs().map(d => d.name)]);
+      if (key === tagKey) return;
+      tagKey = key;
+      clear(tagList);
+      tags.forEach(t => tagList.append(h('span.rec-tag', { dataset: { tag: t } },
+        h('i', { style: { background: FT.cssOf(t) }, 'aria-hidden': 'true' }), h('span', { text: t }),
+        h('button.rec-tag__x', { type: 'button', 'aria-label': `Remove the tag ${t}`, onclick: () => { FT.remove(it.path, t); say(`Removed ${t}`); } }, icon('x')))));
+      clear(tagData);
+      FT.defs().filter(d => !FT.hasTag(it.node, d.name)).forEach(d => tagData.append(h('option', { value: d.name })));
+    }
+
+    /* markers dropped while recording */
+    const markChips = h('div.rec-marks');
+    const markCard = h('div.rec-markcard', { hidden: true }, h('span.rec-tags__lbl', icon('pin'), h('span', { text: 'Markers' })), markChips);
+    function seekMark(ms) {
+      const it = current();
+      if (!it) return;
+      if (it.kind === 'video') { pausePreview(); seek(ms / 1000); }
+      else { audio.currentTime = clamp(ms / 1000, 0, audio.duration || ms / 1000); paintPlayhead(); }
+    }
+    let markShown = '';
+    function paintMarkCard(it) {
+      const key = JSON.stringify([it.id, it.marks]);
+      markCard.hidden = !it.marks.length;
+      if (key === markShown) return;
+      markShown = key;
+      clear(markChips);
+      it.marks.forEach((ms, i) => markChips.append(h('span.rec-chip', { dataset: { ms: String(ms) } },
+        h('button.rec-chip__go', { type: 'button', 'aria-label': `Go to marker ${i + 1} at ${clock(ms)}`, onclick: () => seekMark(ms) }, `${i + 1} · ${clock(ms)}`),
+        h('button.rec-tag__x', { type: 'button', 'aria-label': `Remove marker ${i + 1}`, onclick: () => { patchItem(it.id, { marks: it.marks.filter((_, j) => j !== i) }); reconcile(); paint(); } }, icon('x')))));
+    }
+
+    /* the transcript saved beside a take */
+    const txPre = h('pre.rec-txcard__text');
+    const txCard = h('section.rec-txcard', { hidden: true, 'aria-label': 'Transcript' },
+      h('div.rec-ed__ph', icon('type'), h('b', { text: 'Transcript' }), h('small', { text: 'Made live by the browser’s speech recognition; saved as a text file next to the recording' })),
+      txPre,
+      h('button.btn.btn--sm', { type: 'button', onclick: () => { const it = current(); if (it?.tx && vfs.node(it.tx)) api.openApp('files', { path: it.tx }); } }, icon('folder-open'), h('span', { text: 'Show the text file' })));
+    function paintTxCard(it) {
+      const n = it.tx ? vfs.node(it.tx) : null;
+      txCard.hidden = !n;
+      if (n) txPre.textContent = String(n.content || '').slice(0, 6000);
+    }
+
+    /* the other tools: the same recording, opened where it can be worked on further */
+    function editInAudio(it) {
+      if (!it || it.kind === 'video' || !vfs.node(it.path)) return;
+      api.openApp('audioeditor', { path: it.path });
+    }
+    function trimInVideos(it) {
+      if (!it || it.kind !== 'video' || !vfs.node(it.path)) return;
+      api.openApp('videos', { path: it.path, trim: true });
+    }
+
+    /* a video that was not recorded here can be captioned and turned into a GIF here too (Videos' "Caption or GIF in Recorder…") */
+    async function adoptVideo(path) {
+      const n = vfs.node(path);
+      if (!n || n.type !== 'file' || !media.isMedia(n) || !String(n.content).startsWith(media.MEDIA)) {
+        S.notice = { tone: 'info', text: 'Only videos kept in this browser can be opened here. This one comes with StaticOS, or has no video data.' };
+        showRecorder();
+        return;
+      }
+      const url = await media.urlOf(n);
+      let info = null;
+      try { info = url ? await VC.probe(url) : null; } catch (err) { info = null; }
+      if (S.dead) return;
+      const id = String(n.content).slice(media.MEDIA.length);
+      if (!/^[\w-]{4,80}$/.test(id)) { showRecorder(); return; }
+      addItem({ id, kind: 'video', path: vfs.norm(path), ms: info ? info.dur * 1000 : 0, size: n.size || 0, mime: '', fmt: describeVideo('', extOf(n.name)),
+        at: n.mtime || new Date().toISOString(), peaks: '', w: info?.w || 0, h: info?.h || 0, aud: true });
+      reconcile();
+      const it = S.items.find(x => x.id === id);
+      if (it) select(it.id); else showRecorder();
+    }
+
+    /* a GIF from the cut: stills of [start, end) at 10 a second, drawn with the caption, written by core/gif.js */
+    async function makeGif() {
+      const it = current();
+      if (!it || it.kind !== 'video' || !canEdit()) return;
+      const a = E.a, b = E.b;
+      if (b - a > GIF_MAX_S) {
+        E.note = { tone: 'warn', text: `A GIF is made from up to ${GIF_MAX_S} seconds. This cut is ${VC.clockText(b - a, true)} — move the start or end in first.` };
+        paintEditor();
+        return;
+      }
+      pausePreview();
+      const ctl = new AbortController();
+      const cap = E.cap.text.trim() ? { text: E.cap.text.trim(), pos: E.cap.pos, from: E.cap.from, to: E.cap.to } : null;
+      E.exp = { ctl, frac: 0, gif: true };
+      E.note = { tone: 'info', text: `Making a GIF of ${VC.clockText(b - a, true)} — ${GIF_FPS} pictures a second, ${GIF_WIDTH} px wide at most. It has no sound.` };
+      paintEditor();
+      say('Making a GIF');
+      let out = null, fail = null;
+      try {
+        const got = await VC.grabFrames({ url: E.url, a, b, fps: GIF_FPS, maxW: GIF_WIDTH, cap, signal: ctl.signal,
+          onProgress: f => { if (E.exp && E.exp.ctl === ctl) { E.exp.frac = f * 0.8; paintExportProgress(); } } });
+        if (E.exp && E.exp.ctl === ctl) { E.exp.frac = 0.85; paintExportProgress(); }
+        await new Promise(res => setTimeout(res, 20));                    /* let the bar paint before the encoder takes the thread */
+        if (ctl.signal.aborted) throw new VC.CutError('abort', 'Cancelled.');
+        const bytesOut = encodeGif({ width: got.width, height: got.height, frames: got.frames, loop: true, colors: 256, dither: false, optimize: true });
+        out = { blob: new Blob([bytesOut], { type: 'image/gif' }), w: got.width, h: got.height, n: got.frames.length };
+      } catch (err) { fail = err; }
+      if (S.dead) return;
+      E.exp = null;
+      if (fail) {
+        E.note = fail.code === 'abort' ? { tone: 'info', text: 'Cancelled. Nothing was saved.' } : { tone: 'err', text: `The GIF didn’t finish: ${fail.message || fail}` };
+        paintEditor();
+        return;
+      }
+      const dir = `${vfs.HOME}/Pictures`;
+      const name = `${stemOf(it.name)}.gif`;
+      try {
+        const saved = await media.save(dir, name, out.blob);
+        E.note = { tone: 'ok', text: `Saved “${vfs.baseName(saved.path)}” — ${out.n} pictures, ${out.w}×${out.h}, ${bytes(out.blob.size)} — in Pictures. A GIF has no sound. “${it.name}” is unchanged.`,
+          actions: [{ label: 'Show in Files', fn: () => api.openApp('files', { path: saved.path }) }] };
+      } catch (err) {
+        E.note = { tone: 'err', text: `The GIF couldn’t be saved: ${err?.message || err}. You can still download it.`, actions: [{ label: 'Download', fn: () => downloadBlob(out.blob, name, reg) }] };
+      }
+      paintEditor();
+      say('GIF saved');
+    }
+
+    /* ticks for the markers on the video timeline */
+    const tickHost = h('div.rec-ed__ticks', { 'aria-hidden': 'true' });
+    track.append(tickHost);
+    let tickKey = '';
+    function paintTicks(it) {
+      const key = JSON.stringify([it.id, it.marks, Math.round(E.dur * 10)]);
+      if (key === tickKey) return;
+      tickKey = key;
+      clear(tickHost);
+      if (E.dur > 0) it.marks.forEach(ms => tickHost.append(h('i', { style: { left: `${clamp(ms / 1000 / E.dur, 0, 1) * 100}%` }, title: `Marker at ${clock(ms)}` })));
+    }
+
+    /* the new pieces join the recording view */
+    const audioEditBtn = ibtn('sliders', 'Edit in Audio Editor', () => editInAudio(current()));
+    const trimVidBtn = ibtn('crop', 'Frame-accurate trim in Videos', () => trimInVideos(current()));
+    acts.insertBefore(audioEditBtn, playElsewhere);
+    acts.insertBefore(trimVidBtn, playElsewhere);
+    const gifBtn = h('button.btn.rec-ed__gif', { type: 'button', title: `Up to ${GIF_MAX_S} seconds of the cut, ${GIF_FPS} pictures a second, no sound — saved to Pictures`, onclick: () => makeGif() }, icon('image'), h('span', { text: 'Make a GIF' }));
+    exportBtn.after(gifBtn);
+    const itemScroll = itemView.querySelector('.rec-scroll');
+    itemScroll.insertBefore(h('div.rec-meta', tagRow, markCard), player);
+    itemScroll.insertBefore(txCard, infoEl);
+
     /* ---- rename ---- */
     function startRename() {
       if (!current()) return;
@@ -2530,6 +3044,9 @@ defineApp({
         if (e.repeat) return;
         if (S.R) finish('user');
         else if (S.phase !== 'asking' && S.phase !== 'saving') { showRecorder(); startRecording(); }
+      } else if (k === 'm' && S.R) {
+        e.preventDefault();
+        if (!e.repeat) dropMarker();
       } else if (k === 'p' && S.R) {
         e.preventDefault();
         if (!e.repeat) togglePause();
@@ -2590,6 +3107,7 @@ defineApp({
         reconcile();
         const it = S.items.find(x => x.path === p);
         if (it) { select(it.id); return; }
+        if (media.kindOf(vfs.baseName(p)) === 'video' && vfs.node(p)) { adoptVideo(p); return; }
       }
       if (o.view === 'rec' || o.record) showRecorder();
     }

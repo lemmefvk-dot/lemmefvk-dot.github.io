@@ -14,8 +14,13 @@
      noteOf(freq, a4 = 440)           -> { midi, name, octave, label, cents, freq }
          the nearest equal-tempered note and how many cents (1/100
          of a semitone) the sound is above (+) or below (−) it
-     TUNINGS                          standard guitar, drop D, ukulele
-     targetOf(freq, tuning)           -> the closest string and its cents
+     TUNINGS                          guitar, drop D, half-step down, ukulele, bass (4 and 5
+                                      strings, drop D), violin, cello — a new tuning is one
+                                      more entry here
+     parseNote('Eb2')                 -> midi number, or null
+     customTuning('E2 A2 D3')         -> a tuning object made from note names, or null
+     freqOfMidi(midi, a4)             the pitch of a note when A4 is a4 Hz (415–466 Hz)
+     targetOf(freq, tuning, a4)       -> the closest string and its cents
      makeSmoother()                   -> { push(reading|null), reset() }
          steadies a stream of readings: a median of the last few,
          dropped to nothing only after a run of silent frames
@@ -83,19 +88,49 @@ export function noteOf(freq, a4 = 440) {
   return { midi, name, octave, label: `${name}${octave}`, cents: (m - midi) * 100, freq };
 }
 
+export const freqOfMidi = (midi, a4 = 440) => hz(midi, a4);
 const str = (name, midi) => ({ name, midi, label: `${name}${Math.floor(midi / 12) - 1}`, freq: hz(midi) });
 /* strings in the order they are played, low to high (the ukulele's G is the high one) */
 export const TUNINGS = {
   guitar: { id: 'guitar', label: 'Guitar', sub: 'E A D G B E', strings: [str('E', 40), str('A', 45), str('D', 50), str('G', 55), str('B', 59), str('E', 64)] },
   dropd: { id: 'dropd', label: 'Drop D', sub: 'D A D G B E', strings: [str('D', 38), str('A', 45), str('D', 50), str('G', 55), str('B', 59), str('E', 64)] },
   ukulele: { id: 'ukulele', label: 'Ukulele', sub: 'G C E A', strings: [str('G', 67), str('C', 60), str('E', 64), str('A', 69)] },
+  halfdown: { id: 'halfdown', label: 'Half step down', sub: 'E♭ A♭ D♭ G♭ B♭ E♭', strings: [str('E♭', 39), str('A♭', 44), str('D♭', 49), str('G♭', 54), str('B♭', 58), str('E♭', 63)] },
+  bass: { id: 'bass', label: 'Bass', sub: 'E A D G', strings: [str('E', 28), str('A', 33), str('D', 38), str('G', 43)] },
+  bass5: { id: 'bass5', label: 'Bass, 5 strings', sub: 'B E A D G', strings: [str('B', 23), str('E', 28), str('A', 33), str('D', 38), str('G', 43)] },
+  dropdbass: { id: 'dropdbass', label: 'Drop D bass', sub: 'D A D G', strings: [str('D', 26), str('A', 33), str('D', 38), str('G', 43)] },
+  violin: { id: 'violin', label: 'Violin', sub: 'G D A E', strings: [str('G', 55), str('D', 62), str('A', 69), str('E', 76)] },
+  cello: { id: 'cello', label: 'Cello', sub: 'C G D A', strings: [str('C', 36), str('G', 43), str('D', 50), str('A', 57)] },
 };
 
+const LETTER = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+/** "E2", "f#3", "Bb1", "D♭4" -> midi number (C4 = 60), or null */
+export function parseNote(text) {
+  const m = /^\s*([A-Ga-g])\s*([#♯b♭]?)\s*(-?\d)\s*$/.exec(String(text || ''));
+  if (!m) return null;
+  const acc = m[2] === '#' || m[2] === '♯' ? 1 : m[2] === 'b' || m[2] === '♭' ? -1 : 0;
+  const midi = (Number(m[3]) + 1) * 12 + LETTER[m[1].toUpperCase()] + acc;
+  return midi >= 12 && midi <= 108 ? midi : null;
+}
+/** Up to 8 notes separated by spaces or commas, low to high: "D2 A2 D3 G3". null when any is not a note. */
+export function customTuning(text) {
+  const parts = String(text || '').split(/[\s,]+/).filter(Boolean);
+  if (!parts.length || parts.length > 8) return null;
+  const strings = [];
+  for (const p of parts) {
+    const midi = parseNote(p);
+    if (midi === null) return null;
+    const name = NAMES[((midi % 12) + 12) % 12];
+    strings.push(str(name, midi));
+  }
+  return { id: 'custom', label: 'Custom', sub: strings.map(s => s.name).join(' '), strings };
+}
+
 /** The string a sound is closest to (in pitch, not in Hz) and its cents off that string. */
-export function targetOf(freq, tuning) {
-  const t = TUNINGS[tuning];
+export function targetOf(freq, tuning, a4 = 440) {
+  const t = typeof tuning === 'object' && tuning ? tuning : TUNINGS[tuning];
   if (!t || !(freq > 0)) return null;
-  const m = midiOf(freq);
+  const m = midiOf(freq, a4);
   let best = 0;
   t.strings.forEach((s, i) => { if (Math.abs(s.midi - m) < Math.abs(t.strings[best].midi - m)) best = i; });
   const s = t.strings[best];

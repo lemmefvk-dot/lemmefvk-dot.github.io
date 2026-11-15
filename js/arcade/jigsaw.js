@@ -2,9 +2,16 @@
    arcade/jigsaw.js — Photo Jigsaw for Static Arcade.
 
    Pick a picture from your Pictures folder (or one of the wallpapers
-   StaticOS ships with), pick a piece count, and the picture is cut
-   into real interlocking pieces and scattered. Drag a piece near its
-   place and it snaps in; fill the board to finish.
+   StaticOS ships with, or one of the scenes drawn in code for anyone
+   with no photo to hand, ./jigsaw-art.js), pick a piece count, and
+   the picture is cut into real interlocking pieces and scattered.
+   Drag a piece near its place and it snaps in; fill the board to
+   finish.
+
+   Helpers: Edges hides the loose pieces that aren't on the picture's
+   border, so the frame can be done first. Ghost lays a faint copy of
+   the picture on the board to line pieces up on (kept on for next
+   time); Preview shows the whole picture over the board for a look.
 
    Your photo stays on this device. The bytes are read from the
    browser's own storage, shrunk to at most 1280 px on the long side
@@ -19,7 +26,8 @@
                     game says which row and column it belongs in) ·
                     arrows move along the board's squares · Space /
                     Enter put the chosen piece on that square (it
-                    only stays if it belongs there) · V preview
+                    only stays if it belongs there) · V preview ·
+                    G ghost · E edges only
    Score = seconds to finish, lower is better. The unfinished puzzle
    survives a reload (portal.arcadePuzzles.jigsaw).
    ============================================================ */
@@ -29,7 +37,8 @@ import media from '../core/media.js';
 import { listPictures, bitmapOf, sizeOfBitmap, picturesDir } from '../photos/pt-common.js';
 import { ownsKey, sounder, randomSeed } from './kit.js';
 import { CSS as BASE, load, save, reducedMotion, bag, clock, fmtTime } from './puzzlekit.js';
-import { COUNTS, MARGIN, gridFor, workSize, makeEdges, piecePath, geometry, home, snaps, scatter, packState, unpackState, placedCount } from './jigsaw-logic.js';
+import { COUNTS, MARGIN, gridFor, workSize, makeEdges, piecePath, geometry, home, snaps, scatter, packState, unpackState, placedCount, isEdge } from './jigsaw-logic.js';
+import { PICTURES, drawPicture, isPicture } from './jigsaw-art.js';
 
 const GAME = 'jigsaw';
 const BUNDLED = [
@@ -51,7 +60,7 @@ const CSS = `${BASE}
 .pz-jg__thumb{display:flex;flex-direction:column;gap:4px;padding:5px;border-radius:10px;background:var(--fill-1,rgba(255,255,255,.06));border:1px solid var(--line-1,rgba(255,255,255,.1));color:var(--ink-1,#ddd);cursor:pointer;text-align:left;font:600 11px/1.2 var(--font,system-ui)}
 .pz-jg__thumb:focus-visible{outline:2px solid var(--ga);outline-offset:2px}
 @media (hover:hover){.pz-jg__thumb:hover{background:var(--fill-2,rgba(255,255,255,.12))}}
-.pz-jg__thumb img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:7px;background:#181b27;display:block}
+.pz-jg__thumb img,.pz-jg__thumb canvas{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:7px;background:#181b27;display:block}
 .pz-jg__thumb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pz-jg__row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .pz-jg__msg{position:absolute;inset:0;display:grid;place-items:center;z-index:4;background:rgba(10,8,16,.8);text-align:center;padding:16px;color:#fff}
@@ -73,6 +82,7 @@ export default {
     /* the puzzle in play */
     let P = null;               /* { src, count, cols, rows, seed, aspect, geo, edges, work, pieces, mPx, scale0 } */
     let phase = 'pick', done = false, preview = false, kbd = false, sel = -1, slotCur = 0, z = 0, msg = '';
+    let ghost = sv.ghost === true, edgesOnly = false;
     let drawMs = 0, prepMs = 0, drag = null, token = 0, saveTimer = 0, raf = 0, flashUntil = 0, lastSecs = -1;
     let view = { w: 0, h: 0, dpr: 1, S: 1, bx: 0, by: 0 };
 
@@ -83,9 +93,12 @@ export default {
     const placedRead = h('div.pz__read', { title: 'Pieces in place', 'aria-label': 'Pieces in place' }, icon('layers'), placedV);
     const bestV = h('small', { text: '' });
     const previewBtn = h('button.pz__btn', { type: 'button', 'aria-pressed': 'false', title: 'Show the whole picture (V)' }, icon('eye'), h('span.pz__long', { text: 'Preview' }));
+    const ghostBtn = h('button.pz__btn', { type: 'button', 'aria-pressed': 'false', dataset: { act: 'ghost' }, title: 'A faint copy of the picture on the board (G)' }, icon('layers'), h('span.pz__long', { text: 'Ghost' }));
+    const edgeV = h('small', { text: '' });
+    const edgesBtn = h('button.pz__btn', { type: 'button', 'aria-pressed': 'false', dataset: { act: 'edges' }, title: 'Show only the loose pieces of the border (E)' }, icon('square'), h('span', { text: 'Edges' }), edgeV);
     const restartBtn = h('button.pz__btn', { type: 'button', title: 'Scatter the pieces and start again' }, icon('refresh'), h('span.pz__long', { text: 'Restart' }));
     const newBtn = h('button.pz__btn', { type: 'button', title: 'Choose a different picture' }, icon('image'), h('span.pz__long', { text: 'New picture' }));
-    const top = h('div.pz__top', placedRead, timeRead, bestV, previewBtn, restartBtn, newBtn);
+    const top = h('div.pz__top', placedRead, timeRead, bestV, edgesBtn, ghostBtn, previewBtn, restartBtn, newBtn);
     const cv = h('canvas.pz-jg__cv', { tabindex: '0', role: 'application', 'aria-label': 'Jigsaw board' });
     const g = cv.getContext('2d');
     const hit = document.createElement('canvas').getContext('2d');
@@ -146,14 +159,15 @@ export default {
       for (let c = 0; c <= geo.cols; c++) { g.moveTo(bx + c * geo.pw * S, by); g.lineTo(bx + c * geo.pw * S, by + bh); }
       for (let r = 0; r <= geo.rows; r++) { g.moveTo(bx, by + r * geo.ph * S); g.lineTo(bx + S, by + r * geo.ph * S); }
       g.stroke();
-      if (preview) { g.globalAlpha = 0.45; g.drawImage(P.work, bx, by, S, bh); g.globalAlpha = 1; }
+      /* the ghost: a faint copy of the picture to line pieces up on */
+      if (ghost) { g.globalAlpha = 0.2; g.drawImage(P.work, bx, by, S, bh); g.globalAlpha = 1; }
       const k = S / P.work.width, mp = P.mPx * k;
       const put = p => {
         const c = P.canvases[p.id];
         g.drawImage(c, bx + p.x * S - mp, by + p.y * S - mp, c.width * k, c.height * k);
       };
       for (const p of P.pieces) if (p.locked) put(p);
-      const loose = P.pieces.filter(p => !p.locked).sort((a, b) => a.z - b.z);
+      const loose = P.pieces.filter(p => !p.locked && shown(p)).sort((a, b) => a.z - b.z);
       for (const p of loose) {
         if (drag && drag.p === p) { g.save(); g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 14; g.shadowOffsetY = 5; put(p); g.restore(); }
         else put(p);
@@ -178,10 +192,18 @@ export default {
         }
         if (now < flashUntil) dirty();
       }
-      drawMs = drawMs ? drawMs * 0.8 + (performance.now() - t0) * 0.2 : performance.now() - t0;
+      /* the preview: the whole picture over the board, like the box lid */
+      if (preview) {
+        g.save(); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 18;
+        g.drawImage(P.work, bx, by, S, bh); g.restore();
+        g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 2; g.strokeRect(bx, by, S, bh);
+      }
+      drawMs =drawMs ? drawMs * 0.8 + (performance.now() - t0) * 0.2 : performance.now() - t0;
     }
 
     /* ---------- the picture ---------- */
+    /* the Edges filter: is this loose piece on show? */
+    const shown = p => !edgesOnly || isEdge(P.cols, P.rows, p.id);
     async function blobOfSource(src) {
       if (src.kind === 'asset') {
         const res = await fetch(src.ref);
@@ -234,8 +256,14 @@ export default {
       phase = 'loading'; done = false; drag = null;
       showMsg('Cutting the picture…');
       try {
-        const blob = await blobOfSource(src);
-        const { canvas: work } = await makeWork(blob);
+        let work;
+        if (src.kind === 'drawn') {
+          /* painted here, at the size the puzzle keeps: nothing is read or fetched */
+          if (!isPicture(src.ref)) throw new Error('That drawn picture isn’t here any more. Choose another.');
+          await new Promise(r => setTimeout(r, 0));
+          work = drawPicture(src.ref, 1280, 960);
+          if (!work) throw new Error('That picture couldn’t be drawn.');
+        } else ({ canvas: work } = await makeWork(await blobOfSource(src)));
         if (mine !== token || dead) return;
         const grid = resume ? { cols: resume.cols, rows: resume.rows } : gridFor(count, work.width / work.height);
         const seed = resume ? resume.seed : randomSeed();
@@ -251,7 +279,7 @@ export default {
           scatterAll();
         }
         prepMs = performance.now() - began;
-        phase = 'play'; sel = -1; slotCur = 0; kbd = false; preview = false; paused = false;
+        phase = 'play'; sel = -1; slotCur = 0; kbd = false; preview = false; paused = false; edgesOnly = false;
         clk.stop(); clk.secs = resume ? resume.elapsed : 0; lastSecs = -1; timeV.textContent = fmtTime(clk.secs);
         clearOverlay();
         layout();
@@ -280,9 +308,10 @@ export default {
         h('button.pz__btn', { type: 'button', onclick: () => showPicker() }, icon('image'), h('span', { text: 'Choose a picture' }))) : null));
       stage.appendChild(box);
     }
-    function thumb(name, ref, kind, url) {
-      const img = h('img', { alt: '', draggable: 'false', loading: 'lazy' });
-      if (url) img.src = url;
+    function thumb(name, ref, kind, url, art = null) {
+      /* a drawn picture's thumbnail is its own small canvas: no address of any kind */
+      const img = art || h('img', { alt: '', draggable: 'false', loading: 'lazy' });
+      if (url && !art) img.src = url;
       const b = h('button.pz-jg__thumb', { type: 'button', title: name, dataset: { kind, ref, name } }, img, h('span', { text: name }));
       L.on(b, 'click', () => { if (!dead) startPuzzle({ kind, ref }, wantCount); });
       return { b, img };
@@ -299,6 +328,13 @@ export default {
         grid.appendChild(t.b);
       }
       for (const wp of BUNDLED) wall.appendChild(thumb(wp.name, wp.ref, 'asset', wp.ref).b);
+      /* the scenes drawn in code: their thumbnails are painted here too */
+      const drawn = h('div.pz-jg__grid', { role: 'group', 'aria-label': 'Pictures drawn for the game' });
+      for (const pic of PICTURES) {
+        const art = drawPicture(pic.id, 224, 168) || h('canvas');
+        art.setAttribute('aria-hidden', 'true');
+        drawn.appendChild(thumb(pic.name, pic.id, 'drawn', '', art).b);
+      }
       const countBtns = COUNTS.map(n => h('button', { type: 'button', dataset: { count: n }, 'aria-pressed': String(n === wantCount), text: String(n) }));
       const seg = h('div.pz__seg', { role: 'group', 'aria-label': 'Pieces' }, ...countBtns);
       countBtns.forEach(b => L.on(b, 'click', () => {
@@ -322,7 +358,8 @@ export default {
         h('div.pz-jg__row', h('span.pz__note', { text: 'Pieces' }), seg, addBtn, input),
         h('p', { text: 'The picture is read from this browser, shrunk, and cut up right here. It is never uploaded. “Add a photo…” keeps a copy in your Pictures folder, on this device.' }),
         h('h4', { text: 'Your pictures' }),
-        mine.length ? grid : h('p', { text: 'No pictures in your Pictures folder yet. Use “Add a photo…”, or Camera / Files.' }),
+        mine.length ? grid : h('p', { text: 'No pictures in your Pictures folder yet. Use “Add a photo…”, or Camera / Files — or pick one drawn below.' }),
+        h('h4', { text: 'Drawn for the game' }), drawn,
         h('h4', { text: 'Wallpapers' }), wall));
       paintReads();
       say('Choose a picture to begin.');
@@ -335,7 +372,11 @@ export default {
       const b = P ? best[P.pieces.length] : null;
       bestV.textContent = b != null ? `Best: ${fmtTime(b)}` : '';
       previewBtn.setAttribute('aria-pressed', String(preview));
-      previewBtn.disabled = !P; restartBtn.disabled = !P;
+      ghostBtn.setAttribute('aria-pressed', String(ghost));
+      edgesBtn.setAttribute('aria-pressed', String(edgesOnly));
+      const edges = P ? P.pieces.filter(p => isEdge(P.cols, P.rows, p.id)) : [];
+      edgeV.textContent = P ? `${edges.filter(p => p.locked).length}/${edges.length}` : '';
+      previewBtn.disabled = !P; restartBtn.disabled = !P; ghostBtn.disabled = !P; edgesBtn.disabled = !P || done;
       cv.setAttribute('aria-label', P ? `Jigsaw board, ${P.cols} by ${P.rows}. ${n} of ${total} pieces in place.` : 'Jigsaw board');
     }
 
@@ -351,9 +392,9 @@ export default {
     const toBoard = e => { const r = cv.getBoundingClientRect(); return { x: ((e.clientX - r.left) - view.bx) / view.S, y: ((e.clientY - r.top) - view.by) / view.S }; };
     function pieceAt(bx, by) {
       const k = view.S / P.work.width;
-      const loose = P.pieces.filter(p => !p.locked).sort((a, b) => b.z - a.z);
+      const loose = P.pieces.filter(p => !p.locked && shown(p)).sort((a, b) => b.z - a.z);
       for (const p of loose) {
-        const lx = (bx - p.x) * view.S / k + P.mPx, ly = (by - p.y) * view.S / k + P.mPx;
+        const lx =(bx - p.x) * view.S / k + P.mPx, ly = (by - p.y) * view.S / k + P.mPx;
         if (lx < 0 || ly < 0 || lx > P.canvases[p.id].width || ly > P.canvases[p.id].height) continue;
         if (hit.isPointInPath(P.paths[p.id], lx, ly)) return p;
       }
@@ -365,7 +406,8 @@ export default {
       snd.wake(); snd.blip(740, 0.07, 'triangle', 0.8); snd.blip(1110, 0.09, 'sine', 0.5);
       paintReads(); persistSoon(); dirty();
       const n = placedCount(P.pieces), total = P.pieces.length;
-      say(`${how}Piece ${p.id + 1} is in place. ${n} of ${total}.`);
+      const edgesLeft = P.pieces.filter(q => !q.locked && isEdge(P.cols, P.rows, q.id)).length;
+      say(`${how}Piece ${p.id + 1} is in place. ${n} of ${total}.${edgesOnly && !edgesLeft && n < total ? ' The border is done: turn Edges off for the rest.' : ''}`);
       if (n === total) win();
     }
     function win() {
@@ -416,7 +458,7 @@ export default {
     L.on(cv, 'pointercancel', drop);
 
     /* keyboard */
-    const loose = () => P.pieces.filter(p => !p.locked);
+    const loose = () => P.pieces.filter(p => !p.locked && shown(p));
     function choose(dir) {
       const list = loose();
       if (!list.length) return;
@@ -463,9 +505,23 @@ export default {
         e.preventDefault(); unfocus();
         if (!e.repeat) { kbd = true; placeSelected(); }
       } else if (k === 'v' || k === 'V') { e.preventDefault(); togglePreview(); }
+      else if (k === 'g' || k === 'G') { e.preventDefault(); toggleGhost(); }
+      else if (k === 'e' || k === 'E') { e.preventDefault(); toggleEdges(); }
     });
-    function togglePreview() { if (!P) return; preview = !preview; paintReads(); dirty(); say(preview ? 'Preview on.' : 'Preview off.'); }
+    function togglePreview() { if (!P) return; preview = !preview; paintReads(); dirty(); say(preview ? 'Preview on: the whole picture.' : 'Preview off.'); }
+    function toggleGhost() { if (!P) return; ghost = !ghost; save(GAME, { ghost }); paintReads(); dirty(); say(ghost ? 'Ghost on: a faint picture on the board to line pieces up on.' : 'Ghost off.'); }
+    function toggleEdges() {
+      if (!P || done) return;
+      edgesOnly = !edgesOnly;
+      if (sel >= 0 && !shown(P.pieces[sel])) sel = -1;
+      if (drag && !shown(drag.p)) drag = null;
+      const left = P.pieces.filter(p => !p.locked && isEdge(P.cols, P.rows, p.id)).length;
+      paintReads(); dirty();
+      say(edgesOnly ? (left ? `Edges only: the ${left} loose border piece${left === 1 ? '' : 's'}; the others are set aside.` : 'Edges only: the border is already done.') : 'All the pieces are back.');
+    }
     L.on(previewBtn, 'click', togglePreview);
+    L.on(ghostBtn, 'click', toggleGhost);
+    L.on(edgesBtn, 'click', toggleEdges);
     L.on(restartBtn, 'click', () => {
       if (dead || !P) return;
       done = false; clk.stop(); clk.secs = 0; lastSecs = -1; timeV.textContent = '0:00';
@@ -499,7 +555,7 @@ export default {
       resume() { if (dead || !paused) return; paused = false; stage.querySelector('.pz__cover')?.remove(); if (phase === 'play' && !done && P && placedCount(P.pieces) > 0) clk.start(); },
       peek: () => {
         const r = cv.getBoundingClientRect();
-        const base = { phase, paused, done, preview, sel, slotCur, best: { ...best }, wantCount, seconds: clk.secs, running: clk.running, msg, drawMs, prepMs };
+        const base = { phase, paused, done, preview, ghost, edgesOnly, sel, slotCur, best: { ...best }, wantCount, seconds: clk.secs, running: clk.running, msg, drawMs, prepMs };
         if (!P) return base;
         const S = view.S;
         return {
@@ -507,7 +563,7 @@ export default {
           work: { ...P.workSize }, placed: placedCount(P.pieces), total: P.pieces.length,
           geom: { x: r.left, y: r.top, bx: view.bx, by: view.by, S, pw: P.geo.pw, ph: P.geo.ph, boardH: P.geo.boardH, w: view.w, h: view.h },
           pieces: P.pieces.map(p => ({
-            id: p.id, locked: p.locked, x: p.x, y: p.y, z: p.z,
+            id: p.id, locked: p.locked, x: p.x, y: p.y, z: p.z, edge: isEdge(P.cols, P.rows, p.id), shown: p.locked || shown(p),
             cx: r.left + view.bx + (p.x + P.geo.pw / 2) * S, cy: r.top + view.by + (p.y + P.geo.ph / 2) * S,
             hx: r.left + view.bx + (home(P.geo, p.id).x + P.geo.pw / 2) * S, hy: r.top + view.by + (home(P.geo, p.id).y + P.geo.ph / 2) * S,
           })),

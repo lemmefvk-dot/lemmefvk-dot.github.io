@@ -55,6 +55,48 @@
    people invited; a guest's Join opens that room or party.
    Nothing received ever opens or joins anything by itself.
 
+   MEDIA LINKS — 'med' { k, i, ti, hd? } to ONE friend, by hand: k is spotify
+   (i = "playlist:<id>" and the like), tiktok (i = the video id, hd = the @handle
+   that was in the link) or drop (i = a six-character Static Drop code). It is a
+   pointer, never the media: nothing is downloaded, relayed or embedded for them.
+   The receiver checks the shape of i, takes at most one every few seconds from
+   a friend, and shows a notice with Add (Spotify, TikTok) and/or Open. Nothing
+   plays, opens or joins until they press one; a Drop code only fills the Receive
+   box, and the files still need their Accept.
+
+   PROFILE CARD — 'card' { b, g[], a[], c[] } (bio, up to 3 games,
+   3 pinned achievements, 3 pinned creations — titles only, each
+   cleaned and capped) or { x: 1 } to take it back. Off unless the
+   person sends it: the Profile app builds the card from what they
+   ticked, shows exactly that, and calls sendCard(); nothing here ever
+   sends one by itself, not even on a heartbeat. A friend's card is
+   kept on that friend's record (shown in Profile › From friends) and
+   goes when they are removed.
+
+   STATIC ARCADE — 'arc' { k, … }: a best score shared for friends'
+   leaderboards, a Beat-this round, a cup bracket or a cup match score,
+   only ever sent when the person presses a button in the Arcade
+   (sendArcade). js/arcade/friendplay.js checks and keeps them.
+
+   STAR, GROUPS, WEEKLY NIGHTS. A star (fav) and a group (a name and some friends) are
+   kept on this device only. A group is a shortcut to invite or poll several friends:
+   a game night goes to each member as an ordinary night, a poll goes to each as a Static
+   Chat direct message. A night can repeat weekly: the host's copy moves on a week once
+   it is over, "skip this week" moves it on early (and tells guests), and Calendar can
+   hold it (repeating, with the skipped week left out).
+
+   WHAT FRIENDS CHOOSE TO SHARE — 'shr' { r?, fv?, b? } to every friend, and only the
+   parts the person switched on in Friends (all off until then): r the games played
+   lately (kind + id, up to 8), fv favourite Static Games (ids, up to 30), b a birthday
+   as --MM-DD (no year). null takes a part back. The receiver shows its own titles for
+   the ids, keeps what arrived on that friend's record, and compares favourites with
+   its own ("games you both favourited"). A birthday that was shared sets a reminder in
+   Automations (src 'friends', 9 AM on the day) unless reminders are switched off.
+
+   INVITES. 'pin' { c } a Static Party code, 'sin' { c } a Study together room code (see
+   js/core/studyroom.js): each becomes a notice with Join, and nothing opens or joins
+   until it is pressed. Only a friend's device can send one (their sealed topic).
+
    SAFETY — every topic is public, so anything can arrive:
      · text over WIRE_MAX is dropped unread; floods past INBOX_PER_SEC
        (code inboxes) / PAIRS_PER_SEC and FRIEND_PER_SEC (friends) a
@@ -92,6 +134,12 @@
      friends() · incoming() · outgoing() · blocked()
      myStatus() · setStatus({ text, emoji, preset, expiry }) · clearStatus()
      shareGame() · setShareGame(on) · currentGame() · whatFriendsSee()
+     sendLink(fp, { kind, id, title }) — a page (Static Games or Roblox) to one friend
+     sendMedia(fp, { kind, id, title, handle }) — a Spotify item, a TikTok or a Static Drop code to one friend
+     sendDm(fp, body) — a Static Chat message to one friend
+     setFavourite(fp, on) · groups() · saveGroup({ id?, name, members }) · deleteGroup(id) · sendGroupPoll(id, poll)
+     skipNight(id) · addNightToCalendar(id) · options() · setOption(key, on) · setBirthday(v) · sharing()
+     sharedBy(fp) · bothFavourited(fp) · onlineCount() · sendPartyInvite(fp, code) · sendStudyInvite(fp, code) · inviteMessage(code)
      nights() · createNight(d) · rsvp(id, a) · cancelNight(id)
      removeNight(id) · startNight(id) · joinNight(id)
      onChange(fn) -> off · liveStatus() · _debug
@@ -108,7 +156,11 @@ import * as AM from './automations.js';
 import api from './api.js?v=ps5-cloud-proxy-v11';
 import { arcadeById } from '../arcade/index.js';
 import { MODE } from './profiles.js';
+import { parseChat } from './chatwire.js';
+import * as plays from './plays.js';
+import { BY_ID, isStation } from './stations.js';
 
+const PUBID_RE = /^[a-z0-9]{8,32}$/;
 export const KEY = 'portal.friends';
 export const SRC = 'friends';                  /* the reminder engine's source tag */
 export const CODE_LEN = 8;
@@ -151,21 +203,42 @@ const RQ_RE = /^[a-z0-9]{12}$/;
 const PH_RE = /^[0-9a-f]{16}$/;
 const NIGHT_ID = /^[a-z0-9]{12}$/;
 const GAME_ID = /^[A-Za-z0-9_-]{1,96}$/;
+const ANIME_ID = /^[0-9]{1,9}$/;                 /* a MyAnimeList id: an anime night is a title and a time, nothing plays */
 const PARTY_CODE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;
 const CODE_RE = new RegExp(`^[${ALPHABET}]{${CODE_LEN}}$`);
 export const ANSWERS = ['yes', 'maybe', 'no'];
 const INBOX_TYPES = new Set(['req', 'acc', 'dec']);
-const PAIR_TYPES = new Set(['hb', 'off', 'pq', 'pro', 'rm', 'ev', 'rsvp']);
+const PAIR_TYPES = new Set(['hb', 'off', 'pq', 'pro', 'rm', 'ev', 'rsvp', 'lnk', 'card', 'look', 'col', 'rmi', 'med']);
+PAIR_TYPES.add('arc');                         /* Static Arcade: see sendArcade() below */
+PAIR_TYPES.add('dm');                          /* Static Chat direct messages: see sendDm() below */
+PAIR_TYPES.add('shr');                         /* what friends choose to share: recent games, favourites, a birthday */
+PAIR_TYPES.add('pin');                         /* a Static Party invite */
+PAIR_TYPES.add('sin');                         /* a Study together invite */
+PAIR_TYPES.add('wti');                         /* a Watch Together invite */
+PAIR_TYPES.add('fbi');                         /* a Flex Battle invite */
+PAIR_TYPES.add('pni');                         /* a Static Piano duet invite */
+PAIR_TYPES.add('bti');                         /* a Static Beats jam invite */
+export const MAX_LOOKS = 10;                   /* looks friends sent, waiting for you to preview */
+const LOOK_RE = /^SLOOK1\.[A-Za-z0-9_-]{8,2380}$/;
 const STATES = ['online', 'away', 'busy'];
+const GROUP_ID = /^[a-z0-9]{8}$/;
+const BDAY_RE = /^--(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+export const MAX_GROUPS = 12;
+const SHARE_RECENT = 8, SHARE_FAVS = 30;
+const SHARE_EVERY_MS = 2 * 60_000;             /* a changed list of recent games goes out at most this often */
 const GAME_WINDOWS = new Set(['arcade', 'aether-games']);
 
+/* `expiry` is what picking the preset clears after (the status editor can still change it) */
 export const PRESETS = [
-  { id: 'studying', text: 'Studying', emoji: '📚' },
-  { id: 'gaming', text: 'Gaming', emoji: '🎮' },
-  { id: 'away', text: 'Away', emoji: '🌙' },
+  { id: 'studying', text: 'Studying', emoji: '📚', expiry: '1h' },
+  { id: 'inclass', text: 'In class', emoji: '🏫', expiry: '1h' },
+  { id: 'gaming', text: 'Gaming', emoji: '🎮', expiry: '2h' },
+  { id: 'away', text: 'Away', emoji: '🌙', expiry: 'never' },
 ];
 export const EXPIRY = [
+  { id: '30m', label: '30 minutes' },
   { id: '1h', label: '1 hour' },
+  { id: '2h', label: '2 hours' },
   { id: 'today', label: 'Today' },
   { id: 'never', label: 'Never' },
 ];
@@ -322,6 +395,17 @@ function D() {
     status: o.status && typeof o.status === 'object' ? o.status : null,
     shareGame: o.shareGame === true,
     nights: arr(o.nights, x => NIGHT_ID.test(x.id) && FP_RE.test(x.host) && x.game && typeof x.game === 'object'),
+    looks: arr(o.looks, x => typeof x.id === 'string' && FP_RE.test(x.fp) && LOOK_RE.test(x.code || '')),
+    groups: arr(o.groups, x => GROUP_ID.test(x.id) && Array.isArray(x.members)),
+    opts: normOpts(o.opts),
+  };
+}
+/** Settings in Friends. Everything that shares something new is off until it is switched on. */
+function normOpts(v) {
+  const o = v && typeof v === 'object' ? v : {};
+  return {
+    dndBusy: o.dndBusy === true, showCount: o.showCount !== false, remindBirthdays: o.remindBirthdays !== false,
+    shareRecent: o.shareRecent === true, shareFavs: o.shareFavs === true, shared: o.shared === true, birthday: BDAY_RE.test(o.birthday || '') ? o.birthday : '',
   };
 }
 function save(patch) {
@@ -360,7 +444,7 @@ let emitQ = false;
 function changed() {
   if (emitQ) return;
   emitQ = true;
-  queueMicrotask(() => { emitQ = false; subs.forEach(fn => { try { fn(); } catch (e) { console.error('[friends]', e); } }); });
+  queueMicrotask(() => { emitQ = false; try { announceCount(); } catch (e) { /* not started */ } subs.forEach(fn => { try { fn(); } catch (e) { console.error('[friends]', e); } }); });
 }
 export function onChange(fn) { subs.add(fn); return () => subs.delete(fn); }
 
@@ -574,13 +658,15 @@ async function onReq(e, m) {
   if (!perMinute(R.newReqs, NEW_PER_MIN)) { R.stats.dropped++; return; }
   const d2 = D();
   if (d2.incoming.some(x => x.fp === fp) || d2.friends.some(x => x.fp === fp) || d2.blocked.some(b => b.fp === fp)) return;
-  save({ incoming: [...d2.incoming, { fp, pk: m.pk, rq: m.rq, code: e.code, r: myR, at: now, ...who }] });
+  const twin = twinOf(who.name, fp, d2.friends);
+  save({ incoming: [...d2.incoming, { fp, pk: m.pk, rq: m.rq, code: e.code, r: myR, at: now, ...who, ...(twin ? { twin: twin.fp } : {}) }] });
   R.stats.heard++;
   const n = D().incoming.length;
   notify({
     key: 'friends-request', timeout: 10_000,
     title: n > 1 ? `${n} friend requests` : `${who.name} wants to be your friend`,
-    message: 'Accept only people you gave your friend code to — names aren’t verified.',
+    message: twin ? `You already have a friend called ${who.name}. This request comes from a different key: it may be them on a new device, or someone using their name.`
+      : 'Accept only people you gave your friend code to — names aren’t verified.',
     actions: [{ label: 'Open', onClick: () => openSocial({}) }],
     onClick: () => openSocial({}),
   });
@@ -613,8 +699,16 @@ async function onAnswer(e, m) {
   if (d2.blocked.some(b => b.fp === fp)) { R.stats.refused++; return; }
   const name = cleanName(m.n) || 'Your friend';
   save({ outgoing: d2.outgoing.filter(o => o.code !== e.code) });
+  const twin = twinOf(name, fp, d2.friends);
   addFriend({ fp, pk: m.pk, name, hue: hue(m.c), pic: normPic(m.pic), cos: Avatar.normCostume(m.cos) }, null);
-  notify({ title: `${name} accepted your friend request`, message: 'You can now see when each other is online.', actions: [{ label: 'Open', onClick: () => openSocial({}) }] });
+  notify({ title: `${name} accepted your friend request`, message: twin ? `You already have a friend called ${name}, with a different key. Check it is the same person before you trust it.` : 'You can now see when each other is online.', actions: [{ label: 'Open', onClick: () => openSocial({}) }] });
+}
+
+/** A friend of mine with this name (or nickname) but another key: the same person on a new device, or someone using the name. */
+function twinOf(name, fp, friends) {
+  const n = cleanName(name).toLowerCase();
+  if (!n) return null;
+  return friends.find(f => f.fp !== fp && (cleanName(f.name).toLowerCase() === n || cleanName(f.nick).toLowerCase() === n)) || null;
 }
 
 /* ---------------- friendships ---------------- */
@@ -655,6 +749,7 @@ function closePair(fp) {
   R.pairs.delete(fp);
   p.closed = true;
   clearTimeout(p.syncT);
+  clearTimeout(p.shrT);
   try { p.unsub?.(); } catch (e) { /* gone */ }
 }
 
@@ -664,7 +759,8 @@ function dropFriend(fp) {
   const d = D();
   const nights = d.nights.filter(n => n.host !== fp).map(n => (n.host === R.fp && n.invited.includes(fp)
     ? { ...n, invited: n.invited.filter(x => x !== fp), rsvp: Object.fromEntries(Object.entries(n.rsvp || {}).filter(([k]) => k !== fp)) } : n));
-  save({ friends: d.friends.filter(f => f.fp !== fp), incoming: d.incoming.filter(x => x.fp !== fp), nights });
+  const groups = d.groups.map(g => ({ ...g, members: g.members.filter(x => x !== fp) }));
+  save({ friends: d.friends.filter(f => f.fp !== fp), incoming: d.incoming.filter(x => x.fp !== fp), nights, groups });
   syncInboxes();
   syncReminders();
 }
@@ -707,6 +803,7 @@ function onPairMsg(p, m) {
       const f = friendOf(p.fp);
       if (f) {
         const patch = { name: cleanName(m.n) || f.name, hue: hue(m.c) };
+        if (typeof m.i === 'string' && PUBID_RE.test(m.i)) patch.pid = m.i;
         if (was === 'offline' || p.liveAt - (Number(f.seen) || 0) > SEEN_SAVE_MS) patch.seen = p.liveAt;
         patchFriend(p.fp, patch);
         if (PH_RE.test(m.ph || '') && m.ph !== f.ph && mayReply(`pq:${p.fp}`, 30_000)) sendPair(p, 'pq');
@@ -736,8 +833,67 @@ function onPairMsg(p, m) {
       return;
     case 'ev': onNight(p, m); return;
     case 'rsvp': onRsvp(p, m); return;
+    case 'look': onLook(p, m); return;
+    case 'lnk': onLink(p, m); return;
+    case 'col': onCollection(p, m); return;
+    case 'rmi': onRoomInvite(p, m); return;
+    case 'med': onMedia(p, m); return;
+    case 'arc': onArcade(p, m); return;
+    case 'dm': onDm(p, m); return;
+    case 'shr': onShared(p, m); return;
+    case 'pin': onPartyInvite(p, m); return;
+    case 'sin': onStudyInvite(p, m); return;
+    case 'wti': onRoomAppInvite(p, m, 'wti'); return;
+    case 'fbi': onRoomAppInvite(p, m, 'fbi'); return;
+    case 'pni': onRoomAppInvite(p, m, 'pni'); return;
+    case 'bti': onRoomAppInvite(p, m, 'bti'); return;
+    case 'card': {
+      if (m.x === 1) { patchFriend(p.fp, { card: null }); changed(); return; }
+      const c = cleanCard({ bio: m.b, games: m.g, ach: m.a, cre: m.c });
+      if (!cardHasAny(c)) { R.stats.ignored++; return; }
+      if (!mayReply(`card:${p.fp}`, 2000)) { R.stats.dropped++; return; }
+      patchFriend(p.fp, { card: { ...c, at: Date.now() } });
+      changed();
+      return;
+    }
     default: R.stats.ignored++;
   }
+}
+
+/* ---------------- looks sent by friends ----------------
+   A look is a code (core/lookcode.js) and nothing more: it is checked the
+   way a pasted one is, kept in a short list, and does nothing until you
+   preview it in Static Store and press Apply. It can be undone there. */
+const lookTimes = new Map();      /* fp -> when its looks arrived: at most 6 a minute from one friend */
+function lookRoom(fp) {
+  const now = Date.now();
+  const list = (lookTimes.get(fp) || []).filter(t => now - t < 60_000);
+  if (list.length >= 6) { lookTimes.set(fp, list); return false; }
+  list.push(now);
+  lookTimes.set(fp, list);
+  return true;
+}
+async function onLook(p, m) {
+  if (typeof m.c !== 'string' || !LOOK_RE.test(m.c) || !friendOf(p.fp) || !lookRoom(p.fp)) { R.stats.ignored++; return; }
+  try { (await import('./lookcode.js')).decodeLook(m.c); } catch (e) { R.stats.ignored++; return; }
+  const d = D();
+  if (d.looks.some(l => l.fp === p.fp && l.code === m.c)) return;
+  const name = cleanLine(m.n, 40) || 'A look';
+  save({ looks: [{ id: rid(8), fp: p.fp, name, code: m.c, at: Date.now() }, ...d.looks].slice(0, MAX_LOOKS) });
+  notify({ title: `${displayName(friendOf(p.fp))} sent you a look`, message: `“${name}”. Preview it in Static Store, then apply it or not.`, icon: 'palette',
+    actions: [{ label: 'Preview', onClick: () => { try { api.openApp('store', { section: 'In use' }); } catch (e) { /* no shell */ } } }] });
+}
+/** Looks friends sent you, newest first. */
+export const looks = () => D().looks.filter(l => friendOf(l.fp)).map(l => ({ id: l.id, fp: l.fp, from: displayName(friendOf(l.fp)), name: cleanLine(l.name, 40) || 'A look', code: l.code, at: l.at }));
+export function dismissLook(id) { save({ looks: D().looks.filter(l => l.id !== id) }); }
+/** Send a look code to one friend who is online now. Nothing is stored on a server: if they are away it is not sent. */
+export function sendLook(fp, code, name = '') {
+  if (!LOOK_RE.test(String(code || ''))) return { ok: false, error: 'That isn’t a look code.' };
+  const p = R.pairs.get(fp);
+  if (!p || !friendOf(fp)) return { ok: false, error: 'That friend isn’t in your list.' };
+  if (presenceOf(p) === 'offline') return { ok: false, error: 'They’re offline. Looks only go to a friend who is online right now.' };
+  const sent = sendPair(p, 'look', { c: code, n: cleanLine(name, 40) });
+  return sent ? { ok: true } : { ok: false, error: 'Could not reach them. Try again in a moment.' };
 }
 
 /* ---------------- presence ---------------- */
@@ -752,6 +908,7 @@ function myState() {
   if (m.status === 'away' || m.status === 'busy') return m.status;
   const s = myStatus();
   if (s && s.preset === 'away') return 'away';
+  if (D().opts.dndBusy && store.get('prefs.dnd') === true) return 'busy';       /* opt-in: Do Not Disturb shows as Busy */
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return 'away';
   if (Date.now() - R.input >= IDLE_MS) return 'away';
   return 'online';
@@ -760,7 +917,8 @@ function hbBody(q) {
   const m = identity.me();
   const s = myStatus();
   const g = currentGame();
-  const b = { st: myState(), n: cleanName(m.name), c: hue(m.color), ph: R.ph };
+  /* i: this device's id on the public rooms (Social), so Social can tell a friend's posts from a stranger's */
+  const b = { st: myState(), n: cleanName(m.name), c: hue(m.color), ph: R.ph, i: m.id };
   if (s) { b.s = s.text; b.e = s.emoji; b.x = s.until || 0; }
   if (g) b.g = g;
   if (q) b.q = 1;
@@ -787,7 +945,9 @@ function soonBeat() {
 
 /* ---------------- status (#145) ---------------- */
 export function untilFor(id, now = Date.now()) {
+  if (id === '30m') return now + 1800_000;
   if (id === '1h') return now + 3600_000;
+  if (id === '2h') return now + 7200_000;
   if (id === 'today') { const d = new Date(now); d.setHours(23, 59, 59, 999); return d.getTime(); }
   return 0;
 }
@@ -848,6 +1008,57 @@ export function currentGame() {
   }
   return null;
 }
+/* ---------------- the profile card (opt-in, sent by hand) ---------------- */
+export const CARD_BIO_MAX = 240;
+export const CARD_LIST_MAX = 3;
+/** A card from anywhere — a friend's message, the Profile app's picks — as text that is safe to keep and show. */
+export function cleanCard(o) {
+  const c = o && typeof o === 'object' ? o : {};
+  const list = a => (Array.isArray(a) ? a : []).map(x => cleanLine(x, TITLE_MAX)).filter(Boolean).slice(0, CARD_LIST_MAX);
+  return { bio: cleanLine(c.bio, CARD_BIO_MAX), games: list(c.games), ach: list(c.ach), cre: list(c.cre) };
+}
+export const cardHasAny = c => !!(c && (c.bio || c.games.length || c.ach.length || c.cre.length));
+/**
+ * Send my profile card to friends: `fps` is a list of friend ids, or null for everyone.
+ * The card is exactly what is passed in (cleaned and capped); the Profile app passes only what the
+ * person ticked. -> { sent, total, empty?, unavailable? } — `sent` counts friends it was handed to the
+ * live channel for; a friend who isn't listening right now doesn't get it until it is sent again.
+ */
+export async function sendCard(card, fps = null) {
+  if (!available()) return { sent: 0, total: 0, unavailable: true };
+  const c = cleanCard(card);
+  if (!cardHasAny(c)) return { sent: 0, total: 0, empty: true };
+  await ready();
+  const body = { b: c.bio, g: c.games, a: c.ach, c: c.cre };
+  let sent = 0, total = 0;
+  for (const p of R.pairs.values()) {
+    if (Array.isArray(fps) && !fps.includes(p.fp)) continue;
+    total++;
+    if (sendPair(p, 'card', body)) sent++;
+  }
+  return { sent, total };
+}
+/** Take my card back from friends' devices (they delete it when this arrives). */
+export async function withdrawCard(fps = null) {
+  if (!available()) return { sent: 0, total: 0, unavailable: true };
+  await ready();
+  let sent = 0, total = 0;
+  for (const p of R.pairs.values()) {
+    if (Array.isArray(fps) && !fps.includes(p.fp)) continue;
+    total++;
+    if (sendPair(p, 'card', { x: 1 })) sent++;
+  }
+  return { sent, total };
+}
+/** The cards friends have sent me: [{ fp, name, display, hue, picture, costume, card:{ bio, games, ach, cre, at } }] */
+export function cards() {
+  return D().friends.filter(f => f.card && typeof f.card === 'object').map(f => {
+    const c = cleanCard(f.card);
+    return { fp: f.fp, name: cleanName(f.name) || 'Friend', display: displayName(f), hue: hue(f.hue), picture: normPic(f.pic), costume: Avatar.normCostume(f.cos),
+      card: { ...c, at: Number(f.card.at) || 0 } };
+  }).filter(x => cardHasAny(x.card)).sort((a, b) => b.card.at - a.card.at);
+}
+
 /** Exactly what a friend's device is sent about you. */
 export function whatFriendsSee() {
   const m = identity.me();
@@ -856,6 +1067,7 @@ export function whatFriendsSee() {
   return {
     name: cleanName(m.name), color: hue(m.color), picture, costume,
     state: st, status: st === 'invisible' ? null : myStatus(), game: st === 'invisible' ? null : currentGame(), shareGame: shareGame(),
+    shares: sharing(),
   };
 }
 
@@ -865,15 +1077,15 @@ const gameTitle = g => {
   if (g.kind === 'arcade') { const a = arcadeById(g.id); return a ? a.title : null; }
   return typeof g.title === 'string' ? cleanLine(g.title, 80) || null : null;
 };
-export const nightName = n => n.title || `${gameTitle(n.game) || 'Game'} night`;
-const wireNight = n => ({ id: n.id, ti: n.title || '', g: { k: n.game.kind, i: n.game.id }, w: n.at, len: n.len, inv: n.invited, rs: n.rsvp || {}, pc: n.party || null, rc: n.room || null, x: !!n.cancelled, u: n.updated });
+export const nightName = n => n.title || (n.game.kind === 'anime' ? `${gameTitle(n.game) || 'Anime'} watch night` : `${gameTitle(n.game) || 'Game'} night`);
+const wireNight = n => ({ id: n.id, ti: n.title || '', g: { k: n.game.kind, i: n.game.id }, w: n.at, len: n.len, inv: n.invited, rs: n.rsvp || {}, pc: n.party || null, rc: n.room || null, x: !!n.cancelled, u: n.updated, wk: n.weekly ? 1 : 0, sk: n.skipped || 0 });
 /** A two-player online Arcade game with one friend gets an Arcade room; anything else a Static Party. */
 export const roomNight = n => n.game.kind === 'arcade' && !!arcadeById(n.game.id)?.online && n.invited.length === 1;
 
 function cleanNight(m, host) {
   if (!NIGHT_ID.test(m.id || '') || !m.g || typeof m.g !== 'object') return null;
-  const kind = m.g.k === 'arcade' || m.g.k === 'web' ? m.g.k : null;
-  if (!kind || !GAME_ID.test(m.g.i || '')) return null;
+  const kind = m.g.k === 'arcade' || m.g.k === 'web' || m.g.k === 'anime' ? m.g.k : null;
+  if (!kind || !GAME_ID.test(m.g.i || '') || (kind === 'anime' && !ANIME_ID.test(m.g.i))) return null;
   const now = Date.now();
   if (!Number.isFinite(m.w) || m.w < now - 2 * DAY || m.w > now + 90 * DAY) return null;
   if (!Number.isInteger(m.len) || m.len < 15 || m.len > 360) return null;
@@ -889,6 +1101,7 @@ function cleanNight(m, host) {
   return {
     id: m.id, host, title: cleanLine(m.ti, TITLE_MAX), game: { kind, id: m.g.i }, at: m.w, len: m.len,
     invited, rsvp, party: m.pc || null, room: m.rc || null, cancelled: m.x === true, updated: m.u,
+    weekly: m.wk === 1, skipped: m.wk === 1 && Number.isFinite(m.sk) && m.sk > 0 ? m.sk : 0,
   };
 }
 
@@ -896,6 +1109,12 @@ function cleanNight(m, host) {
 async function localTitle(game) {
   if (game.kind === 'arcade') return gameTitle(game);
   try {
+    if (game.kind === 'anime') {
+      const A = await import('../portal/anime.data.js');
+      await A.load('anime');
+      const a = A.byId(game.id, 'anime');
+      return a ? cleanLine(a.title, 80) || null : null;
+    }
     const G = await import('../portal/games.data.js');
     await G.load();
     const g = G.byId(game.id);
@@ -919,14 +1138,15 @@ function onNight(p, m) {
     return;
   }
   if (!cur && (d.nights.filter(x => x.host === p.fp).length >= MAX_NIGHTS_PER_HOST || d.nights.length >= MAX_NIGHTS)) { R.stats.refused++; return; }
-  const next = { ...n, mine: cur ? cur.mine || null : null };
+  const next = { ...n, mine: cur && cur.at === n.at ? cur.mine || null : null };    /* a weekly night's new week starts unanswered */
+  if (cur && cur.cal) next.cal = cur.cal;
   if (cur && cur.game.kind === n.game.kind && cur.game.id === n.game.id && cur.game.title) next.game.title = cur.game.title;
   save({ nights: cur ? d.nights.map(x => (x.id === n.id ? next : x)) : [...d.nights, next] });
   syncReminders();
   if (next.mine && n.rsvp[R.fp] !== next.mine) sendPair(p, 'rsvp', { id: n.id, r: next.mine });
   const host = displayName(friendOf(p.fp));
   const fresh = !cur && !n.cancelled && n.at + n.len * 60_000 > Date.now();
-  if (!next.game.title && next.game.kind === 'web') {
+  if (!next.game.title && (next.game.kind === 'web' || next.game.kind === 'anime')) {
     localTitle(next.game).then(t => {
       if (!t) return;
       const d2 = D();
@@ -936,16 +1156,18 @@ function onNight(p, m) {
   }
   if (fresh) {
     notify({
-      key: `friends-night-${n.id}`, title: `${host} invited you to a game night`,
+      key: `friends-night-${n.id}`, from: p.fp, title: `${host} invited you to a game night`,
       message: `${nightName(next)} · ${whenText(n.at)}`,
       actions: [{ label: 'Open', onClick: () => openSocial({ night: n.id }) }],
       onClick: () => openSocial({ night: n.id }),
     });
   } else if (cur && !cur.cancelled && n.cancelled) {
-    notify({ key: `friends-night-${n.id}`, title: `${host} cancelled ${nightName(next)}`, message: whenText(n.at) });
+    notify({ key: `friends-night-${n.id}`, from: p.fp, title: `${host} cancelled ${nightName(next)}`, message: whenText(n.at) });
+  } else if (cur && n.weekly && n.skipped && n.skipped !== cur.skipped && !n.cancelled) {
+    notify({ key: `friends-night-${n.id}`, from: p.fp, title: `${host} skipped this week’s ${nightName(next)}`, message: `Next one: ${whenText(n.at)}`, timeout: 6000 });
   } else if (cur && ((!cur.party && n.party) || (n.room && cur.room !== n.room)) && !n.cancelled && next.mine !== 'no') {
     notify({
-      key: `friends-night-${n.id}`, timeout: 0, title: `${host} opened the ${n.room ? 'room' : 'party'} for ${nightName(next)}`,
+      key: `friends-night-${n.id}`, from: p.fp, timeout: 0, title: `${host} opened the ${n.room ? 'room' : 'party'} for ${nightName(next)}`,
       message: 'Join when you’re ready.',
       actions: [{ label: 'Join', onClick: () => joinNight(n.id) }],
     });
@@ -962,8 +1184,265 @@ function onRsvp(p, m) {
   save({ nights: d.nights.map(x => (x.id === n.id ? next : x)) });
   sendNight(next);
   if (m.r === 'yes' && mayReply(`rsvpnote:${n.id}:${p.fp}`, 60_000)) {
-    notify({ title: `${displayName(friendOf(p.fp))} is going to ${nightName(next)}`, message: whenText(next.at), timeout: 5000 });
+    notify({ from: p.fp, title: `${displayName(friendOf(p.fp))} is going to ${nightName(next)}`, message: whenText(next.at), timeout: 5000 });
   }
+}
+
+/* ---------------- a link to a page, sent to one friend ---------------- */
+/* 'lnk' { k, i, ti }: the kind of page ('game' = Static Games, 'roblox' =
+   Static Roblox) and its id in that catalogue. It is only ever a pointer to a
+   page both devices already have: nothing is synced, proxied or opened for
+   them. The receiver looks the id up in ITS OWN catalogue, shows ITS title,
+   and a friend sees a notification they can ignore or open. */
+const LINKS = {
+  game: { id: GAME_ID, app: 'aether-games', url: id => `static://games/${id}`, name: 'Static Games' },
+  roblox: { id: /^\d{1,20}$/, app: 'aether-roblox', url: id => `static://roblox/${id}`, name: 'Static Roblox' },
+};
+export const LINK_KINDS = Object.keys(LINKS);
+
+/** Send a page to a friend. -> { ok, error?: 'kind' | 'friend' | 'wait' | 'offline' } */
+export async function sendLink(fp, { kind, id, title = '' } = {}) {
+  const L = LINKS[kind];
+  if (!L || !L.id.test(String(id || ''))) return { ok: false, error: 'kind' };
+  await start();
+  const p = R.pairs.get(fp);
+  if (!p || !p.key) return { ok: false, error: 'friend' };
+  if (!mayReply(`lnkout:${fp}`, 2000)) return { ok: false, error: 'wait' };
+  const sent = sendPair(p, 'lnk', { k: kind, i: String(id), ti: cleanLine(title, 80) });
+  /* sent is false while the live channel is down — the message is still queued */
+  return { ok: true, live: sent };
+}
+
+async function onLink(p, m) {
+  const L = LINKS[m.k];
+  if (!L || typeof m.i !== 'string' || !L.id.test(m.i)) { R.stats.ignored++; return; }
+  if (!mayReply(`lnk:${p.fp}`, 3000)) { R.stats.dropped++; return; }
+  let title = null;
+  try {
+    if (m.k === 'game') title = await localTitle({ kind: 'web', id: m.i });
+    else {
+      const RB = await import('../portal/roblox.data.js');
+      await RB.load();
+      const r = RB.byId(m.i);
+      title = r ? cleanLine(r.name, 80) || null : null;
+    }
+  } catch (e) { title = null; }
+  if (!title) { R.stats.ignored++; return; }          /* not in this device's catalogue: nothing to open */
+  const open = () => { try { api.openApp(L.app, { url: L.url(m.i) }); } catch (e) { /* no shell */ } };
+  notify({
+    key: `friends-link-${m.k}-${m.i}-${p.fp}`, from: p.fp, title: `${displayName(friendOf(p.fp))} sent you ${title}`,
+    message: `In ${L.name}. Nothing opens until you choose.`,
+    actions: [{ label: 'Open', onClick: open }], onClick: open,
+  });
+}
+
+/* ---------------- a collection, sent to one friend ----------------
+   'col' { n, it: [[kind, id], …] }: a name and a list of ids. Like a link, it
+   is only a pointer: the receiver looks every id up in ITS OWN catalogues, shows
+   ITS titles, and nothing is saved until they press Save. Creations and Cloud
+   titles never travel (the receiver could not look them up). */
+const COL_MAX_TEXT = 12_000;
+export async function sendCollection(fp, { name = '', ids = [] } = {}) {
+  const C = await import('./collections.js');
+  let pairs = C.cleanPairs(ids);
+  if (!pairs.length) return { ok: false, error: 'empty' };
+  await start();
+  const p = R.pairs.get(fp);
+  if (!p || !p.key) return { ok: false, error: 'friend' };
+  if (!mayReply(`colout:${fp}`, 3000)) return { ok: false, error: 'wait' };
+  const n = cleanLine(name, 40) || 'Shared collection';
+  while (pairs.length > 1 && JSON.stringify({ n, it: pairs }).length > COL_MAX_TEXT) pairs = pairs.slice(0, -5);
+  const sent = sendPair(p, 'col', { n, it: pairs });
+  return { ok: true, live: sent, count: pairs.length };
+}
+
+async function onCollection(p, m) {
+  if (!mayReply(`col:${p.fp}`, 5000)) { R.stats.dropped++; return; }
+  const C = await import('./collections.js');
+  const pairs = C.cleanPairs(m.it);
+  if (!pairs.length) { R.stats.ignored++; return; }
+  const name = cleanLine(m.n, 40) || 'Shared collection';
+  const save = async () => {
+    const r = await C.importIds(name, pairs);
+    if (!r) { notify({ title: 'Could not save it', message: 'You have reached the limit of 60 collections.', icon: 'alert' }); return; }
+    notify({ title: `Saved “${r.col.name}”`, icon: 'bookmark',
+      message: `${r.added} of ${pairs.length} found in your catalogues${r.skipped ? `; ${r.skipped} this device does not have were left out` : ''}.`,
+      actions: [{ label: 'Open', onClick: () => { try { api.openApp('aether-library', { url: `static://library/collections/${encodeURIComponent(r.col.id)}` }); } catch (e) { /* no shell */ } } }] });
+  };
+  notify({
+    key: `friends-col-${p.fp}`, from: p.fp, title: `${displayName(friendOf(p.fp))} sent you a collection`,
+    message: `“${name}” · ${pairs.length} ${pairs.length === 1 ? 'title' : 'titles'}. Nothing is saved until you choose.`,
+    actions: [{ label: 'Save as collection', onClick: save }],
+  });
+}
+
+/* ---------------- an Arcade room code, sent to one friend ----------------
+   'rmi' { g, c }: the Arcade game's id and the six-character room code of a
+   room the sender just opened. Joining is a click on the notice; nobody is
+   matched with a stranger and nothing opens by itself. */
+export async function sendRoomInvite(fp, { game, code } = {}) {
+  const a = arcadeById(game);
+  if (!a || !a.online || !PARTY_CODE.test(String(code || ''))) return { ok: false, error: 'game' };
+  await start();
+  const p = R.pairs.get(fp);
+  if (!p || !p.key) return { ok: false, error: 'friend' };
+  if (!mayReply(`rmiout:${fp}`, 2000)) return { ok: false, error: 'wait' };
+  const sent = sendPair(p, 'rmi', { g: a.id, c: code });
+  return { ok: true, live: sent };
+}
+
+function onRoomInvite(p, m) {
+  const a = typeof m.g === 'string' ? arcadeById(m.g) : null;
+  if (!a || !a.online || !PARTY_CODE.test(m.c || '')) { R.stats.ignored++; return; }
+  if (!mayReply(`rmi:${p.fp}`, 5000)) { R.stats.dropped++; return; }
+  const join = () => { try { api.openApp('arcade', { join: m.c }); } catch (e) { /* no shell */ } };
+  notify({
+    key: `friends-rmi-${p.fp}`, from: p.fp, timeout: 0, title: `${displayName(friendOf(p.fp))} invited you to play ${a.title}`,
+    message: 'Their room is open now. Nothing joins until you choose.',
+    actions: [{ label: 'Join', onClick: join }], onClick: join,
+  });
+}
+
+/* ---------------- Spotify / TikTok / Drop, sent to one friend ---------------- */
+const MEDIA = {
+  spotify: { id: /^(track|album|playlist|artist|show|episode):[A-Za-z0-9]{1,40}$/, name: 'Spotify', app: 'spotify' },
+  tiktok: { id: /^\d{6,25}$/, name: 'TikTok', app: 'tiktok' },
+  drop: { id: /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/, name: 'Static Drop', app: 'drop' },
+  /* a SomaFM station from Static Radio: the id must also be one on the shared list (js/core/stations.js) */
+  radio: { id: /^[a-z0-9]{2,20}$/, name: 'Static Radio', app: 'radio', known: id => isStation(id) },
+};
+export const MEDIA_KINDS = Object.keys(MEDIA);
+const HANDLE = /^@[A-Za-z0-9._-]{1,30}$/;
+
+/** Send a Spotify item, a TikTok, a Drop code or a radio station to one friend. -> { ok, live?, error?: 'kind' | 'friend' | 'wait' } */
+export async function sendMedia(fp, { kind, id, title = '', handle = '' } = {}) {
+  const M = MEDIA[kind];
+  if (!M || !M.id.test(String(id || '')) || (M.known && !M.known(String(id)))) return { ok: false, error: 'kind' };
+  await start();
+  const p = R.pairs.get(fp);
+  if (!p || !p.key) return { ok: false, error: 'friend' };
+  if (!mayReply(`medout:${fp}`, 2000)) return { ok: false, error: 'wait' };
+  const body = { k: kind, i: String(id), ti: cleanLine(title, 80) };
+  if (kind === 'tiktok' && HANDLE.test(handle)) body.hd = handle;
+  const sent = sendPair(p, 'med', body);
+  return { ok: true, live: sent };
+}
+
+async function onMedia(p, m) {
+  const M = MEDIA[m.k];
+  if (!M || typeof m.i !== 'string' || !M.id.test(m.i) || (M.known && !M.known(m.i))) { R.stats.ignored++; return; }
+  if (!mayReply(`med:${p.fp}`, 3000)) { R.stats.dropped++; return; }
+  const who = displayName(friendOf(p.fp));
+  const title = cleanLine(m.ti, 80);
+  const handle = m.k === 'tiktok' && HANDLE.test(m.hd || '') ? m.hd : '';
+  const open = o => () => { try { api.openApp(M.app, o); } catch (e) { /* no shell */ } };
+  const key = `friends-med-${m.k}-${m.i}-${p.fp}`;
+  if (m.k === 'drop') {
+    notify({
+      key, from: p.fp, timeout: 0, title: `${who} wants to send you files with Static Drop`,
+      message: 'Open fills in their code. Nothing is received until you press Receive and then Accept.',
+      actions: [{ label: 'Open', onClick: open({ join: m.i }) }], onClick: open({ join: m.i }),
+    });
+    return;
+  }
+  if (m.k === 'radio') {
+    /* the name comes from our own list, never from the message: a friend can't put words in the title */
+    const st = BY_ID.get(m.i);
+    const listen = () => { try { api.openApp('radio', { station: st.id }); } catch (e) { /* no shell */ } };
+    const keep = () => {
+      try {
+        const o = store.get('portal.radio');
+        const rec = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+        const favs = Array.isArray(rec.favs) ? rec.favs.filter(x => typeof x === 'string') : [];
+        if (!favs.includes(st.id)) store.set('portal.radio', { ...rec, favs: [...favs, st.id] });
+        notify({ from: p.fp, title: 'Added to your favorite stations', message: st.name, timeout: 4000 });
+      } catch (e) { /* nothing was added */ }
+    };
+    notify({
+      key, from: p.fp, timeout: 0, title: `${who} sent you a radio station: ${st.name}`,
+      message: `${st.genre}. It does not play by itself — Listen opens Static Radio and tunes in.`,
+      actions: [{ label: 'Listen', onClick: listen }, { label: 'Add to favorites', onClick: keep }], onClick: listen,
+    });
+    return;
+  }
+  const added = async () => {
+    try {
+      if (m.k === 'spotify') {
+        const SP = await import('../portal/spotify.js');
+        const [kind, id] = m.i.split(':');
+        SP.save(store, { kind, id, name: title || null });
+      } else {
+        const TT = await import('../portal/tiktok.js');
+        TT.addSaved(store, { id: m.i, handle, url: handle ? `https://www.tiktok.com/${handle}/video/${m.i}` : '' });
+      }
+      bus.emit('media:saved', { app: M.app });
+      notify({ from: p.fp, title: m.k === 'spotify' ? 'Added to your Spotify library' : 'Added to your Saved shelf', message: title || handle || M.name, timeout: 4000 });
+    } catch (e) { /* the app's code could not load: nothing was added */ }
+  };
+  const openIt = m.k === 'spotify'
+    ? open({ link: `https://open.spotify.com/${m.i.split(':')[0]}/${m.i.split(':')[1]}` })
+    : open({ url: `https://www.tiktok.com/${handle || '@'}/video/${m.i}` });
+  notify({
+    key, from: p.fp, timeout: 0,
+    title: m.k === 'spotify' ? `${who} sent you ${title || 'something on Spotify'}` : `${who} sent you a TikTok${handle ? ` from ${handle}` : ''}`,
+    message: m.k === 'spotify' ? 'Nothing plays until you press play in the player.' : 'Add keeps it on your Saved shelf. Nothing plays until you open it.',
+    actions: [{ label: 'Add', onClick: added }, { label: 'Open', onClick: openIt }], onClick: openIt,
+  });
+}
+
+/* ---------------- Static Arcade with friends ----------------
+   'arc' { k, … } carries only what a person chose to send from the Arcade:
+   a best score for their friends' leaderboards, a Beat-this round, a cup's
+   bracket (from its host) or a cup match's score (to its host). It is
+   checked, kept and shown by ../arcade/friendplay.js, which is loaded the
+   first time one arrives (so this keeps working with the Arcade closed). */
+/** Send an Arcade message to friends: `fps` a list of friend ids, or null for all. -> { sent, total } */
+export async function sendArcade(fps, body) {
+  if (!available()) return { sent: 0, total: 0, unavailable: true };
+  if (!body || typeof body !== 'object' || typeof body.k !== 'string') return { sent: 0, total: 0 };
+  await ready();
+  let sent = 0, total = 0;
+  for (const p of R.pairs.values()) {
+    if (Array.isArray(fps) && !fps.includes(p.fp)) continue;
+    total++;
+    if (sendPair(p, 'arc', body)) sent++;
+  }
+  return { sent, total };
+}
+function onArcade(p, m) {
+  if (typeof m.k !== 'string' || m.k.length > 8) { R.stats.ignored++; return; }
+  import('../arcade/friendplay.js').then(A => A.receive(p.fp, m)).catch(e => console.warn('[friends] arcade', e));
+}
+
+/* ---------------- direct messages (Static Chat) ----------------
+   'dm' carries a Static Chat message (js/core/chatwire.js: text, a sticker, a
+   card, a file's name, a poll or a vote, a reaction, an edit or a delete) to
+   ONE accepted friend, on that friendship's sealed topic. Nobody else has
+   the key, so there is no way to message a stranger from here. It is checked
+   with the same validator a shared space uses, taken at most FRIEND_DM_PER_SEC
+   a second from one friend, and handed to the chat store
+   (portal/chat.transport.js), which keeps it on this device and says who it
+   is from. Voice messages do not travel here (rooms only). Nothing says it was
+   read: a send only reports whether the connection was up. */
+const FRIEND_DM_PER_SEC = 6;
+/** Send a chat message to a friend. -> { ok, live, error?: 'friend' | 'wait' | 'invalid' | 'unavailable' } */
+export async function sendDm(fp, body) {
+  if (!available()) return { ok: false, error: 'unavailable' };
+  const clean = parseChat(body, { voice: false });
+  if (!clean) return { ok: false, error: 'invalid' };
+  await ready();
+  const p = R.pairs.get(fp);
+  if (!p || !p.key || !friendOf(fp)) return { ok: false, error: 'friend' };
+  if (!win(p.dmOut || (p.dmOut = { at: 0, n: 0 }), FRIEND_DM_PER_SEC)) return { ok: false, error: 'wait' };
+  const live = sendPair(p, 'dm', clean);
+  return { ok: true, live };
+}
+function onDm(p, m) {
+  const f = friendOf(p.fp);
+  const clean = f && parseChat(m, { voice: false });
+  if (!clean) { R.stats.ignored++; return; }
+  if (!win(p.dmIn || (p.dmIn = { at: 0, n: 0 }), FRIEND_DM_PER_SEC)) { R.stats.dropped++; return; }
+  import('../portal/chat.transport.js').then(T => T.receiveDm(p.fp, clean)).catch(e => console.warn('[friends] dm', e));
 }
 
 const bump = u => Math.max(Date.now(), (Number(u) || 0) + 1);
@@ -983,6 +1462,7 @@ function resync(p) {
 }
 function onFriendOnline(p) {
   const now = Date.now();
+  sendShare(p);
   for (const n of D().nights) {
     if (n.at + n.len * 60_000 < now) continue;
     if (n.host === R.fp && n.invited.includes(p.fp)) sendPair(p, 'ev', wireNight(n));
@@ -1017,7 +1497,17 @@ function syncReminders() {
     for (const [ref, at, text] of [[`${n.id}~15`, n.at - 15 * 60_000, `${name} starts in 15 minutes`], [n.id, n.at, `${name} is starting`]]) {
       if (at + 11 * 60_000 < now) continue;
       const d = new Date(at);
-      want.push({ ref, text, sub: 'Game night · Static Social', time: `${pad(d.getHours())}:${pad(d.getMinutes())}`, date: AM.ymd(d) });
+      want.push({ ref, text, sub: `${n.game.kind === 'anime' ? 'Anime night' : 'Game night'} · Static Social`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}`, date: AM.ymd(d) });
+    }
+  }
+  /* a friend's birthday — only a day that friend chose to share — at 9 AM, this year's or next */
+  if (D().opts.remindBirthdays) {
+    const today = ymdOf(now);
+    for (const f of D().friends) {
+      if (!BDAY_RE.test(f.bday || '')) continue;
+      const on = [];
+      for (let y = +today.slice(0, 4); y <= +today.slice(0, 4) + 1 && on.length < 2; y++) { const day = bdayIn(f.bday, y); if (day >= today) on.push(day); }
+      if (on.length) want.push({ ref: `bd~${f.fp}`, text: `${displayName(f)}’s birthday`, sub: 'Friend birthday · Static Social', time: '09:00', repeat: 'dates', on });
     }
   }
   try { AM.syncSourceReminders(SRC, want); } catch (e) { console.warn('[friends] reminders', e); }
@@ -1051,10 +1541,16 @@ function onTick() {
     R.lastNightSend = now;
     for (const n of d.nights) if (n.host === R.fp && n.at + n.len * 60_000 > now) sendNight(n);
   }
+  rollNights(now);
+  shareTick(now);
+  announceCount();
+  const day = ymdOf(now);
+  if (day !== R.day) { if (R.day) syncReminders(); R.day = day; }
   /* nights long over, declines long past */
-  const keep = d.nights.filter(n => n.at + n.len * 60_000 + DAY > now);
+  const nightsNow = D().nights;
+  const keep = nightsNow.filter(n => n.at + n.len * 60_000 + DAY > now);
   const dec = d.declined.filter(x => x.until > now);
-  if (keep.length !== d.nights.length || dec.length !== d.declined.length) { save({ nights: keep, declined: dec }); syncInboxes(); }
+  if (keep.length !== nightsNow.length || dec.length !== d.declined.length) { save({ nights: keep, declined: dec }); syncInboxes(); }
 }
 
 async function knock(o) {
@@ -1224,6 +1720,33 @@ export async function block(fp) {
 export function unblock(fp) { save({ blocked: D().blocked.filter(b => b.fp !== fp) }); }
 export function setNick(fp, nick) { patchFriend(fp, { nick: cleanName(nick) }); }
 
+/** Is this id on the public rooms one of my friends' devices? Learned from their
+    sealed heartbeats. A public id proves nothing by itself (anyone can copy one),
+    so this only decides what to show by default, never who to trust. */
+export const isFriendId = id => typeof id === 'string' && !!id && D().friends.some(f => f.pid === id);
+
+/** For a private two-person room (Notes' Write together): one tag per friend,
+    from that friendship's own ECDH secret and the room's name, through HKDF.
+    Two friends in the same room make the same tag; nobody else can, and a tag
+    says nothing in any other room. -> [{ fp, tag }] — none when Friends isn't
+    set up on this profile (it is never set up from here). */
+export async function roomTags(context) {
+  if (!available() || !secureOk() || !D().friends.length) return [];
+  try { await ready(); } catch (e) { return []; }
+  if (!R.priv) return [];
+  const salt = await sha256(enc.encode(`staticos/friends/v1/room|${String(context)}`));
+  const out = [];
+  for (const f of D().friends) {
+    try {
+      const theirKey = await crypto.subtle.importKey('raw', unb64(f.pk), { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+      const shared = await crypto.subtle.deriveBits({ name: 'ECDH', public: theirKey }, R.priv, 256);
+      const hk = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveBits']);
+      const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode('staticos/friends/v1/room-tag') }, hk, 128));
+      out.push({ fp: f.fp, tag: b64(bits).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') });
+    } catch (e) { /* a friend whose key won't load is simply not matched */ }
+  }
+  return out;
+}
 export const displayName = f => (f ? cleanName(f.nick) || cleanName(f.name) || 'Friend' : 'Friend');
 
 export function friends() {
@@ -1237,10 +1760,13 @@ export function friends() {
       picture: normPic(f.pic), costume: Avatar.normCostume(f.cos), since: Number(f.since) || 0,
       presence, status, game: on ? p.game : null,
       lastSeen: Math.max(Number(f.seen) || 0, (p && p.liveAt) || 0) || null,
+      fav: f.fav === true, keyTag: keyTag(f.fp),
+      birthday: BDAY_RE.test(f.bday || '') ? f.bday : '',
     };
-  }).sort((a, b) => (a.presence === 'offline') - (b.presence === 'offline') || a.display.localeCompare(b.display));
+  }).sort((a, b) => (b.fav - a.fav) || (a.presence === 'offline') - (b.presence === 'offline') || a.display.localeCompare(b.display));
 }
-export const incoming = () => D().incoming.map(x => ({ fp: x.fp, name: cleanName(x.name) || 'Someone', hue: hue(x.hue), picture: normPic(x.pic), costume: Avatar.normCostume(x.cos), at: x.at, code: x.code }));
+export const incoming = () => D().incoming.map(x => ({ fp: x.fp, name: cleanName(x.name) || 'Someone', hue: hue(x.hue), picture: normPic(x.pic), costume: Avatar.normCostume(x.cos), at: x.at, code: x.code,
+  keyTag: keyTag(x.fp), twin: x.twin && friendOf(x.twin) ? displayName(friendOf(x.twin)) : '' }));
 export const outgoing = () => D().outgoing.map(o => ({ code: o.code, at: o.at, until: o.until, state: o.state }));
 export const blocked = () => D().blocked.map(b => ({ fp: b.fp, name: cleanName(b.name) || 'Someone', at: b.at }));
 
@@ -1261,18 +1787,19 @@ export function nights() {
       invited: n.invited.map(fp => ({ fp, name: nameOf(fp), answer: (fp === R.fp ? mine : rs[fp]) || null })),
       going: names('yes'), maybe: names('maybe'), no: names('no'),
       mine, confirmed: host || (!!mine && rs[R.fp] === mine), party: n.party || null, room: n.room || null,
-      via: roomNight(n) ? 'room' : 'party', state,
+      weekly: !!n.weekly, skipped: n.skipped || 0, calendar: !!n.cal,
+      via: roomNight(n) ? 'room' : n.game.kind === 'anime' ? 'watch' : 'party', state,
       canJoin: state === 'soon' || state === 'live',
     };
   }).sort((a, b) => (a.state === 'over' || a.state === 'cancelled') - (b.state === 'over' || b.state === 'cancelled') || a.at - b.at);
 }
 
-export async function createNight({ title = '', game, at, len = 60, invite = [] } = {}) {
+export async function createNight({ title = '', game, at, len = 60, invite = [], weekly = false } = {}) {
   await start();
   const d = D();
   const now = Date.now();
-  const kind = game && (game.kind === 'arcade' || game.kind === 'web') ? game.kind : null;
-  if (!kind || !GAME_ID.test(game.id || '') || (kind === 'arcade' && !arcadeById(game.id))) return { ok: false, error: 'game' };
+  const kind = game && (game.kind === 'arcade' || game.kind === 'web' || game.kind === 'anime') ? game.kind : null;
+  if (!kind || !GAME_ID.test(game.id || '') || (kind === 'arcade' && !arcadeById(game.id)) || (kind === 'anime' && !ANIME_ID.test(game.id))) return { ok: false, error: 'game' };
   if (!Number.isFinite(at) || at < now - 60_000 || at > now + 60 * DAY) return { ok: false, error: 'time' };
   const L = Math.round(Number(len));
   if (!Number.isInteger(L) || L < 15 || L > 360) return { ok: false, error: 'length' };
@@ -1282,8 +1809,9 @@ export async function createNight({ title = '', game, at, len = 60, invite = [] 
   if (d.nights.filter(n => n.at + n.len * 60_000 > now).length >= MAX_NIGHTS) return { ok: false, error: 'full' };
   const n = {
     id: rid(12), host: R.fp, title: cleanLine(title, TITLE_MAX),
-    game: { kind, id: game.id, title: kind === 'web' ? cleanLine(game.title, 80) || null : null },
+    game: { kind, id: game.id, title: kind === 'web' || kind === 'anime' ? cleanLine(game.title, 80) || null : null },
     at: Math.floor(at / 60_000) * 60_000, len: L, invited, rsvp: {}, party: null, cancelled: false, updated: now,
+    weekly: weekly === true, skipped: 0,
   };
   save({ nights: [...d.nights, n] });
   syncReminders();
@@ -1311,6 +1839,64 @@ export function cancelNight(id) {
   syncReminders();
   return true;
 }
+/** Host: a weekly night leaves out its next turn. It moves on a week, answers start again, and guests are told. */
+export function skipNight(id) {
+  const d = D();
+  const n = d.nights.find(x => x.id === id && x.host === R.fp);
+  if (!n || !n.weekly || n.cancelled) return false;
+  const next = { ...n, at: n.at + 7 * DAY, rsvp: {}, party: null, room: null, skipped: n.at, updated: bump(n.updated) };
+  save({ nights: d.nights.map(x => (x.id === id ? next : x)) });
+  sendNight(next);
+  syncReminders();
+  if (n.cal) skipInCalendar(n.cal, n.at);
+  return true;
+}
+/** A weekly night whose turn is over moves to the same time next week (its host's device does this). */
+function rollNights(now) {
+  const d = D();
+  let hit = false;
+  const list = d.nights.map(n => {
+    if (!n.weekly || n.host !== R.fp || n.cancelled || n.at + n.len * 60_000 >= now) return n;
+    let at = n.at;
+    while (at + n.len * 60_000 < now) at += 7 * DAY;
+    hit = true;
+    return { ...n, at, rsvp: {}, party: null, room: null, skipped: 0, updated: bump(n.updated) };
+  });
+  if (!hit) return;
+  save({ nights: list });
+  list.filter(n => n.weekly && n.host === R.fp).forEach(n => sendNight(n));
+  syncReminders();
+}
+const ymdOf = ms => { const d = new Date(ms); const p = x => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+const hmOf = ms => { const d = new Date(ms); const p = x => String(x).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}`; };
+async function skipInCalendar(calId, skippedAt) {
+  try {
+    const C = await import('./calendar.js');
+    const ev = C.byId(calId);
+    if (!ev) return;
+    const day = ymdOf(skippedAt);
+    if (day > ev.date) C.updateEvent(calId, { skip: [...ev.skip, day] });
+    else C.updateEvent(calId, { date: ymdOf(skippedAt + 7 * DAY), skip: [] });
+  } catch (e) { console.warn('[friends] calendar skip', e); }
+}
+/** Put a night in Calendar (a weekly one repeats every week). Once: asking again says so. -> { ok, already?, error? } */
+export async function addNightToCalendar(id) {
+  const d = D();
+  const n = d.nights.find(x => x.id === id);
+  if (!n || n.cancelled) return { ok: false, error: 'night' };
+  try {
+    const C = await import('./calendar.js');
+    if (n.cal && C.byId(n.cal)) return { ok: true, already: true };
+    const r = C.addEvent({
+      title: nightName(n), date: ymdOf(n.at), time: hmOf(n.at), end: hmOf(n.at + n.len * 60_000) > hmOf(n.at) ? hmOf(n.at + n.len * 60_000) : '',
+      repeat: n.weekly ? 'weekly' : 'none', remind: null, notes: 'Planned in Static Social › Friends.',
+    });
+    if (!r.ok) return { ok: false, error: 'calendar' };
+    save({ nights: D().nights.map(x => (x.id === id ? { ...x, cal: r.event.id } : x)) });
+    return { ok: true, event: r.event.id };
+  } catch (e) { return { ok: false, error: 'calendar' }; }
+}
+
 export function removeNight(id) {
   const d = D();
   const n = d.nights.find(x => x.id === id);
@@ -1326,7 +1912,7 @@ export function removeNight(id) {
 export async function startNight(id) {
   await start();
   const n = D().nights.find(x => x.id === id && x.host === R.fp);
-  if (!n || n.cancelled) return null;
+  if (!n || n.cancelled || n.game.kind === 'anime') return null;     /* an anime night has no room or party to open */
   let patch;
   if (roomNight(n)) {
     const code = await new Promise(res => {
@@ -1365,11 +1951,282 @@ export async function joinNight(id) {
   const n = D().nights.find(x => x.id === id);
   if (!n) return false;
   if (n.cancelled) { openSocial({ night: id }); return false; }
+  /* an anime night: everyone watches on their own official service, at the same time — Join opens the title */
+  if (n.game.kind === 'anime') { try { api.openApp('aether-anime', { url: `static://anime/${n.game.id}` }); return true; } catch (e) { return false; } }
   if (n.host === R.fp) return !!(await startNight(id));
   if (n.room && PARTY_CODE.test(n.room)) { api.openApp('arcade', { join: n.room }); return true; }
   if (n.party && PARTY_CODE.test(n.party)) { api.openApp('party', { code: n.party }); return true; }
   openSocial({ night: id });
   return false;
+}
+
+/* ---------------- stars, groups, options ---------------- */
+/** A short tag made from a friend's key, to compare out loud or by message. */
+export const keyTag = fp => (FP_RE.test(String(fp)) ? `${fp.slice(0, 4)} ${fp.slice(4, 8)} ${fp.slice(8, 12)}`.toUpperCase() : '');
+function bdayIn(b, y) {
+  const mm = b.slice(2, 4), dd = b.slice(5, 7);
+  const t = new Date(y, +mm - 1, +dd);
+  return t.getMonth() === +mm - 1 ? `${y}-${mm}-${dd}` : `${y}-${mm}-28`;     /* 29 February in a year without one */
+}
+export function setFavourite(fp, on) {
+  if (!friendOf(fp)) return false;
+  patchFriend(fp, { fav: !!on });
+  return true;
+}
+
+/** Groups are a shortcut for inviting or asking several friends at once; they exist on this device only. */
+export function groups() {
+  const have = new Set(D().friends.map(f => f.fp));
+  return D().groups.map(g => ({ id: g.id, name: cleanLine(g.name, 30) || 'Group', members: g.members.filter(fp => have.has(fp)) }));
+}
+/** Make a group, or change one (pass its id). -> { ok, id?, error?: 'name' | 'members' | 'full' | 'gone' } */
+export function saveGroup({ id = null, name = '', members = [] } = {}) {
+  const d = D();
+  const nm = cleanLine(name, 30);
+  if (!nm) return { ok: false, error: 'name' };
+  const have = new Set(d.friends.map(f => f.fp));
+  const list = [...new Set(members)].filter(fp => have.has(fp)).slice(0, MAX_INVITE);
+  if (!list.length) return { ok: false, error: 'members' };
+  if (id) {
+    if (!d.groups.some(g => g.id === id)) return { ok: false, error: 'gone' };
+    save({ groups: d.groups.map(g => (g.id === id ? { id, name: nm, members: list } : g)) });
+    return { ok: true, id };
+  }
+  if (d.groups.length >= MAX_GROUPS) return { ok: false, error: 'full' };
+  const gid = rid(8);
+  save({ groups: [...d.groups, { id: gid, name: nm, members: list }] });
+  return { ok: true, id: gid };
+}
+export function deleteGroup(id) {
+  const d = D();
+  if (!d.groups.some(g => g.id === id)) return false;
+  save({ groups: d.groups.filter(g => g.id !== id) });
+  return true;
+}
+/**
+ * Ask a whole group something: the poll goes to each member as a Static Chat direct message (their
+ * own sealed friend topic), and shows in your own Chat under each of them. Nobody outside the group
+ * gets it. -> { ok, sent, total, error?: 'group' | 'poll' }
+ */
+export async function sendGroupPoll(id, { q = '', opts = [], multi = false, dur = 0 } = {}) {
+  const g = groups().find(x => x.id === id);
+  if (!g || !g.members.length) return { ok: false, sent: 0, total: 0, error: 'group' };
+  const POLL = await import('./polls.js');
+  const meta = POLL.parsePoll({ pid: rid(10), q, opts, multi: !!multi, anon: false, dur });
+  if (!meta) return { ok: false, sent: 0, total: 0, error: 'poll' };
+  await ready();
+  const T = await import('../portal/chat.transport.js');
+  let sent = 0;
+  for (const fp of g.members) {
+    try { await T.sendPoll(`dm:${fp}`, { ...meta, pid: rid(10) }); sent++; } catch (e) { /* that friend's chat did not take it */ }
+  }
+  return { ok: sent > 0, sent, total: g.members.length };
+}
+
+/* Options (Friends › You). Anything that shares something new starts off. */
+export const options = () => ({ ...D().opts });
+export function setOption(key, on) {
+  const d = D();
+  if (!['dndBusy', 'showCount', 'remindBirthdays', 'shareRecent', 'shareFavs'].includes(key)) return false;
+  const opts = { ...d.opts, [key]: !!on };
+  if (on && (key === 'shareRecent' || key === 'shareFavs')) opts.shared = true;
+  save({ opts });
+  if (key === 'dndBusy') soonBeat();
+  else if (key === 'showCount') announceCount(true);
+  else if (key === 'remindBirthdays') syncReminders();
+  else pushShare(true);
+  return true;
+}
+/** My birthday as month and day, no year: '--MM-DD' (also takes 'MM-DD' or 'YYYY-MM-DD'); '' takes it back. */
+export function setBirthday(v) {
+  const t = String(v || '').trim();
+  const m = /^(?:\d{4}-|--)?(\d{2})-(\d{2})$/.exec(t);
+  const b = m ? `--${m[1]}-${m[2]}` : '';
+  if (t && !BDAY_RE.test(b)) return false;
+  const d = D();
+  save({ opts: { ...d.opts, birthday: b, shared: d.opts.shared || !!b } });
+  pushShare(true);
+  return true;
+}
+/** What is being shared with friends right now (for "What your friends see"). */
+export function sharing() {
+  const o = D().opts;
+  return { recent: o.shareRecent, favs: o.shareFavs, birthday: o.birthday, dndBusy: o.dndBusy };
+}
+
+/* ---------------- what friends choose to share ('shr') ---------------- */
+function recentList() {
+  const out = [];
+  for (const r of plays.recent(40)) {
+    if (out.length >= SHARE_RECENT) break;
+    if (r.kind === 'arcade' && arcadeById(r.id)) out.push({ k: 'arcade', i: r.id });
+    else if (r.kind === 'web' && GAME_ID.test(String(r.id))) out.push({ k: 'web', i: String(r.id) });
+  }
+  return out;
+}
+const FAV_KEY = 'portal.games.favs';           /* Static Games' favourites (core/quickplay.js reads the same list) */
+function favList() {
+  const v = store.get(FAV_KEY, []);
+  return (Array.isArray(v) ? v : []).filter(x => typeof x === 'string' && GAME_ID.test(x)).slice(0, SHARE_FAVS);
+}
+function shareBody() {
+  const o = D().opts;
+  const r = o.shareRecent ? recentList() : null, f = o.shareFavs ? favList() : null, b = o.birthday || null;
+  if (!o.shared && r === null && f === null && b === null) return null;        /* never shared: nothing to say */
+  return { r, fv: f, b };
+}
+function sendShare(p) {
+  const b = shareBody();
+  if (b) sendPair(p, 'shr', b);
+}
+function pushShare(force) {
+  R.shareAt = Date.now();
+  R.shareSig = JSON.stringify(shareBody());
+  if (!force && R.shareSig === 'null') return;
+  R.pairs.forEach(p => sendShare(p));
+}
+function shareTick(now) {
+  if (now - (R.shareAt || 0) < SHARE_EVERY_MS) return;
+  if (JSON.stringify(shareBody()) !== R.shareSig) pushShare(false);
+  else R.shareAt = now;
+}
+function onShared(p, m) {
+  if (!friendOf(p.fp)) { R.stats.ignored++; return; }
+  if (!('r' in m) && !('fv' in m) && !('b' in m)) { R.stats.ignored++; return; }
+  /* one a second from a friend; a change that comes sooner waits its turn (the latest one), so a switch turned off is never lost */
+  if (!mayReply(`shr:${p.fp}`, 1000)) {
+    p.shrLate = m;
+    if (!p.shrT) p.shrT = setTimeout(() => { p.shrT = 0; const late = p.shrLate; p.shrLate = null; if (late && !p.closed) onShared(p, late); }, 1100);
+    return;
+  }
+  const at = Date.now();
+  const patch = {};
+  if ('r' in m) {
+    if (m.r === null) patch.recent = null;
+    else if (Array.isArray(m.r)) {
+      const list = [];
+      for (const x of m.r.slice(0, SHARE_RECENT)) {
+        if (x && (x.k === 'web' || x.k === 'arcade') && typeof x.i === 'string' && GAME_ID.test(x.i) && (x.k === 'web' || arcadeById(x.i))) list.push({ k: x.k, i: x.i });
+      }
+      patch.recent = { list, at };
+    }
+  }
+  if ('fv' in m) {
+    if (m.fv === null) patch.favs = null;
+    else if (Array.isArray(m.fv)) patch.favs = { list: [...new Set(m.fv.filter(x => typeof x === 'string' && GAME_ID.test(x)))].slice(0, SHARE_FAVS), at };
+  }
+  if ('b' in m) {
+    if (m.b === null) patch.bday = '';
+    else if (typeof m.b === 'string' && BDAY_RE.test(m.b)) patch.bday = m.b;
+  }
+  if (!Object.keys(patch).length) { R.stats.ignored++; return; }
+  const was = friendOf(p.fp)?.bday || '';
+  patchFriend(p.fp, patch);
+  if ('bday' in patch && patch.bday !== was) syncReminders();
+  changed();
+}
+/** What a friend chose to share with me: { recent, favs, at } — a part is null when they don't share it. Ids only: titles are looked up here. */
+export function sharedBy(fp) {
+  const f = friendOf(fp);
+  if (!f) return null;
+  const ok = x => (x && Array.isArray(x.list) ? x : null);
+  const r = ok(f.recent), v = ok(f.favs);
+  return { recent: r ? r.list.map(x => ({ kind: x.k, id: x.i })) : null, favs: v ? v.list.slice() : null, at: Math.max(r ? r.at : 0, v ? v.at : 0) };
+}
+/** Static Games ids both of us have as a favourite: theirs (only if they share them) against my own list. */
+export function bothFavourited(fp) {
+  const f = friendOf(fp);
+  if (!f || !f.favs || !Array.isArray(f.favs.list)) return [];
+  const mine = new Set(favList());
+  return f.favs.list.filter(id => mine.has(id));
+}
+
+/* ---------------- how many friends are online ---------------- */
+export function onlineCount() {
+  const have = new Set(D().friends.map(f => f.fp));
+  let n = 0;
+  for (const p of R.pairs.values()) if (have.has(p.fp) && presenceOf(p) !== 'offline') n++;
+  return n;
+}
+/** Tells the top bar and the dock (bus 'friends:count') when the number moves. */
+function announceCount(force = false) {
+  const d = D();
+  const on = d.opts.showCount && d.friends.length > 0 && R.started;
+  const online = on ? onlineCount() : 0;
+  const sig = `${on}:${online}`;
+  /* said again now and then, so a bar that was drawn later still learns it */
+  if (!force && sig === R.countSig && Date.now() - (R.countAt || 0) < 30_000) return;
+  R.countSig = sig;
+  R.countAt = Date.now();
+  bus.emit('friends:count', { on, online, total: d.friends.length });
+}
+
+/* ---------------- invites: a Static Party, a Study together room ---------------- */
+async function sendInvite(fp, t, c) {
+  if (!PARTY_CODE.test(String(c || ''))) return { ok: false, error: 'code' };
+  await start();
+  const p = R.pairs.get(fp);
+  if (!p || !p.key || !friendOf(fp)) return { ok: false, error: 'friend' };
+  if (!mayReply(`${t}out:${fp}`, 2000)) return { ok: false, error: 'wait' };
+  return { ok: true, live: sendPair(p, t, { c }) };
+}
+/** Invite one friend to my Static Party. -> { ok, live?, error?: 'code' | 'friend' | 'wait' } */
+export const sendPartyInvite = (fp, code) => sendInvite(fp, 'pin', code);
+/** Invite one friend to my Study together room. */
+export const sendStudyInvite = (fp, code) => sendInvite(fp, 'sin', code);
+
+/** Invite one friend to my open Watch Together / Flex Battle room (the same six-letter room code the app shows). */
+export const sendWatchInvite = (fp, code) => sendInvite(fp, 'wti', code);
+export const sendFlexInvite = (fp, code) => sendInvite(fp, 'fbi', code);
+export const sendPianoInvite = (fp, code) => sendInvite(fp, 'pni', code);
+export const sendBeatsInvite = (fp, code) => sendInvite(fp, 'bti', code);
+const ROOM_APPS = {
+  wti: { app: 'watch-together', title: 'to watch together', msg: 'Join opens Watch Together with their room code. Nothing joins until you press it.', icon: 'users' },
+  pni: { app: 'piano', title: 'to play a duet', msg: 'Join opens Static Piano with their room code. Nothing joins until you press it.', icon: 'music' },
+  bti: { app: 'beats', title: 'to make a beat together', msg: 'Join opens Static Beats with their room code. Nothing joins until you press it.', icon: 'grid' },
+  fbi: { app: 'flex-battle', title: 'to a Flex Battle', msg: 'Join opens Flex Battle with their room code. Cameras stay off until you turn them on.', icon: 'camera' },
+};
+function onRoomAppInvite(p, m, t) {
+  const A = ROOM_APPS[t];
+  if (!PARTY_CODE.test(m.c || '') || !friendOf(p.fp)) { R.stats.ignored++; return; }
+  if (!mayReply(`${t}:${p.fp}`, 5000)) { R.stats.dropped++; return; }
+  const join = () => { try { api.openApp(A.app, { join: m.c }); } catch (e) { /* no shell */ } };
+  notify({
+    key: `friends-${t}-${p.fp}`, from: p.fp, timeout: 0, icon: A.icon, title: `${displayName(friendOf(p.fp))} invited you ${A.title}`,
+    message: A.msg, actions: [{ label: 'Join', onClick: join }], onClick: join,
+  });
+}
+
+function onPartyInvite(p, m) {
+  if (!PARTY_CODE.test(m.c || '')) { R.stats.ignored++; return; }
+  if (!friendOf(p.fp)) { R.stats.ignored++; return; }
+  if (!mayReply(`pin:${p.fp}`, 5000)) { R.stats.dropped++; return; }
+  const join = () => { try { api.openApp('party', { code: m.c }); } catch (e) { /* no shell */ } };
+  notify({
+    key: `friends-pin-${p.fp}`, from: p.fp, timeout: 0, title: `${displayName(friendOf(p.fp))} invited you to their party`,
+    message: 'Join opens Static Party with their code. Nothing joins until you press it.',
+    actions: [{ label: 'Join', onClick: join }],
+  });
+}
+function onStudyInvite(p, m) {
+  if (!PARTY_CODE.test(m.c || '')) { R.stats.ignored++; return; }
+  if (!friendOf(p.fp)) { R.stats.ignored++; return; }
+  if (!mayReply(`sin:${p.fp}`, 5000)) { R.stats.dropped++; return; }
+  const join = () => import('./studyroom.js').then(SR => { SR.join(m.c); openSocial({}); }).catch(() => {});
+  notify({
+    key: `friends-sin-${p.fp}`, from: p.fp, timeout: 0, icon: 'clock', title: `${displayName(friendOf(p.fp))} wants to study together`,
+    message: 'Join puts you in a shared focus timer with them. Nothing starts until you press it.',
+    actions: [{ label: 'Join', onClick: join }],
+  });
+}
+
+/** A message to copy and send to someone you know: the code, how to add it, and who to share it with. */
+export function inviteMessage(code) {
+  if (!isCode(code)) return '';
+  const link = inviteLink(code);
+  return `Hi! Here’s my StaticOS friend code: ${spaced(code)}\n`
+    + `To add me: open StaticOS, go to Social › Friends, type the code under “Add a friend” and press Send request${link ? ` (or open ${link})` : ''}. I’ll see your request and accept it.\n`
+    + 'Only share this with people you know, and only add people you know. Anyone who has the code can send me a request.';
 }
 
 /* for the play-tests: counters and topics, never keys */
@@ -1386,6 +2243,9 @@ export default {
   init, start, ready, ensureCode, rotateCode, myCode, inviteLink, normCode, isCode, spaced,
   request, cancelRequest, accept, decline, block, unblock, remove, setNick,
   friends, incoming, outgoing, blocked, myStatus, setStatus, clearStatus, shareGame, setShareGame,
-  currentGame, whatFriendsSee, nights, createNight, rsvp, cancelNight, removeNight, startNight, joinNight,
-  onChange, liveStatus, PRESETS, EXPIRY,
+  currentGame, whatFriendsSee, sendCard, withdrawCard, cards, cleanCard, nights, createNight, rsvp, cancelNight, removeNight, startNight, joinNight, sendLink, sendArcade, sendCollection, sendRoomInvite, sendMedia, sendDm,
+  sendLook, looks, dismissLook,
+  setFavourite, groups, saveGroup, deleteGroup, sendGroupPoll, skipNight, addNightToCalendar, options, setOption, setBirthday, sharing,
+  sharedBy, bothFavourited, onlineCount, sendPartyInvite, sendStudyInvite, inviteMessage, keyTag,
+  onChange, liveStatus, PRESETS, EXPIRY, isFriendId, roomTags,
 };

@@ -12,6 +12,10 @@
      usersPanel()      the list of people and its forms, shown by the
                        Users sheet and by Settings › Users.
 
+   Also here: locking the screen after idle minutes (prefs.autoLock), the
+   guest's "Nothing here is saved" bar with "Make a profile from this session",
+   and a hint shown after a wrong PIN.
+
    Whose data is whose — key names, locks, deleting only the right
    things — is js/core/profiles.js. Nothing here touches storage itself.
    ============================================================ */
@@ -23,6 +27,7 @@ import { cover } from '../core/cover.js';
 import * as L from '../core/layers.js';
 import * as P from '../core/profiles.js';
 import { BUILTIN, avatarEl, normPicture } from '../core/avatar.js';
+import { t } from '../core/i18n.js';
 
 /* the avatar art's stylesheet — the Profile app adds the same one */
 if (typeof document !== 'undefined' && !document.getElementById('feat-profile-css')) {
@@ -33,11 +38,11 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-profile-cs
   document.head.appendChild(l);
 }
 
-export const NOTE = 'Everyone here gets their own settings, files, screen time and saved projects, and shares this browser’s storage space. '
-  + 'Sites opened through the Browser’s proxy keep their sign-ins for this whole browser, not per person, so sign out of them when you finish. '
-  + 'A PIN or password is a front-end lock: it keeps people out of each other’s desktops in StaticOS, not out of the browser’s own storage, so don’t keep secrets behind it.';
-export const GUEST_NOTE = 'Your files and settings here are erased when you end the session or close this tab. '
-  + 'Guests can’t see other people’s files or profiles. One exception: sites opened through the Browser’s proxy keep their sign-ins and data in this browser for everyone, so sign out of them before you go.';
+export const NOTE = t('Everyone here gets their own settings, files, screen time and saved projects, and shares this browser’s storage space. ')
+  + t('Sites opened through the Browser’s proxy keep their sign-ins for this whole browser, not per person, so sign out of them when you finish. ')
+  + t('A PIN or password is a front-end lock: it keeps people out of each other’s desktops in StaticOS, not out of the browser’s own storage, so don’t keep secrets behind it.');
+export const GUEST_NOTE = t('Your files and settings here are erased when you end the session or close this tab. ')
+  + t('Guests can’t see other people’s files or profiles. One exception: sites opened through the Browser’s proxy keep their sign-ins and data in this browser for everyone, so sign out of them before you go.');
 
 const initialOf = name => (String(name || '?').trim().charAt(0) || '?').toUpperCase();
 const face = (p, size) => avatarEl(h, { picture: p.pic || null, costume: 'none', initial: initialOf(p.name), size });
@@ -46,6 +51,22 @@ const field = (label, attrs = {}) => {
   return { input, el: h('label.acct-field', h('span', { text: label }), input) };
 };
 const say = (title, message, ic = 'users') => bus.emit('noti:push', { app: 'Users', icon: ic, title, message, timeout: 6000 });
+const API = () => window.StaticAPI;
+/* "Used today", "Used 3 days ago": when this person last opened their desktop (never a made-up date) */
+export function usedText(ts, now = Date.now()) {
+  if (!ts) return '';
+  const days = Math.floor((now - ts) / 86400000);
+  return days <= 0 ? 'Used today' : days === 1 ? 'Used yesterday' : `Used ${days} days ago`;
+}
+/* a wrong PIN: the hint its owner left, if there is one (anyone could read it, so it is a reminder, never the PIN) */
+const withHint = (id, x) => {
+  const hint = P.hintOf(id);
+  return hint && /not right/.test(x.message) ? new Error(`${x.message} Hint: ${hint}`) : x;
+};
+/* before signing out or ending a guest session: say so if work is not backed up (core/backup.js) */
+async function mayLeave() {
+  try { return await (await import('../core/backup.js')).confirmLeaving(API()); } catch (e) { return true; }
+}
 const accountName = () => P.tidy(store.get('session.user')?.name || '');
 const myPic = () => normPicture(store.get('portal.profile')?.picture);
 const reduced = () => !!store.get('prefs.reduceMotion')
@@ -56,13 +77,43 @@ function shake(el) {
     { transform: 'translateX(-4px)' }, { transform: 'translateX(0)' }], { duration: 340, easing: 'ease-in-out' });
 }
 
-function guestCard(onEnd) {
-  return h('div.users-guest',
+/* "Make a profile from this session": the guest's settings and files become a profile of their own */
+function keepForm(cancel) {
+  const nm = field(t('Name for the new profile'), { maxlength: '24', name: 'name', 'aria-label': t('Name for the new profile') });
+  const pin = field(t('PIN or password (optional)'), { type: 'password', autocomplete: 'new-password', name: 'pin' });
+  const err = h('div.users-err', { role: 'alert' });
+  const go = h('button.btn.btn--sm.btn--primary', { type: 'submit', dataset: { act: 'keep-go' } }, h('span', { text: t('Make profile') }));
+  const form = h('form.users-form', {
+    dataset: { form: 'keep' },
+    onsubmit: async e => {
+      e.preventDefault();
+      go.disabled = true; err.textContent = '';
+      try {
+        if (pin.input.value) { const why = P.checkSecret(pin.input.value); if (why) throw new Error(why); }
+        await P.fromGuest({ name: nm.input.value, secret: pin.input.value, first: { name: accountName() || 'Me', pic: myPic() } });
+      } catch (x) { err.textContent = x.message; go.disabled = false; shake(err); }
+    },
+  }, h('b', { text: t('Make a profile from this session') }),
+  h('p.users-form__p', { text: t('Your settings and files from this session become a profile on this computer, and you sign in as them. Anything a guest keeps in memory only — projects, pictures and clips — is not carried over. If nobody was set up on this computer yet, what was here before becomes a profile called “Me”.') }),
+  nm.el, pin.el, err,
+  h('div.users-form__acts', cancel ? h('button.btn.btn--sm.btn--ghost', { type: 'button', onclick: cancel }, h('span', { text: t('Cancel') })) : null, go));
+  setTimeout(() => nm.input.focus(), 30);
+  return form;
+}
+
+function guestCard(onEnd, { keep = false } = {}) {
+  const card = h('div.users-guest');
+  const showKeep = () => { card.querySelector('.users-form')?.remove(); card.append(keepForm(() => card.querySelector('.users-form')?.remove())); };
+  card.append(
     h('div.users-guest__ic', icon('user')),
-    h('b', { text: 'You’re using a guest session' }),
+    h('b', { text: t('Nothing here is saved') }),
     h('p', { text: GUEST_NOTE }),
-    h('button.btn.btn--primary', { type: 'button', dataset: { act: 'end-guest' }, onclick: onEnd || (() => P.signOut()) },
-      icon('power'), h('span', { text: 'End guest session' })));
+    h('div.users-guest__acts',
+      h('button.btn.btn--primary', { type: 'button', dataset: { act: 'keep-guest' }, onclick: showKeep }, icon('plus'), h('span', { text: t('Make a profile from this session') })),
+      h('button.btn', { type: 'button', dataset: { act: 'end-guest' }, onclick: onEnd || (async () => { if (await mayLeave()) P.signOut(); }) },
+        icon('power'), h('span', { text: t('End guest session') }))));
+  if (keep) showKeep();
+  return card;
 }
 
 /* ---------- the login screen (and the switcher over the lock) ---------- */
@@ -79,13 +130,13 @@ function loginScreen({ overlay = false, close = null } = {}) {
   const timer = setInterval(clock, 1000);
   const err = h('div.users-err', { role: 'alert' });
   const body = h('div.users-login__body');
-  const title = h('h1.users-login__h', { text: overlay ? 'Switch user' : 'Who’s using StaticOS?' });
+  const title = h('h1.users-login__h', { text: overlay ? t('Switch user') : t('Who’s using StaticOS?') });
   const el = h('div.users-login', {
-    role: 'dialog', 'aria-modal': 'true', 'aria-label': overlay ? 'Switch user' : 'Choose who is using StaticOS',
+    role: 'dialog', 'aria-modal': 'true', 'aria-label': overlay ? t('Switch user') : t('Choose who is using StaticOS'),
     dataset: { mode: overlay ? 'switch' : 'boot' },
   }, h('div.users-login__inner', time, date, title, body, err,
-    h('p.users-login__note', { text: 'Each person’s files and settings are kept apart on this computer. A PIN is a front-end lock: it keeps people out of each other’s desktops here, not out of the browser’s storage.' }),
-    overlay ? h('button.btn.btn--ghost.users-login__cancel', { type: 'button', onclick: () => done() }, icon('x'), h('span', { text: 'Cancel' })) : null));
+    h('p.users-login__note', { text: t('Each person’s files and settings are kept apart on this computer. A PIN is a front-end lock: it keeps people out of each other’s desktops here, not out of the browser’s storage.') }),
+    overlay ? h('button.btn.btn--ghost.users-login__cancel', { type: 'button', onclick: () => done() }, icon('x'), h('span', { text: t('Cancel') })) : null));
 
   let busy = false;
   let asking = false;
@@ -108,7 +159,7 @@ function loginScreen({ overlay = false, close = null } = {}) {
     } catch (x) {
       busy = false;
       el.classList.remove('is-busy');
-      err.textContent = x.message;
+      err.textContent = withHint(p.id, x).message;
       if (input) { input.value = ''; input.focus(); shake(input); }
     }
   }
@@ -128,28 +179,29 @@ function loginScreen({ overlay = false, close = null } = {}) {
     }
     const kids = people.map(p => h('button.users-tile', {
       type: 'button', dataset: { id: p.id },
-      'aria-label': `${p.name}${p.locked ? ', needs a PIN or password' : ''}${overlay && p.id === P.ID ? ', signed in now' : ''}`,
+      'aria-label': `${p.name}${p.locked ? ', needs a PIN or password' : ''}${overlay && p.id === P.ID ? ', signed in now' : ''}${p.used && !(overlay && p.id === P.ID) ? ', ' + usedText(p.used).toLowerCase() : ''}`,
       onclick: () => pick(p),
     }, face(p, 76), h('span.users-tile__name', { text: p.name, title: p.name }),
-    h('small.users-tile__sub', ...(p.locked ? [icon('lock'), h('span', { text: 'PIN' })] : [h('span', { text: overlay && p.id === P.ID ? 'Signed in' : '' })]))));
+    h('small.users-tile__sub', ...(p.locked ? [icon('lock'), h('span', { text: 'PIN' })] : [h('span', { text: overlay && p.id === P.ID ? t('Signed in') : '' })])),
+    h('small.users-tile__used', { text: overlay && p.id === P.ID ? '' : usedText(p.used) })));
     kids.push(h('button.users-tile.users-tile--guest', {
-      type: 'button', dataset: { id: 'guest' }, 'aria-label': 'Guest: a session whose files and settings are not kept',
+      type: 'button', dataset: { id: 'guest' }, 'aria-label': t('Guest: a session whose files and settings are not kept'),
       onclick: () => pick({ guest: true }),
-    }, h('span.users-tile__g', icon('user')), h('span.users-tile__name', { text: 'Guest' }),
-    h('small.users-tile__sub', h('span', { text: 'Files aren’t kept' }))));
-    body.replaceChildren(h('div.users-grid', { role: 'group', 'aria-label': 'People on this computer' }, kids));
+    }, h('span.users-tile__g', icon('user')), h('span.users-tile__name', { text: t('Guest') }),
+    h('small.users-tile__sub', h('span', { text: t('Files aren’t kept') }))));
+    body.replaceChildren(h('div.users-grid', { role: 'group', 'aria-label': t('People on this computer') }, kids));
     setTimeout(() => { if (!asking) body.querySelector('.users-tile')?.focus({ preventScroll: true }); }, 30);
   }
   function ask(p) {
     asking = true;
-    const f = field('PIN or password', { type: 'password', 'aria-label': `PIN or password for ${p.name}` });
+    const f = field(t('PIN or password'), { type: 'password', 'aria-label': t('PIN or password for {name}', { name: p.name }) });
     const form = h('form.users-ask', {
       dataset: { id: p.id },
       onsubmit: e => { e.preventDefault(); go(p, f.input.value, f.input); },
     }, face(p, 88), h('div.users-ask__name', { text: p.name }), f.el,
     h('div.users-ask__acts',
-      h('button.btn.btn--ghost', { type: 'button', onclick: tiles }, icon('arrow-left'), h('span', { text: 'Back' })),
-      h('button.btn.btn--primary.users-ask__go', { type: 'submit' }, h('span', { text: 'Sign in' }))));
+      h('button.btn.btn--ghost', { type: 'button', onclick: tiles }, icon('arrow-left'), h('span', { text: t('Back') })),
+      h('button.btn.btn--primary.users-ask__go', { type: 'submit' }, h('span', { text: t('Sign in') }))));
     body.replaceChildren(form);
     setTimeout(() => f.input.focus(), 30);
   }
@@ -178,9 +230,17 @@ export function mountLogin(host) {
 }
 
 /* ---------- the list of people and its forms -------------------------- */
-export function usersPanel() {
+export function usersPanel(opts = {}) {
   const root = h('div.users-panel');
   let stage = null;               /* { kind, p } — the form under the list */
+  /* a profile exported from another computer (or this one) joins as a new person */
+  const importInput = h('input.sr', {
+    type: 'file', accept: '.json,application/json', 'aria-label': t('Choose a profile file to add'),
+    onchange: async () => {
+      try { await (await import('../core/backup.js')).chooseBackupFile(API(), importInput, 'profile'); paint(); bus.emit('users:changed'); }
+      catch (x) { say('Could not import', x.message, 'alert'); }
+    },
+  });
 
   const btn = (ic, label, fn, act, cls = '') => h('button.btn.btn--sm' + cls, { type: 'button', dataset: { act }, onclick: fn }, icon(ic), h('span', { text: label }));
   const open = (kind, p = null) => { stage = { kind, p }; paint(); root.querySelector('.users-form input')?.focus(); };
@@ -192,9 +252,9 @@ export function usersPanel() {
       h('div.users-row__who', h('b', { text: p.name, title: p.name }),
         h('small', { text: [p.current ? 'You' : '', p.locked ? 'PIN set' : 'No PIN'].filter(Boolean).join(' · ') })),
       h('div.users-row__acts', ...(p.current
-        ? [btn('edit-3', 'Rename', () => open('rename', p), 'rename'), btn('lock', p.locked ? 'Change PIN' : 'Set PIN', () => open('pin', p), 'pin')]
-        : [btn('users', 'Switch', () => (p.locked ? open('switch', p) : P.switchTo(p.id).catch(x => say('Could not switch', x.message, 'alert'))), 'switch'),
-          btn('trash', 'Delete', () => open('delete', p), 'delete', '.btn--danger')])));
+        ? [btn('edit-3', t('Rename'), () => open('rename', p), 'rename'), btn('lock', p.locked ? 'Change PIN' : t('Set PIN'), () => open('pin', p), 'pin')]
+        : [btn('users', t('Switch'), () => (p.locked ? open('switch', p) : P.switchTo(p.id).catch(x => say('Could not switch', x.message, 'alert'))), 'switch'),
+          btn('trash', t('Delete'), () => open('delete', p), 'delete', '.btn--danger')])));
   }
 
   /* a form under the list: fields, an error line, its buttons */
@@ -210,7 +270,7 @@ export function usersPanel() {
     return h('form.users-form', { dataset: { form: kind }, onsubmit: e => { e.preventDefault(); run(submit); } },
       h('b', { text: title }), ...kids, err,
       h('div.users-form__acts',
-        h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { act: 'cancel' }, onclick: shut }, h('span', { text: 'Cancel' })),
+        h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { act: 'cancel' }, onclick: shut }, h('span', { text: t('Cancel') })),
         extra ? h('button.btn.btn--sm', { type: 'button', dataset: { act: extra.act }, onclick: () => run(extra.fn) }, h('span', { text: extra.label })) : null,
         go));
   }
@@ -220,51 +280,54 @@ export function usersPanel() {
     if (!stage) return null;
     const { kind, p } = stage;
     if (kind === 'add') {
-      const me = solo ? field('Your name on this computer', { value: accountName(), maxlength: '24', autocomplete: 'nickname', name: 'me' }) : null;
-      const nm = field('Their name', { maxlength: '24', name: 'name' });
-      const pin1 = field('PIN or password (optional)', { type: 'password', autocomplete: 'new-password', name: 'pin' });
-      const pin2 = field('The same again', { type: 'password', autocomplete: 'new-password', name: 'pin2' });
+      const me = solo ? field(t('Your name on this computer'), { value: accountName(), maxlength: '24', autocomplete: 'nickname', name: 'me' }) : null;
+      const nm = field(t('Their name'), { maxlength: '24', name: 'name' });
+      const pin1 = field(t('PIN or password (optional)'), { type: 'password', autocomplete: 'new-password', name: 'pin' });
+      const pin2 = field(t('The same again'), { type: 'password', autocomplete: 'new-password', name: 'pin2' });
       let pic = null;
       const choices = [null, ...BUILTIN.map(b => ({ kind: 'builtin', id: b.id }))];
-      const pics = h('div.users-pics', { role: 'radiogroup', 'aria-label': 'Picture' }, choices.map(c => h('button.users-pic', {
-        type: 'button', role: 'radio', 'aria-checked': String(c === null), 'aria-label': c ? BUILTIN.find(b => b.id === c.id).name : 'Their initial',
+      const pics = h('div.users-pics', { role: 'radiogroup', 'aria-label': t('Picture') }, choices.map(c => h('button.users-pic', {
+        type: 'button', role: 'radio', 'aria-checked': String(c === null), 'aria-label': c ? BUILTIN.find(b => b.id === c.id).name : t('Their initial'),
         dataset: { pic: c ? c.id : '' },
         onclick: e => {
           pic = c;
           for (const b of pics.children) b.setAttribute('aria-checked', String(b === e.currentTarget));
         },
       }, avatarEl(h, { picture: c, costume: 'none', initial: '?', size: 34 }))));
-      return form('add', solo ? 'Add someone to this computer' : 'Add a user', [
-        solo ? para('What was here already — your settings, files and projects — becomes your profile. Nothing is moved or copied; the new person starts with an empty desktop.') : null,
-        me?.el, nm.el, h('div.acct-field', h('span', { text: 'Picture' }), pics), pin1.el, pin2.el,
-      ], 'Add user', async () => {
+      return form('add', solo ? 'Add someone to this computer' : t('Add a user'), [
+        solo ? para(t('What was here already — your settings, files and projects — becomes your profile. Nothing is moved or copied; the new person starts with an empty desktop.')) : null,
+        me?.el, nm.el, h('div.acct-field', h('span', { text: t('Picture') }), pics), pin1.el, pin2.el,
+      ], t('Add user'), async () => {
         if (me && !P.tidy(me.input.value)) throw new Error('Give yourself a name first, so people can tell the profiles apart.');
         if (pin1.input.value !== pin2.input.value) throw new Error('The two PINs don’t match.');
         if (pin1.input.value) { const why = P.checkSecret(pin1.input.value); if (why) throw new Error(why); }
         const made = await P.create({ name: nm.input.value, pic, secret: pin1.input.value, first: me ? { name: me.input.value, pic: myPic() } : undefined });
         shut();
+        bus.emit('users:changed');
         say(`${made.name} can sign in now`, 'Their desktop starts empty. Switch to them here, or pick them on the login screen in a new tab.', 'users');
       });
     }
     if (kind === 'rename') {
-      const nm = field('Name', { value: p.name, maxlength: '24', name: 'name' });
-      return form('rename', 'Rename', [nm.el], 'Save', async () => { P.rename(p.id, nm.input.value); shut(); });
+      const nm = field(t('Name'), { value: p.name, maxlength: '24', name: 'name' });
+      return form('rename', t('Rename'), [nm.el], t('Save'), async () => { P.rename(p.id, nm.input.value); shut(); });
     }
     if (kind === 'pin') {
-      const cur = p.locked ? field('Current PIN or password', { type: 'password', name: 'current' }) : null;
-      const pin1 = field(p.locked ? 'New PIN or password' : 'PIN or password', { type: 'password', autocomplete: 'new-password', name: 'pin' });
-      const pin2 = field('The same again', { type: 'password', autocomplete: 'new-password', name: 'pin2' });
-      return form('pin', p.locked ? 'Change your PIN' : 'Set a PIN', [
-        para('A new tab will ask for it before opening your desktop. It is a front-end lock only.'),
-        cur?.el, pin1.el, pin2.el,
-      ], 'Save PIN', async () => {
+      const cur = p.locked ? field(t('Current PIN or password'), { type: 'password', name: 'current' }) : null;
+      const pin1 = field(p.locked ? 'New PIN or password' : t('PIN or password'), { type: 'password', autocomplete: 'new-password', name: 'pin' });
+      const pin2 = field(t('The same again'), { type: 'password', autocomplete: 'new-password', name: 'pin2' });
+      const hint = field(t('Hint (optional)'), { maxlength: '60', name: 'hint', value: P.hintOf(p.id), 'aria-label': t('Hint, shown after a wrong try') });
+      return form('pin', p.locked ? 'Change your PIN' : t('Set a PIN'), [
+        para(t('A new tab will ask for it before opening your desktop. It is a front-end lock only.')),
+        cur?.el, pin1.el, pin2.el, hint.el,
+        para(t('The hint is shown after a wrong try. Anyone can read it, so write a reminder, never the PIN itself.')),
+      ], t('Save PIN'), async () => {
         const why = P.checkSecret(pin1.input.value);
         if (why) throw new Error(why);
         if (pin1.input.value !== pin2.input.value) throw new Error('The two PINs don’t match.');
-        await P.setSecret(p.id, pin1.input.value, cur ? cur.input.value : '');
+        await P.setSecret(p.id, pin1.input.value, cur ? cur.input.value : '', hint.input.value);
         shut();
         say('PIN saved', 'New tabs will ask for it before opening your desktop.', 'lock');
-      }, { extra: p.locked ? { act: 'remove-pin', label: 'Remove PIN', fn: async () => {
+      }, { extra: p.locked ? { act: 'remove-pin', label: t('Remove PIN'), fn: async () => {
         await P.setSecret(p.id, null, cur.input.value);
         shut();
         say('PIN removed', 'Your desktop opens without one now.', 'unlock');
@@ -272,47 +335,76 @@ export function usersPanel() {
     }
     if (kind === 'switch') {
       const f = field(`${p.name}’s PIN or password`, { type: 'password', name: 'secret' });
-      return form('switch', `Switch to ${p.name}`, [f.el], 'Switch', () => P.switchTo(p.id, f.input.value));
+      return form('switch', `Switch to ${p.name}`, [f.el], 'Switch', async () => { try { await P.switchTo(p.id, f.input.value); } catch (x) { throw withHint(p.id, x); } });
     }
     if (kind === 'delete') {
       const f = p.locked ? field(`${p.name}’s PIN or password`, { type: 'password', name: 'secret' }) : null;
-      return form('delete', `Delete ${p.name}?`, [
-        para(`This erases ${p.name}’s settings, files, screen time and saved projects from this browser. Nobody else’s data is touched. It can’t be undone.`),
+      return form('delete', t('Delete {name}?', { name: p.name }), [
+        para(t('This erases {name}’s settings, files, screen time and saved projects from this browser. Nobody else’s data is touched. It can’t be undone.', { name: p.name })),
         f?.el,
-      ], `Delete ${p.name}`, async () => {
+      ], t('Delete {name}', { name: p.name }), async () => {
         await P.remove(p.id, f ? f.input.value : '');
         shut();
+        bus.emit('users:changed');
         say(`${p.name} was deleted`, 'Their data is gone from this browser. Nobody else’s was touched.', 'trash');
       }, { danger: true });
     }
     if (kind === 'guest') {
-      return form('guest', 'Start a guest session?', [
-        para('Your desktop is saved and closed first. The guest gets an empty desktop and can’t see anyone’s files or profiles, and their files and settings aren’t kept.'),
-      ], 'Start guest session', async () => P.startGuest());
+      return form('guest', t('Start a guest session?'), [
+        para(t('Your desktop is saved and closed first. The guest gets an empty desktop and can’t see anyone’s files or profiles, and their files and settings aren’t kept.')),
+      ], t('Start guest session'), async () => P.startGuest());
     }
     return null;
   }
 
   function paint() {
-    if (P.MODE === 'guest') { root.replaceChildren(guestCard()); return; }
+    if (P.MODE === 'guest') { root.replaceChildren(guestCard(null, { keep: opts.keep })); return; }
     const all = P.list();
     const solo = !all.length;     /* nobody added yet: just the data that was here */
     const rows = solo
       ? [h('div.users-row.is-you', { role: 'listitem', dataset: { id: P.ID } },
           face({ name: accountName() || 'You', pic: myPic() }, 40),
-          h('div.users-row__who', h('b', { text: accountName() || 'You' }), h('small', { text: 'You — the only person on this computer so far' })))]
+          h('div.users-row__who', h('b', { text: accountName() || t('You') }), h('small', { text: t('You — the only person on this computer so far') })))]
       : all.map(row);
     root.replaceChildren(
-      h('div.users-list', { role: 'list', 'aria-label': 'People on this computer' }, rows),
+      h('div.users-list', { role: 'list', 'aria-label': t('People on this computer') }, rows),
       stageEl(solo) || '',
       h('div.users-acts',
-        all.length < P.MAX ? btn('plus', 'Add user', () => open('add'), 'add', '.btn--primary') : null,
-        btn('user', 'Guest session', () => open('guest'), 'guest'),
-        P.asksAtStart() ? btn('power', 'Sign out', () => P.signOut(), 'signout') : null),
+        all.length < P.MAX ? btn('plus', t('Add user'), () => open('add'), 'add', '.btn--primary') : null,
+        btn('user', t('Guest session'), () => open('guest'), 'guest'),
+        P.asksAtStart() ? btn('power', t('Sign out'), async () => { if (await mayLeave()) P.signOut(); }, 'signout') : null),
+      h('div.users-acts.users-acts--move',
+        btn('download', 'Export my profile', async () => { try { await (await import('../core/backup.js')).exportBackup(API(), { protect: false }); } catch (x) { say('Could not export', x.message, 'alert'); } }, 'export-profile'),
+        btn('upload', 'Import a profile', () => importInput.click(), 'import-profile'),
+        importInput),
       h('p.users-note', { text: NOTE }));
   }
   paint();
   return root;
+}
+
+/* ---------- locking after idle minutes ----------------------------------- */
+/* prefs.autoLock is 0 (off), 1, 5 or 15: that many minutes with no key, click, touch,
+   scroll or pointer move shows the lock screen (which asks for a PIN if one is set).
+   It only closes the curtain: nothing is saved or discarded by it. */
+export const AUTO_LOCK = [0, 1, 5, 15];
+function autoLock() {
+  let last = Date.now();
+  const bump = () => { last = Date.now(); };
+  const evs = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'];
+  for (const e of evs) window.addEventListener(e, bump, { passive: true, capture: true });
+  /* true when it locked now; `now` lets a test move the clock */
+  const check = (now = Date.now()) => {
+    const min = Number(store.get('prefs.autoLock', 0)) || 0;
+    if (!min || now - last < min * 60000) return false;
+    if (document.querySelector('.lock:not(.is-out)') || document.body.dataset.login) return false;
+    last = now;
+    bus.emit('power:lock');
+    return true;
+  };
+  const off = bus.on('tick:5s', () => check());
+  if (window.Static) window.Static.autoLock = { check, bump };
+  return () => { off(); for (const e of evs) window.removeEventListener(e, bump, true); };
 }
 
 /* ---------- the shell part ---------------------------------------------- */
@@ -328,13 +420,13 @@ export function mountUsers(host) {
     release?.();
     release = null;
   }
-  function openSheet() {
+  function openSheet(o = {}) {
     if (sheet) return;
-    const card = h('div.acct-sheet__card.users-sheet', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Users on this computer', tabindex: '-1' },
-      h('button.acct-sheet__x', { type: 'button', 'aria-label': 'Close', onclick: closeSheet }, icon('x')),
+    const card = h('div.acct-sheet__card.users-sheet', { role: 'dialog', 'aria-modal': 'true', 'aria-label': t('Users on this computer'), tabindex: '-1' },
+      h('button.acct-sheet__x', { type: 'button', 'aria-label': t('Close'), onclick: closeSheet }, icon('x')),
       h('div.acct-sheet__brand', h('span.acct-sheet__logo', icon('users')),
-        h('b', { text: P.MODE === 'guest' ? 'Guest session' : 'Users on this computer' })),
-      usersPanel());
+        h('b', { text: P.MODE === 'guest' ? t('Guest session') : t('Users on this computer') })),
+      usersPanel({ keep: o.keep === true }));
     sheet = h('div.acct-sheet', { onclick: e => { if (e.target === sheet) closeSheet(); } }, card);
     host.appendChild(sheet);
     release = L.push({ name: 'users', el: card, trap: true, close: closeSheet });
@@ -350,13 +442,14 @@ export function mountUsers(host) {
     rel = L.push({ name: 'users-switch', el: overlay, trap: true, close: () => overlay?.close() });
   }
 
-  offs.push(bus.on('users:open', o => (o && o.from === 'lock' ? openSwitch() : openSheet())));
+  offs.push(bus.on('users:open', o => (o && o.from === 'lock' ? openSwitch() : openSheet({ keep: !!(o && o.keep) }))));
 
   if (P.MODE === 'guest') {
     /* a guest is told, and keeps being shown, that their things are not kept */
     const bar = h('div.users-guestbar', { role: 'status' },
-      icon('user'), h('span.users-guestbar__long', { text: 'Guest session · files aren’t kept' }), h('span.users-guestbar__short', { text: 'Guest' }),
-      h('button.users-guestbar__end', { type: 'button', onclick: openSheet }, 'End…'));
+      icon('user'), h('span.users-guestbar__long', { text: t('Nothing here is saved · files aren’t kept') }), h('span.users-guestbar__short', { text: t('Guest') }),
+      h('button.users-guestbar__keep', { type: 'button', dataset: { act: 'keep' }, onclick: () => openSheet({ keep: true }) }, t('Make a profile from this session')),
+      h('button.users-guestbar__end', { type: 'button', onclick: () => openSheet() }, t('End…')));
     host.appendChild(bar);
     offs.push(() => bar.remove());
     offs.push(bus.on('boot:ready', () => say('You’re a guest', GUEST_NOTE, 'user')));
@@ -368,6 +461,9 @@ export function mountUsers(host) {
     if (!myPic() && normPicture(listed)) store.set('portal.profile', { ...(store.get('portal.profile') || {}), picture: normPicture(listed) });
     else sync();
     offs.push(store.sub('portal.profile', sync));
+    /* this person opened their desktop: the login screen lists the latest first */
+    P.markUsed();
+    offs.push(autoLock());
   }
 
   return () => { offs.forEach(f => f?.()); closeSheet(); overlay?.close(); };

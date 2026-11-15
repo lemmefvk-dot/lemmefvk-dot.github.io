@@ -271,3 +271,17 @@ body.reduce-motion .cam__shutter,body.reduce-motion .cam__shutter i,body.reduce-
 body.reduce-motion .cam-stkbtn,body.reduce-motion .cam-chip,body.reduce-motion .cam-stk{transition:none;animation:none}
 body.reduce-motion .cam-pill--rec i,body.reduce-motion .cam__count .cam__countring{animation:none}
 body.reduce-motion .cam-card__spin{animation-duration:2.4s}
+
+/* ---------- burst, photo strip, resolution and zoom (only what the camera reports) ---------- */
+.cam__ctl{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4) 0;flex:0 0 auto;flex-wrap:wrap}
+.cam__ctl[hidden],.cam-ctl__res[hidden],.cam-ctl__zoomwrap[hidden],.cam__ctl .cam-tool[hidden]{display:none}
+.cam__ctl .cam-tool{height:28px}
+.cam-ctl__zoomwrap{display:inline-flex;align-items:center;gap:var(--sp-2);color:var(--ink-2);font-size:var(--fs-10)}
+.cam-ctl__zoomwrap .icon{width:14px;height:14px}
+.cam-ctl__zoom{width:120px;accent-color:var(--accent)}
+.cam-ctl__zoomval{min-width:34px;text-align:right;font-variant-numeric:tabular-nums;color:var(--ink-1)}
+
+/* ---------- photo frames (js/core/booth.js, any time of year; the winter set in winter) ---------- */
+.cam__frames{display:flex;padding:var(--sp-3) var(--sp-3) 0;overflow-x:auto;scrollbar-width:none;flex:0 0 auto}
+.cam__frames::-webkit-scrollbar{display:none}
+.cam__frames[hidden],.cam-booth__grp[hidden]{display:none}

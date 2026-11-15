@@ -84,3 +84,19 @@ export function untilLabel(ms, h24 = false) {
   const same = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   return same ? t : `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]} ${t}`;
 }
+
+/** The next 8:00 in the morning after `now` (today's, if it is still early): "until tomorrow". */
+export function tomorrowMorning(now = Date.now()) {
+  const d = new Date(now);
+  let t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 8, 0, 0, 0).getTime();
+  if (t <= now + 60_000) t = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 8, 0, 0, 0).getTime();
+  return t;
+}
+
+/** "42 min left", "1 h 5 min left" — for a tooltip; the time as the clock shows it goes with it. */
+export function leftLabel(ms, now = Date.now()) {
+  const mins = Math.max(1, Math.ceil((ms - now) / 60_000));
+  if (mins < 60) return `${mins} min left`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return m ? `${h} h ${m} min left` : `${h} h left`;
+}

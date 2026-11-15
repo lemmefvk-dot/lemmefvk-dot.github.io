@@ -468,3 +468,31 @@ body.is-mobile .dt .dt-side { max-height: none; }
 }
 body.reduce-motion .dt *, body.reduce-motion .dt *::before { animation: none !important; transition: none !important; }
 body.reduce-motion .dt-srow.is-changed > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* ---- Apps pane, state snapshots and Compare, Copy diagnostics ---- */
+.dt-table--apps th:nth-child(4), .dt-table--apps th:nth-child(5) { width: 64px; }
+.dt-table--apps td { white-space: nowrap; }
+.dt-table--apps .dt-tag { margin-left: 6px; }
+.dt-cmp {
+  flex: none; display: flex; flex-direction: column; gap: 6px; max-height: 44%; overflow: auto;
+  padding: 8px 12px; background: var(--fill-0); border-bottom: 1px solid var(--line-0);
+}
+.dt-cmp[hidden] { display: none; }
+.dt-cmp__empty { color: var(--ink-3); font-style: italic; }
+.dt-cmp__bar { display: flex; align-items: center; gap: 8px; color: var(--ink-3); }
+.dt-cmp__bar select { max-width: 150px; height: 24px; padding: 0 6px; border-radius: var(--r-sm); font-size: var(--fs-11);
+  color: var(--ink-0); background: var(--fill-1); border: 1px solid var(--line-1); }
+.dt-cmp__sum { font-weight: 600; color: var(--ink-1); }
+.dt-cmp__list { display: flex; flex-direction: column; gap: 1px; }
+.dt-cmp__row { display: grid; grid-template-columns: 62px minmax(120px, 1.2fr) minmax(0, 2fr); gap: 10px; align-items: baseline;
+  padding: 2px 6px; border-radius: var(--r-sm); font-size: var(--fs-10); }
+.dt-cmp__row:hover { background: var(--fill-1); }
+.dt-cmp__kind { text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.dt-cmp__row--added .dt-cmp__kind { color: var(--dt-ok); }
+.dt-cmp__row--removed .dt-cmp__kind { color: var(--dt-err); }
+.dt-cmp__row--changed .dt-cmp__kind { color: var(--dt-warn); }
+.dt-cmp__path, .dt-cmp__val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-cmp__val { font-family: var(--mono); color: var(--ink-2); }
+.dt-cmpbtn[aria-pressed="true"] { background: var(--fill-accent); }
+.dt.is-narrow .dt-cmp__row { grid-template-columns: 56px 1fr; }
+.dt.is-narrow .dt-cmp__val { grid-column: 1 / -1; }

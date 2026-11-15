@@ -92,6 +92,8 @@ function frameMain(cfg) {
     const log = window.__classic.log;
     log.push(String(line).slice(0, 300));
     if (log.length > 60) log.shift();
+    /* ScummVM's --auto-detect, given files it knows no game in, says so and quits */
+    if (/could not find any game/i.test(line)) post({ t: 'nogame' });
   };
 
   addEventListener('error', e => { logLine(`error: ${e.message}`); post({ t: 'problem', message: String(e.message).slice(0, 300) }); });
@@ -160,26 +162,51 @@ function frameMain(cfg) {
     wrap('rename', soon);
   }
 
-  /* A game that draws to a fixed-shape canvas keeps its shape: the canvas is placed
-     in the frame by hand (not object-fit, which would throw off SDL's mouse position). */
-  function keepAspect(canvas, aspect) {
+  /* The canvas is placed in the frame by hand (not object-fit, which would throw off
+     SDL's mouse position), three ways:
+       fit      the game's own shape (run.aspect), as large as fits; a game with no
+                run.aspect fills the frame, as it always did
+       sharp    the largest whole multiple of the canvas's own pixels that fits, so
+                every pixel is the same size; plain fit when even one times is too big
+       stretch  the whole frame, whatever the shape */
+  let scaleMode = 'fit';
+  function placeCanvas(canvas, aspect) {
     const fit = () => {
-      const w = Math.min(innerWidth, innerHeight * aspect);
-      const h = w / aspect;
+      const W = innerWidth, H = innerHeight;
+      document.documentElement.dataset.scale = scaleMode;
+      /* a game with no shape of its own (Sopwith) fills the frame as it always has, at Fit */
+      if (scaleMode === 'fit' && !aspect) {
+        for (const k of ['position', 'left', 'top', 'width', 'height']) canvas.style.removeProperty(k);
+        return;
+      }
+      const nw = canvas.width || 0, nh = canvas.height || 0;
+      const shape = aspect || (nw && nh ? nw / nh : W / H);
+      let w = Math.min(W, H * shape);
+      let h = w / shape;
+      if (scaleMode === 'stretch') { w = W; h = H; }
+      else if (scaleMode === 'sharp' && nw && nh) {
+        const k = Math.floor(Math.min(W / nw, H / nh));
+        if (k >= 1) { w = nw * k; h = nh * k; }
+      }
       const set = (k, v) => canvas.style.setProperty(k, v, 'important');
       set('position', 'absolute');
-      set('left', `${(innerWidth - w) / 2}px`);
-      set('top', `${(innerHeight - h) / 2}px`);
+      set('left', `${Math.round((W - w) / 2)}px`);
+      set('top', `${Math.round((H - h) / 2)}px`);
       set('width', `${w}px`);
       set('height', `${h}px`);
     };
     addEventListener('resize', fit);
+    /* SDL sets the canvas's own size once the game is up */
+    new MutationObserver(fit).observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] });
     fit();
+    return fit;
   }
+  let refit = () => {};
 
   function bootWasm(b) {
     const canvas = document.getElementById('canvas');
-    if (b.aspect) keepAspect(canvas, b.aspect);
+    scaleMode = b.scale || 'fit';
+    refit = placeCanvas(canvas, b.aspect);
     const Module = {
       arguments: b.args.slice(),
       canvas,
@@ -203,6 +230,8 @@ function frameMain(cfg) {
         b.files.forEach(put);
         b.saves.forEach(put);
         watchSaves(FS, b.watch);
+        /* Doom keeps its settings and saves in the folder it starts in */
+        if (b.cwd) { mkdirs(b.cwd); FS.chdir(b.cwd); }
       }],
       onRuntimeInitialized: () => { post({ t: 'running' }); try { canvas.focus(); } catch (err) { /* fine */ } },
       onAbort: fail,
@@ -221,7 +250,10 @@ function frameMain(cfg) {
     const m = e.data;
     if (!m) return;
     if (m.t === 'boot') { try { bootWasm(m); } catch (err) { fail(err); } }
-    else if (m.t === 'mute') {
+    else if (m.t === 'scale') {
+      scaleMode = ['fit', 'sharp', 'stretch'].includes(m.mode) ? m.mode : 'fit';
+      refit();
+    } else if (m.t === 'mute') {
       muted = !!m.on;
       for (const g of gains) g.gain.value = muted ? 0 : 1;
     } else if (m.t === 'focus') {

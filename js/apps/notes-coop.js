@@ -30,6 +30,27 @@
    note as an ordinary note on both sides: the host's own, and the
    guest's new one, which was kept up to date all along.
 
+   READ ONLY: the host can tick "Friend can only read" before sharing.
+   The room's own validator then refuses the friend's changes
+   (core/coopnote.js), and the friend's Notes shows the note without a
+   caret to type with.
+
+   THE BAR names who is there. A friend from your Friends list is named
+   the way you have them there, once the room has checked (by a secret
+   only the two of you share, never by the typed name) that it really
+   is them; anyone else is shown by the name they typed.
+
+   RECENT ROOMS: the last five rooms you were in are kept (store
+   'portal.notesRooms', this profile only) so you can rejoin one: as a
+   guest you knock with that code again; as the host you open the same
+   code again on the same note, so your friend's invite still works.
+   A guest who rejoins gets their old copy updated when they haven't
+   changed it since; otherwise a new copy, so nothing of theirs is lost.
+
+   THE TRASH: a shared note moved to the Trash keeps taking the friend's
+   changes. If another window deletes it for good while the room is
+   open, it is put back from the shared text (Notes' revive()).
+
      createCoop(editor) -> { live(n), owns(n), local(n), fromBlocks(n, blocks),
                              undo(), redo(), title(n, text), redraw(),
                              external(), toggle(), fromOpts(o), active(), destroy() }
@@ -39,6 +60,7 @@ import { sameBlocks, unitCount, LIMITS } from '../core/textcrdt.js';
 import { isCode, normalizeCode, spaced } from '../core/roomcode.js';
 import { me } from '../core/identity.js';
 import * as live from '../portal/live.js';
+import { t } from '../core/i18n.js';
 
 const ERR = {
   invalid: 'That isn’t a room code — codes are 6 letters and numbers, like K7QM2X.',
@@ -50,22 +72,54 @@ const FULL = `A shared note holds up to ${LIMITS.text.toLocaleString('en-US')} c
 const TOO_LONG = `This note is too long to share: a shared note holds up to ${LIMITS.text.toLocaleString('en-US')} characters.`;
 const inviteLink = code => { try { return `${location.origin}${location.pathname}#note=${code}`; } catch (e) { return ''; } };
 const MAX_RECTS = 60;
+export const RECENT_KEY = 'portal.notesRooms';
+const RECENT_MAX = 5;
 
 export function createCoop(E) {
   const { h, icon, api, wrap, rich } = E;
   const S = {
     open: false, sess: null, off: null, noteId: null, shown: null, peerCur: null,
     err: '', note: '', joinCode: '', dirty: false, composing: false, pressing: false, timer: 0, dead: false,
+    ro: false,            /* the box: share for reading only */
+    reuse: null,          /* rejoining: the recent room this was */
+    friend: null,         /* { fp, display } once the room has checked it is one of your friends */
   };
   const doc = () => S.sess?.doc || null;
   const shared = () => (S.noteId ? E.note(S.noteId) : null);
   const paired = () => !!S.sess && S.sess.phase === 'paired';
   const ready = () => !!S.sess && S.sess.ready && !!S.shown;
-  const peerName = () => S.sess?.peer?.name || 'your friend';
+  const peerName = () => S.friend?.display || S.sess?.peer?.name || 'your friend';
   const owns = n => !!S.sess && !!n && S.noteId === n.id;
   const isLive = n => owns(n) && ready();
+  /* this person may only read the shared note (a guest of a read-only room) */
+  const readOnly = n => isLive(n) && S.sess.role === 'guest' && S.sess.readOnly;
 
-  const panel = h('div.notes-co', { role: 'dialog', 'aria-label': 'Write together', hidden: true });
+  /* ---------------- the last five rooms ---------------- */
+  const recent = () => {
+    const v = api.store.get(RECENT_KEY);
+    return Array.isArray(v) ? v.filter(r => r && isCode(r.code) && (r.role === 'host' || r.role === 'guest')).slice(0, RECENT_MAX) : [];
+  };
+  function remember(patch) {
+    const list = recent();
+    const at = list.findIndex(r => r.code === patch.code && r.role === patch.role);
+    const row = { ...(at >= 0 ? list[at] : {}), ...patch, at: Date.now() };
+    if (at >= 0) list.splice(at, 1);
+    api.store.set(RECENT_KEY, [row, ...list].slice(0, RECENT_MAX));
+  }
+  function forgetRoom(code, role) {
+    api.store.set(RECENT_KEY, recent().filter(r => !(r.code === code && r.role === role)));
+    paint();
+  }
+  function rejoin(r) {
+    if (S.sess) return;
+    if (r.role === 'guest') { S.reuse = r; begin('guest', r.code); return; }
+    const n = r.noteId ? E.note(r.noteId) : null;
+    if (!n || n.trashed) { S.err = n ? 'That note is in the Trash: restore it to share it again.' : 'That note isn’t here any more.'; paint(); return; }
+    E.open(n.id);
+    begin('host', r.code, { readOnly: !!r.ro });
+  }
+
+  const panel = h('div.notes-co', { role: 'dialog', 'aria-label': t('Write together'), hidden: true });
   const bar = h('div.notes-co__bar', { role: 'status', hidden: true });
   const name = h('span.notes-co__name');
   const caret = h('div.notes-co__caret', name);
@@ -127,7 +181,7 @@ export function createCoop(E) {
   function take(n, blocks, caret) {
     const r = doc().sync(S.shown, blocks, { caret: caret ? caret.e : null });
     if (r.rejected) {
-      api.notify({ app: 'Notes', icon: 'alert', title: 'This shared note is full', message: FULL });
+      api.notify({ app: 'Notes', icon: 'alert', title: t('This shared note is full'), message: FULL });
       const at = caret ? { a: doc().anchorIn(S.shown, caret.s), f: doc().anchorIn(S.shown, caret.e) } : null;
       redraw(at);
       return;
@@ -142,12 +196,14 @@ export function createCoop(E) {
   }
   function local(n) {
     if (!isLive(n) || !E.inEditor(n)) return;
+    if (readOnly(n)) { redraw(); return; }
     take(n, E.read(), E.getCaret());
   }
   function fromBlocks(n, blocks) {
     if (!isLive(n)) return;
+    if (readOnly(n)) { redraw(); return; }
     const r = doc().sync(S.shown, blocks);
-    if (r.rejected) { api.notify({ app: 'Notes', icon: 'alert', title: 'This shared note is full', message: FULL }); return; }
+    if (r.rejected) { api.notify({ app: 'Notes', icon: 'alert', title: t('This shared note is full'), message: FULL }); return; }
     S.sess.push(r.ops);
     redraw();
   }
@@ -159,14 +215,27 @@ export function createCoop(E) {
     announce();
   }
   function title(n, text) {
-    if (isLive(n)) S.sess.push(doc().setTitle(text));
+    if (isLive(n) && !readOnly(n)) S.sess.push(doc().setTitle(text));
   }
   /** Another Notes window saved. Its copy of this note may be a moment old, and taking
       that as an edit would delete what the friend just wrote: the shared text wins. */
   function external() {
     const n = shared();
     if (!S.sess || !S.noteId) return;
-    if (!n) { S.note = 'The shared note was deleted, so you left the room.'; end(true); return; }
+    if (!n) {
+      /* deleted for good somewhere else while your friend still has it open: it comes back,
+         from the shared text, which has every word of it */
+      if (ready() && E.revive) {
+        const d = doc().render();
+        E.revive(S.noteId, doc().title, d.blocks);
+        api.notify({ app: 'Notes', icon: 'users', title: t('Kept the shared note'), message: `It was deleted in another window while ${peerName()} still has it open, so it’s back in Notes.`, timeout: 7000 });
+        redrawSoon();
+        return;
+      }
+      S.note = 'The shared note was deleted, so you left the room.';
+      end(true);
+      return;
+    }
     if (ready()) redrawSoon();
   }
 
@@ -217,16 +286,18 @@ export function createCoop(E) {
   }
 
   /* ---------------- starting and ending ---------------- */
-  function begin(role, code) {
+  function begin(role, code, { readOnly: ro = S.ro } = {}) {
     if (S.sess) return;
     S.err = '';
     S.note = '';
+    S.friend = null;
+    if (role === 'host') S.reuse = null;
     const n = E.current();
     if (role === 'host' && (!n || n.path)) { S.err = 'Pick a note first — text files can’t be shared.'; paint(); return; }
     if (role === 'host' && unitCount(E.inEditor(n) ? E.read() : E.parse(n.body)) > LIMITS.text) { S.err = TOO_LONG; paint(); return; }
     const noteId = role === 'host' ? n.id : null;
     const sess = openCoop({
-      role, code,
+      role, code, readOnly: role === 'host' && !!ro,
       initial: () => {
         const t = E.note(noteId);
         return { blocks: t ? (E.inEditor(t) ? E.read() : E.parse(t.body)) : [], title: t ? t.title : '' };
@@ -240,6 +311,8 @@ export function createCoop(E) {
       if (type === 'remote') { redrawSoon(); return; }
       if (type === 'cursor') { S.peerCur = data; paintPeer(); return; }
       if (type === 'ready') { onReady(); return; }
+      if (type === 'friend') { onFriend(data, sess); return; }
+      if (type === 'readonly') { E.paint(); paint(); return; }
       if (type === 'toolong') {
         sayInPanel(TOO_LONG);
         end(false);
@@ -265,9 +338,13 @@ export function createCoop(E) {
     const d = doc();
     if (S.sess.role === 'guest') {
       const blocks = d.render().blocks;
-      const n = E.addNote(d.title, blocks);
+      /* rejoining: the copy from last time, if it's still as it was when you left */
+      const old = S.reuse && S.reuse.noteId ? E.note(S.reuse.noteId) : null;
+      const same = old && !old.trashed && S.reuse.left && old.mtime === S.reuse.left;
+      const n = same && E.adopt ? E.adopt(old.id, d.title, blocks) : E.addNote(d.title, blocks);
       S.noteId = n.id;
     }
+    S.reuse = null;
     S.shown = d.render();
     const n = shared();
     if (S.sess.role === 'guest') {
@@ -276,8 +353,20 @@ export function createCoop(E) {
     } else if (n && E.inEditor(n) && !sameBlocks(S.shown.blocks, E.read())) redraw();
     S.open = false;
     panel.hidden = true;
+    remember({ code: S.sess.code, role: S.sess.role, title: String(d.title || shared()?.title || 'Untitled note').slice(0, 80), noteId: S.noteId, ro: !!S.sess.readOnly });
     paint();
     announce();
+  }
+  /* the room says this is one of your friends: their name as you have it in Friends */
+  async function onFriend(fp, sess) {
+    try {
+      const FR = await import('../core/friends.js');
+      const f = FR.friends().find(x => x.fp === fp);
+      if (!f || S.sess !== sess) return;
+      S.friend = { fp, display: f.display, hue: f.hue };
+      paint();
+      paintPeer();
+    } catch (e) { /* Friends isn't here: the typed name stays */ }
   }
   /** Over: the note is already saved as an ordinary note. Undo starts afresh from here. */
   function end(sayBye) {
@@ -287,6 +376,8 @@ export function createCoop(E) {
     S.timer = 0;
     const n = shared();
     if (n && S.shown && doc() && S.dirty) redraw();     /* the friend's last words go in before it ends */
+    /* a guest's copy as it is now: rejoining reuses it only if it is still this */
+    if (sess.role === 'guest' && n && sess.ready) remember({ code: sess.code, role: 'guest', noteId: n.id, left: n.mtime, title: String(n.title || 'Untitled note').slice(0, 80), ro: !!sess.readOnly });
     S.off?.();
     S.off = null;
     S.sess = null;
@@ -294,6 +385,7 @@ export function createCoop(E) {
     S.shown = null;
     S.peerCur = null;
     S.dirty = false;
+    S.friend = null;
     layer.hidden = true;
     if (sayBye) { try { sess.leave(); } catch (e) { /* gone */ } }
     E.ended();
@@ -313,8 +405,8 @@ export function createCoop(E) {
     const text = `Write with me in Notes — room code ${code}${link ? ` · ${link}` : ''}`;
     try {
       await navigator.clipboard.writeText(text);
-      api.notify({ app: 'Notes', icon: 'copy', title: 'Invite copied', message: `Room code ${code}.`, timeout: 3000 });
-    } catch (e) { api.notify({ app: 'Notes', icon: 'info', title: `Room code ${code}`, message: 'Copying was blocked here — read the code out instead.' }); }
+      api.notify({ app: 'Notes', icon: 'copy', title: t('Invite copied'), message: t('Room code {code}.', { code }), timeout: 3000 });
+    } catch (e) { api.notify({ app: 'Notes', icon: 'info', title: t('Room code {code}', { code }), message: t('Copying was blocked here — read the code out instead.') }); }
   }
   function toggle(force) {
     S.open = typeof force === 'boolean' ? force : !S.open;
@@ -329,46 +421,62 @@ export function createCoop(E) {
   }
   function paintPanel() {
     const sess = S.sess;
-    const kids = [h('div.notes-co__head', icon('users'), h('b', { text: 'Write together' }),
-      h('button.ibtn', { type: 'button', 'aria-label': 'Hide this panel', onclick: () => toggle(false) }, icon('x')))];
+    const kids = [h('div.notes-co__head', icon('users'), h('b', { text: t('Write together') }),
+      h('button.ibtn', { type: 'button', 'aria-label': t('Hide this panel'), onclick: () => toggle(false) }, icon('x')))];
     if (!sess) {
       const n = E.current();
       const can = !!n && !n.path;
       const input = h('input.notes-co__in', { type: 'text', maxlength: '80', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false',
-        placeholder: 'Friend’s code', 'aria-label': 'Room code from your friend', value: S.joinCode || '',
+        placeholder: t('Friend’s code'), 'aria-label': t('Room code from your friend'), value: S.joinCode || '',
         oninput: e => { S.joinCode = e.target.value; } });
+      const roBox = h('input', { type: 'checkbox', checked: S.ro, onchange: e => { S.ro = e.target.checked; } });
       kids.push(
-        h('p', { text: 'Write a note with a friend, live: you both type at once, anywhere in it, and see each other’s cursor.' }),
-        h('button.btn.btn--primary.notes-co__start', { type: 'button', disabled: can ? null : true, onclick: () => begin('host') },
-          icon('users'), h('span', { text: can ? `Share “${(n.title || 'Untitled note').slice(0, 40)}”` : 'Pick a note to share' })),
-        h('div.notes-co__or', { text: 'or join theirs' }),
+        h('p', { text: t('Write a note with a friend, live: you both type at once, anywhere in it, and see each other’s cursor.') }),
+        h('label.notes-co__ro', roBox, h('span', { text: t('Friend can only read (they see it live, but can’t change it)') })),
+        h('button.btn.btn--primary.notes-co__start', { type: 'button', disabled: can && !n.trashed ? null : true, onclick: () => begin('host') },
+          icon('users'), h('span', { text: !can ? t('Pick a note to share') : n.trashed ? t('Restore this note to share it') : `Share “${(n.title || 'Untitled note').slice(0, 40)}”` })),
+        h('div.notes-co__or', { text: t('or join theirs') }),
         h('form.notes-co__join', { onsubmit: e => {
           e.preventDefault();
           const c = normalizeCode(input.value);
           S.joinCode = c;
           if (!isCode(c)) { S.err = ERR.invalid; paint(); return; }
           begin('guest', c);
-        } }, input, h('button.btn', { type: 'submit' }, h('span', { text: 'Join' }))),
-        h('p.notes-co__fine', { text: 'Joining adds a new note of your own, which stays yours when you leave.' }));
+        } }, input, h('button.btn', { type: 'submit' }, h('span', { text: t('Join') }))),
+        h('p.notes-co__fine', { text: t('Joining adds a new note of your own, which stays yours when you leave.') }));
+      const rooms = recent();
+      if (rooms.length) {
+        kids.push(h('div.notes-co__recent', { role: 'group', 'aria-label': t('Your last rooms') },
+          h('b', { text: t('Your last rooms') }),
+          ...rooms.map(r => h('div.notes-co__room', { dataset: { code: r.code, role: r.role } },
+            h('span.notes-co__rt',
+              h('span', { text: r.title || t('Untitled note') }),
+              h('small', { text: `${r.role === 'host' ? 'you shared it' : 'you joined'}${r.ro ? ', read only' : ''} · ${spaced(r.code)} · ${api.fmt.fmtAgo(new Date(r.at).toISOString())}` })),
+            h('button.btn.btn--sm.notes-co__rejoin', { type: 'button', onclick: () => rejoin(r) }, h('span', { text: r.role === 'host' ? t('Open again') : t('Rejoin') })),
+            h('button.ibtn', { type: 'button', 'aria-label': `Forget ${r.title || 'this room'}`, onclick: () => forgetRoom(r.code, r.role) }, icon('x')))),
+          h('p.notes-co__fine', { text: t('Rejoining only works while your friend has that room open. Opening your own again reuses its code, so the invite you sent still works.') })));
+      }
     } else if (paired() && !sess.ready) {
       kids.push(h('p.notes-co__wait', h('i.notes-co__spin'), h('span', { text: `Getting ${peerName()}’s note…` })));
     } else if (paired()) {
-      kids.push(h('p.notes-co__with', { style: { '--h': String(sess.peer?.color ?? 200) } }, h('i'), h('span', { text: `Writing with ${peerName()}` })));
+      kids.push(h('p.notes-co__with', { style: { '--h': String(sess.peer?.color ?? 200) } }, h('i'),
+        h('span', { text: sess.readOnly ? (sess.role === 'host' ? `${peerName()} is reading along` : `Reading ${peerName()}’s note`) : `Writing with ${peerName()}` })));
+      if (S.friend) kids.push(h('p.notes-co__fine', { text: t('{display} is one of your friends: the room checked it with a secret only the two of you have.', { display: S.friend.display }) }));
     } else if (sess.role === 'host') {
       const link = inviteLink(sess.code);
-      kids.push(h('p', { text: 'Your room code' }),
+      kids.push(h('p', { text: sess.readOnly ? t('Your room code — your friend can only read') : t('Your room code') }),
         h('div.notes-co__code', { 'aria-label': `Room code ${spaced(sess.code)}`, role: 'group', dataset: { code: sess.code } }, [...sess.code].map(c => h('span', { text: c, 'aria-hidden': 'true' }))),
-        h('input.notes-co__link', { type: 'text', readonly: true, value: link, 'aria-label': 'Invite link', onfocus: e => e.target.select() }),
-        h('button.btn.btn--sm', { type: 'button', onclick: () => copyInvite(sess.code) }, icon('copy'), h('span', { text: 'Copy invite' })),
-        h('p.notes-co__wait', h('i.notes-co__spin'), h('span', { text: sess.phase === 'waiting' ? 'Waiting for your friend — keep writing, they’ll get all of it.' : 'Opening the room…' })));
+        h('input.notes-co__link', { type: 'text', readonly: true, value: link, 'aria-label': t('Invite link'), onfocus: e => e.target.select() }),
+        h('button.btn.btn--sm', { type: 'button', onclick: () => copyInvite(sess.code) }, icon('copy'), h('span', { text: t('Copy invite') })),
+        h('p.notes-co__wait', h('i.notes-co__spin'), h('span', { text: sess.phase === 'waiting' ? t('Waiting for your friend — keep writing, they’ll get all of it.') : t('Opening the room…') })));
     } else {
-      kids.push(h('p.notes-co__wait', h('i.notes-co__spin'), h('span', { text: `Joining ${sess.code}…` })));
+      kids.push(h('p.notes-co__wait', h('i.notes-co__spin'), h('span', { text: t('Joining {code}…', { code: sess.code }) })));
     }
-    if (sess && !paired() && live.status() === 'offline') kids.push(h('p.notes-co__err', { text: 'Can’t reach the live server — this network may block it. Trying again…' }));
+    if (sess && !paired() && live.status() === 'offline') kids.push(h('p.notes-co__err', { text: t('Can’t reach the live server — this network may block it. Trying again…') }));
     if (S.err) kids.push(h('p.notes-co__err', { role: 'alert', text: S.err }));
     if (S.note) kids.push(h('p.notes-co__note', { role: 'status', text: S.note }));
-    if (sess) kids.push(h('button.btn.btn--sm.notes-co__leave', { type: 'button', onclick: leaveNow }, h('span', { text: paired() ? 'Leave' : 'Cancel' })));
-    kids.push(h('p.notes-co__fine', { text: 'This runs over StaticOS’s live connection, a free public relay. Your note is encrypted with the room code before it leaves this device, so anyone watching the relay sees sealed bytes, not your words — but the code is short and anyone who has it could read along, so treat it like a password. Names aren’t verified. Undo only takes back your own changes. Pictures stay on the device they were added on; your friend sees their name.' }));
+    if (sess) kids.push(h('button.btn.btn--sm.notes-co__leave', { type: 'button', onclick: leaveNow }, h('span', { text: paired() ? t('Leave') : t('Cancel') })));
+    kids.push(h('p.notes-co__fine', { text: t('This runs over StaticOS’s live connection, a free public relay. Your note is encrypted with the room code before it leaves this device, so anyone watching the relay sees sealed bytes, not your words — but the code is short and anyone who has it could read along, so treat it like a password. Names aren’t verified. Undo only takes back your own changes. Pictures stay on the device they were added on; your friend sees their name.') }));
     panel.replaceChildren(...kids);
   }
   function paintBar() {
@@ -379,19 +487,23 @@ export function createCoop(E) {
     if (paired() && sess.ready) {
       const mine = me();
       const n = shared();
+      const fr = S.friend;
+      const typed = sess.peer?.name || 'Friend';
       kids.push(
         h('span.notes-co__who', { style: { '--h': String(mine.color ?? 200) } }, h('i'), h('span', { text: `${mine.name || 'You'} (you)` })),
-        h('span.notes-co__who.is-peer', { style: { '--h': String(sess.peer?.color ?? 200) } }, h('i'), h('span', { text: peerName() })),
-        h('span.notes-co__state', { text: 'writing together' }));
-      if (n && E.current()?.id !== n.id) kids.push(h('button.btn.btn--sm', { type: 'button', onclick: () => E.open(n.id) }, h('span', { text: 'Go to the shared note' })));
+        h(`span.notes-co__who.is-peer${fr ? '.is-friend' : ''}`, { style: { '--h': String(sess.peer?.color ?? 200) }, dataset: { fk: 'peer-name' },
+          title: fr ? (fr.display !== typed ? `Your friend ${fr.display} (they call themselves “${typed}”)` : `Your friend ${fr.display}`) : t('“{typed}” is the name they typed: it isn’t checked', { typed }) },
+          h('i'), h('span', { text: fr ? fr.display : typed }), fr ? h('small.notes-co__fr', { text: 'friend' }) : null),
+        h('span.notes-co__state', { text: sess.readOnly ? (sess.role === 'host' ? 'can only read' : 'read only: you can’t change this note') : t('writing together') }));
+      if (n && E.current()?.id !== n.id) kids.push(h('button.btn.btn--sm', { type: 'button', onclick: () => E.open(n.id) }, h('span', { text: t('Go to the shared note') })));
     } else if (paired()) {
       kids.push(h('i.notes-co__spin'), h('span.notes-co__state', { text: `Getting ${peerName()}’s note…` }));
     } else if (sess.role === 'host') {
-      kids.push(h('i.notes-co__spin'), h('span.notes-co__state', { text: sess.phase === 'waiting' ? `Waiting for your friend — code ${sess.code}` : 'Opening the room…' }));
+      kids.push(h('i.notes-co__spin'), h('span.notes-co__state', { text: sess.phase === 'waiting' ? `Waiting for your friend — code ${sess.code}${sess.readOnly ? ' (read only)' : ''}` : t('Opening the room…') }));
     } else {
-      kids.push(h('i.notes-co__spin'), h('span.notes-co__state', { text: `Joining ${sess.code}…` }));
+      kids.push(h('i.notes-co__spin'), h('span.notes-co__state', { text: t('Joining {code}…', { code: sess.code }) }));
     }
-    kids.push(h('div.grow'), h('button.btn.btn--sm.notes-co__barleave', { type: 'button', onclick: leaveNow }, h('span', { text: paired() ? 'Leave' : 'Cancel' })));
+    kids.push(h('div.grow'), h('button.btn.btn--sm.notes-co__barleave', { type: 'button', onclick: leaveNow }, h('span', { text: paired() ? t('Leave') : t('Cancel') })));
     bar.replaceChildren(...kids);
   }
   function paint() {
@@ -450,14 +562,15 @@ export function createCoop(E) {
       ready: !!sess?.ready, peer: sess?.peer || null, noteId: S.noteId, note: S.note, err: S.err,
       blocks: S.shown?.blocks || null, title: d?.title ?? null, digest: d && S.shown ? d.digest() : null, length: d?.length ?? 0,
       peerCur: S.peerCur, net: sess?.peek?.() || null, joinCode: S.joinCode,
+      readOnly: !!sess?.readOnly, friend: S.friend, recent: recent(),
     };
   };
 
   return {
-    owns, live: isLive, local, fromBlocks, title, external, toggle, fromOpts,
+    owns, live: isLive, readOnly, local, fromBlocks, title, external, toggle, fromOpts, recent, rejoin,
     redraw: () => redraw(),
-    undo: () => step(doc()?.undo()),
-    redo: () => step(doc()?.redo()),
+    undo: () => { if (!readOnly(shared())) step(doc()?.undo()); },
+    redo: () => { if (!readOnly(shared())) step(doc()?.redo()); },
     /** In a room at all, with this person's note or waiting for one. */
     active: () => !!S.sess,
     paint,

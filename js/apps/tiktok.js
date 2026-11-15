@@ -45,19 +45,28 @@
 
    Feed lives in store 'portal.tiktok'. Only the slide you're on
    mounts an iframe, so a long feed stays fast.
+
+   Your own layer on top, all of it by hand and all of it links:
+   paste many links at once (a label may follow each link), label a
+   video, sort Saved ones into collections, search Saved by @handle
+   or label, export the feed as a list of links and import one back,
+   send a video to a friend (just its id and @handle: they press Add
+   or Open), mark videos watched and hide them, and auto-advance
+   after a time you choose. "Watched" is only ever something you
+   press: the embed does not tell us, and we do not guess.
    ============================================================ */
 import { defineApp } from '../core/registry.js';
+import * as TT from '../portal/tiktok.js';
+import { paintMediaPanel } from '../portal/sendfriend.js';
 
-const KEY = 'portal.tiktok';
-const SAVED_KEY = 'portal.tiktokSaved';
+const { KEY, SAVED_KEY, WATCHED_KEY, PREFS_KEY, MAX, SAVED_MAX, tidy, idFromUrl, looksLikeTikTok, handleFromUrl, normVideo } = TT;
+const AUTO_CHOICES = [[0, 'Off'], [10, '10 s'], [20, '20 s'], [30, '30 s'], [60, '60 s']];
 const OEMBED = 'https://www.tiktok.com/oembed?url=';
 const ORIGIN = 'https://www.tiktok.com';
 /* TikTok's current embed player. The older /embed/v2/<id> path now answers
    400, so we use /player/v1/<id> — and prefer whatever src oEmbed itself
    hands back, which is the one path TikTok keeps up to date. */
 const PLAYER = 'https://www.tiktok.com/player/v1/';
-const MAX = 200;
-const SAVED_MAX = 500;
 
 /* swipe feel */
 const TAP_MOVE = 8;          /* px a finger may drift and still be a tap   */
@@ -76,47 +85,13 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-tiktok-css
 
 /* ---- link parsing -------------------------------------------------- */
 
-/** A TikTok video id is a long numeric snowflake. */
-const idFromUrl = url => {
-  const m = String(url).match(/\/(?:video|v|embed(?:\/v2)?)\/(\d{6,25})/);
-  return m ? m[1] : null;
-};
-
-/** Does this even look like a TikTok link we could resolve? */
-const looksLikeTikTok = url => /^https?:\/\/([a-z0-9-]+\.)?tiktok\.com\//i.test(String(url).trim());
-
-/* The creator handle is right there in a full video link. That is the only
-   name we can honestly show: TikTok's oEmbed stopped returning author_name,
-   title and thumbnail_url, so anything else would be invented. The caption
-   and creator still appear inside the player itself. */
-const handleFromUrl = url => {
-  const m = String(url).match(/tiktok\.com\/@([A-Za-z0-9._-]{1,30})/);
-  return m ? `@${m[1]}` : null;
-};
-
 /** Pull the player src out of the <iframe> html oEmbed returns. */
 const srcFromOEmbed = html => {
   const m = String(html || '').match(/src="(https:\/\/www\.tiktok\.com\/player\/[^"]+)"/);
   return m ? m[1].replace(/&amp;/g, '&') : null;
 };
 
-const tidy = (s, n) => String(s ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, n);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-
-/** One stored video, whatever an older build or a hand edit left there. */
-function normVideo(v, stampKey) {
-  if (!v || typeof v.id !== 'string' || !/^\d{6,25}$/.test(v.id)) return null;
-  const out = {
-    id: v.id,
-    url: typeof v.url === 'string' && looksLikeTikTok(v.url) ? v.url : `https://www.tiktok.com/@/video/${v.id}`,
-    handle: tidy(v.handle, 32) || null,
-    /* only ever a tiktok.com player URL, never arbitrary */
-    embedSrc: typeof v.embedSrc === 'string' && v.embedSrc.startsWith('https://www.tiktok.com/player/') ? v.embedSrc : null,
-    unverified: !!v.unverified,
-  };
-  out[stampKey] = typeof v[stampKey] === 'string' && !Number.isNaN(Date.parse(v[stampKey])) ? v[stampKey] : new Date().toISOString();
-  return out;
-}
 
 /** A TikTok player message, if this is one ({'x-tiktok-player':true,type,value}). */
 function playerMsg(data) {
@@ -153,17 +128,26 @@ defineApp({
       shelf: true,               /* in Saved: the shelf (true) or its player */
       idx: { feed: 0, saved: 0 },
       adding: false,
+      lookup: null,              /* 'blocked' once TikTok's link lookup could not be reached */
       error: null,
       dead: false,
       touch: false,
       player: { ready: false, state: null, muted: null },   /* only what the player said */
+      prefs: loadPrefs(),
+      watched: loadWatched(),    /* { id: iso } of videos the person marked */
+      sfilter: { q: '', col: null },   /* the Saved shelf: search text, and a collection (null all, '' none) */
+      sheet: null,
+      autoAt: 0,
     };
 
-    function loadList(key, stampKey, max) {
-      const raw = store.get(key, null);
-      const rows = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.feed) ? raw.feed : []);
-      const seen = new Set();
-      return rows.map(v => normVideo(v, stampKey)).filter(v => v && !seen.has(v.id) && seen.add(v.id)).slice(0, max);
+    function loadList(key, stampKey, max) { return TT.loadList(store, key, stampKey, max); }
+    function loadPrefs() {
+      const p = store.get(PREFS_KEY, null) || {};
+      return { hideWatched: p.hideWatched === true, auto: AUTO_CHOICES.some(([n]) => n === p.auto) ? p.auto : 0 };
+    }
+    function loadWatched() {
+      const w = store.get(WATCHED_KEY, null);
+      return w && typeof w === 'object' && !Array.isArray(w) ? { ...w } : {};
     }
 
     const saveFeed = () => store.set(KEY, S.feed.map(v => ({ ...v })));
@@ -172,7 +156,18 @@ defineApp({
 
     /* the list the player is showing right now */
     const playing = () => S.tab === 'saved' && !S.shelf;
-    const list = () => (S.tab === 'saved' ? S.saved : S.feed);
+    const isWatched = id => !!S.watched[id];
+    const feedView = () => (S.prefs.hideWatched ? S.feed.filter(v => !isWatched(v.id)) : S.feed);
+    const colOf = v => v.collection || '';
+    const collections = () => [...new Set(S.saved.map(colOf).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    function savedView() {
+      const { q, col } = S.sfilter;
+      const needle = q.trim().replace(/^@/, '').toLowerCase();
+      return S.saved.filter(v => (col === null || colOf(v) === col)
+        && (!needle || `${(v.handle || '').replace(/^@/, '')} ${v.label || ''}`.toLowerCase().includes(needle)));
+    }
+    const list = () => (S.tab === 'saved' ? savedView() : feedView());
+    const nameOf = v => v.label || v.handle || 'TikTok video';
     const cur = () => S.idx[S.tab];
     const setCur = i => { S.idx[S.tab] = i; };
 
@@ -183,11 +178,16 @@ defineApp({
     const statusEl = h('div.tt__status', { role: 'status', 'aria-live': 'polite' });
 
     const input = h('input.tt__input', {
-      type: 'url',
-      placeholder: 'Paste a TikTok link…',
+      type: 'text',
+      placeholder: 'Paste TikTok links (a label may follow each)…',
       'aria-label': 'TikTok video link',
       spellcheck: 'false',
       onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); addFromInput(); } },
+      /* a single-line box swallows line breaks, so a pasted list is read off the clipboard */
+      onpaste: e => {
+        const links = TT.parseMany(e.clipboardData?.getData('text') || '');
+        if (links.length > 1) { e.preventDefault(); addLinks(links); }
+      },
     });
 
     const addBtn = h('button.btn.btn--primary.tt__add', {
@@ -206,7 +206,8 @@ defineApp({
     const bar = h('div.tt__bar',
       h('div.tt__brand', icon('brand-tiktok'), h('b', { text: 'TikTok' })),
       tabs,
-      h('div.tt__addrow', input, addBtn));
+      h('div.tt__addrow', input, addBtn,
+        h('button.btn.btn--sm.btn--ghost.tt__more', { type: 'button', 'aria-label': 'Export or import links', title: 'Export or import links', dataset: { role: 'tt-more' }, onclick: e => moreMenu(e.currentTarget) }, icon('more-horizontal'))));
 
     /* ---- adding ------------------------------------------------- */
 
@@ -217,33 +218,23 @@ defineApp({
       render(statusEl, icon(kind === 'error' ? 'alert' : kind === 'ok' ? 'check' : 'info'), h('span', { text }));
     }
 
-    async function addFromInput() {
-      const url = input.value.trim();
-      if (!url) return;
-      if (!looksLikeTikTok(url)) {
-        setStatus('That isn’t a tiktok.com link.', 'error');
-        return;
-      }
-      if (S.adding) return;
-      S.adding = true;
-      addBtn.disabled = true;
-      setStatus('Checking that link with TikTok…');
+    function addFromInput() {
+      const text = input.value.trim();
+      if (!text) return;
+      const links = TT.parseMany(text);
+      if (!links.length) { setStatus('That isn’t a tiktok.com link.', 'error'); return; }
+      return addLinks(links);
+    }
 
+    /* One link through TikTok's oEmbed. -> { entry } or { failure } */
+    async function resolveLink({ url, label }) {
       const existingId = idFromUrl(url);
-      if (existingId && S.feed.some(v => v.id === existingId)) {
-        S.adding = false; addBtn.disabled = false;
-        setStatus('That video is already in your feed.', 'error');
-        setTab('feed', { quiet: true });
-        jumpTo(S.feed.findIndex(v => v.id === existingId));
-        return;
-      }
-
-      let entry = null;
-      let failure = null;
+      let entry = null, failure = null;
       try {
         const res = await fetch(OEMBED + encodeURIComponent(url), { mode: 'cors' });
         if (!res.ok) throw new Error(`TikTok replied ${res.status}`);
         const data = await res.json();
+        S.lookup = null;
         const id = String(data.embed_product_id || '').match(/^\d{6,25}$/)
           ? String(data.embed_product_id)
           : idFromUrl(data.html || '') || existingId;
@@ -252,45 +243,59 @@ defineApp({
            player — NOT that the video still plays. A deleted or private
            video still answers 200 here and then shows "Video currently
            unavailable" in the player, so we never claim it is available. */
-        entry = {
-          id, url,
-          handle: handleFromUrl(url),
-          embedSrc: srcFromOEmbed(data.html),
-          unverified: false,
-          addedAt: new Date().toISOString(),
-        };
+        entry = { id, url, handle: handleFromUrl(url), embedSrc: srcFromOEmbed(data.html), unverified: false, addedAt: new Date().toISOString() };
       } catch (err) {
-        failure = err && err.message ? err.message : String(err);
+        /* a fetch that never got an answer (blocked, offline) throws a TypeError */
+        if (err instanceof TypeError) {
+          S.lookup = 'blocked';
+          failure = 'TikTok’s link lookup couldn’t be reached from here. This network may be blocking it, or you may be offline';
+        } else failure = err && err.message ? err.message : String(err);
         /* If we can still read an id straight out of the URL, the embed
            itself may well work even though we couldn't reach oEmbed
            (blocked network, offline). Add it, but don't invent details. */
-        if (existingId) {
-          entry = {
-            id: existingId, url,
-            handle: handleFromUrl(url),
-            embedSrc: null,
-            unverified: true,
-            addedAt: new Date().toISOString(),
-          };
-        }
+        if (existingId) entry = { id: existingId, url, handle: handleFromUrl(url), embedSrc: null, unverified: true, addedAt: new Date().toISOString() };
       }
+      if (entry && label) entry.label = tidy(label, TT.LABEL_MAX);
+      return entry ? { entry } : { failure };
+    }
 
+    async function addLinks(links) {
+      if (S.adding) return;
+      S.adding = true;
+      addBtn.disabled = true;
+      const many = links.length > 1;
+      setStatus(many ? `Checking ${links.length} links with TikTok…` : 'Checking that link with TikTok…');
+      const fresh = [];
+      const had = [];
+      let failed = 0, failure = null, unverified = 0;
+      for (const l of links) {
+        const id = idFromUrl(l.url);
+        if (id && (S.feed.some(v => v.id === id) || fresh.some(v => v.id === id))) { had.push(id); continue; }
+        const r = await resolveLink(l);
+        if (S.dead) return;
+        if (!r.entry) { failed++; failure = r.failure; continue; }
+        if (S.feed.some(v => v.id === r.entry.id) || fresh.some(v => v.id === r.entry.id)) { had.push(r.entry.id); continue; }
+        if (r.entry.unverified) unverified++;
+        fresh.push(r.entry);
+      }
       S.adding = false;
       addBtn.disabled = false;
       if (S.dead) return;
 
-      if (!entry) {
-        setStatus(`Couldn’t add that link — ${failure || 'TikTok didn’t recognise it'}.`, 'error');
-        return;
-      }
-      if (S.feed.some(v => v.id === entry.id)) {
-        setStatus('That video is already in your feed.', 'error');
-        setTab('feed', { quiet: true });
-        jumpTo(S.feed.findIndex(v => v.id === entry.id));
+      if (!fresh.length) {
+        if (had.length && !failed) {
+          setStatus(many ? 'Those videos are already in your feed.' : 'That video is already in your feed.', 'error');
+          setTab('feed', { quiet: true });
+          const at = feedView().findIndex(v => v.id === had[0]);
+          if (at >= 0) jumpTo(at);
+          return;
+        }
+        setStatus(`Couldn’t add ${many ? 'those links' : 'that link'} — ${failure || 'TikTok didn’t recognise it'}.`, 'error');
+        if (!S.feed.length) paint();                       /* the empty feed explains why */
         return;
       }
 
-      S.feed.unshift(entry);
+      S.feed.unshift(...fresh);
       if (S.feed.length > MAX) S.feed.length = MAX;
       saveFeed();
       input.value = '';
@@ -298,9 +303,14 @@ defineApp({
       S.idx.feed = 0;
       paint();
       jumpTo(0, { instant: true });
-      setStatus(entry.unverified
-        ? 'Added, but TikTok couldn’t be reached to confirm the link — the player may not load.'
-        : `Added ${entry.handle ? `${entry.handle}’s` : 'that'} video.`, entry.unverified ? 'info' : 'ok');
+      if (!many) {
+        const entry = fresh[0];
+        setStatus(entry.unverified
+          ? 'Added, but TikTok’s link lookup couldn’t be reached (this network may be blocking it), so the link is unchecked and the player may not load.'
+          : `Added ${entry.handle ? `${entry.handle}’s` : 'that'} video.`, entry.unverified ? 'info' : 'ok');
+      } else {
+        setStatus(`Added ${fresh.length} video${fresh.length === 1 ? '' : 's'}${had.length ? `; ${had.length} already in your feed` : ''}${failed ? `; ${failed} couldn’t be added` : ''}${unverified ? `; ${unverified} unchecked (TikTok’s lookup couldn’t be reached)` : ''}.`, failed || unverified ? 'info' : 'ok');
+      }
     }
 
     async function remove(v) {
@@ -315,7 +325,7 @@ defineApp({
       if (at < 0) return;
       S.feed.splice(at, 1);
       saveFeed();
-      S.idx.feed = clamp(S.idx.feed, 0, Math.max(0, S.feed.length - 1));
+      S.idx.feed = clamp(S.idx.feed, 0, Math.max(0, feedView().length - 1));
       paint();
       jumpTo(S.idx.feed, { instant: true });
       setStatus('Removed.', 'ok');
@@ -331,8 +341,8 @@ defineApp({
         setStatus('Removed from Saved.', 'ok');
         /* unsaving the one playing on the Saved shelf takes it out of that list */
         if (playing()) {
-          S.idx.saved = clamp(S.idx.saved, 0, Math.max(0, S.saved.length - 1));
-          if (!S.saved.length) { showShelf(); return; }
+          S.idx.saved = clamp(S.idx.saved, 0, Math.max(0, savedView().length - 1));
+          if (!savedView().length) { showShelf(); return; }
           paint();
           jumpTo(S.idx.saved, { instant: true });
           return;
@@ -458,7 +468,9 @@ defineApp({
         h('div.tt__touch', { 'aria-hidden': 'true' }),
         h('div.tt__overlay',
           h('div.tt__who',
-            v.handle ? h('b', { text: v.handle }) : h('b.tt__dim', { text: 'TikTok video' }),
+            v.label ? h('b', { text: v.label }) : v.handle ? h('b', { text: v.handle }) : h('b.tt__dim', { text: 'TikTok video' }),
+            v.label && v.handle ? h('span.tt__handle', { text: v.handle }) : null,
+            isWatched(v.id) ? h('span.tt__badge.tt__badge--watched', { text: 'watched' }) : null,
             v.unverified
               ? h('span.tt__badge', { title: 'TikTok couldn’t be reached to confirm this link' }, 'unconfirmed')
               : null),
@@ -472,6 +484,13 @@ defineApp({
             onclick: () => toggleSave(v),
           }, icon('bookmark', { fill: saved })),
           h('button.tt__sbtn.tt__mute', { type: 'button', hidden: true, onclick: () => toggleMute() }, icon('volume-x')),
+          h('button.tt__sbtn.tt__watch', {
+            type: 'button', dataset: { id: v.id }, class: isWatched(v.id) ? 'is-on' : null, 'aria-pressed': String(isWatched(v.id)),
+            'aria-label': isWatched(v.id) ? 'Watched — mark as not watched' : 'Mark as watched', title: isWatched(v.id) ? 'Watched' : 'Mark watched',
+            onclick: () => toggleWatched(v),
+          }, icon(isWatched(v.id) ? 'eye' : 'eye-off')),
+          sideBtn('tag', 'Add your own label', () => labelSheet(v)),
+          sideBtn('send', 'Send to a friend', () => sendSheet(v)),
           sideBtn('external-link', 'Open on TikTok', () => window.open(v.url, '_blank', 'noopener,noreferrer')),
           sideBtn('link', 'Copy link', () => copyLink(v)),
           inSaved ? null : sideBtn('trash', 'Remove from feed', () => remove(v))));
@@ -482,10 +501,20 @@ defineApp({
     }, icon(ic));
 
     function emptyState() {
+      if (S.tab === 'feed' && S.feed.length && S.prefs.hideWatched) {
+        return h('div.tt__empty',
+          icon('eye'),
+          h('b', { text: 'You have watched everything here' }),
+          h('p', { text: `All ${S.feed.length} video${S.feed.length === 1 ? ' is' : 's are'} marked watched, and watched videos are hidden.` }),
+          h('button.btn.btn--sm', { type: 'button', onclick: () => setPrefs({ hideWatched: false }) }, icon('eye'), h('span', { text: 'Show watched' })));
+      }
       return h('div.tt__empty',
         icon('brand-tiktok'),
         h('b', { text: 'Your feed is empty' }),
         h('p', { text: 'Paste any TikTok link above and it lands here, playing in TikTok’s own player. Swipe, scroll or press ↓ to move between videos.' }),
+        S.lookup === 'blocked'
+          ? h('p.tt__fine', { text: 'TikTok’s link lookup couldn’t be reached from here, so links can’t be added right now. This network may be blocking tiktok.com, or you may be offline.' })
+          : null,
         h('p.tt__fine', { text: 'StaticOS can’t show a personalised For You feed — that needs a TikTok account and their private API — so this feed is the one you build.' }));
     }
 
@@ -498,28 +527,56 @@ defineApp({
           icon('bookmark'),
           h('b', { text: 'Nothing saved yet' }),
           h('p', { text: 'Tap the bookmark beside any video in your feed and it’s kept here — even if you later remove it from the feed.' }),
-          S.feed.length ? h('button.btn.btn--sm', { type: 'button', onclick: () => setTab('feed') }, icon('play'), h('span', { text: 'Back to the feed' })) : null));
+          feedView().length ? h('button.btn.btn--sm', { type: 'button', onclick: () => setTab('feed') }, icon('play'), h('span', { text: 'Back to the feed' })) : null));
         return;
       }
+      const view = savedView();
+      const cols = collections();
+      const chip = (label, col, n) => h('button.tt__chip', {
+        type: 'button', class: S.sfilter.col === col ? 'is-on' : null, 'aria-pressed': String(S.sfilter.col === col), dataset: { col: col === null ? '*' : col },
+        onclick: () => { S.sfilter.col = col; paintShelf(); },
+      }, h('span', { text: label }), h('small', { text: String(n) }));
+      const search = h('input.tt__find', {
+        type: 'search', spellcheck: 'false', value: S.sfilter.q, placeholder: 'Search saved by @handle or label', 'aria-label': 'Search saved videos',
+        oninput: e => {
+          S.sfilter.q = e.target.value;
+          const at = e.target.selectionStart;
+          paintShelf();
+          const again = shelfEl.querySelector('.tt__find');
+          again?.focus({ preventScroll: true });
+          try { again?.setSelectionRange(at, at); } catch (err) { /* not a text box */ }
+        },
+      });
       shelfEl.append(
         h('div.tt__shelfhead',
-          h('b', { text: `${S.saved.length} saved video${S.saved.length === 1 ? '' : 's'}` }),
+          h('b', { text: view.length === S.saved.length ? `${S.saved.length} saved video${S.saved.length === 1 ? '' : 's'}` : `${view.length} of ${S.saved.length} saved` }),
           h('small', { text: 'Newest first · kept in this browser' })),
-        h('div.tt__grid', { role: 'list', 'aria-label': 'Saved TikToks' }, S.saved.map((v, i) =>
-          h('div.tt__card', { role: 'listitem' },
+        h('div.tt__shelftools', search,
+          h('div.tt__chips', { role: 'group', 'aria-label': 'Collections' },
+            chip('All', null, S.saved.length),
+            cols.map(c => chip(c, c, S.saved.filter(v => colOf(v) === c).length)),
+            cols.length ? chip('Unsorted', '', S.saved.filter(v => !colOf(v)).length) : null)),
+        view.length ? h('div.tt__grid', { role: 'list', 'aria-label': 'Saved TikToks' }, view.map((v, i) =>
+          h('div.tt__card', { role: 'listitem', dataset: { id: v.id } },
             h('button.tt__cardmain', {
               type: 'button', dataset: { id: v.id },
-              'aria-label': `Play ${v.handle ? `${v.handle}’s video` : 'this TikTok'}, saved ${fmt.fmtAgo(v.savedAt)}`,
+              'aria-label': `Play ${v.label || (v.handle ? `${v.handle}’s video` : 'this TikTok')}, saved ${fmt.fmtAgo(v.savedAt)}`,
               onclick: () => playSaved(i),
             },
             h('span.tt__cardart', icon('brand-tiktok'), h('span.tt__cardplay', icon('play', { fill: true }))),
             h('span.tt__cardtxt',
-              v.handle ? h('b', { text: v.handle }) : h('b.tt__dim', { text: 'TikTok video' }),
+              v.label ? h('b', { text: v.label }) : v.handle ? h('b', { text: v.handle }) : h('b.tt__dim', { text: 'TikTok video' }),
+              v.label && v.handle ? h('small', { text: v.handle }) : null,
+              colOf(v) ? h('small.tt__col', { text: colOf(v) }) : null,
               h('small', { text: `Saved ${fmt.fmtAgo(v.savedAt)}` }))),
+            h('button.ibtn.tt__tocol', {
+              type: 'button', 'aria-label': `Put ${nameOf(v)} in a collection`, title: 'Collection', onclick: () => collectionSheet(v),
+            }, icon('folder')),
             h('button.ibtn.tt__unsave', {
               type: 'button', 'aria-label': `Remove ${v.handle ? `${v.handle}’s video` : 'this video'} from Saved`, title: 'Remove from Saved',
               onclick: () => unsaveFromShelf(v),
-            }, icon('x'))))));
+            }, icon('x')))))
+          : h('div.tt__empty', icon('search'), h('b', { text: 'Nothing matches' }), h('p', { text: 'Try another handle, label or collection.' })));
     }
 
     function unsaveFromShelf(v) {
@@ -546,7 +603,7 @@ defineApp({
     function playSaved(i) {
       S.tab = 'saved';
       S.shelf = false;
-      S.idx.saved = clamp(i, 0, S.saved.length - 1);
+      S.idx.saved = clamp(i, 0, Math.max(0, savedView().length - 1));
       paint();
       jumpTo(S.idx.saved, { instant: true });
       feedEl.focus({ preventScroll: true });
@@ -566,7 +623,7 @@ defineApp({
     }
 
     function paintTabs() {
-      for (const [b, id, n] of [[feedTab, 'feed', S.feed.length], [savedTab, 'saved', S.saved.length]]) {
+      for (const [b, id, n] of [[feedTab, 'feed', feedView().length], [savedTab, 'saved', S.saved.length]]) {
         const on = S.tab === id;
         b.classList.toggle('is-on', on);
         b.setAttribute('aria-selected', on ? 'true' : 'false');
@@ -585,12 +642,13 @@ defineApp({
       shelfEl.hidden = !showShelfNow;
       feedEl.hidden = showShelfNow;
       feedEl.setAttribute('aria-label', playing() ? 'Your saved TikToks' : 'Your TikTok feed');
-      if (showShelfNow) { clear(feedEl); paintShelf(); paintMeta(); return; }
+      if (showShelfNow) { clear(feedEl); paintShelf(); paintMeta(); armAuto(); return; }
       clear(feedEl);
       const L = list();
       if (!L.length) {
         feedEl.appendChild(emptyState());
         paintMeta();
+        armAuto();
         return;
       }
       setCur(clamp(cur(), 0, L.length - 1));
@@ -598,6 +656,7 @@ defineApp({
       mountWindow();
       paintMeta();
       watchSlides();
+      armAuto();
     }
 
     function paintMeta() {
@@ -617,6 +676,172 @@ defineApp({
       setCur(i);
       mountWindow();
       paintMeta();
+      armAuto();
+    }
+
+    /* ---- watched, prefs, auto-advance ------------------------------ */
+
+    function setPrefs(patch) {
+      S.prefs = { ...S.prefs, ...patch };
+      store.set(PREFS_KEY, { ...S.prefs });
+      syncControls();
+      if (patch.hideWatched !== undefined) {
+        S.idx.feed = clamp(S.idx.feed, 0, Math.max(0, feedView().length - 1));
+        paint();
+        if (!feedEl.hidden) jumpTo(S.idx.feed, { instant: true });
+      } else armAuto();
+    }
+
+    /* Only a press of the button marks a video: the embed's own "ended" is not taken for it. */
+    function toggleWatched(v) {
+      if (S.watched[v.id]) delete S.watched[v.id]; else S.watched[v.id] = new Date().toISOString();
+      store.set(WATCHED_KEY, { ...S.watched });
+      setStatus(S.watched[v.id] ? 'Marked watched.' : 'Marked not watched.', 'ok');
+      if (S.prefs.hideWatched && S.watched[v.id] && S.tab === 'feed') {
+        S.idx.feed = clamp(S.idx.feed, 0, Math.max(0, feedView().length - 1));
+        paint();
+        jumpTo(S.idx.feed, { instant: true });
+        return;
+      }
+      for (const b of feedEl.querySelectorAll('.tt__watch')) {
+        const on = isWatched(b.dataset.id);
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', String(on));
+        b.setAttribute('aria-label', on ? 'Watched — mark as not watched' : 'Mark as watched');
+        b.title = on ? 'Watched' : 'Mark watched';
+        render(b, icon(on ? 'eye' : 'eye-off'));
+      }
+      for (const slideEl of feedEl.querySelectorAll('.tt__slide')) {
+        const item = list()[Number(slideEl.dataset.i)];
+        const who = slideEl.querySelector('.tt__who');
+        if (!item || !who) continue;
+        who.querySelector('.tt__badge--watched')?.remove();
+        if (isWatched(item.id)) who.appendChild(h('span.tt__badge.tt__badge--watched', { text: 'watched' }));
+      }
+    }
+
+    let autoT = 0;
+    function paintAuto() {
+      if (!autoEl) return;
+      const left = S.autoAt ? Math.max(0, Math.ceil((S.autoAt - Date.now()) / 1000)) : 0;
+      autoEl.textContent = S.autoAt ? `Next video in ${left} s` : '';
+    }
+    function armAuto() {
+      clearInterval(autoT);
+      autoT = 0;
+      S.autoAt = 0;
+      const sec = S.prefs.auto;
+      if (!sec || S.dead || feedEl.hidden || !list().length || cur() >= list().length - 1) { paintAuto(); return; }
+      S.autoAt = Date.now() + sec * 1000;
+      autoT = setInterval(() => {
+        if (S.dead) { clearInterval(autoT); return; }
+        /* the clock waits while the player is paused, the window is hidden or the page is in the background */
+        if (S.player.state === 2 || win.min || document.hidden) S.autoAt += 1000;
+        else if (Date.now() >= S.autoAt) { clearInterval(autoT); autoT = 0; S.autoAt = 0; step(1); return; }
+        paintAuto();
+      }, 1000);
+      paintAuto();
+    }
+
+    /* ---- sheets: label, collection, send to a friend ----------------- */
+
+    function closeSheet() { S.sheet?.remove(); S.sheet = null; }
+    function openSheet(title, ...kids) {
+      closeSheet();
+      S.sheet = h('div.tt__sheet', {
+        role: 'dialog', 'aria-label': title,
+        onkeydown: e => { if (e.key === 'Escape') { e.stopPropagation(); closeSheet(); } },
+      },
+      h('div.tt__sheet-h', h('b', { text: title }),
+        h('button.ibtn', { type: 'button', 'aria-label': 'Close', onclick: closeSheet }, icon('x'))),
+      ...kids);
+      appEl.appendChild(S.sheet);
+      S.sheet.querySelector('input,button.btn')?.focus({ preventScroll: true });
+      return S.sheet;
+    }
+    /* a label or collection lives on the feed copy and the saved copy alike */
+    function patchVideo(id, patch) {
+      let a = false, b = false;
+      for (const v of S.feed) if (v.id === id) { Object.assign(v, patch); a = true; }
+      for (const v of S.saved) if (v.id === id) { Object.assign(v, patch); b = true; }
+      for (const list of [S.feed, S.saved]) for (const v of list) for (const k of Object.keys(patch)) if (!patch[k]) delete v[k];
+      if (a) saveFeed();
+      if (b) saveSaved();
+    }
+    function labelSheet(v) {
+      const input = h('input', { type: 'text', maxlength: String(TT.LABEL_MAX), value: v.label || '', 'aria-label': 'Label', placeholder: 'Your own label for this video' });
+      const go = () => {
+        patchVideo(v.id, { label: tidy(input.value, TT.LABEL_MAX) });
+        closeSheet();
+        paint();
+        jumpTo(cur(), { instant: true });
+      };
+      input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
+      openSheet('Label this video',
+        h('div.field', input),
+        h('small.dim', { text: 'Only you see this. TikTok does not give us captions, so labels are yours to write.' }),
+        h('div.tt__sheet-row',
+          h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { role: 'tt-save-label' }, onclick: go }, 'Save'),
+          h('button.btn.btn--sm', { type: 'button', onclick: closeSheet }, 'Cancel')));
+      input.select();
+    }
+    function collectionSheet(v) {
+      const input = h('input', { type: 'text', maxlength: String(TT.COLLECTION_MAX), value: colOf(v), 'aria-label': 'Collection name', placeholder: 'Collection name, e.g. Recipes', list: 'tt-cols' });
+      const go = name => {
+        patchVideo(v.id, { collection: tidy(name, TT.COLLECTION_MAX) });
+        if (S.sfilter.col && !S.saved.some(x => colOf(x) === S.sfilter.col)) S.sfilter.col = null;
+        closeSheet();
+        paintShelf();
+      };
+      input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(input.value); } };
+      openSheet('Put in a collection',
+        h('div.field', input),
+        h('datalist', { id: 'tt-cols' }, collections().map(c => h('option', { value: c }))),
+        h('div.tt__sheet-row',
+          h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { role: 'tt-save-col' }, onclick: () => go(input.value) }, 'Save'),
+          h('button.btn.btn--sm', { type: 'button', onclick: () => go('') }, 'No collection'),
+          h('button.btn.btn--sm', { type: 'button', onclick: closeSheet }, 'Cancel')));
+    }
+    function sendSheet(v) {
+      const hold = h('div.tt__sheet-list', { dataset: { role: 'tt-friends' } });
+      openSheet('Send to a friend', hold);
+      paintMediaPanel(ctx, hold, {
+        label: `${nameOf(v)}`,
+        note: `This sends the video’s id${v.handle ? ` and ${v.handle}` : ''}, nothing more. They choose whether to add it to their Saved shelf or open it, and it does not play by itself.`,
+        noun: 'it',
+        send: fp => import('../core/friends.js').then(F => F.sendMedia(fp, { kind: 'tiktok', id: v.id, handle: v.handle || '', title: v.label || '' })),
+      }, () => !S.dead && !!S.sheet);
+    }
+
+    /* ---- the feed as a list of links ---------------------------------- */
+    function exportFeed() {
+      if (!S.feed.length) { setStatus('Your feed is empty: nothing to export.', 'error'); return; }
+      const url = URL.createObjectURL(new Blob([TT.toLines(S.feed)], { type: 'text/plain' }));
+      const a = h('a', { href: url, download: 'tiktok-feed.txt' });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      setStatus(`Exported ${S.feed.length} link${S.feed.length === 1 ? '' : 's'} to tiktok-feed.txt.`, 'ok');
+    }
+    const fileIn = h('input.sr', {
+      type: 'file', accept: '.txt,.csv,text/plain', tabindex: '-1', 'aria-hidden': 'true', dataset: { role: 'tt-import' },
+      onchange: async e => {
+        const f = e.target.files?.[0];
+        e.target.value = '';
+        if (!f) return;
+        if (f.size > 512 * 1024) { setStatus('That file is too big to be a list of links.', 'error'); return; }
+        const links = TT.parseMany(await f.text());
+        if (!links.length) { setStatus('No TikTok links found in that file.', 'error'); return; }
+        addLinks(links);
+      },
+    });
+    function moreMenu(btn) {
+      const r = btn.getBoundingClientRect();
+      api.menu([
+        { label: 'Export feed as a list of links', icon: 'download', disabled: !S.feed.length, onClick: exportFeed },
+        { label: 'Import links from a file…', icon: 'upload', onClick: () => fileIn.click() },
+      ], r.left, r.bottom + 4);
     }
 
     /* ---- moving between videos ------------------------------------- */
@@ -775,15 +1000,24 @@ defineApp({
     }, 0);
     window.addEventListener('blur', onBlur);
 
+    const autoEl = h('small.tt__auto', { role: 'status' });
+    const autoSel = h('select.tt__sel', { 'aria-label': 'Auto-advance after', onchange: e => setPrefs({ auto: Number(e.target.value) }) },
+      AUTO_CHOICES.map(([n, label]) => h('option', { value: String(n), text: label })));
+    const hideBox = h('input', { type: 'checkbox', 'aria-label': 'Hide watched videos', onchange: e => setPrefs({ hideWatched: e.target.checked }) });
+    function syncControls() { autoSel.value = String(S.prefs.auto); hideBox.checked = S.prefs.hideWatched; }
     const appEl = h('div.app.tt',
       bar,
       statusEl,
       feedEl,
       shelfEl,
-      h('div.tt__foot', metaEl, h('div.grow'),
-        h('small.tt__note', { text: 'Official TikTok embeds · needs tiktok.com reachable' })));
+      h('div.tt__foot', metaEl, h('div.grow'), autoEl,
+        h('label.tt__opt', h('span', { text: 'Auto-advance' }), autoSel),
+        h('label.tt__opt', hideBox, h('span', { text: 'Hide watched' })),
+        h('small.tt__note', { text: 'Official TikTok embeds · needs tiktok.com reachable' })),
+      fileIn);
     root.appendChild(appEl);
     syncTouch();
+    syncControls();
     const mo = new MutationObserver(syncTouch);
     mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
@@ -812,8 +1046,18 @@ defineApp({
     take(opts);
     win.onReopen?.(take);
 
+    /* a friend's video was added to Saved while this window is open */
+    const offSaved = api.bus.on('media:saved', d => {
+      if (d?.app !== 'tiktok' || S.dead) return;
+      S.saved = loadList(SAVED_KEY, 'savedAt', SAVED_MAX);
+      paintTabs();
+      if (S.tab === 'saved' && S.shelf) paintShelf();
+    });
+
     return () => {
       S.dead = true;
+      clearInterval(autoT);
+      offSaved?.();
       cancelGlide();
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('blur', onBlur);

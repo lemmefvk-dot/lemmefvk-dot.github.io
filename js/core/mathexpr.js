@@ -12,10 +12,18 @@
      numbers, π e Ans, ( … ), name( … ), √x
 
    A missing ")" at the end is closed for you, as on a handheld.
-   Errors are MathError with a plain-English message.
+   Errors are MathError with a plain-English message. Typed on one
+   line, x and * multiply (3x4) and ** is a power.
 
      evaluate('sin(30)', { angle: 'deg' })  -> 0.5
      formatResult(0.1 + 0.2)                -> '0.3'
+
+   exact() works the same grammar in fractions (BigInt over BigInt) for
+   the Calculator's fraction answers: exact('1/3 + 1/6') -> { n: 1n, d: 2n }.
+   Only a sum that stays rational has one — + − × ÷, %, ², whole-number
+   powers, n!, abs, and roots that come out whole (√(4/9) = 2/3). π, e,
+   trig, logs and other roots give null: never a fraction that only
+   looks right, the way 355/113 looks like π.
    ============================================================ */
 
 export class MathError extends Error {}
@@ -44,12 +52,13 @@ function tokenize(src) {
       }
       const text = s.slice(i, j).replace('−', '-');
       if ((text.match(/\./g) || []).length > 1) fail('Too many decimal points');
-      out.push({ t: 'num', v: Number(text) });
+      out.push({ t: 'num', v: Number(text), text });
       i = j;
       continue;
     }
     if (c === 'π') { out.push({ t: 'const', v: Math.PI, name: 'π' }); i++; continue; }
-    if (c === 'e') { out.push({ t: 'const', v: Math.E, name: 'e' }); i++; continue; }
+    /* e is Euler's number, unless it starts a name such as exp */
+    if (c === 'e' && !FUNCS.has(/^[a-zA-Z]+/.exec(s.slice(i))[0])) { out.push({ t: 'const', v: Math.E, name: 'e' }); i++; continue; }
     if (/[a-zA-Z]/.test(c)) {
       let j = i;
       while (j < s.length && /[a-zA-Z]/.test(s[j])) j++;
@@ -57,12 +66,14 @@ function tokenize(src) {
       if (name === 'pi') { out.push({ t: 'const', v: Math.PI, name: 'π' }); i = j; continue; }
       if (name === 'Ans') { out.push({ t: 'ans' }); i = j; continue; }
       if (FUNCS.has(name)) { out.push({ t: 'fn', v: name }); i = j; continue; }
+      if (name === 'x') { out.push({ t: 'op', v: '*' }); i = j; continue; }   /* 3x4, as typed on one line */
       /* "2e" / "2sin" run together: split a leading e */
       fail(`I don't know "${name}"`);
     }
     if (c === '(' || c === ')') { out.push({ t: c }); i++; continue; }
     if (c === '+') { out.push({ t: 'op', v: '+' }); i++; continue; }
     if (c === '-' || c === '−') { out.push({ t: 'op', v: '-' }); i++; continue; }
+    if (c === '*' && s[i + 1] === '*') { out.push({ t: 'op', v: '^' }); i += 2; continue; }
     if (c === '×' || c === '*' || c === '·') { out.push({ t: 'op', v: '*' }); i++; continue; }
     if (c === '÷' || c === '/') { out.push({ t: 'op', v: '/' }); i++; continue; }
     if (c === '^') { out.push({ t: 'op', v: '^' }); i++; continue; }
@@ -233,4 +244,160 @@ export function formatResult(n) {
     return `${m}E${Number(e)}`;
   }
   return String(p);
+}
+
+/* ---- exact answers: the same grammar in fractions ----
+   A value is { n, d }: BigInts, d > 0, in lowest terms. Anything that
+   would leave the rationals (or grow past MAX_EXACT digits) stops the
+   walk, and the answer is null. Errors are the float evaluator's to
+   report, so here they are null too. */
+class NotExact extends Error {}
+const inexact = () => { throw new NotExact(); };
+const MAX_EXACT = 400;
+const bAbs = x => (x < 0n ? -x : x);
+const bGcd = (a, b) => { a = bAbs(a); b = bAbs(b); while (b) [a, b] = [b, a % b]; return a; };
+
+function rat(n, d = 1n) {
+  if (d === 0n) inexact();
+  if (d < 0n) { n = -n; d = -d; }
+  const g = bGcd(n, d) || 1n;
+  n /= g; d /= g;
+  if (String(bAbs(n)).length > MAX_EXACT || String(d).length > MAX_EXACT) inexact();
+  return { n, d };
+}
+const ONE = { n: 1n, d: 1n };
+function textRat(text) {
+  const m = /^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+\-−]?)(\d+))?$/.exec(String(text).trim());
+  if (!m || !(m[2] || m[3])) inexact();
+  const frac = m[3] || '';
+  let n = BigInt((m[2] || '0') + frac) * (m[1] === '-' ? -1n : 1n);
+  let d = 10n ** BigInt(frac.length);
+  const ex = m[5] ? Number(m[5]) * (m[4] && m[4] !== '+' ? -1 : 1) : 0;
+  if (Math.abs(ex) > MAX_EXACT) inexact();
+  if (ex > 0) n *= 10n ** BigInt(ex); else if (ex < 0) d *= 10n ** BigInt(-ex);
+  return rat(n, d);
+}
+function opRat(a, op, b) {
+  if (op === '+') return rat(a.n * b.d + b.n * a.d, a.d * b.d);
+  if (op === '-') return rat(a.n * b.d - b.n * a.d, a.d * b.d);
+  if (op === '*') return rat(a.n * b.n, a.d * b.d);
+  if (op === '/') { if (b.n === 0n) inexact(); return rat(a.n * b.d, a.d * b.n); }
+  return inexact();
+}
+function powRat(a, b) {
+  if (b.d !== 1n) inexact();                           /* 2^0.5 is not a fraction */
+  const k = b.n;
+  if (k === 0n) return ONE;
+  if (a.n === 0n) { if (k < 0n) inexact(); return { n: 0n, d: 1n }; }
+  const size = Math.max(String(bAbs(a.n)).length, String(a.d).length);
+  if (bAbs(k) > 2000n || size * Number(bAbs(k)) > MAX_EXACT + 2) inexact();
+  const p = { n: a.n ** bAbs(k), d: a.d ** bAbs(k) };
+  return k < 0n ? rat(p.d, p.n) : rat(p.n, p.d);
+}
+/* the whole k-th root of a whole number, when it has one */
+function rootInt(x, k) {
+  const neg = x < 0n;
+  if (neg && k % 2 === 0) inexact();
+  const v = bAbs(x);
+  if (v > BigInt(Number.MAX_SAFE_INTEGER)) inexact();
+  const guess = Math.round(Math.pow(Number(v), 1 / k));
+  for (const c of [guess - 1, guess, guess + 1]) {
+    if (c < 0) continue;
+    const C = BigInt(c);
+    if (C ** BigInt(k) === v) return neg ? -C : C;
+  }
+  return inexact();
+}
+function rootRat(a, deg) {
+  if (deg.d !== 1n || deg.n < 1n || deg.n > 64n) inexact();
+  const k = Number(deg.n);
+  return rat(rootInt(a.n, k), rootInt(a.d, k));
+}
+
+/** The answer as an exact fraction { n, d }, or null when it isn't one (see above). */
+export function exact(src, { ans = null } = {}) {
+  try {
+    const toks = tokenize(src);
+    if (!toks.length) return null;
+    let p = 0;
+    const peek = () => toks[p];
+    const next = () => toks[p++];
+    const startsOperand = t => t && (t.t === 'num' || t.t === 'const' || t.t === 'ans' || t.t === '(' || t.t === 'fn' || t.t === 'sqrt');
+    const expr = () => {
+      let v = term();
+      for (let t = peek(); t && t.t === 'op' && (t.v === '+' || t.v === '-'); t = peek()) { next(); v = opRat(v, t.v, term()); }
+      return v;
+    };
+    const term = () => {
+      let v = unary();
+      for (;;) {
+        const t = peek();
+        if (t && t.t === 'op' && (t.v === '*' || t.v === '/')) { next(); v = opRat(v, t.v, unary()); }
+        else if (startsOperand(t)) v = opRat(v, '*', unary());
+        else return v;
+      }
+    };
+    const unary = () => {
+      const t = peek();
+      if (t && t.t === 'op' && (t.v === '-' || t.v === '+')) { next(); const v = unary(); return t.v === '-' ? rat(-v.n, v.d) : v; }
+      return pow();
+    };
+    const pow = () => {
+      let v = postfix();
+      for (let t = peek(); t && (t.t === 'root' || (t.t === 'op' && t.v === '^')); t = peek()) {
+        next();
+        v = t.t === 'root' ? rootRat(postfix(), v) : powRat(v, unary());
+      }
+      return v;
+    };
+    const postfix = () => {
+      let v = primary();
+      for (let t = peek(); t && t.t === 'post'; t = peek()) {
+        next();
+        if (t.v === '%') v = opRat(v, '/', { n: 100n, d: 1n });
+        else if (t.v === 'sq') v = opRat(v, '*', v);
+        else {
+          if (v.d !== 1n || v.n < 0n || v.n > 170n) inexact();
+          let f = 1n;
+          for (let k = 2n; k <= v.n; k++) f *= k;
+          v = rat(f);
+        }
+      }
+      return v;
+    };
+    const primary = () => {
+      const t = next();
+      if (!t) inexact();
+      if (t.t === 'num') return textRat(t.text);
+      if (t.t === 'ans') return ans && typeof ans.n === 'bigint' ? rat(ans.n, ans.d) : inexact();
+      if (t.t === '(') {
+        const v = expr();
+        if (peek() && peek().t === ')') next(); else if (peek()) inexact();
+        return v;
+      }
+      if (t.t === 'sqrt') return rootRat(postfix(), { n: 2n, d: 1n });
+      if (t.t === 'fn') {
+        const arg = peek() && peek().t === '(' ? primary() : postfix();
+        if (t.v === 'abs') return rat(bAbs(arg.n), arg.d);
+        if (t.v === 'sqrt') return rootRat(arg, { n: 2n, d: 1n });
+        if (t.v === 'cbrt') return rootRat(arg, { n: 3n, d: 1n });
+      }
+      return inexact();                           /* π, e, trig, logs, exp */
+    };
+    const v = expr();
+    return p < toks.length ? null : v;
+  } catch (e) {
+    if (e instanceof NotExact || e instanceof MathError) return null;
+    throw e;
+  }
+}
+
+/** An entry as typed ('0.75', '-2', '6.02e+23') as an exact fraction, or null. */
+export function exactOf(text) {
+  try { return textRat(String(text).replace(/,/g, '')); } catch (e) { if (e instanceof NotExact) return null; throw e; }
+}
+/** a op b in fractions (op is + - * /); null when either side is null or it would leave the rationals. */
+export function exactOp(a, op, b) {
+  if (!a || !b) return null;
+  try { return opRat(a, op, b); } catch (e) { if (e instanceof NotExact) return null; throw e; }
 }

@@ -39,6 +39,7 @@ let lastCheck = 0;
 let announced = null;    // build id we have already told the user about
 let pending = null;      // a newer build we know about but have not loaded
 let stopped = false;
+let answeredAt = 0;      // when the server last answered a check (Settings › About shows it)
 
 async function readStamp(running = false) {
   try {
@@ -62,6 +63,24 @@ async function readIndexSignature() {
   } catch (err) {
     return null;
   }
+}
+
+/** "What changed": the releases newer than this one, from the newest build's own notes (data/changelog.json
+    is read from the network, so it describes the update, not the copy this tab runs). */
+async function showChanges() {
+  const W = await import('../shell/whatsnew-sheet.js').catch(() => null);
+  let releases = [];
+  try {
+    const res = await fetch(`data/changelog.json?t=${Date.now()}`, { cache: 'no-store' });
+    const log = res.ok ? await res.json() : [];
+    const ver = (pending && pending.version) || null;
+    const mine = (current && current.version) || '0';
+    releases = Array.isArray(log) && W ? log.filter(r => r && r.version && W.cmpVersion(r.version, mine) > 0 && (!ver || W.cmpVersion(r.version, ver) <= 0)) : [];
+  } catch (err) { /* offline: the What's New app below still has this build's notes */ }
+  if (W && releases.length) W.showSheet(document.getElementById('os') || document.body, releases, { kicker: `Ready to install: StaticOS ${releases[0].version}` });
+  else window.StaticAPI?.openApp('whatsnew');
+  /* pressing a button on a notice closes it: put the notice back so Restart now is still there */
+  if (pending) announce(pending, true);
 }
 
 async function restart() {
@@ -101,6 +120,7 @@ function announce(next, force = false) {
       : 'A newer build of StaticOS is ready. Restart to load it.',
     actions: [
       { label: 'Restart now', onClick: restart },
+      { label: 'What changed', onClick: showChanges },
       { label: 'Later', onClick: () => {} },
     ],
   });
@@ -118,6 +138,7 @@ async function check(reason = 'poll') {
   lastCheck = Date.now();
 
   const stamp = await readStamp(!current);
+  if (stamp) answeredAt = Date.now();
   if (stamp) {
     if (!current) { current = stamp; return null; }
     if (off) return null;
@@ -129,6 +150,7 @@ async function check(reason = 'poll') {
   /* no build.json — compare what the server says about index.html */
   const sig = await readIndexSignature();
   if (!sig) return null;
+  answeredAt = Date.now();
   if (!fallback) { fallback = sig; return null; }
   if (off) return null;
   if ((sig.etag && sig.etag !== fallback.etag)
@@ -177,16 +199,18 @@ export function mountUpdater() {
   }));
 
   return {
-    check,
+    check, restart, showChanges,
     get current() { return current; },
     get pending() { return pending; },
+    get checkedAt() { return answeredAt; },
     stop() { stopped = true; clearInterval(timer); },
   };
 }
 
 export const updater = {
-  mountUpdater, check,
+  mountUpdater, check, restart, showChanges,
   get current() { return current; },
   get pending() { return pending; },
+  get checkedAt() { return answeredAt; },
 };
 export default updater;

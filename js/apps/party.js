@@ -10,8 +10,7 @@
    with a Play button. There is a small party chat alongside.
 
    The party itself lives in js/portal/party.js, not in this window,
-   so it keeps running when the window closes — the pill above the
-   Dock (js/shell/partybar.js) shows it and brings this window back.
+   so it keeps running when the window closes.
 
    Honesty. It all runs over StaticOS's public live channel (MQTT on
    a free public broker). There are no accounts: anyone with the code
@@ -21,6 +20,19 @@
    Offline), and never shows a person, a count or a game it has not
    actually heard about. Everything from the network is rendered as
    text, and games are looked up by id in this device's catalogue.
+
+   Which of the three party apps reaches other devices? Only this one.
+   Static Party rides the live channel, so people on other devices can
+   join. Party Hub and Squad only reach other StaticOS tabs in this one
+   browser (a BroadcastChannel); the lobby lists them under that note.
+
+   Also here: a lock-state banner while connected (the topic is public;
+   anyone who has or guesses the code can join), a copyable invite link and
+   a friends menu (js/core/friends.js party invites), a countdown everyone
+   sees, a game-night queue of up to three Arcade games, a room for an
+   online Arcade game with its code sent to every member, the games played
+   this session, a scoreboard of the scores members report from the Arcade,
+   and Mute (this device) / Remove (host) on each member.
 
    Layout: a party sidebar (code, invite line, members), the stage
    (chosen game, the big button, who's ready) and the chat. It folds
@@ -75,8 +87,8 @@ defineApp({
   icon: 'users',
   g1: G1, g2: G2,
   category: 'Games',
-  keywords: ['party', 'friends', 'play together', 'multiplayer', 'invite', 'lobby', 'ready', 'group', 'code', 'host', 'co-op', 'squad'],
-  desc: 'Start a party, invite friends with a code, pick a game and play together',
+  keywords: ['party', 'friends', 'play together', 'multiplayer', 'invite', 'lobby', 'ready', 'group', 'code', 'host', 'co-op', 'squad', 'party hub', 'countdown', 'queue', 'scoreboard', 'game night'],
+  desc: 'Start a party, invite friends with a code, pick a game and play together on other devices',
   singleton: true,
   win: { w: 1000, h: 650, minW: 420, minH: 480 },
 
@@ -100,6 +112,8 @@ defineApp({
       goNote: '',
       chatNote: '',
       pickToken: 0,
+      pickMode: 'game',     /* what a tile does: 'game' (choose it) | 'queue' (add it) | 'room' (open a room) */
+      prefill: '',          /* a code from a #party= link, put in the Join box, not joined */
     };
 
     const shell = h('div.app.pt');
@@ -205,6 +219,8 @@ defineApp({
       const rejoin = h('div.pt-rejoin');
       const you = h('div.pt-you');
 
+      if (S.prefill) { codeIn.value = S.prefill; S.prefill = ''; queueMicrotask(() => { if (codeIn.isConnected) codeIn.focus(); }); }
+
       L = { codeIn, joinBtn, joinMsg, startBtn, rejoin, you, youMode: null, rejoinSig: null };
       shell.append(h('div.pt-lobby', h('div.pt-lobby__in',
         h('header.pt-hero',
@@ -224,7 +240,25 @@ defineApp({
             form, joinMsg)),
         rejoin,
         you,
+        sameBrowser(),
         honest())));
+    }
+
+    /* Party Hub and Squad, listed here so there is one place to start. They never leave this browser. */
+    function sameBrowser() {
+      const row = (id, name, ic, line) => api.getApp(id)
+        ? h('li.pt-local',
+          h('div.pt-local__ic', icon(ic)),
+          h('div.grow', h('b', { text: name }), h('small', { text: line })),
+          h('span.pt-tag', { text: 'This browser only' }),
+          h('button.btn.btn--sm', { type: 'button', 'aria-label': `Open ${name}`, onclick: () => api.openApp(id) }, 'Open'))
+        : null;
+      return h('section.pt-locals', { 'aria-label': 'Parties that stay in this browser' },
+        h('div.pt-locals__head', h('b', { text: 'Which one reaches other devices?' }),
+          h('small', { text: 'Only Static Party. It uses the live channel, so a friend on another device can join with the code. Party Hub and Squad below only connect StaticOS tabs open in this one browser; other devices never see them.' })),
+        h('ul.pt-locals__list',
+          row('partyhub', 'Party Hub', 'users', 'Post a party for a catalogue game and chat about it, across your own tabs.'),
+          row('squad', 'Squad', 'gamepad', 'Find multiplayer games in the catalogue and post a party, across your own tabs.')));
     }
 
     function paintLobby() {
@@ -328,21 +362,29 @@ defineApp({
       const inviteLine = h('span.pt-invite__t');
       const inviteBtn = h('button.pt-invite', { type: 'button', 'aria-label': 'Copy the invite message', onclick: () => copyText(party.inviteText(), inviteBtn, 'Invite copied') },
         inviteLine, h('span.pt-invite__act', icon('copy'), h('span', { text: 'Copy invite' })));
+      const linkBtn = h('button.btn.btn--sm.pt-linkbtn', { type: 'button', 'aria-label': 'Copy the invite link', onclick: () => copyText(party.inviteLink(), linkBtn, 'Link copied') }, icon('link'), h('span', { text: 'Copy link' }));
+      const friendBtn = h('button.btn.btn--sm.pt-friendbtn', { type: 'button', 'aria-haspopup': 'menu', 'aria-label': 'Invite a friend', onclick: () => inviteFriend(friendBtn) }, icon('send'), h('span', { text: 'Invite a friend' }));
       const memCount = h('span.pt-count');
       const nameBox = h('div.pt-namebox', { hidden: true });
       const members = h('ul.pt-members', { 'aria-label': 'People in the party' });
+      const soundSw = h('button.switch', { type: 'button', role: 'switch', 'aria-label': 'Party sounds', onclick: () => party.setSounds(!party.sounds()) });
+      const scoreSw = h('button.switch', { type: 'button', role: 'switch', 'aria-label': 'Share my Arcade scores with the party', onclick: () => party.setShareScores(!party.shareScores()) });
+      const switches = h('div.pt-switches',
+        h('label.pt-switch', soundSw, h('span', h('b', { text: 'Party sounds' }), h('small', { text: 'A chime when someone is ready, ticks in a countdown. Follows Mute.' }))),
+        h('label.pt-switch', scoreSw, h('span', h('b', { text: 'Share my Arcade scores' }), h('small', { text: 'Sends the score of each round you finish to this party’s scoreboard. Off sends nothing.' }))));
       const leaveBtn = h('button.btn.btn--sm.pt-leave', { type: 'button', onclick: askLeave }, icon('power'), 'Leave party');
 
       const side = h('aside.app__side.pt-side',
         h('section.pt-code',
           h('div.side__label', { text: 'Party code' }),
           h('div.pt-code__row', codeBtn, codeCopy),
-          inviteBtn),
+          inviteBtn,
+          h('div.pt-code__more', linkBtn, friendBtn)),
         h('section.pt-crewlist',
           h('div.pt-crewlist__head', h('div.side__label', { text: 'In the party' }), memCount),
           nameBox,
           members),
-        h('div.pt-side__foot', honest('pt-honest--side'), leaveBtn));
+        h('div.pt-side__foot', switches, honest('pt-honest--side'), leaveBtn));
 
       /* ---- main: stage or game picker ---- */
       const backBtn = h('button.ibtn.tip.tip--below', { type: 'button', 'data-tip': 'Back to the party', 'aria-label': 'Back to the party', onclick: () => setView('stage') }, icon('chevron-left'));
@@ -356,7 +398,11 @@ defineApp({
       });
       const pickField = h('div.field.pt-bar__search', icon('search'), pickIn);
       const chooseBtn = h('button.btn.btn--sm', { type: 'button', onclick: () => setView('pick') }, icon('gamepad'), h('span', { text: 'Choose game' }));
-      const bar = h('div.app__bar.pt-bar', backBtn, h('div.pt-bar__txt', barTitle, barSub), h('div.grow'), pickField, chooseBtn);
+      const modeBox = h('div.pt-modes', { role: 'group', 'aria-label': 'What a game does when you choose it', hidden: true },
+        [['game', 'Play now'], ['queue', 'Add to queue'], ['room', 'Online room']].map(([m, label]) => h('button.pt-mode', {
+          type: 'button', dataset: { mode: m }, onclick: () => { S.pickMode = m; V.pickBuilt = false; paintParty(party.current()); },
+        }, label)));
+      const bar = h('div.app__bar.pt-bar', backBtn, h('div.pt-bar__txt', barTitle, barSub), h('div.grow'), modeBox, pickField, chooseBtn);
 
       const bannerBox = h('div.pt-banners');
       const gameBox = h('div.pt-gamebox');
@@ -369,9 +415,13 @@ defineApp({
       const readyBtn = h('button.pt-ready', { type: 'button', 'aria-pressed': 'false', onclick: () => { const c = party.current(); if (c && !c.isHost) party.setReady(!c.ready); } },
         readyIc, h('span.pt-ready__txt', readyMain, readySub));
       const goNote = h('div.pt-gonote', { 'aria-live': 'polite' });
+      const cdBtn = h('button.btn.btn--sm.pt-cd', { type: 'button', onclick: onCountdown }, icon('clock'), h('span', { text: 'Countdown' }));
+      const roomBtn = h('button.btn.btn--sm.pt-roombtn', { type: 'button', onclick: () => setView('pick', 'room') }, icon('globe'), h('span', { text: 'Open an online room' }));
+      const hostRow = h('div.pt-hostrow', cdBtn, roomBtn);
       const crewBox = h('div.pt-crew');
+      const extras = h('div.pt-extras');
       const stage = h('div.app__content.pt-stage',
-        h('div.pt-stage__in', bannerBox, gameBox, h('div.pt-act', goBtn, readyBtn), goNote, crewBox));
+        h('div.pt-stage__in', bannerBox, gameBox, h('div.pt-act', goBtn, readyBtn), hostRow, goNote, crewBox, extras));
 
       const pickBody = h('div.pt-pick');
       const pick = h('div.app__content.pt-pickwrap', { hidden: true }, pickBody);
@@ -403,16 +453,18 @@ defineApp({
         partyEl, codeBtn, inviteLine, memCount, nameBox, members,
         backBtn, barTitle, barSub, pickIn, pickField, chooseBtn,
         stage, bannerBox, gameBox, goBtn, goSub, readyBtn, readyIc, readyMain, readySub, goNote, crewBox,
+        linkBtn, friendBtn, soundSw, scoreSw, cdBtn, roomBtn, hostRow, extras, extrasSig: null,
         pick, pickBody, feed, feedWrap, chatIn, chatCount, sendBtn, chatHint,
-        feedKeys: [], gameSig: null, bannerSig: null, crewSig: null, youMode: null, pickBuilt: false,
+        modeBox, feedKeys: [], gameSig: null, bannerSig: null, crewSig: null, youMode: null, pickBuilt: false,
       };
     }
 
-    function setView(v) {
+    function setView(v, mode) {
       const cur = party.current();
       if (!cur) return;
       S.view = v === 'pick' && cur.isHost ? 'pick' : 'stage';
       if (S.view === 'pick') {
+        S.pickMode = mode || 'game';
         V.pickBuilt = false;
         queueMicrotask(() => { if (V?.pickIn.isConnected) V.pickIn.focus(); });
       } else if (V) {
@@ -445,6 +497,47 @@ defineApp({
       else S.goNote = '';
       paintParty(party.current());
       if (S.goNote) later(() => { S.goNote = ''; if (mode === 'party') paintParty(party.current()); }, 6000);
+    }
+
+    function onCountdown() {
+      const cur = party.current();
+      if (!cur || !cur.isHost) return;
+      if (cur.countdown) { party.cancelCountdown(); S.goNote = ''; }
+      else if (!cur.game) S.goNote = 'Choose a game first, then count everyone down.';
+      else if (cur.status !== 'live') S.goNote = 'The live channel is offline, so nobody would see the countdown.';
+      else if (!party.startCountdown(5)) S.goNote = 'It didn’t go out. Try again in a moment.';
+      else S.goNote = '';
+      paintParty(party.current());
+    }
+
+    /* a friend's party invite, over the friend channel (js/core/friends.js): they press Join themselves */
+    async function inviteFriend(anchor) {
+      const cur = party.current();
+      if (!cur) return;
+      let F = null;
+      try { F = await import('../core/friends.js'); } catch (e) { F = null; }
+      const say = (title, message, ic = 'info') => api.notify({ app: 'Static Party', icon: ic, title, message, timeout: 6000 });
+      if (dead) return;
+      if (!F || !F.available()) { say('Friends aren’t available here', 'Sign in to a profile, then add friends in Static Social.', 'alert'); return; }
+      const list = F.friends();
+      if (!list.length) {
+        api.notify({ app: 'Static Party', icon: 'users', title: 'No friends added yet', message: 'Add a friend with their friend code first.', timeout: 6000,
+          actions: [{ label: 'Open Friends', onClick: () => api.openApp('social', { friends: true }) }] });
+        return;
+      }
+      const r = anchor.getBoundingClientRect();
+      api.menu([
+        { header: true, label: `Invite to party ${cur.code}` },
+        ...list.map(f => ({
+          label: f.display, icon: 'send', hint: f.presence === 'offline' ? 'offline' : f.presence,
+          onClick: async () => {
+            const res = await F.sendPartyInvite(f.fp, cur.code);
+            if (dead) return;
+            if (res.ok) say(`Invited ${f.display}`, 'Your code was sent. They choose whether to join.', 'send');
+            else say('Could not send the invite', res.error === 'wait' ? 'Wait a moment and try again.' : `Give ${f.display} the code ${cur.code} yourself.`, 'alert');
+          },
+        })),
+      ], r.left, r.bottom + 4);
     }
 
     function sendChat() {
@@ -482,6 +575,7 @@ defineApp({
       setText(V.codeBtn, cur.code);
       setText(V.inviteLine, party.inviteText());
       setText(V.memCount, String(cur.members.length));
+      for (const [el, on] of [[V.soundSw, cur.sounds], [V.scoreSw, cur.shareScores]]) { el.classList.toggle('is-on', on); el.setAttribute('aria-checked', String(on)); }
       V.memCount.title = plural(cur.members.length, 'person', 'people');
       paintYou();
       reconcile(V.members, cur.members, m => m.id, makeMember, (el, m) => updateMember(el, m, cur));
@@ -558,9 +652,19 @@ defineApp({
         ? [{ header: true, label: 'You' }, { label: 'Change your name…', icon: 'edit-3', onClick: () => { S.naming = true; paintYou(); } }]
         : [{ header: true, label: m.name },
           m.muted
-            ? { label: 'Unmute', icon: 'volume', onClick: () => party.unmute(m.id) }
-            : { label: 'Mute (hide their messages)', icon: 'volume-x', onClick: () => party.mute(m.id) }];
+            ? { label: 'Unmute', icon: 'volume', hint: 'this device', onClick: () => party.unmute(m.id) }
+            : { label: 'Mute', icon: 'volume-x', hint: 'this device: hides their messages and sounds', onClick: () => party.mute(m.id) },
+          cur.isHost ? { label: 'Remove from party…', icon: 'x', danger: true, onClick: () => askRemove(m) } : null].filter(Boolean);
       api.menu(items, x, y);
+    }
+
+    async function askRemove(m) {
+      const yes = await api.confirm({
+        title: `Remove ${m.name}?`,
+        message: 'They are told and dropped from everyone’s list. The party code is public, so anyone with it can try to join again; their beats are ignored for five minutes.',
+        ok: 'Remove', danger: true,
+      });
+      if (yes && !dead) party.removeMember(m.id);
     }
 
     function paintBar(cur) {
@@ -570,9 +674,13 @@ defineApp({
       V.pickField.hidden = !picking;
       V.chooseBtn.hidden = picking || !cur.isHost;
       V.chooseBtn.lastChild.textContent = cur.game ? 'Change game' : 'Choose game';
-      V.barTitle.textContent = picking ? 'Choose a game' : cur.game ? 'Up next' : 'Party';
+      V.modeBox.hidden = !picking;
+      V.modeBox.querySelectorAll('.pt-mode').forEach(b => { const on = b.dataset.mode === S.pickMode; b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', String(on)); });
+      V.barTitle.textContent = picking ? (S.pickMode === 'queue' ? 'Add to the queue' : S.pickMode === 'room' ? 'Open an online room' : 'Choose a game') : cur.game ? 'Up next' : 'Party';
       V.barSub.textContent = picking
-        ? 'Everyone plays on their own device'
+        ? (S.pickMode === 'queue' ? 'Up to three Arcade games, played in order'
+          : S.pickMode === 'room' ? 'The code goes to everyone in the party; a room has two seats'
+            : 'Everyone plays on their own device')
         : cur.isHost ? 'You’re the host' : `${host ? host.name : 'Someone'} is hosting`;
     }
 
@@ -586,10 +694,32 @@ defineApp({
       /* banners: the channel's state, and a game you were invited into */
       const go = cur.lastGo;
       const showGo = go && !go.opened && !cur.isHost && Date.now() - go.at < 30 * 60e3;
-      const bsig = `${cur.status}|${showGo ? `${go.at}:${fmt.fmtAgo(new Date(go.at).toISOString())}` : ''}`;
+      const cd = cur.countdown;
+      const room = cur.room;
+      const bsig = `${cur.status}|${showGo ? `${go.at}:${fmt.fmtAgo(new Date(go.at).toISOString())}` : ''}|${cd ? `${cd.left}:${cd.byId}` : ''}|${room ? `${room.code}:${fmt.fmtAgo(new Date(room.at).toISOString())}` : ''}|${readyN}/${nonHost.length}`;
       if (bsig !== V.bannerSig) {
         V.bannerSig = bsig;
         clear(V.bannerBox);
+        if (cd) {
+          V.bannerBox.append(h('div.pt-banner.pt-banner--cd', { role: 'status' },
+            h('span.pt-cd__n', { text: String(cd.left) }),
+            h('span.grow', h('b', { text: `${cd.by === 'You' ? 'You' : cd.by} started a countdown` }),
+              h('span.dim', { text: ` · ${readyN} of ${nonHost.length} ready · ${cur.game ? cur.game.title : 'the game'} opens when it reaches 0` })),
+            cd.byId === cur.me.id ? h('button.btn.btn--sm', { type: 'button', onclick: () => { party.cancelCountdown(); } }, 'Cancel') : null));
+        }
+        if (room) {
+          V.bannerBox.append(h('div.pt-banner.pt-banner--go', icon('globe'),
+            h('span.grow', h('b', { text: `${room.by === 'You' ? 'Your' : `${room.by}’s`} ${room.title} room is open` }),
+              h('span.dim', { text: ` · code ${room.code} · ${fmt.fmtAgo(new Date(room.at).toISOString())}. Two seats: the first to join gets the second.` })),
+            room.mine
+              ? h('button.btn.btn--sm', { type: 'button', onclick: e => copyText(room.code, e.currentTarget, 'Code copied') }, icon('copy'), 'Copy code')
+              : h('button.btn.btn--sm.btn--primary', { type: 'button', onclick: () => party.joinRoom() }, icon('play'), 'Join')));
+        }
+        if (cur.status === 'live') {
+          V.bannerBox.append(h('div.pt-banner.pt-banner--lock', { role: 'note' }, icon('unlock'),
+            h('span.grow', h('b', { text: 'Not locked. ' }),
+              h('span', { text: `Anyone who has or guesses the code ${cur.code} can join and read this party. Share it only with people you want here.${cur.isHost ? ' You can remove someone from their menu.' : ''}` }))));
+        }
         if (cur.status !== 'live') {
           V.bannerBox.append(h('div.pt-banner.pt-banner--warn', icon(cur.status === 'offline' ? 'wifi-off' : 'wifi'),
             h('span.grow', { text: cur.status === 'offline'
@@ -639,6 +769,17 @@ defineApp({
       V.goNote.textContent = S.goNote;
       V.goNote.hidden = !S.goNote;
 
+      /* host-only extras: the countdown and an online room */
+      V.hostRow.hidden = !cur.isHost;
+      if (cur.isHost) {
+        const cdOn = !!cur.countdown;
+        V.cdBtn.disabled = !cdOn && (!g || cur.status !== 'live');
+        setText(V.cdBtn.lastChild, cdOn ? 'Cancel countdown' : 'Countdown (5 s)');
+        V.cdBtn.title = cdOn ? 'Stop the countdown' : 'Counts everyone down, then presses Play Together for you';
+        V.roomBtn.disabled = cur.status !== 'live';
+      }
+      paintExtras(cur);
+
       /* who's ready — or the honest empty state when you're alone. While
          alone, the one real number worth showing is how many other devices
          said hello on the presence topic in the last minute (presence.js),
@@ -665,6 +806,73 @@ defineApp({
             h('span.pt-crew__t', { text: `${readyN} of ${nonHost.length} ready` }));
         }
       }
+    }
+
+    /* ---- game-night queue, this session's games, and the scoreboard ---- */
+    const clock = at => { const h24 = !!store.get('prefs.h24'); const c = fmt.fmtClock(new Date(at), h24); return h24 ? c.time : `${c.time} ${c.ap}`; };
+    const num = n => Number(n).toLocaleString(undefined, { maximumFractionDigits: 1 });
+
+    function queuePanel(cur) {
+      const q = cur.queue;
+      const head = h('div.pt-panel__head', icon('list'), h('b', { text: 'Game night queue' }), h('span.pt-count', { text: `${q.length} of 3` }));
+      const body = [];
+      if (!q.length) {
+        body.push(h('p.pt-panel__empty', { text: cur.isHost
+          ? 'Line up to three Arcade games. Start next picks the first, shows it to everyone and presses Play Together.'
+          : 'The host hasn’t lined up any games. They show here when they do.' }));
+      } else {
+        body.push(h('ol.pt-queue', q.map((it, i) => h('li.pt-queue__it', { dataset: { game: it.id } },
+          h('span.pt-queue__n', { text: String(i + 1) }),
+          h('span.pt-queue__t', { text: it.title }),
+          cur.isHost ? h('span.pt-queue__acts',
+            h('button.ibtn', { type: 'button', 'aria-label': `Move ${it.title} up`, disabled: i === 0, onclick: () => party.queueMove(it.id, -1) }, icon('chevron-up')),
+            h('button.ibtn', { type: 'button', 'aria-label': `Move ${it.title} down`, disabled: i === q.length - 1, onclick: () => party.queueMove(it.id, 1) }, icon('chevron-down')),
+            h('button.ibtn', { type: 'button', 'aria-label': `Remove ${it.title} from the queue`, onclick: () => party.queueRemove(it.id) }, icon('x'))) : null))));
+      }
+      if (cur.isHost) {
+        const next = h('button.btn.btn--sm.btn--primary.pt-queue__next', { type: 'button', disabled: !q.length || cur.status !== 'live', onclick: async () => {
+          S.goNote = party.goWait() > 0 ? `Just sent. Try again in ${secs(party.goWait())} s.` : '';
+          if (!S.goNote && !(await party.queueNext())) S.goNote = 'It didn’t go out. The live channel may be offline.';
+          if (!dead && mode === 'party') paintParty(party.current());
+        } }, icon('play', { fill: true }), 'Start next');
+        body.push(h('div.pt-panel__acts',
+          h('button.btn.btn--sm', { type: 'button', disabled: q.length >= 3, onclick: () => setView('pick', 'queue') }, icon('plus'), 'Add an Arcade game'), next));
+      }
+      return h('section.pt-panel.pt-panel--queue', { 'aria-label': 'Game night queue' }, head, ...body);
+    }
+
+    function playedPanel(cur) {
+      const list = cur.played.slice().reverse();
+      return h('section.pt-panel.pt-panel--played', { 'aria-label': 'Games played this session' },
+        h('div.pt-panel__head', icon('clock'), h('b', { text: 'Played this session' }), h('span.pt-count', { text: String(list.length) })),
+        list.length
+          ? h('ol.pt-played', list.map(x => h('li.pt-played__it', h('span.pt-played__t', { text: x.game.title }),
+            h('span.dim', { text: `started by ${x.by === 'You' ? 'you' : x.by} · ${clock(x.at)}` }))))
+          : h('p.pt-panel__empty', { text: 'Nothing yet. Each game the host starts with Play Together is listed here, newest first, until the party ends.' }));
+    }
+
+    function scorePanel(cur) {
+      const boards = cur.scores.slice(0, 4);
+      return h('section.pt-panel.pt-panel--scores', { 'aria-label': 'Scoreboard' },
+        h('div.pt-panel__head', icon('star'), h('b', { text: 'Scoreboard' })),
+        boards.length
+          ? boards.map(b => h('div.pt-board', { dataset: { game: b.game } },
+            h('div.pt-board__t', h('b', { text: b.title }), h('small', { text: b.better === 'low' ? 'lower is better' : 'higher is better' })),
+            h('ol.pt-board__rows', b.rows.map((r, i) => h(`li.pt-board__row${r.you ? '.is-you' : ''}`,
+              h('span.pt-board__n', { text: String(i + 1) }),
+              h('span.pt-board__who', { text: r.you ? `${r.name} (you)` : r.name }),
+              h('b.pt-board__s', { text: num(r.score) }),
+              h('span.dim', { text: r.n > 1 ? `best of ${r.n}` : '1 round' }))))))
+          : h('p.pt-panel__empty', { text: 'No scores yet. When someone finishes a round of an Arcade game, their own device reports the score here.' }),
+        h('p.pt-panel__fine', { text: 'Only scores that members’ own Arcade games reported while they were in this party. Nobody can check them, and a member can switch sharing off.' }));
+    }
+
+    function paintExtras(cur) {
+      const sig = JSON.stringify([cur.isHost, cur.status === 'live', cur.queue, cur.played.map(x => x.at), cur.scores.map(b => [b.game, b.rows.map(r => [r.id, r.name, r.score, r.n])])]);
+      if (sig === V.extrasSig) return;
+      V.extrasSig = sig;
+      clear(V.extras);
+      V.extras.append(queuePanel(cur), playedPanel(cur), scorePanel(cur));
     }
 
     function gameMeta(g) {
@@ -713,7 +921,7 @@ defineApp({
 
     function feedItem(e, prev) {
       if (e.type === 'sys') {
-        const ic = { join: 'user', leave: 'arrow-left', host: 'star', game: 'gamepad', go: 'play', you: 'users', name: 'edit-3' }[e.kind] || 'info';
+        const ic = { join: 'user', leave: 'arrow-left', host: 'star', game: 'gamepad', go: 'play', you: 'users', name: 'edit-3', ready: 'check', cd: 'clock', room: 'globe' }[e.kind] || 'info';
         return h('li.pt-sys', { dataset: { key: e.key } }, icon(ic), h('span', { text: e.text }), h('time', { text: timeOf(e.at) }));
       }
       const cont = prev && prev.type === 'chat' && prev.id === e.id && e.at - prev.at < 3 * 60e3;
@@ -747,7 +955,7 @@ defineApp({
     }
 
     /* ---------------- the host's game picker ---------------- */
-    function arcItem(a) { return { kind: 'arcade', id: a.id, title: a.title, art: null, meta: `Arcade · ~${a.minutes} min` }; }
+    function arcItem(a) { return { kind: 'arcade', id: a.id, title: a.title, art: null, meta: `Arcade · ~${a.minutes} min${a.online ? ' · online room' : ''}` }; }
     function webItem(g) {
       const cat = (g.cats || []).find(c => c !== 'featured');
       return { kind: 'web', id: g.id, title: cleanText(g.title) || g.id, art: g.art || null, meta: cat ? catalogue.catMeta(cat).name : 'Web game' };
@@ -775,7 +983,22 @@ defineApp({
       if (!V) return;
       const token = ++S.pickToken;
       const body = V.pickBody;
-      const chosen = party.current()?.game || null;
+      const chosen = S.pickMode === 'game' ? party.current()?.game || null : null;
+      /* queue and room modes are about the built-in Arcade only: a web game can't be queued and has no room */
+      if (S.pickMode !== 'game') {
+        clear(body);
+        const q = S.q.toLowerCase();
+        const pool = ARCADE.filter(a => (S.pickMode === 'room' ? a.online : true) && (!q || `${a.title} ${a.blurb} ${a.tags.join(' ')}`.toLowerCase().includes(q)));
+        if (!pool.length) {
+          body.append(h('div.empty.pt-pick__empty', icon('search'), h('b', { text: 'Nothing matches' }), h('small', { text: `No ${S.pickMode === 'room' ? 'online ' : ''}Arcade game matches “${S.q}”.` })));
+        } else if (S.pickMode === 'room') {
+          body.append(shelf('Online Arcade games', `${plural(pool.length, 'game')} · picking one opens a room here and sends its code to everyone in the party. A room has two seats, so the first of them to join gets the second.`, pool.map(arcItem), null));
+        } else {
+          const have = party.current()?.queue.length || 0;
+          body.append(shelf('Arcade', `${3 - have} of 3 places left · games are played in the order you add them`, pool.map(arcItem), null));
+        }
+        return;
+      }
       if (!catalogue.isLoaded()) {
         clear(body);
         body.append(h('div.pt-loading', h('span.spinner'), h('span', { text: 'Loading the games catalogue…' })));
@@ -818,6 +1041,20 @@ defineApp({
     }
 
     async function pickGame(item) {
+      if (S.pickMode === 'queue') {
+        if (item.kind !== 'arcade') return;
+        if (party.queueAdd(item.id)) setView('stage');
+        else api.notify({ app: 'Static Party', icon: 'users', title: 'Couldn’t add that game', message: 'The queue holds three games, each only once.' });
+        return;
+      }
+      if (S.pickMode === 'room') {
+        setView('stage');
+        const r = await party.openRoom(item.id);
+        if (dead) return;
+        if (r.ok) api.notify({ app: 'Static Party', icon: 'globe', title: `Room ${r.code} is open`, message: r.sent ? `The code went to ${r.sent === 1 ? '1 member' : `${r.sent} members`}.` : 'Nobody else is in the party yet.', timeout: 6000 });
+        else api.notify({ app: 'Static Party', icon: 'alert', title: 'The room didn’t open', message: r.error === 'offline' ? 'The live channel is offline.' : r.error === 'game' ? 'That game has no online mode.' : 'Open the game in the Arcade and make the room there.', timeout: 7000 });
+        return;
+      }
       const ok = await party.chooseGame({ kind: item.kind, id: item.id, title: item.title, art: item.art });
       if (dead || !V) return;
       if (ok) setView('stage');
@@ -849,6 +1086,13 @@ defineApp({
        party? Ask before leaving it. */
     async function handleOpts(o) {
       if (!o || dead) return;
+      /* a #party= link: the code lands in the Join box, and the person presses Join */
+      if (o.prefill) {
+        const c = party.normalizeCode(String(o.prefill));
+        if (party.isCode(c) && !party.current()) {
+          if (mode === 'lobby' && L) { L.codeIn.value = c; L.codeIn.focus(); } else S.prefill = c;
+        }
+      }
       if (o.code && !party.joining()) {
         const code = party.normalizeCode(String(o.code));
         const cur = party.current();

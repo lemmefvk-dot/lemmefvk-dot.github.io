@@ -3,7 +3,7 @@
 
    Saved in store('portal.books') as
      { v: 1, books: [{ id, title, author, unit, total, pos, status,
-                       notes, finished, added }] }
+                       notes, finished, added, log }] }
    Everything in a book is what the person typed: there is no look-up,
    no cover art (a book's tile is a colour made from its title, below)
    and no figure that is not worked out from these fields.
@@ -13,10 +13,18 @@
      pos       the page or chapter you are on (0 = not started)
      status    'want' | 'reading' | 'finished'
      finished  'YYYY-MM-DD', or '' (only kept for a finished book)
+     log       [['YYYY-MM-DD', pos]], oldest first: where you were each
+               day you changed it (the last change of a day counts)
 
    Progress is pos / total as a whole percent, rounded down, and only
    when the total is known — otherwise the book shows its position and
    no percentage. A position is never above the total.
+
+   Pace (pace()) needs PACE_ENTRIES days in the log: pages (or chapters)
+   a day is (last position − first position) ÷ the days between the
+   first and the last entry, and with a known total, the days left are
+   what is left ÷ that rate, rounded up. With fewer entries there is no
+   pace, and none is shown.
    ============================================================ */
 import { store } from './store.js';
 
@@ -24,6 +32,8 @@ export const KEY = 'portal.books';
 export const MAX_BOOKS = 500;
 export const STATUS = [['want', 'Want to read'], ['reading', 'Reading'], ['finished', 'Finished']];
 export const UNITS = [['pages', 'pages'], ['chapters', 'chapters']];
+export const PACE_ENTRIES = 3;
+const LOG_MAX = 400;
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const pad = n => String(n).padStart(2, '0');
 
@@ -53,7 +63,42 @@ export function norm(b) {
     notes: String(o.notes == null ? '' : o.notes).replace(/\r\n?/g, '\n').trim().slice(0, 4000),
     finished: status === 'finished' && validDay(o.finished) ? o.finished : '',
     added: Number(o.added) || Date.now(),
+    log: cleanLog(o.log, total),
   };
+}
+function cleanLog(v, total) {
+  const byDay = new Map();
+  for (const e of Array.isArray(v) ? v : []) {
+    if (!Array.isArray(e) || !validDay(e[0])) continue;
+    let p = Math.floor(Number(e[1]));
+    if (!Number.isFinite(p) || p < 0) continue;
+    if (total && p > total) p = total;
+    byDay.set(e[0], Math.min(p, 100000));
+  }
+  return [...byDay].sort((a, b) => a[0].localeCompare(b[0])).slice(-LOG_MAX);
+}
+/** The book's log with today's position (`pos`) in it: one entry a day, the last one counting. */
+export function logged(b, pos, day = today()) {
+  return cleanLog([...(Array.isArray(b && b.log) ? b.log.filter(e => e[0] !== day) : []), [day, pos]], b && b.total);
+}
+const dayNum = d => { const [y, m, dd] = d.split('-').map(Number); return Date.UTC(y, m - 1, dd) / 864e5; };
+/**
+ * Reading pace, from the log. -> null with fewer than PACE_ENTRIES entries, else
+ * { perDay, read, days, entries, left, daysLeft, finishOn } (left/daysLeft/finishOn null when they can't be known)
+ */
+export function pace(b, now = Date.now()) {
+  const log = Array.isArray(b && b.log) ? b.log : [];
+  if (log.length < PACE_ENTRIES) return null;
+  const [d0, p0] = log[0], [d1, p1] = log[log.length - 1];
+  const days = dayNum(d1) - dayNum(d0);
+  if (days <= 0) return null;
+  const read = Math.max(0, p1 - p0);
+  const perDay = read / days;
+  const left = b.total ? Math.max(0, b.total - b.pos) : null;
+  const daysLeft = left === null || !perDay ? null : Math.ceil(left / perDay);
+  let finishOn = null;
+  if (daysLeft !== null) { const t = new Date(now); finishOn = today(new Date(t.getFullYear(), t.getMonth(), t.getDate() + daysLeft).getTime()); }
+  return { perDay, read, days, entries: log.length, left, daysLeft, finishOn };
 }
 export function normalize(raw) {
   const list = raw && typeof raw === 'object' && Array.isArray(raw.books) ? raw.books : [];
@@ -116,4 +161,4 @@ export function view(books, status) {
 }
 export const counts = books => ({ all: books.length, want: books.filter(b => b.status === 'want').length, reading: books.filter(b => b.status === 'reading').length, finished: books.filter(b => b.status === 'finished').length });
 
-export default { KEY, STATUS, UNITS, norm, normalize, read, write, issues, percent, progressText, tile, view, counts, today, validDay, uid };
+export default { KEY, STATUS, UNITS, PACE_ENTRIES, norm, normalize, read, write, issues, percent, progressText, tile, view, counts, today, validDay, uid, logged, pace };

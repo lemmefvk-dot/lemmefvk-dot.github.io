@@ -21,6 +21,13 @@ import api from '../core/api.js?v=ps5-cloud-proxy-v11';
 import * as M from '../core/metrics.js';
 import { GAMES } from '../portal/catalog.js';
 import * as CAL from '../core/calendar.js';
+import * as TRY from '../core/tryit.js';
+import { makeWidgets } from './widgets.more.js';
+import { t as tr } from '../core/i18n.js';
+
+if (typeof document !== 'undefined' && !document.getElementById('feat-widgets-more-css')) {
+  document.head.appendChild(Object.assign(document.createElement('link'), { id: 'feat-widgets-more-css', rel: 'stylesheet', href: 'css/feat-widgets-more.css' }));
+}
 
 const LAYOUT_KEY = 'prefs.widgetLayout';
 const WX_PLACE = 'prefs.wxPlace';
@@ -30,27 +37,17 @@ const WX_MAX_AGE = 20 * 60 * 1000;       /* re-fetch the forecast at most every 
 const CIRC = 2 * Math.PI * 22;           /* ring circumference for r=22, as in shell.css */
 const SW = 248, SH = 42;                 /* sparkline user units (widget content box)    */
 
-const QUOTES = [
-  ['ZXS',      'Owner of Luna',              'aether is clean imo'],
-  ['Divine',   'Owner of Starlight',         'cute lil site'],
-  ['TestUser', 'Co-Owner of Hydra Network',  'i like aether because it is ugly'],
-  ['JOSH',     'User',                       'i like the name'],
-  ['4xmq',     'Owner of Fern',              'aether, like the fifth element? nerdy'],
-  ['apbz',     'Owner of Lucide',            'aether has upgraded my unblocking experience'],
-];
-
-
 /* WMO weather codes, as Open-Meteo returns them. */
 const WMO = {
-  0: ['Clear', 'sun'], 1: ['Mainly clear', 'cloud-sun'], 2: ['Partly cloudy', 'cloud-sun'],
-  3: ['Overcast', 'cloud'], 45: ['Fog', 'cloud'], 48: ['Freezing fog', 'cloud'],
-  51: ['Light drizzle', 'cloud-rain'], 53: ['Drizzle', 'cloud-rain'], 55: ['Heavy drizzle', 'cloud-rain'],
-  56: ['Freezing drizzle', 'cloud-rain'], 57: ['Freezing drizzle', 'cloud-rain'],
-  61: ['Light rain', 'cloud-rain'], 63: ['Rain', 'cloud-rain'], 65: ['Heavy rain', 'cloud-rain'],
-  66: ['Freezing rain', 'cloud-rain'], 67: ['Freezing rain', 'cloud-rain'],
-  71: ['Light snow', 'cloud-snow'], 73: ['Snow', 'cloud-snow'], 75: ['Heavy snow', 'cloud-snow'],
-  77: ['Snow grains', 'cloud-snow'], 80: ['Showers', 'cloud-rain'], 81: ['Showers', 'cloud-rain'],
-  82: ['Violent showers', 'cloud-rain'], 85: ['Snow showers', 'cloud-snow'], 86: ['Snow showers', 'cloud-snow'],
+  0: ['Clear', 'sun'], 1: [tr('Mainly clear'), 'cloud-sun'], 2: [tr('Partly cloudy'), 'cloud-sun'],
+  3: ['Overcast', 'cloud'], 45: ['Fog', 'cloud'], 48: [tr('Freezing fog'), 'cloud'],
+  51: [tr('Light drizzle'), 'cloud-rain'], 53: ['Drizzle', 'cloud-rain'], 55: [tr('Heavy drizzle'), 'cloud-rain'],
+  56: [tr('Freezing drizzle'), 'cloud-rain'], 57: [tr('Freezing drizzle'), 'cloud-rain'],
+  61: [tr('Light rain'), 'cloud-rain'], 63: ['Rain', 'cloud-rain'], 65: [tr('Heavy rain'), 'cloud-rain'],
+  66: [tr('Freezing rain'), 'cloud-rain'], 67: [tr('Freezing rain'), 'cloud-rain'],
+  71: [tr('Light snow'), 'cloud-snow'], 73: ['Snow', 'cloud-snow'], 75: [tr('Heavy snow'), 'cloud-snow'],
+  77: [tr('Snow grains'), 'cloud-snow'], 80: ['Showers', 'cloud-rain'], 81: ['Showers', 'cloud-rain'],
+  82: [tr('Violent showers'), 'cloud-rain'], 85: [tr('Snow showers'), 'cloud-snow'], 86: [tr('Snow showers'), 'cloud-snow'],
   95: ['Thunderstorm', 'cloud-rain'], 96: ['Thunderstorm', 'cloud-rain'], 99: ['Thunderstorm', 'cloud-rain'],
 };
 const wmo = c => WMO[c] || ['—', 'weather'];
@@ -70,22 +67,41 @@ async function getJSON(url, ms = 8000) {
    remove a card. Kept beside DEFS below: an id here with no DEF is simply
    ignored by layout(), and `off` must agree with the DEF's own `off`. */
 export const WIDGET_CATALOG = [
-  { id: 'clock', name: 'Clock', icon: 'clock', desc: 'The time and date, 12 or 24 hour.' },
-  { id: 'weather', name: 'Weather', icon: 'cloud-sun', desc: 'The forecast for a place you choose (Open-Meteo).' },
-  { id: 'calendar', name: 'Calendar', icon: 'calendar', desc: 'This month, with today marked.' },
-  { id: 'monitor', name: 'System Monitor', icon: 'activity', desc: 'Frame rate, memory and storage, as the browser reports them.' },
-  { id: 'media', name: 'Now Playing', icon: 'music', desc: 'Whatever Static Music is playing.' },
-  { id: 'battery', name: 'Battery', icon: 'battery', desc: 'Charge level, where the browser shares it.' },
-  { id: 'network', name: 'Network', icon: 'network', desc: 'Online or offline, and what this session has downloaded.' },
-  { id: 'recent', name: 'Recent Files', icon: 'clock', desc: 'The files you opened last.' },
-  { id: 'notes', name: 'Notes', icon: 'notes', desc: 'A scratchpad that saves as you type.' },
-  { id: 'games', name: 'Games', icon: 'gamepad', desc: 'Continue where you left off, then featured games.' },
-  { id: 'anime', name: 'Anime', icon: 'star', desc: 'Pick up the episode you were on.' },
-  { id: 'aetherium', name: 'Staticum', icon: 'sparkles', desc: 'Ask the assistant from the rail.', off: true },
-  { id: 'gamemode', name: 'Game Mode', icon: 'gamepad', desc: 'One switch for Game Mode, and what it changes.', off: true },
-  { id: 'community', name: 'Static', icon: 'diamond', desc: 'What other site owners have said about StaticOS.', off: true },
+  { id: 'clock', name: tr('Clock'), icon: 'clock', desc: tr('The time and date, 12 or 24 hour.') },
+  { id: 'weather', name: tr('Weather'), icon: 'cloud-sun', desc: tr('The forecast for a place you choose (Open-Meteo).') },
+  { id: 'calendar', name: tr('Calendar'), icon: 'calendar', desc: tr('This month, with today marked.') },
+  { id: 'monitor', name: tr('System Monitor'), icon: 'activity', desc: tr('Frame rate, memory and storage, as the browser reports them.') },
+  { id: 'media', name: tr('Now Playing'), icon: 'music', desc: tr('Whatever Static Music is playing.') },
+  { id: 'battery', name: tr('Battery'), icon: 'battery', desc: tr('Charge level, where the browser shares it.') },
+  { id: 'network', name: tr('Network'), icon: 'network', desc: tr('Online or offline, and what this session has downloaded.') },
+  { id: 'recent', name: tr('Recent Files'), icon: 'clock', desc: tr('The files you opened last.') },
+  { id: 'notes', name: tr('Notes'), icon: 'notes', desc: tr('A scratchpad that saves as you type.') },
+  { id: 'games', name: tr('Games'), icon: 'gamepad', desc: tr('Continue where you left off, then featured games.') },
+  { id: 'anime', name: 'Anime', icon: 'star', desc: tr('Pick up the episode you were on.') },
+  { id: 'aetherium', name: 'Staticum', icon: 'sparkles', desc: tr('Ask the assistant from the rail.'), off: true },
+  { id: 'gamemode', name: tr('Game Mode'), icon: 'gamepad', desc: tr('One switch for Game Mode, and what it changes.'), off: true },
+  { id: 'community', name: 'Static', icon: 'diamond', desc: tr('A shortcut to your friends and rooms in Static Social.'), off: true },
+  { id: 'tryit', name: tr('Try it'), icon: 'sparkles', desc: tr('A checklist of things worth trying once, ticked as you do them.') },
+  { id: 'due', name: tr('Due Next'), icon: 'clipboard', desc: tr('The next three things due, from Study homework and Tasks.'), off: true },
+  { id: 'timetable', name: tr('Next Class'), icon: 'calendar', desc: tr('The class on now and the next one, from your Study timetable.'), off: true },
+  { id: 'focus', name: tr('Focus'), icon: 'clock', desc: tr('Start, pause and stop the Focus timer.'), off: true },
+  { id: 'screentime', name: tr('Screen Time'), icon: 'bar-chart', desc: tr('Time in StaticOS today, by app, as Screen Time measured it.'), off: true },
+  { id: 'habits', name: tr('Habits'), icon: 'check-circle', desc: tr('Today’s habits and their streaks from Static Life.'), off: true },
+  { id: 'worldclock', name: tr('World Clock'), icon: 'globe', desc: tr('The time in two or three cities you pick.'), off: true },
+  { id: 'photos', name: tr('Photo Frame'), icon: 'image', desc: tr('Cycles through the pictures in your Photos library or one album.'), off: true },
+  { id: 'quote', name: tr('Quote of the Day'), icon: 'sparkles', desc: tr('A public-domain quote with its real author, new each day.'), off: true },
 ];
-const catalogHidden = raw => (Array.isArray(raw?.hidden) ? raw.hidden : WIDGET_CATALOG.filter(w => w.off).map(w => w.id));
+/* Widgets that existed before the rail remembered which it had seen: a layout saved
+   without `seen` has met exactly these. A newer widget that is `off` by default stays
+   out of the rail of someone who saved a layout earlier, until they add it. */
+const FIRST_IDS = ['clock', 'weather', 'calendar', 'monitor', 'media', 'battery', 'network', 'recent', 'notes', 'games', 'anime', 'aetherium', 'gamemode', 'community'];
+const hiddenOf = (raw, defs) => {
+  const base = Array.isArray(raw?.hidden) ? raw.hidden : defs.filter(w => w.off).map(w => w.id);
+  if (!Array.isArray(raw?.hidden)) return base;
+  const seen = Array.isArray(raw.seen) ? raw.seen : FIRST_IDS;
+  return [...new Set([...base, ...defs.filter(w => w.off && !seen.includes(w.id)).map(w => w.id)])];
+};
+const catalogHidden = raw => hiddenOf(raw, WIDGET_CATALOG);
 /** Is this widget out of the rail? (Same first-run rule as layout().) */
 export const widgetHidden = (store, id) => catalogHidden(store.get(LAYOUT_KEY)).includes(id);
 /** Put a widget in the rail or take it out, keeping order and heights. */
@@ -93,13 +109,15 @@ export function setWidgetHidden(store, id, hide) {
   const raw = store.get(LAYOUT_KEY) || {};
   const hidden = catalogHidden(raw).filter(x => x !== id);
   if (hide) hidden.push(id);
-  store.set(LAYOUT_KEY, { order: Array.isArray(raw.order) ? [...raw.order] : [], hidden, h: { ...(raw.h || {}) } });
+  store.set(LAYOUT_KEY, { order: Array.isArray(raw.order) ? [...raw.order] : [], hidden, h: { ...(raw.h || {}) }, seen: WIDGET_CATALOG.map(w => w.id) });
 }
 
 export function mountWidgets(host) {
   const { h, icon, fmt, render, clear, on } = api;
 
-  const rail = h('aside.widgets', { 'aria-label': 'Widgets' });
+  const rail = h('aside.widgets', { 'aria-label': tr('Widgets') });
+  const MORE = makeWidgets({ api, rail, store, bus, fmt });
+  TRY.init();                         /* the Try it checklist listens from now on, rail shown or not */
   const cards = new Map();            /* id → built card instance */
   const offs = [];                    /* teardown for every subscription made here */
   let dead = false;
@@ -113,16 +131,14 @@ export function mountWidgets(host) {
     const order = (Array.isArray(raw.order) ? raw.order : []).filter(id => known.includes(id));
     for (const d of DEFS) if (!order.includes(d.id)) order.push(d.id);
     /* An absent `hidden` is a first run, not "everything visible". */
-    const hidden = Array.isArray(raw.hidden)
-      ? raw.hidden.filter(id => known.includes(id))
-      : DEFS.filter(d => d.off).map(d => d.id);
+    const hidden = hiddenOf(raw, DEFS).filter(id => known.includes(id));
     return { order, hidden, h: { ...(raw.h || {}) } };
   }
 
   /* store.set short-circuits on reference equality, so every write is a
      brand-new object or nothing reaches localStorage. */
   const saveLayout = L => store.set(LAYOUT_KEY, {
-    order: [...L.order], hidden: [...L.hidden], h: { ...L.h },
+    order: [...L.order], hidden: [...L.hidden], h: { ...L.h }, seen: DEFS.map(d => d.id),
   });
 
   const isHidden = id => layout().hidden.includes(id);
@@ -167,28 +183,36 @@ export function mountWidgets(host) {
 
     const grip = h('button.wg__grip', {
       type: 'button',
-      'aria-label': `${d.name} widget options`,
+      'aria-label': tr('{name} widget options', { name: d.name }),
       'aria-haspopup': 'menu',
-      title: `${d.name} — options, or drag to reorder`,
+      title: tr('{name} — options, or drag to reorder', { name: d.name }),
     }, icon('more-horizontal'));
 
     const inner = d.resize
-      ? h('div.wg__scroll', { tabindex: '0', role: 'group', 'aria-label': `${d.name} contents` }, nodes)
+      ? h('div.wg__scroll', { tabindex: '0', role: 'group', 'aria-label': tr('{name} contents', { name: d.name }) }, nodes)
       : nodes;
 
     const handle = d.resize
       ? h('div.wg__grab', {
           role: 'separator', 'aria-orientation': 'horizontal', tabindex: '0',
-          'aria-label': `Resize ${d.name}`,
+          'aria-label': tr('Resize {name}', { name: d.name }),
           'aria-valuenow': String(layout().h[d.id] || d.h || 150),
           'aria-valuemin': String(d.min || 70), 'aria-valuemax': String(d.max || 460),
         })
       : null;
 
+    /* edit mode (the Edit button on the rail): drag anywhere on the card, or ✕ to take it out */
+    const shield = h('div.wg__shield', { 'aria-hidden': 'true' });
+    const rm = h('button.wg__rm', {
+      type: 'button', 'aria-label': tr('Remove {name} from the rail', { name: d.name }), title: tr('Remove {name}', { name: d.name }),
+      onclick: e => { e.stopPropagation(); setHidden(d.id, true); },
+    }, icon('x'));
+
     const el = h('section.wg', {
       dataset: { wg: d.id }, role: 'group', 'aria-label': d.name,
       class: d.cls || null,
     },
+      shield, rm,
       grip,
       d.head === false ? null
         : h('div.wg__head', icon(d.icon), h('div.wg__title', { text: d.name })),
@@ -210,6 +234,7 @@ export function mountWidgets(host) {
 
     /* grip: click opens the menu, a real drag reorders, ⌥↑/⌥↓ moves */
     bindGrip(inst, grip);
+    bindDrag(inst, shield);
     if (handle) bindResize(inst, handle);
     return inst;
   }
@@ -234,37 +259,38 @@ export function mountWidgets(host) {
     const at = vis.indexOf(d.id);
     const items = [
       { header: true, label: d.name },
-      { label: 'Move up', icon: 'arrow-up', hint: '⌥↑', disabled: at <= 0, onClick: () => move(d.id, -1) },
-      { label: 'Move down', icon: 'arrow-down', hint: '⌥↓', disabled: at < 0 || at >= vis.length - 1,
+      { label: tr('Move up'), icon: 'arrow-up', hint: '⌥↑', disabled: at <= 0, onClick: () => move(d.id, -1) },
+      { label: tr('Move down'), icon: 'arrow-down', hint: '⌥↓', disabled: at < 0 || at >= vis.length - 1,
         onClick: () => move(d.id, 1) },
     ];
     if (d.resize) {
       const cur = L.h[d.id] || d.h || 150;
       items.push('-',
-        { label: 'Taller', icon: 'maximize-2', onClick: () => setHeight(d.id, cur + 40) },
-        { label: 'Shorter', icon: 'minimize-2', onClick: () => setHeight(d.id, cur - 40) });
+        { label: tr('Taller'), icon: 'maximize-2', onClick: () => setHeight(d.id, cur + 40) },
+        { label: tr('Shorter'), icon: 'minimize-2', onClick: () => setHeight(d.id, cur - 40) });
     }
     if (d.open) items.push('-', { label: d.open.label, icon: d.icon, onClick: d.open.run });
     items.push('-',
-      { label: 'Hide widget', icon: 'minus', onClick: () => setHidden(d.id, true) },
-      { label: 'Manage widgets…', icon: 'sliders', onClick: () => manageMenu(x, y) });
+      { label: tr('Hide widget'), icon: 'minus', onClick: () => setHidden(d.id, true) },
+      { label: tr('Manage widgets…'), icon: 'sliders', onClick: () => manageMenu(x, y) });
     api.menu(items, x, y);
   }
 
-  function bindGrip(inst, grip) {
+  /* the pointer drag that re-orders a card: from its grip, and in edit mode from anywhere on it */
+  function bindDrag(inst, handle) {
     let drag = null;
 
-    grip.addEventListener('pointerdown', e => {
+    handle.addEventListener('pointerdown', e => {
       if (e.button !== 0) return;
       drag = { id: e.pointerId, y0: e.clientY, startY: e.clientY, live: false };
-      grip.setPointerCapture(e.pointerId);
+      handle.setPointerCapture(e.pointerId);
       /* Focusing the grip by mouse scrolls the rail a pixel to bring it into
          view, and that scroll — dispatched a frame later — closes the menu we
          are about to open. Keyboard focus is unaffected. */
       e.preventDefault();
     });
 
-    grip.addEventListener('pointermove', e => {
+    handle.addEventListener('pointermove', e => {
       if (!drag || e.pointerId !== drag.id) return;
       if (!drag.live) {
         if (Math.abs(e.clientY - drag.y0) < 5) return;
@@ -306,8 +332,12 @@ export function mountWidgets(host) {
       L.order = [...seen, ...L.order.filter(id => !seen.includes(id))];
       saveLayout(L);
     };
-    grip.addEventListener('pointerup', end);
-    grip.addEventListener('pointercancel', end);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  }
+
+  function bindGrip(inst, grip) {
+    bindDrag(inst, grip);
 
     grip.addEventListener('click', e => {
       e.stopPropagation();
@@ -358,7 +388,7 @@ export function mountWidgets(host) {
      ------------------------------------------------------------------ */
   function manageMenu(x, y) {
     const L = layout();
-    const items = [{ header: true, label: 'Widgets' }];
+    const items = [{ header: true, label: tr('Widgets') }];
     for (const id of L.order) {
       const d = DEFS.find(w => w.id === id);
       if (!d) continue;
@@ -369,13 +399,14 @@ export function mountWidgets(host) {
       });
     }
     items.push('-',
-      { label: 'Reset arrangement', icon: 'rotate-ccw', onClick: () => { store.set(LAYOUT_KEY, {}); applyLayout(); } },
-      { label: 'Hide the rail', icon: 'sidebar', onClick: () => bus.emit('widgets:toggle') });
+      { label: editing ? tr('Done editing') : tr('Edit layout'), icon: 'sliders', onClick: () => setEditing(!editing) },
+      { label: tr('Reset arrangement'), icon: 'rotate-ccw', onClick: () => { store.set(LAYOUT_KEY, {}); applyLayout(); } },
+      { label: tr('Hide the rail'), icon: 'sidebar', onClick: () => bus.emit('widgets:toggle') });
     api.menu(items, x, y);
   }
 
   const manage = h('button.ibtn.wgr__manage.tip', {
-    'data-tip': 'Manage widgets', 'aria-label': 'Manage widgets', 'aria-haspopup': 'menu',
+    'data-tip': tr('Manage widgets'), 'aria-label': tr('Manage widgets'), 'aria-haspopup': 'menu',
     onclick: e => {
       const el = e.currentTarget;
       requestAnimationFrame(() => {
@@ -385,7 +416,25 @@ export function mountWidgets(host) {
     },
   }, icon('sliders'));
 
-  const bar = h('div.wgr__bar', h('div.grow'), manage);
+  /* Edit: every card can be dragged from anywhere and has a ✕; Esc or Done ends it */
+  let editing = false;
+  const addBtn = h('button.btn.btn--sm.wgr__add', {
+    type: 'button', 'aria-haspopup': 'menu', hidden: true,
+    onclick: e => { const r = e.currentTarget.getBoundingClientRect(); manageMenu(r.left, r.bottom + 4); },
+  }, icon('plus'), tr('Add widget'));
+  const editBtn = h('button.btn.btn--sm.wgr__edit', {
+    type: 'button', 'aria-pressed': 'false', 'aria-label': tr('Edit widgets'), onclick: () => setEditing(!editing),
+  }, icon('sliders'), h('span', { text: tr('Edit') }));
+  function setEditing(on) {
+    editing = !!on;
+    rail.classList.toggle('is-editing', editing);
+    editBtn.setAttribute('aria-pressed', String(editing));
+    editBtn.querySelector('span').textContent = editing ? 'Done' : 'Edit';
+    addBtn.hidden = !editing;
+    for (const inst of cards.values()) inst.grip.setAttribute('aria-roledescription', editing ? 'drag handle' : '');
+  }
+
+  const bar = h('div.wgr__bar', addBtn, h('div.grow'), editBtn, manage);
 
   /* ------------------------------------------------------------------
      order the DOM to match the layout
@@ -405,7 +454,10 @@ export function mountWidgets(host) {
       if (!inst) return;
       if (!inst.shown) inst.el.style.animationDelay = `${Math.min(i, 8) * 40}ms`;
       inst.setH(L.h[id] || inst.def.h || 150);
+      /* a card that was hidden missed whatever changed meanwhile */
+      const returning = inst.shown && inst.el.parentNode !== rail;
       if (prev.nextSibling !== inst.el) rail.insertBefore(inst.el, prev.nextSibling);
+      if (returning) { try { inst.paint?.(); } catch (e) { console.error('[widgets]', id, e); } }
       prev = inst.el;
       if (!inst.shown) { inst.shown = true; try { inst.show?.(); } catch (e) { console.error('[widgets]', id, e); } }
     });
@@ -429,7 +481,7 @@ export function mountWidgets(host) {
     };
     return {
       nodes: [h('button.wg-clock__btn', {
-        'aria-label': 'Open Calendar', onclick: () => api.openApp('calendar'),
+        'aria-label': tr('Open Calendar'), onclick: () => api.openApp('calendar'),
       }, t, d)],
       paint, tick: paint,
       offs: [store.sub('prefs.h24', () => paint())],
@@ -468,7 +520,7 @@ export function mountWidgets(host) {
           code: j.current?.weather_code, days,
         });
       } catch (e) {
-        err = 'Weather unavailable';
+        err = tr('Weather unavailable');
       } finally { busy = false; paint(); }
     }
 
@@ -479,14 +531,14 @@ export function mountWidgets(host) {
       try {
         const j = await getJSON(`https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(term)}`);
         const hit = j.results?.[0];
-        if (!hit) { err = `No place called “${term}”`; return; }
+        if (!hit) { err = tr('No place called “{term}”', { term }); return; }
         store.set(WX_PLACE, {
           name: [hit.name, hit.admin1, hit.country_code].filter(Boolean).join(', '),
           lat: hit.latitude, lon: hit.longitude,
         });
         store.set(WX_CACHE, null);
       } catch (e) {
-        err = 'Could not look that up';
+        err = tr('Could not look that up');
       } finally {
         busy = false; paint();
         fetchWx(true);
@@ -495,37 +547,37 @@ export function mountWidgets(host) {
 
     function askForm() {
       const input = h('input', {
-        type: 'text', placeholder: 'City or town', 'aria-label': 'Weather location',
+        type: 'text', placeholder: tr('City or town'), 'aria-label': tr('Weather location'),
         onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); setPlace(input.value); } },
       });
       return h('div.wg-wx__ask',
-        h('div.wg__head', icon('cloud-sun'), h('div.wg__title', { text: 'Weather' })),
-        h('div.wg__empty', { text: 'No location set yet.' }),
+        h('div.wg__head', icon('cloud-sun'), h('div.wg__title', { text: tr('Weather') })),
+        h('div.wg__empty', { text: tr('No location set yet.') }),
         h('div.field', icon('search'), input),
         h('button.btn.btn--sm.btn--block', { style: { marginTop: 'var(--sp-3)' },
-          onclick: () => setPlace(input.value) }, 'Set location'));
+          onclick: () => setPlace(input.value) }, tr('Set location')));
     }
 
     function paint() {
       const p = place(), c = cache();
       clear(body);
       if (busy && !c) {
-        body.appendChild(h('div.wg__head', icon('cloud-sun'), h('div.wg__title', { text: 'Weather' })));
-        return void body.appendChild(h('div.wg__empty', { text: 'Checking…' }));
+        body.appendChild(h('div.wg__head', icon('cloud-sun'), h('div.wg__title', { text: tr('Weather') })));
+        return void body.appendChild(h('div.wg__empty', { text: tr('Checking…') }));
       }
       if (!p) {
         if (err) body.appendChild(h('div.wg__warn', { text: err }));
         return void body.appendChild(askForm());
       }
       if (!c) {
-        body.appendChild(h('div.wg__head', icon('cloud-sun'), h('div.wg__title', { text: 'Weather' })));
-        body.appendChild(h('div.wg__empty', { text: err || 'No reading yet.' }));
+        body.appendChild(h('div.wg__head', icon('cloud-sun'), h('div.wg__title', { text: tr('Weather') })));
+        body.appendChild(h('div.wg__empty', { text: err || tr('No reading yet.') }));
         return void body.appendChild(h('button.btn.btn--sm.btn--block', {
-          style: { marginTop: 'var(--sp-3)' }, onclick: () => fetchWx(true) }, 'Try again'));
+          style: { marginTop: 'var(--sp-3)' }, onclick: () => fetchWx(true) }, tr('Try again')));
       }
       const [label, ic] = wmo(c.code);
       body.appendChild(h('button.wg-wx__open', {
-        'aria-label': 'Open Weather', onclick: () => api.openApp('weather') },
+        'aria-label': tr('Open Weather'), onclick: () => api.openApp('weather') },
         h('div.wg-weather',
           h('div.wg-weather__ico', icon(ic)),
           h('div.grow',
@@ -630,7 +682,7 @@ export function mountWidgets(host) {
     const spark = h('svg.spark', { viewBox: `0 0 ${SW} ${SH}`, preserveAspectRatio: 'none',
       'aria-hidden': 'true' }, sparkFill, sparkLine);
 
-    const foot = h('div.wg__note', { text: 'Host CPU, GPU and disk load are not exposed to a web page.' });
+    const foot = h('div.wg__note', { text: tr('Host CPU, GPU and disk load are not exposed to a web page.') });
     let storagePct = null;
     let storageTxt = 'reading…';
 
@@ -694,8 +746,8 @@ export function mountWidgets(host) {
     const fill = h('i');
     const curT = h('span');
     const totT = h('span');
-    const trackEl = h('button.track', { 'aria-label': 'Seek', onclick: seek }, fill);
-    const play = h('button.ibtn.ibtn--play.tip', { 'data-tip': 'Play', 'aria-label': 'Play', onclick: toggle });
+    const trackEl = h('button.track', { 'aria-label': tr('Seek'), onclick: seek }, fill);
+    const play = h('button.ibtn.ibtn--play.tip', { 'data-tip': tr('Play'), 'aria-label': tr('Play'), onclick: toggle });
     const body = h('div');
     let track = null;
 
@@ -709,9 +761,9 @@ export function mountWidgets(host) {
     function paint() {
       clear(body);
       if (!track) {
-        body.appendChild(h('div.wg__empty', { text: 'Nothing is playing.' }));
+        body.appendChild(h('div.wg__empty', { text: tr('Nothing is playing.') }));
         body.appendChild(h('button.btn.btn--sm.btn--block', { style: { marginTop: 'var(--sp-3)' },
-          onclick: () => api.openApp('music') }, 'Open Music'));
+          onclick: () => api.openApp('music') }, tr('Open Music')));
         return;
       }
       t.textContent = track.title || '';
@@ -728,10 +780,10 @@ export function mountWidgets(host) {
         h('div.wg-np', art, h('div.grow', t, a, al)),
         h('div.wg-np__bar', curT, trackEl, totT),
         h('div.wg-np__ctl',
-          h('button.ibtn.tip', { 'data-tip': 'Previous', 'aria-label': 'Previous track',
+          h('button.ibtn.tip', { 'data-tip': tr('Previous'), 'aria-label': tr('Previous track'),
             onclick: () => bus.emit('media:prev') }, icon('skip-back')),
           play,
-          h('button.ibtn.tip', { 'data-tip': 'Next', 'aria-label': 'Next track',
+          h('button.ibtn.tip', { 'data-tip': tr('Next'), 'aria-label': tr('Next track'),
             onclick: () => bus.emit('media:next') }, icon('skip-forward'))));
     }
 
@@ -753,18 +805,18 @@ export function mountWidgets(host) {
 
     function paint() {
       clear(body);
-      if (!checked) return void body.appendChild(h('div.wg__empty', { text: 'Reading…' }));
+      if (!checked) return void body.appendChild(h('div.wg__empty', { text: tr('Reading…') }));
       if (!b) return void body.appendChild(h('div.wg__empty',
-        { text: 'This browser does not report battery level.' }));
+        { text: tr('This browser does not report battery level.') }));
       body.append(
         h('div.wg-bat',
           h('div.wg-bat__n', { text: `${b.level}%` }),
           h('div.grow',
-            h('div.wg-bat__s', { text: b.charging ? 'Charging' : 'On battery' }),
+            h('div.wg-bat__s', { text: b.charging ? tr('Charging') : tr('On battery') }),
             h('div.wg-bat__sub', {
               text: b.charging
-                ? (b.timeToFull ? `${mins(b.timeToFull)} to full` : 'Plugged in')
-                : (b.timeToEmpty ? `${mins(b.timeToEmpty)} remaining` : 'Time remaining not reported'),
+                ? (b.timeToFull ? `${mins(b.timeToFull)} to full` : tr('Plugged in'))
+                : (b.timeToEmpty ? `${mins(b.timeToEmpty)} remaining` : tr('Time remaining not reported')),
             }))),
         h('div.wg-bat__bar', h('i', { style: { width: `${b.level}%` } })));
     }
@@ -795,19 +847,19 @@ export function mountWidgets(host) {
       body.appendChild(h('div.wg-net__top',
         icon(online ? 'wifi' : 'wifi-off'),
         h('div.grow',
-          h('div.wg-net__s', { text: online ? 'Online' : 'Offline' }),
+          h('div.wg-net__s', { text: online ? tr('Online') : tr('Offline') }),
           h('div.wg-net__sub', {
-            text: !conn ? 'Connection class not exposed'
+            text: !conn ? tr('Connection class not exposed')
               : conn.rtt ? `${conn.type || 'unknown'} · ${conn.rtt} ms round trip`
               : (conn.type || 'class unknown'),
           }))));
-      if (conn && conn.downlink) body.appendChild(line('Downlink', `${conn.downlink} Mb/s`));
+      if (conn && conn.downlink) body.appendChild(line(tr('Downlink'), `${conn.downlink} Mb/s`));
       if (net) {
-        body.appendChild(line('Requests', String(net.requests)));
-        body.appendChild(line('Transferred', M.formatBytes(net.transferred)));
-        body.appendChild(line('Saved by cache', M.formatBytes(net.saved)));
+        body.appendChild(line(tr('Requests'), String(net.requests)));
+        body.appendChild(line(tr('Transferred'), M.formatBytes(net.transferred)));
+        body.appendChild(line(tr('Saved by cache'), M.formatBytes(net.saved)));
       }
-      if (conn?.saveData) body.appendChild(h('div.wg__note', { text: 'Data Saver is on for this browser.' }));
+      if (conn?.saveData) body.appendChild(h('div.wg__note', { text: tr('Data Saver is on for this browser.') }));
     }
 
     return {
@@ -827,10 +879,10 @@ export function mountWidgets(host) {
       clear(list);
       let rows = [];
       try { rows = api.vfs.recent(12); } catch (e) { rows = []; }
-      if (!rows.length) return void list.appendChild(h('div.wg__empty', { text: 'No files yet.' }));
+      if (!rows.length) return void list.appendChild(h('div.wg__empty', { text: tr('No files yet.') }));
       for (const r of rows) {
         list.appendChild(h('button.wg-row', {
-          'aria-label': `Open ${r.node.name}`,
+          'aria-label': tr('Open {name}', { name: r.node.name }),
           onclick: () => api.openFile(r.path),
         },
           icon(api.vfs.iconFor(r.node), { size: 13 }),
@@ -849,7 +901,7 @@ export function mountWidgets(host) {
   const notes = () => {
     const list = h('div.wg-list');
     const input = h('input', {
-      type: 'text', placeholder: 'Quick note', 'aria-label': 'New note',
+      type: 'text', placeholder: tr('Quick note'), 'aria-label': tr('New note'),
       onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); add(); } },
     });
 
@@ -869,15 +921,15 @@ export function mountWidgets(host) {
 
     function paint() {
       clear(list);
-      const rows = Array.isArray(store.get('notes')) ? store.get('notes') : [];
-      if (!rows.length) return void list.appendChild(h('div.wg__empty', { text: 'No notes yet.' }));
+      const rows = (Array.isArray(store.get('notes')) ? store.get('notes') : []).filter(n => n && !n.trashed);   /* not Notes' Trash */
+      if (!rows.length) return void list.appendChild(h('div.wg__empty', { text: tr('No notes yet.') }));
       for (const n of rows.slice(0, 12)) {
         list.appendChild(h('button.wg-row', {
           'aria-label': `Open ${n.title || 'note'}`,
           onclick: () => api.openApp('notes'),
         },
           icon('note', { size: 13 }),
-          h('span.grow.trunc', { text: n.title || 'Untitled' }),
+          h('span.grow.trunc', { text: n.title || tr('Untitled') }),
           h('small', { text: n.mtime ? fmt.fmtAgo(n.mtime) : '' })));
       }
     }
@@ -902,7 +954,7 @@ export function mountWidgets(host) {
       else if (r.kind === 'creation') api.openApp('forge', { project: r.id });
       else api.openApp('aether-games', { url: `static://games/${r.id}` });
     };
-    const tile = (label, art, glyph, onclick, hue) => h('button.wg-shelf__i', { 'aria-label': `Play ${label}`, title: label, onclick },
+    const tile = (label, art, glyph, onclick, hue) => h('button.wg-shelf__i', { 'aria-label': tr('Play {label}', { label }), title: label, onclick },
       art
         ? h('div.wg-shelf__art', { style: { backgroundImage: `url("${String(art).replace(/"/g, '\\"')}")` } })
         : h('div.wg-shelf__art.wg-shelf__art--glyph', { style: hue != null ? { '--h': hue } : null }, icon(glyph)),
@@ -924,7 +976,7 @@ export function mountWidgets(host) {
       const featured = withArt.filter(g => (g.cats || []).includes('featured'));
       const shelf = [...featured, ...withArt.filter(g => !featured.includes(g))].slice(0, Math.max(0, 12 - recent.length));
       for (const g of shelf) grid.appendChild(tile(g.title, g.art, 'gamepad', () => api.openApp('aether-games', { url: `static://games/${g.id}` })));
-      if (!grid.children.length) grid.appendChild(h('div.wg__empty', { text: 'No games in the catalogue.' }));
+      if (!grid.children.length) grid.appendChild(h('div.wg__empty', { text: tr('No games in the catalogue.') }));
     }
 
     return { nodes: [cap, grid], paint, offs: [bus.on('game:launch', () => paint())] };
@@ -945,7 +997,7 @@ export function mountWidgets(host) {
         state = 'ready';
       } catch (e) {
         state = 'error';
-        err = 'Catalogue unavailable';
+        err = tr('Catalogue unavailable');
       }
       paint();
     }
@@ -967,16 +1019,16 @@ export function mountWidgets(host) {
 
       if (state !== 'ready') {
         body.appendChild(h('div.wg__empty', {
-          text: state === 'loading' ? 'Loading the catalogue…'
+          text: state === 'loading' ? tr('Loading the catalogue…')
             : state === 'error' ? err
-            : 'The anime catalogue loads on demand.',
+            : tr('The anime catalogue loads on demand.'),
         }));
         if (watched.length) {
-          body.appendChild(h('div.wg__note', { text: `${watched.length} saved in your watchlist.` }));
+          body.appendChild(h('div.wg__note', { text: tr('{length} saved in your watchlist.', { length: watched.length }) }));
         }
         body.appendChild(h('div.row', { style: { marginTop: 'var(--sp-3)', gap: 'var(--sp-3)' } },
-          h('button.btn.btn--sm.grow', { disabled: state === 'loading', onclick: loadShelf }, 'Load shelf'),
-          h('button.btn.btn--sm.grow', { onclick: () => api.openApp('aether-anime') }, 'Open')));
+          h('button.btn.btn--sm.grow', { disabled: state === 'loading', onclick: loadShelf }, tr('Load shelf')),
+          h('button.btn.btn--sm.grow', { onclick: () => api.openApp('aether-anime') }, tr('Open'))));
         return;
       }
 
@@ -988,16 +1040,16 @@ export function mountWidgets(host) {
         catch (e) { rows = []; }
       }
       rows = rows.slice(0, 12);
-      if (!rows.length) return void body.appendChild(h('div.wg__empty', { text: 'Nothing to show yet.' }));
+      if (!rows.length) return void body.appendChild(h('div.wg__empty', { text: tr('Nothing to show yet.') }));
 
-      if (fromWatchlist) body.appendChild(h('div.wg__note', { text: 'From your watchlist' }));
+      if (fromWatchlist) body.appendChild(h('div.wg__note', { text: tr('From your watchlist') }));
       const grid = h('div.wg-shelf');
       for (const r of rows) {
         const art = h('div.wg-shelf__art', r.image
           ? { style: { backgroundImage: `url("${String(r.image).replace(/"/g, '\\"')}")` } }
           : null);
         grid.appendChild(h('button.wg-shelf__i', {
-          'aria-label': `Open ${r.title}`, title: r.title,
+          'aria-label': tr('Open {title}', { title: r.title }), title: r.title,
           onclick: () => api.openApp('aether-anime', { url: `static://anime/${r.id}` }),
         }, art, h('span.trunc', { text: r.title })));
       }
@@ -1013,7 +1065,7 @@ export function mountWidgets(host) {
   /* ---------------- 12 · aetherium ---------------- */
   const aetherium = () => {
     const input = h('input', {
-      type: 'text', placeholder: 'Ask Staticum', 'aria-label': 'Ask Staticum',
+      type: 'text', placeholder: tr('Ask Staticum'), 'aria-label': tr('Ask Staticum'),
       onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } },
     });
     function ask() {
@@ -1024,7 +1076,7 @@ export function mountWidgets(host) {
     return {
       nodes: [
         h('div.field.wg-add', icon('sparkles'), input),
-        h('button.btn.btn--sm.btn--block', { style: { marginTop: 'var(--sp-3)' }, onclick: ask }, 'Ask'),
+        h('button.btn.btn--sm.btn--block', { style: { marginTop: 'var(--sp-3)' }, onclick: ask }, tr('Ask')),
       ],
     };
   };
@@ -1040,29 +1092,29 @@ export function mountWidgets(host) {
     function paint() {
       const on = document.documentElement.dataset.gamemode === 'on';
       const manual = !!store.get('prefs.gameMode');
-      state.textContent = on ? (manual ? 'On' : 'On (a game is in front)') : 'Off';
+      state.textContent = on ? (manual ? 'On' : tr('On (a game is in front)')) : 'Off';
       auto.textContent = store.get('prefs.gameModeAuto') ? 'On' : 'Off';
-      btn.textContent = manual ? 'Turn Game Mode off' : 'Turn Game Mode on';
+      btn.textContent = manual ? 'Turn Game Mode off' : tr('Turn Game Mode on');
     }
 
     btn.addEventListener('click', () => {
       const wasOn = !!store.get('prefs.gameMode');
       store.set('prefs.gameMode', !wasOn);
       api.notify({
-        app: 'Game Mode', icon: 'gamepad',
-        title: wasOn ? 'Game Mode off' : 'Game Mode on',
-        message: wasOn ? 'Effects are back on.' : 'Blur, shadows, animations, the wallpaper video and widget updates are off.',
+        app: tr('Game Mode'), icon: 'gamepad',
+        title: wasOn ? tr('Game Mode off') : tr('Game Mode on'),
+        message: wasOn ? tr('Effects are back on.') : tr('Blur, shadows, animations, the wallpaper video and widget updates are off.'),
       });
       paint();
     });
 
     return {
       nodes: [
-        h('div.wg-gm__row', h('span', { text: 'Status' }), state),
+        h('div.wg-gm__row', h('span', { text: tr('Status') }), state),
         h('button.wg-gm__row', { style: { width: '100%' },
           onclick: () => { store.set('prefs.gameModeAuto', !store.get('prefs.gameModeAuto')); paint(); } },
-          h('span', { text: 'Auto while a game is in front' }), auto),
-        h('small.dim', { text: 'Turns off blur, shadows, animations, the wallpaper video and widget updates so games get the frames.' }),
+          h('span', { text: tr('Auto while a game is in front') }), auto),
+        h('small.dim', { text: tr('Turns off blur, shadows, animations, the wallpaper video and widget updates so games get the frames.') }),
         btn,
       ],
       paint,
@@ -1075,54 +1127,62 @@ export function mountWidgets(host) {
     };
   };
 
-  /* ---------------- 14 · community ---------------- */
-  const community = () => {
-    const initials = n => n.replace(/[^a-z0-9]/gi, '').slice(0, 2).toUpperCase();
-    const quote = ([u, role, text]) => h('article.quote',
-      h('div.quote__u',
-        h('div.avatar', { text: initials(u) }),
-        h('div', h('b', { text: u }), h('small', { text: role }))),
-      text);
-    return {
-      nodes: [
-        h('div.marquee', h('div.marquee__rail', QUOTES.map(quote), QUOTES.map(quote))),
-        h('div.row', { style: { marginTop: 'var(--sp-4)' } },
-          h('div.grow'),
-          h('button.chip.chip--accent', { 'aria-label': 'Open the Static arcade',
-            onclick: () => api.openApp('browser', { url: 'static://arcade' }) },
-            icon('message-circle'), 'Community')),
-      ],
-    };
-  };
+  /* ---------------- 14 · community (a Static Social shortcut) ---------------- */
+  const community = () => ({
+    nodes: [
+      h('p.dim', { text: tr('Friends, parties and rooms live in Static Social. You only see people you have added.') }),
+      h('div.row', { style: { marginTop: 'var(--sp-4)' } },
+        h('div.grow'),
+        h('button.chip.chip--accent', { 'aria-label': tr('Open Static Social'),
+          onclick: () => api.openApp('social') },
+          icon('users'), tr('Open Social'))),
+    ],
+  });
 
   /* ------------------------------------------------------------------
      the registry. `off: true` means hidden until the user adds it.
      ------------------------------------------------------------------ */
   const DEFS = [
-    { id: 'clock', name: 'Clock', icon: 'clock', head: false, build: clock,
-      open: { label: 'Open Calendar', run: () => api.openApp('calendar') } },
-    { id: 'weather', name: 'Weather', icon: 'cloud-sun', head: false, build: weather,
-      open: { label: 'Open Weather', run: () => api.openApp('weather') } },
-    { id: 'calendar', name: 'Calendar', icon: 'calendar', build: calendar,
-      open: { label: 'Open Calendar', run: () => api.openApp('calendar') } },
-    { id: 'monitor', name: 'System Monitor', icon: 'activity', build: monitor,
-      open: { label: 'Open System Monitor', run: () => api.openApp('monitor') } },
-    { id: 'media', name: 'Now Playing', icon: 'music', build: nowPlaying,
-      open: { label: 'Open Music', run: () => api.openApp('music') } },
-    { id: 'battery', name: 'Battery', icon: 'battery', build: battery },
-    { id: 'network', name: 'Network', icon: 'network', build: network },
-    { id: 'recent', name: 'Recent Files', icon: 'clock', build: recent, resize: true, h: 150, min: 70, max: 420,
-      open: { label: 'Open Files', run: () => api.openApp('files') } },
-    { id: 'notes', name: 'Notes', icon: 'notes', build: notes, resize: true, h: 140, min: 70, max: 420,
-      open: { label: 'Open Notes', run: () => api.openApp('notes') } },
-    { id: 'games', name: 'Games', icon: 'gamepad', build: games, resize: true, h: 168, min: 90, max: 460,
-      open: { label: 'Open Static Games', run: () => api.openApp('aether-games') } },
+    { id: 'clock', name: tr('Clock'), icon: 'clock', head: false, build: clock,
+      open: { label: tr('Open Calendar'), run: () => api.openApp('calendar') } },
+    { id: 'weather', name: tr('Weather'), icon: 'cloud-sun', head: false, build: weather,
+      open: { label: tr('Open Weather'), run: () => api.openApp('weather') } },
+    { id: 'calendar', name: tr('Calendar'), icon: 'calendar', build: calendar,
+      open: { label: tr('Open Calendar'), run: () => api.openApp('calendar') } },
+    { id: 'monitor', name: tr('System Monitor'), icon: 'activity', build: monitor,
+      open: { label: tr('Open System Monitor'), run: () => api.openApp('monitor') } },
+    { id: 'media', name: tr('Now Playing'), icon: 'music', build: nowPlaying,
+      open: { label: tr('Open Music'), run: () => api.openApp('music') } },
+    { id: 'battery', name: tr('Battery'), icon: 'battery', build: battery },
+    { id: 'network', name: tr('Network'), icon: 'network', build: network },
+    { id: 'recent', name: tr('Recent Files'), icon: 'clock', build: recent, resize: true, h: 150, min: 70, max: 420,
+      open: { label: tr('Open Files'), run: () => api.openApp('files') } },
+    { id: 'notes', name: tr('Notes'), icon: 'notes', build: notes, resize: true, h: 140, min: 70, max: 420,
+      open: { label: tr('Open Notes'), run: () => api.openApp('notes') } },
+    { id: 'games', name: tr('Games'), icon: 'gamepad', build: games, resize: true, h: 168, min: 90, max: 460,
+      open: { label: tr('Open Static Games'), run: () => api.openApp('aether-games') } },
     { id: 'anime', name: 'Anime', icon: 'star', build: anime, resize: true, h: 168, min: 90, max: 460,
-      open: { label: 'Open Static Anime', run: () => api.openApp('aether-anime') } },
+      open: { label: tr('Open Static Anime'), run: () => api.openApp('aether-anime') } },
     { id: 'aetherium', name: 'Staticum', icon: 'sparkles', build: aetherium, off: true,
-      open: { label: 'Open Staticum', run: () => api.openApp('aetherium') } },
-    { id: 'gamemode', name: 'Game Mode', icon: 'gamepad', build: gameMode, off: true },
+      open: { label: tr('Open Staticum'), run: () => api.openApp('aetherium') } },
+    { id: 'gamemode', name: tr('Game Mode'), icon: 'gamepad', build: gameMode, off: true },
     { id: 'community', name: 'Static', icon: 'diamond', build: community, off: true, cls: 'wg-community' },
+    /* what you keep in other apps (shell/widgets.more.js) */
+    { id: 'tryit', name: tr('Try it'), icon: 'sparkles', build: () => MORE.tryit() },
+    { id: 'due', name: tr('Due Next'), icon: 'clipboard', build: () => MORE.due(), off: true,
+      open: { label: tr('Open Study'), run: () => api.openApp('study', { tab: 'homework' }) } },
+    { id: 'timetable', name: tr('Next Class'), icon: 'calendar', build: () => MORE.timetable(), off: true,
+      open: { label: tr('Open Timetable'), run: () => api.openApp('study', { tab: 'timetable' }) } },
+    { id: 'focus', name: tr('Focus'), icon: 'clock', build: () => MORE.focus(), off: true,
+      open: { label: tr('Open Clock'), run: () => api.openApp('clock', { tab: 'focus' }) } },
+    { id: 'screentime', name: tr('Screen Time'), icon: 'bar-chart', build: () => MORE.screentime(), off: true,
+      open: { label: tr('Open Screen Time'), run: () => api.openApp('settings', { section: 'screentime' }) } },
+    { id: 'habits', name: tr('Habits'), icon: 'check-circle', build: () => MORE.habits(), off: true,
+      open: { label: tr('Open Static Life'), run: () => api.openApp('life') } },
+    { id: 'worldclock', name: tr('World Clock'), icon: 'globe', build: () => MORE.worldClock(), off: true },
+    { id: 'photos', name: tr('Photo Frame'), icon: 'image', build: () => MORE.photos(), off: true,
+      open: { label: tr('Open Photos'), run: () => api.openApp('photos') } },
+    { id: 'quote', name: tr('Quote of the Day'), icon: 'sparkles', build: () => MORE.quote(), off: true },
   ];
 
   /* ------------------------------------------------------------------
@@ -1136,8 +1196,9 @@ export function mountWidgets(host) {
      moves the node, which would otherwise replay it every time */
   const settle = setTimeout(() => rail.classList.add('is-settled'), 900);
 
-  /* widgets are for signed-in users (shell/account.js shows a card in their
-     place while signed out) */
+  /* widgets need a profile on this device — "signed in" is local, a name
+     and password kept in this browser (shell/account.js shows a card that
+     says "Make a profile" in their place until then) */
   const paintVisible = () => rail.classList.toggle('is-hidden',
     !store.get('prefs.widgetsVisible') || !store.get('session.user'));
   paintVisible();
@@ -1157,6 +1218,8 @@ export function mountWidgets(host) {
         try { inst.tick(d); } catch (e) { console.error('[widgets]', inst.def.id, e); }
       }
     }),
+    on(rail, 'keydown', e => { if (e.key === 'Escape' && editing) { e.stopPropagation(); setEditing(false); editBtn.focus({ preventScroll: true }); } }),
+    bus.on('widgets:tryit-hide', () => setHidden('tryit', true)),
     on(rail, 'contextmenu', e => {
       /* a text field keeps the browser's own menu — cut/paste is genuinely
          useful in the quick-note and location boxes */

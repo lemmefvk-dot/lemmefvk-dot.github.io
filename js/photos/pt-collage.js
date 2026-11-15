@@ -8,12 +8,19 @@
    whole collage. Export is a PNG or JPEG at a chosen size, drawn fresh at
    that size from the original pictures (not the preview's pixels).
 
+   More layouts (stacked rows, wide tops and bottoms, a big picture on the
+   right) are under "More layouts". Every filled cell has a small grip in
+   its top-left corner: drag it onto another cell and the two pictures
+   swap places (an empty cell takes the picture). The "Swap with previous /
+   next" buttons do the same from the keyboard.
+
    Layouts are rectangles in a unit square, [x, y, w, h]; the same numbers
    give the preview and the export, whatever the export's shape. Gap and
    radius are percentages (of the shorter side, and of half a cell's
    shorter side), so they look the same at every size.
    ============================================================ */
 import { pickerView, blobOfSource, bitmapOf, sizeOfBitmap, sourceOfPath, encode, saveBlob, clamp, picturesDir, listPictures } from './pt-common.js';
+import { t } from '../core/i18n.js';
 
 const R = (x, y, w, h) => [x, y, w, h];
 const t3 = 1 / 3, t23 = 2 / 3;
@@ -33,14 +40,27 @@ export const LAYOUTS = [
   { id: '6-tall', n: 6, name: '2 × 3 grid', cells: [R(0, 0, .5, t3), R(.5, 0, .5, t3), R(0, t3, .5, t3), R(.5, t3, .5, t3), R(0, t23, .5, t3), R(.5, t23, .5, t3)] },
   { id: '6-mosaic', n: 6, name: 'Mosaic: big and five', cells: [R(0, 0, t23, t23), R(t23, 0, t3, t3), R(t23, t3, t3, t3), R(0, t23, t3, t3), R(t3, t23, t3, t3), R(t23, t23, t3, t3)] },
 ];
+export const MORE_LAYOUTS = [
+  { id: '3-rows', n: 3, name: 'Three rows', cells: [R(0, 0, 1, t3), R(0, t3, 1, t3), R(0, t23, 1, t3)] },
+  { id: '3-right', n: 3, name: 'Mosaic: big right', cells: [R(.4, 0, .6, 1), R(0, 0, .4, .5), R(0, .5, .4, .5)] },
+  { id: '3-bottom', n: 3, name: 'Mosaic: wide bottom', cells: [R(0, 0, .5, .4), R(.5, 0, .5, .4), R(0, .4, 1, .6)] },
+  { id: '4-rows', n: 4, name: 'Four rows', cells: [R(0, 0, 1, .25), R(0, .25, 1, .25), R(0, .5, 1, .25), R(0, .75, 1, .25)] },
+  { id: '4-top', n: 4, name: 'Mosaic: wide top', cells: [R(0, 0, 1, .5), R(0, .5, t3, .5), R(t3, .5, t3, .5), R(t23, .5, t3, .5)] },
+  { id: '4-right', n: 4, name: 'Mosaic: big right', cells: [R(.4, 0, .6, 1), R(0, 0, .4, t3), R(0, t3, .4, t3), R(0, t23, .4, t3)] },
+  { id: '5-rows', n: 5, name: 'Five rows', cells: [R(0, 0, 1, .2), R(0, .2, 1, .2), R(0, .4, 1, .2), R(0, .6, 1, .2), R(0, .8, 1, .2)] },
+  { id: '5-top', n: 5, name: 'Mosaic: wide top', cells: [R(0, 0, 1, .5), R(0, .5, .25, .5), R(.25, .5, .25, .5), R(.5, .5, .25, .5), R(.75, .5, .25, .5)] },
+  { id: '6-top', n: 6, name: 'Mosaic: wide top', cells: [R(0, 0, 1, .4), R(0, .4, .2, .6), R(.2, .4, .2, .6), R(.4, .4, .2, .6), R(.6, .4, .2, .6), R(.8, .4, .2, .6)] },
+];
+const ALL_LAYOUTS = [...LAYOUTS, ...MORE_LAYOUTS];
 export const SIZES = [
-  { id: '1080x1080', w: 1080, h: 1080, label: '1080 × 1080 (square)' },
-  { id: '1920x1080', w: 1920, h: 1080, label: '1920 × 1080 (wide)' },
-  { id: '1080x1920', w: 1080, h: 1920, label: '1080 × 1920 (tall)' },
-  { id: '2048x2048', w: 2048, h: 2048, label: '2048 × 2048 (big square)' },
-  { id: 'custom', w: 0, h: 0, label: 'Custom…' },
+  { id: '1080x1080', w: 1080, h: 1080, label: t('1080 × 1080 (square)') },
+  { id: '1920x1080', w: 1920, h: 1080, label: t('1920 × 1080 (wide)') },
+  { id: '1080x1920', w: 1080, h: 1920, label: t('1080 × 1920 (tall)') },
+  { id: '2048x2048', w: 2048, h: 2048, label: t('2048 × 2048 (big square)') },
+  { id: 'custom', w: 0, h: 0, label: t('Custom…') },
 ];
 const EPS = 1e-6;
+const GRIP = 22;                    /* the swap handle, in screen pixels */
 
 /** Pixel rectangles for a layout drawn at W × H with gap g (px). */
 export function cellRects(layout, W, H, g) {
@@ -53,7 +73,7 @@ export function cellRects(layout, W, H, g) {
 }
 
 /** Paint the collage on a 2D context at W × H. cells[i] = { bmp, zoom, px, py } | null */
-export function paintCollage(g, W, H, { layout, cells, gapPct, radiusPct, bg, selected = -1 }) {
+export function paintCollage(g, W, H, { layout, cells, gapPct, radiusPct, bg, selected = -1, grip = 0, target = -1 }) {
   g.save();
   g.fillStyle = bg;
   g.fillRect(0, 0, W, H);
@@ -85,6 +105,26 @@ export function paintCollage(g, W, H, { layout, cells, gapPct, radiusPct, bg, se
       g.drawImage(c.bmp, ox, oy, dw, dh);
     }
     g.restore();
+    if (grip && c?.bmp) {                          /* the swap handle: a small dark tile with a grid of dots */
+      const gx = r.x + grip * 0.3, gy = r.y + grip * 0.3;
+      g.save();
+      g.fillStyle = 'rgba(0,0,0,.6)';
+      g.beginPath(); g.roundRect(gx, gy, grip, grip, grip * 0.22); g.fill();
+      g.fillStyle = '#fff';
+      for (const dx of [0.3, 0.7]) for (const dy of [0.3, 0.5, 0.7]) { g.beginPath(); g.arc(gx + grip * dx, gy + grip * dy, grip * 0.06, 0, Math.PI * 2); g.fill(); }
+      g.restore();
+    }
+    if (i === target) {
+      g.save();
+      g.beginPath();
+      g.roundRect(r.x, r.y, r.w, r.h, rad);
+      g.fillStyle = 'rgba(255,69,109,.28)';
+      g.fill();
+      g.lineWidth = Math.max(3, Math.min(W, H) * 0.006);
+      g.strokeStyle = '#ff456d';
+      g.stroke();
+      g.restore();
+    }
     if (i === selected) {
       g.save();
       g.beginPath();
@@ -103,11 +143,11 @@ export function mountCollage({ api, root, opts }) {
   const S = {
     layout: LAYOUTS.find(l => l.id === '4-grid'), cells: Array(6).fill(null), sel: 0,
     gap: 2, radius: 0, bg: '#ffffff', size: '1080x1080', cw: 1080, ch: 1080, fmt: 'png', q: 90,
-    alive: true, busy: false, drag: null, raf: 0,
+    alive: true, busy: false, drag: null, raf: 0, swap: null,
   };
   const cells = () => S.cells.slice(0, S.layout.n);
 
-  const cv = h('canvas.pt-col__canvas', { 'aria-label': 'Collage preview', tabindex: 0 });
+  const cv = h('canvas.pt-col__canvas', { 'aria-label': t('Collage preview'), tabindex: 0 });
   const g = cv.getContext('2d');
   const stage = h('div.pt__stage', h('div.pt-col__paper', cv));
   const foot = h('div.pt__foot', { role: 'status', 'aria-live': 'polite' });
@@ -128,7 +168,7 @@ export function mountCollage({ api, root, opts }) {
     const bw = Math.round(p.w * dpr), bh = Math.round(p.h * dpr);
     if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
     cv.style.width = `${p.w}px`; cv.style.height = `${p.h}px`;
-    paintCollage(g, bw, bh, { layout: S.layout, cells: cells(), gapPct: S.gap, radiusPct: S.radius, bg: S.bg, selected: S.sel });
+    paintCollage(g, bw, bh, { layout: S.layout, cells: cells(), gapPct: S.gap, radiusPct: S.radius, bg: S.bg, selected: S.sel, grip: GRIP * dpr, target: S.swap ? S.swap.to : -1 });
     const filled = cells().filter(Boolean).length;
     foot.textContent = `${S.layout.name} · ${filled} of ${S.layout.n} filled · exports at ${S.cw} × ${S.ch} px`;
     saveBtn.disabled = S.busy || filled === 0;
@@ -138,18 +178,22 @@ export function mountCollage({ api, root, opts }) {
 
   /* ---------- layout + settings ---------- */
   const layoutBtns = new Map();
-  const layoutRow = h('div.pt-col__layouts', { role: 'radiogroup', 'aria-label': 'Layout' }, LAYOUTS.map(l => {
+  const layoutBtn = (l, cls) => {
     const tile = h('svg', { viewBox: '0 0 30 30', 'aria-hidden': 'true' },
       l.cells.map(([x, y, w, hh]) => h('rect', { x: x * 30 + 1.2, y: y * 30 + 1.2, width: w * 30 - 2.4, height: hh * 30 - 2.4, rx: 1.5 })));
-    const b = h('button.pt-col__layout', {
-      type: 'button', role: 'radio', 'aria-checked': 'false', title: `${l.n} pictures · ${l.name}`, dataset: { layout: l.id, n: l.n },
-      'aria-label': `${l.n} pictures, ${l.name}`, onclick: () => setLayout(l.id),
+    const b = h(`button.${cls}`, {
+      type: 'button', role: 'radio', 'aria-checked': 'false', title: t('{n} pictures · {name}', { n: l.n, name: l.name }), dataset: { layout: l.id, n: l.n },
+      'aria-label': t('{n} pictures, {name}', { n: l.n, name: l.name }), onclick: () => setLayout(l.id),
     }, tile, h('span', { text: String(l.n) }));
     layoutBtns.set(l.id, b);
     return b;
-  }));
+  };
+  const layoutRow = h('div.pt-col__layouts', { role: 'radiogroup', 'aria-label': t('Layout') }, LAYOUTS.map(l => layoutBtn(l, 'pt-col__layout')));
+  const moreRow = h('div.pt-col__layouts', { role: 'radiogroup', 'aria-label': t('More layouts') }, MORE_LAYOUTS.map(l => layoutBtn(l, 'pt-col__more')));
+  const moreBox = h('details.pt-col__moreBox', h('summary', { text: t('More layouts') }), moreRow);
   function setLayout(id) {
-    S.layout = LAYOUTS.find(l => l.id === id) || S.layout;
+    S.layout = ALL_LAYOUTS.find(l => l.id === id) || S.layout;
+    if (MORE_LAYOUTS.some(l => l.id === S.layout.id)) moreBox.open = true;
     S.sel = clamp(S.sel, 0, S.layout.n - 1);
     for (const [k, b] of layoutBtns) b.setAttribute('aria-checked', String(k === S.layout.id));
     redraw();
@@ -160,38 +204,50 @@ export function mountCollage({ api, root, opts }) {
       oninput: () => { S[key] = Number(input.value); out.textContent = `${S[key]}${unit}`; (onchange || redraw)(); } });
     return h('label.pt__slider', h('span', { text: label }), input, out);
   };
-  const bgInput = h('input.pt-col__bg', { type: 'color', value: S.bg, 'aria-label': 'Background colour', oninput: () => { S.bg = bgInput.value; redraw(); } });
-  const sizeSel = h('select', { 'aria-label': 'Export size', onchange: () => {
+  const bgInput = h('input.pt-col__bg', { type: 'color', value: S.bg, 'aria-label': t('Background colour'), oninput: () => { S.bg = bgInput.value; redraw(); } });
+  const sizeSel = h('select', { 'aria-label': t('Export size'), onchange: () => {
     S.size = sizeSel.value;
     const s = SIZES.find(x => x.id === S.size);
     if (s.w) { S.cw = s.w; S.ch = s.h; cw.value = s.w; ch.value = s.h; }
     customRow.hidden = S.size !== 'custom';
     redraw();
   } }, SIZES.map(s => h('option', { value: s.id, text: s.label })));
-  const cw = h('input', { type: 'number', min: 64, max: 8192, step: 1, value: S.cw, 'aria-label': 'Export width in pixels',
+  const cw = h('input', { type: 'number', min: 64, max: 8192, step: 1, value: S.cw, 'aria-label': t('Export width in pixels'),
     oninput: () => { S.cw = clamp(Math.round(Number(cw.value) || 64), 64, 8192); redraw(); } });
-  const ch = h('input', { type: 'number', min: 64, max: 8192, step: 1, value: S.ch, 'aria-label': 'Export height in pixels',
+  const ch = h('input', { type: 'number', min: 64, max: 8192, step: 1, value: S.ch, 'aria-label': t('Export height in pixels'),
     oninput: () => { S.ch = clamp(Math.round(Number(ch.value) || 64), 64, 8192); redraw(); } });
   const customRow = h('div.pt__pair', { hidden: true }, cw, h('span', { text: '×' }), ch, h('span', { text: 'px' }));
-  const fmtSel = h('select', { 'aria-label': 'Export format', onchange: () => { S.fmt = fmtSel.value; qRow.hidden = S.fmt !== 'jpeg'; } },
-    h('option', { value: 'png', text: 'PNG (sharp, larger)' }), h('option', { value: 'jpeg', text: 'JPEG (smaller)' }));
+  const fmtSel = h('select', { 'aria-label': t('Export format'), onchange: () => { S.fmt = fmtSel.value; qRow.hidden = S.fmt !== 'jpeg'; } },
+    h('option', { value: 'png', text: t('PNG (sharp, larger)') }), h('option', { value: 'jpeg', text: t('JPEG (smaller)') }));
   const qOut = h('output', { text: `${S.q}%` });
-  const qIn = h('input', { type: 'range', min: 40, max: 100, step: 1, value: S.q, 'aria-label': 'JPEG quality', oninput: () => { S.q = Number(qIn.value); qOut.textContent = `${S.q}%`; } });
-  const qRow = h('label.pt__slider', { hidden: true }, h('span', { text: 'Quality' }), qIn, qOut);
+  const qIn = h('input', { type: 'range', min: 40, max: 100, step: 1, value: S.q, 'aria-label': t('JPEG quality'), oninput: () => { S.q = Number(qIn.value); qOut.textContent = `${S.q}%`; } });
+  const qRow = h('label.pt__slider', { hidden: true }, h('span', { text: t('Quality') }), qIn, qOut);
 
   /* ---------- the picked cell ---------- */
   const zoomOut = h('output', { text: '100%' });
-  const zoomIn = h('input', { type: 'range', min: 100, max: 400, step: 1, value: 100, 'aria-label': 'Zoom the picture in this cell',
+  const zoomIn = h('input', { type: 'range', min: 100, max: 400, step: 1, value: 100, 'aria-label': t('Zoom the picture in this cell'),
     oninput: () => { const c = S.cells[S.sel]; if (!c) return; c.zoom = Number(zoomIn.value) / 100; clampPan(c); redraw(); } });
   const cellName = h('b', { text: '' });
-  const resetCell = h('button.btn.btn--sm', { type: 'button', onclick: () => { const c = S.cells[S.sel]; if (c) { c.zoom = 1; c.px = 0; c.py = 0; redraw(); } } }, icon('refresh'), h('span', { text: 'Reset' }));
-  const clearCell = h('button.btn.btn--sm', { type: 'button', onclick: () => { S.cells[S.sel] = null; syncPicker(); redraw(); } }, icon('x'), h('span', { text: 'Empty cell' }));
+  const resetCell = h('button.btn.btn--sm', { type: 'button', onclick: () => { const c = S.cells[S.sel]; if (c) { c.zoom = 1; c.px = 0; c.py = 0; redraw(); } } }, icon('refresh'), h('span', { text: t('Reset') }));
+  const clearCell = h('button.btn.btn--sm', { type: 'button', onclick: () => { S.cells[S.sel] = null; syncPicker(); redraw(); } }, icon('x'), h('span', { text: t('Empty cell') }));
+  const swapPrev = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'col-swap-prev' }, onclick: () => swapCells(S.sel, S.sel - 1) }, icon('arrow-left'), h('span', { text: t('Swap with previous') }));
+  const swapNext = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'col-swap-next' }, onclick: () => swapCells(S.sel, S.sel + 1) }, h('span', { text: t('Swap with next') }), icon('arrow-right'));
+  /* two cells trade pictures (with their zoom and pan); an empty cell just takes the other's picture */
+  function swapCells(a, b) {
+    if (a === b || a < 0 || b < 0 || a >= S.layout.n || b >= S.layout.n) return;
+    [S.cells[a], S.cells[b]] = [S.cells[b], S.cells[a]];
+    S.sel = b;
+    redraw();
+  }
   const cellPanel = h('div.pt-col__cell', h('div.pt__rowhead', cellName, h('span.pt__spacer'), resetCell, clearCell),
-    h('label.pt__slider', h('span', { text: 'Zoom' }), zoomIn, zoomOut));
+    h('label.pt__slider', h('span', { text: t('Zoom') }), zoomIn, zoomOut),
+    h('div.pt__rowhead', swapPrev, h('span.pt__spacer'), swapNext));
   function paintCellPanel() {
     const c = S.cells[S.sel];
     cellName.textContent = c ? `Cell ${S.sel + 1}: ${c.name}` : `Cell ${S.sel + 1} is empty. Click a picture to fill it.`;
     zoomIn.disabled = resetCell.disabled = clearCell.disabled = !c;
+    swapPrev.disabled = S.sel <= 0;
+    swapNext.disabled = S.sel >= S.layout.n - 1;
     zoomIn.value = c ? Math.round(c.zoom * 100) : 100;
     zoomOut.textContent = `${zoomIn.value}%`;
   }
@@ -199,7 +255,7 @@ export function mountCollage({ api, root, opts }) {
   const clampPan = c => { c.px = clamp(c.px, -1, 1); c.py = clamp(c.py, -1, 1); };
 
   /* ---------- pictures ---------- */
-  const picker = pickerView(api, { multi: true, label: 'Pictures for the collage', onChange: (list, src, added) => {
+  const picker = pickerView(api, { multi: true, label: t('Pictures for the collage'), onChange: (list, src, added) => {
     if (added) put(src); else { const i = S.cells.findIndex(c => c && c.src.key === src.key); if (i >= 0) { S.cells[i] = null; redraw(); } }
   } });
   function syncPicker() {
@@ -217,7 +273,7 @@ export function mountCollage({ api, root, opts }) {
       S.sel = next >= 0 ? next : target;
       redraw();
     } catch (err) {
-      api.notify({ app: 'Picture Tools', icon: 'alert', title: 'Can’t use that picture', message: err?.message || String(err) });
+      api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Can’t use that picture'), message: err?.message || String(err) });
     }
   }
   const autoFill = () => {
@@ -226,7 +282,7 @@ export function mountCollage({ api, root, opts }) {
     let i = 0;
     for (const s of free) { if (i >= S.layout.n) break; picker.pick(s); i++; }
   };
-  const fillBtn = h('button.btn.btn--sm', { type: 'button', onclick: autoFill, title: 'Fill the empty cells with pictures from your library' }, icon('shuffle'), h('span', { text: 'Fill from library' }));
+  const fillBtn = h('button.btn.btn--sm', { type: 'button', onclick: autoFill, title: t('Fill the empty cells with pictures from your library') }, icon('shuffle'), h('span', { text: t('Fill from library') }));
 
   /* ---------- pan and zoom on the canvas ---------- */
   function cellAt(e) {
@@ -235,7 +291,24 @@ export function mountCollage({ api, root, opts }) {
     const rects = cellRects(S.layout, S.cw, S.ch, S.gap / 100 * Math.min(S.cw, S.ch));
     return { i: rects.findIndex(q => x >= q.x && x <= q.x + q.w && y >= q.y && y <= q.y + q.h), rects, k: r.width / S.cw };
   }
+  /* the cell whose swap grip is under the pointer, or -1 */
+  function gripAt(e) {
+    const r = cv.getBoundingClientRect();
+    const k = r.width / S.cw;
+    const rects = cellRects(S.layout, S.cw, S.ch, S.gap / 100 * Math.min(S.cw, S.ch));
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    return rects.findIndex((q, i) => cells()[i] && px >= q.x * k + GRIP * 0.3 && px <= q.x * k + GRIP * 1.3 && py >= q.y * k + GRIP * 0.3 && py <= q.y * k + GRIP * 1.3);
+  }
   cv.addEventListener('pointerdown', e => {
+    const gi = gripAt(e);
+    if (gi >= 0) {
+      S.sel = gi;
+      S.swap = { from: gi, to: -1 };
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
+      cv.style.cursor = 'grabbing';
+      redraw();
+      return;
+    }
     const { i } = cellAt(e);
     if (i < 0) return;
     S.sel = i;
@@ -245,6 +318,13 @@ export function mountCollage({ api, root, opts }) {
     redraw();
   });
   cv.addEventListener('pointermove', e => {
+    if (S.swap) {
+      const { i } = cellAt(e);
+      const to = i === S.swap.from ? -1 : i;
+      if (to !== S.swap.to) { S.swap.to = to; redraw(); }
+      return;
+    }
+    cv.style.cursor = gripAt(e) >= 0 ? 'grab' : '';
     const d = S.drag, c = d && S.cells[d.i];
     if (!c) return;
     const { rects, k } = cellAt(e);
@@ -258,7 +338,15 @@ export function mountCollage({ api, root, opts }) {
     clampPan(c);
     redraw();
   });
-  const endDrag = () => { S.drag = null; };
+  const endDrag = e => {
+    S.drag = null;
+    if (S.swap) {
+      const { from, to } = S.swap;
+      S.swap = null;
+      cv.style.cursor = '';
+      if (e?.type === 'pointerup' && to >= 0) swapCells(from, to); else redraw();
+    }
+  };
   cv.addEventListener('pointerup', endDrag);
   cv.addEventListener('pointercancel', endDrag);
   cv.addEventListener('wheel', e => {
@@ -273,7 +361,7 @@ export function mountCollage({ api, root, opts }) {
   }, { passive: false });
 
   /* ---------- export ---------- */
-  const saveBtn = h('button.btn.btn--primary', { type: 'button', 'aria-label': 'Save collage to Pictures', onclick: () => save() }, icon('save'), h('span', { text: 'Save to Pictures' }));
+  const saveBtn = h('button.btn.btn--primary', { type: 'button', 'aria-label': t('Save collage to Pictures'), onclick: () => save() }, icon('save'), h('span', { text: t('Save to Pictures') }));
   async function save() {
     if (S.busy) return;
     S.busy = true;
@@ -290,9 +378,9 @@ export function mountCollage({ api, root, opts }) {
       const blob = await encode(c, type, S.q / 100);
       c.width = c.height = 0;
       if (!blob) throw new Error(`This browser couldn’t make a ${S.fmt === 'jpeg' ? 'JPEG' : 'PNG'}.`);
-      await saveBlob(api, 'Picture Tools', picturesDir(), `Collage ${W}x${H}.${S.fmt === 'jpeg' ? 'jpg' : 'png'}`, blob, { title: 'Collage saved' });
+      await saveBlob(api, 'Picture Tools', picturesDir(), `Collage ${W}x${H}.${S.fmt === 'jpeg' ? 'jpg' : 'png'}`, blob, { title: t('Collage saved') });
     } catch (err) {
-      api.notify({ app: 'Picture Tools', icon: 'alert', title: 'Not saved', message: err?.message || String(err) });
+      api.notify({ app: 'Picture Tools', icon: 'alert', title: t('Not saved'), message: err?.message || String(err) });
     } finally {
       S.busy = false;
       if (S.alive) redraw();
@@ -300,15 +388,15 @@ export function mountCollage({ api, root, opts }) {
   }
 
   const side = h('div.pt__side',
-    h('div.pt__group', h('b.pt__label', { text: 'Layout' }), layoutRow),
+    h('div.pt__group', h('b.pt__label', { text: t('Layout') }), layoutRow, moreBox),
     cellPanel,
     h('div.pt__group',
       slider('Gap', 'gap', 0, 10, '%'), slider('Corners', 'radius', 0, 100, '%'),
-      h('label.pt__line', h('span', { text: 'Background' }), bgInput)),
-    h('div.pt__group', h('b.pt__label', { text: 'Export' }),
-      h('label.pt__line', h('span', { text: 'Size' }), sizeSel), customRow,
-      h('label.pt__line', h('span', { text: 'Format' }), fmtSel), qRow),
-    h('div.pt__group', h('div.pt__rowhead', h('b.pt__label', { text: 'Pictures' }), h('span.pt__spacer'), fillBtn), picker.el),
+      h('label.pt__line', h('span', { text: t('Background') }), bgInput)),
+    h('div.pt__group', h('b.pt__label', { text: t('Export') }),
+      h('label.pt__line', h('span', { text: t('Size') }), sizeSel), customRow,
+      h('label.pt__line', h('span', { text: t('Format') }), fmtSel), qRow),
+    h('div.pt__group', h('div.pt__rowhead', h('b.pt__label', { text: t('Pictures') }), h('span.pt__spacer'), fillBtn), picker.el),
     h('div.pt__actions', saveBtn));
   root.append(h('div.pt__split', h('div.pt__col', stage, foot), side));
   setLayout(S.layout.id);
@@ -319,7 +407,7 @@ export function mountCollage({ api, root, opts }) {
   const first = opts?.path && sourceOfPath(opts.path);
   if (first) picker.pick(first);
 
-  root.collagePeek = () => ({ layout: S.layout.id, cells: cells().map(c => c && { name: c.name, zoom: c.zoom, px: c.px, py: c.py }), sel: S.sel, cw: S.cw, ch: S.ch });
+  root.collagePeek = () => ({ layout: S.layout.id, grip: GRIP, cells: cells().map(c => c && { name: c.name, zoom: c.zoom, px: c.px, py: c.py }), sel: S.sel, cw: S.cw, ch: S.ch });
 
   return () => {
     S.alive = false;

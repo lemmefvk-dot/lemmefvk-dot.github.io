@@ -12,6 +12,13 @@
      to use from the exact chances of what a reroll can give — the
      search runs in a Web Worker). Remembered in portal.arcadeFiveDice.
    · 2P: two players on one screen, taking turns on their own cards.
+   · Online (ctx.online, a friend through the Arcade's room): the
+     host's Arcade rolls every die, for both of you, with
+     crypto.getRandomValues, and checks every move (./hostlink.js).
+     The friend's Arcade sends which dice it keeps when it rolls and
+     which box it scores; the host's rules decide whether the move
+     stands, and both screens are sent the same dice and cards. Who
+     rolls first swaps every rematch (the host in odd rounds).
    There is no undo: taking a roll back would let you reroll for luck.
    Dice come from crypto.getRandomValues (see ./dice-rules.js).
 
@@ -24,6 +31,7 @@ import { h } from '../core/dom.js';
 import { store } from '../core/store.js';
 import * as D from './dice-rules.js';
 import { thinker } from './thinker.js';
+import { hostLink, guestLink } from './hostlink.js';
 import { KIT_CSS, surface, ownsKey, sounder, looper, rr, playerStrip, segment, button } from './boardkit.js';
 
 const PREF = 'portal.arcadeFiveDice';
@@ -66,11 +74,18 @@ export default {
     const snd = sounder(ctx);
     const prefs = readPrefs();
     const two = ctx.players === 2;
-    let mode = two ? '2p' : prefs.vs;                   /* 'solo' | 'cpu' | '2p' */
+    /* online: a duel through the room (a kit race is something else); the host rolls and checks */
+    const NET = ctx.online && typeof ctx.online.send === 'function' && !ctx.online.kit ? ctx.online : null;
+    const host = NET?.role === 'host', guest = !!NET && !host;
+    const peerName = NET?.peer?.name || 'Your friend';
+    /* who rolls first: the host in odd rounds, the friend in even ones (seen from this screen: 0 = me) */
+    const firstP = !NET ? 0 : ((Number(NET.round) || 1) % 2 === 1) === host ? 0 : 1;
+    let mode = NET ? 'net' : two ? '2p' : prefs.vs;      /* 'solo' | 'cpu' | '2p' | 'net' */
     let brain = mode === 'cpu' ? thinker() : null;
     let dead = false;
     let rng = D.makeRng(null);
-    const namesFor = m => (m === 'solo' ? ['You'] : m === 'cpu' ? ['You', 'Computer'] : ['Player 1', 'Player 2']);
+    let link = null;
+    const namesFor = m => (m === 'solo' ? ['You'] : m === 'cpu' ? ['You', 'Computer'] : m === 'net' ? ['You', peerName] : ['Player 1', 'Player 2']);
     let names = namesFor(mode);
     const NP = () => names.length;
     const COLORS = ['#4dd2ff', '#ffb84d'];
@@ -78,6 +93,9 @@ export default {
     const S = {
       cards: names.map(() => D.newCard()), p: 0, dice: [1, 2, 3, 4, 5], held: [false, false, false, false, false], rolls: 0,
       over: false, ended: false, endT: 0, rollT0: -1e9, thinking: false, runId: 0, cursor: 0, flash: '', geo: { dice: [] }, hover: -1, shake: 0, scored: 0,
+      /* online: inAct — the host is applying the friend's move; pending — the guest's move is on its way;
+         q — the last view the guest drew; rn — rolls so far in the game (a new one animates) */
+      inAct: false, pending: false, q: -1, rn: 0,
     };
     const hue = Number(getComputedStyle(el).getPropertyValue('--h')) || 200;
 
@@ -86,7 +104,7 @@ export default {
     const sr = h('div.arx-bg__sr', { 'aria-live': 'polite' });
     const statusEl = h('div.arx-bg__status', { role: 'status' });
     const strips = [0, 1].map(i => playerStrip(COLORS[i], namesFor(mode === 'solo' ? 'cpu' : mode)[i], ''));
-    const vsSeg = !two ? segment('Play', [{ id: 'solo', label: 'Solo' }, { id: 'cpu', label: 'Vs computer' }], mode, v => { setVs(v); refocus(); }) : null;
+    const vsSeg = !two && !NET ? segment('Play', [{ id: 'solo', label: 'Solo' }, { id: 'cpu', label: 'Vs computer' }], mode, v => { setVs(v); refocus(); }) : null;
     const rollBtn = button('Roll', 'refresh', () => { roll(); refocus(); }, { title: 'Roll the dice (Space or R)' });
     const note = h('div.arx-bg__note', { text: 'Click dice to keep them, then roll again or write the result in a box on the card.' });
     const rows = D.CATS.map(c => {
@@ -125,7 +143,7 @@ export default {
       strips.forEach((st, i) => { if (names[i]) st.set({ name: names[i] }); });
     }
     function setVs(v) {
-      if (two || v === mode) return;
+      if (two || NET || v === mode) return;
       mode = v;
       writePrefs({ vs: v });
       if (mode === 'cpu' && !brain) brain = thinker();
@@ -135,37 +153,72 @@ export default {
     }
 
     /* ------------------------------ rules glue ------------------------------ */
-    const mine = () => mode !== 'cpu' || S.p === 0;
+    const mine = () => (mode !== 'cpu' && mode !== 'net') || S.p === 0;
     const rolling = () => performance.now() - S.rollT0 < ROLL_MS && !reduced;
-    const canAct = () => !dead && !S.over && !S.thinking && mine();
+    const canAct = () => !dead && !S.over && !S.thinking && mine() && !S.pending && !(guest && S.q < 0);
     const card0 = () => S.cards[S.p];
+    /* the host's game moved on by its own hand: the friend's screen is sent its view */
+    const changed = () => { if (host && link && !S.inAct) link.changed(); };
+    /* the guest's move goes to the host's Arcade, which answers with the next view */
+    function send(a) {
+      if (!guest || !link || S.pending || !link.act(a)) return false;
+      S.pending = true;
+      paint();
+      return true;
+    }
 
     function newGame() {
       clearTimeout(S.endT);
       S.runId++;
-      Object.assign(S, { cards: names.map(() => D.newCard()), p: 0, dice: [1, 2, 3, 4, 5], held: [false, false, false, false, false], rolls: 0, over: false, ended: false, thinking: false, flash: '', scored: 0, rollT0: -1e9 });
+      Object.assign(S, { cards: names.map(() => D.newCard()), p: firstP, dice: [1, 2, 3, 4, 5], held: [false, false, false, false, false], rolls: 0, over: false, ended: false, thinking: false, flash: '', scored: 0, rollT0: -1e9, rn: 0 });
       ctx.onScore(0);
       paint();
+      changed();
     }
 
     function roll() {
       if (!canAct() || rolling()) return false;
       if (S.rolls >= 3) return flash('No rolls left this turn: pick a box for your dice.');
       if (S.rolls > 0 && S.held.every(Boolean)) return flash('You are keeping every die. Release one to roll it, or pick a box.');
+      if (guest) return send({ k: 'roll', held: S.rolls === 0 ? null : S.held.slice() });
       doRoll();
       return true;
     }
     function doRoll() {
       S.dice = D.roll(rng, S.dice, S.rolls === 0 ? null : S.held);
       S.rolls++;
+      S.rn++;
       S.rollT0 = performance.now();
       S.flash = '';
       if (S.rolls === 1) S.held = [false, false, false, false, false];
+      rollSound();
+      say(`${NET && S.p === 1 ? `${peerName}’s roll` : 'Roll'} ${S.rolls}: ${S.dice.join(', ')}.`);
+      paint();
+      changed();
+    }
+    function rollSound() {
       snd.blip(200, 0.05, 'square', 0.5);
       if (!reduced) for (let k = 1; k < 5; k++) setTimeout(() => snd.blip(160 + Math.random() * 120, 0.04, 'square', 0.35), k * 70);
       loop.kick(ROLL_MS / 1000 + 0.1);
-      say(`Roll ${S.rolls}: ${S.dice.join(', ')}.`);
-      paint();
+    }
+    /* the host checks the friend's move against the rules before it touches the game */
+    function friendMove(a) {
+      if (!a || typeof a !== 'object' || dead || S.over || S.p !== 1) return false;
+      if (a.k === 'roll') {
+        if (S.rolls >= 3) return false;
+        if (S.rolls > 0) {
+          if (!Array.isArray(a.held) || a.held.length !== 5 || !a.held.every(x => typeof x === 'boolean') || a.held.every(Boolean)) return false;
+          S.held = a.held.slice();
+        }
+        doRoll();
+        return true;
+      }
+      if (a.k === 'score') {
+        if (S.rolls === 0 || typeof a.cat !== 'string' || !D.IDS.includes(a.cat) || !D.allowed(S.cards[1], S.dice).includes(a.cat)) return false;
+        commit(a.cat);
+        return true;
+      }
+      return false;
     }
     function flash(t) { S.flash = t; S.shake = performance.now(); snd.blip(140, 0.08, 'sawtooth', 0.4); loop.kick(0.25); paint(); return false; }
 
@@ -189,6 +242,7 @@ export default {
         const jk = D.isExtraFive(c, S.dice);
         return flash(jk ? 'Extra Five: it must go in its own number box if open, else a lower box.' : 'That box is already used.');
       }
+      if (guest) return send({ k: 'score', cat });
       commit(cat);
       return true;
     }
@@ -200,7 +254,7 @@ export default {
       snd.blip(pts ? 520 : 200, 0.1, 'triangle', 0.8, pts ? 760 : 120);
       say(`${names[S.p]} scored ${pts} in ${D.CATS[D.IDS.indexOf(cat)].name}${extra ? ', plus a 100 bonus for an extra five' : ''}.`);
       S.flash = extra ? 'Extra Five: +100 bonus!' : '';
-      if (D.isFull(c) && S.cards.every(D.isFull)) { S.over = true; S.rolls = 0; paint(); loop.kick(1); finishSoon(); return; }
+      if (D.isFull(c) && S.cards.every(D.isFull)) { S.over = true; S.rolls = 0; paint(); changed(); loop.kick(1); finishSoon(); return; }
       /* next turn: the next player who still has boxes (all have the same count, so just rotate) */
       S.p = (S.p + 1) % NP();
       S.held = [false, false, false, false, false];
@@ -208,6 +262,7 @@ export default {
       S.rollT0 = -1e9;
       S.cursor = Math.max(0, D.IDS.findIndex(id => card0().s[id] === null));
       paint();
+      changed();
       if (mode === 'cpu' && S.p === 1) computerTurn();
     }
 
@@ -256,7 +311,11 @@ export default {
       paint();
       const t = S.cards.map(c => D.totals(c));
       const mineT = t[0].total;
-      if (mode === '2p') {
+      if (mode === 'net') {
+        const th = t[1].total;
+        ctx.onEnd({ score: mineT, won: mineT === th ? null : mineT > th, versus: { me: mineT, them: th },
+          detail: mineT === th ? `A tie at ${mineT} each.` : mineT > th ? `You won, ${mineT} to ${th}.` : `${peerName} won, ${th} to ${mineT}.` });
+      } else if (mode === '2p') {
         const w = t[0].total === t[1].total ? -1 : t[0].total > t[1].total ? 0 : 1;
         ctx.onEnd({ score: null, detail: w < 0 ? `A tie at ${t[0].total} each.` : `${names[w]} wins, ${t[w].total} to ${t[1 - w].total}.` });
       } else if (mode === 'cpu') {
@@ -278,8 +337,11 @@ export default {
       if (S.over) {
         if (mode === 'solo') text = `Card full: ${tot[0].total} points.`;
         else if (tot[0].total === tot[1].total) text = `A tie at ${tot[0].total}.`;
-        else { const w = tot[0].total > tot[1].total ? 0 : 1; text = mode === 'cpu' ? (w === 0 ? `You win, ${tot[0].total} to ${tot[1].total}!` : `The computer wins, ${tot[1].total} to ${tot[0].total}.`) : `${names[w]} wins, ${tot[w].total} to ${tot[1 - w].total}!`; }
+        else { const w = tot[0].total > tot[1].total ? 0 : 1; text = mode === 'cpu' ? (w === 0 ? `You win, ${tot[0].total} to ${tot[1].total}!` : `The computer wins, ${tot[1].total} to ${tot[0].total}.`) : mode === 'net' && w === 0 ? `You win, ${tot[0].total} to ${tot[1].total}!` : `${names[w]} wins, ${tot[w].total} to ${tot[1 - w].total}!`; }
       } else if (S.thinking) text = 'The computer is playing…';
+      else if (guest && S.q < 0) text = `Waiting for ${peerName}’s Arcade…`;
+      else if (S.pending) text = 'Sending your move…';
+      else if (mode === 'net' && S.p === 1) text = S.rolls === 0 ? `${peerName}’s turn: waiting for the roll…` : `${peerName}’s turn: roll ${S.rolls} of 3`;
       else if (S.rolls === 0) text = mode === '2p' ? `${names[S.p]}: roll the dice` : 'Roll the dice';
       else if (S.rolls < 3) text = `Roll ${S.rolls} of 3: keep dice and roll again, or pick a box`;
       else text = 'Last roll: pick a box for your dice';
@@ -376,7 +438,7 @@ export default {
       g.fillStyle = 'rgba(210,220,250,.75)';
       g.font = `600 ${Math.max(12, s * 0.2)}px system-ui, sans-serif`;
       g.textAlign = 'center';
-      const msg = S.over ? 'Card full' : S.thinking ? 'The computer is rolling…' : S.rolls === 0 ? 'Roll to start your turn' : S.rolls < 3 ? `Roll ${S.rolls} of 3 — click a die to keep it` : 'Last roll — pick a box';
+      const msg = S.over ? 'Card full' : S.thinking ? 'The computer is rolling…' : mode === 'net' && S.p === 1 ? `${peerName}’s turn` : S.rolls === 0 ? 'Roll to start your turn' : S.rolls < 3 ? `Roll ${S.rolls} of 3 — click a die to keep it` : 'Last roll — pick a box';
       g.fillText(msg, sf.w / 2, y0 - s * 0.62);
       /* the roll pips: three small lights */
       for (let k = 0; k < 3; k++) {
@@ -420,6 +482,51 @@ export default {
     sf.cv.addEventListener('pointerdown', onDown);
     sf.cv.addEventListener('pointermove', onMove);
 
+    /* ------------------------------ online ------------------------------ */
+    /* on the host card 0 is the host's; the friend's view is turned round so its own card comes first */
+    const cardOut = c => ({ s: { ...c.s }, x: c.extra });
+    const view = () => ({
+      c: [cardOut(S.cards[1]), cardOut(S.cards[0])], p: 1 - S.p, d: S.dice.slice(), hd: S.held.slice(), r: S.rolls, n: S.rn, o: S.over, f: S.flash.startsWith('Extra Five: +') ? 1 : 0,
+    });
+    const cardIn = c => {
+      if (!c || typeof c !== 'object' || !c.s || typeof c.s !== 'object' || !Number.isInteger(c.x) || c.x < 0 || c.x > 1300 || c.x % 100) return null;
+      const card = D.newCard();
+      for (const id of D.IDS) { const v = c.s[id]; if (v === null) continue; if (!Number.isInteger(v) || v < 0 || v > 50) return null; card.s[id] = v; }
+      card.extra = c.x;
+      return card;
+    };
+    /* the guest's screen: a new view from the host, checked field by field */
+    function show(v, q, refused) {
+      if (dead) return;
+      if (q === S.q && !refused) return;               /* the same view again (the host's beat): local holds stay */
+      const cards = Array.isArray(v.c) && v.c.length === 2 ? v.c.map(cardIn) : null;
+      const ok = cards && cards.every(Boolean) && (v.p === 0 || v.p === 1) && Array.isArray(v.d) && v.d.length === 5 && v.d.every(x => Number.isInteger(x) && x >= 1 && x <= 6)
+        && Array.isArray(v.hd) && v.hd.length === 5 && v.hd.every(x => typeof x === 'boolean') && Number.isInteger(v.r) && v.r >= 0 && v.r <= 3 && Number.isInteger(v.n) && v.n >= 0 && typeof v.o === 'boolean';
+      if (!ok) { S.badViews = (S.badViews || 0) + 1; return; }
+      const scoredBefore = S.cards.reduce((a, c) => a + D.IDS.filter(id => c.s[id] !== null).length, 0);
+      S.q = q;
+      S.pending = false;
+      const turned = v.p !== S.p || (v.r === 0 && S.rolls !== 0);
+      S.cards = cards; S.p = v.p; S.dice = v.d.slice(); S.rolls = v.r; S.over = v.o;
+      /* my own holds stay as I set them until a roll or a new turn says otherwise */
+      if (v.n !== S.rn || turned || S.p === 1) S.held = v.hd.slice();
+      if (v.n !== S.rn && v.r > 0) { S.rollT0 = performance.now(); rollSound(); say(`${S.p === 1 ? `${peerName}’s roll` : 'Roll'} ${S.rolls}: ${S.dice.join(', ')}.`); }
+      S.rn = v.n;
+      const scoredNow = S.cards.reduce((a, c) => a + D.IDS.filter(id => c.s[id] !== null).length, 0);
+      if (scoredNow > scoredBefore) { S.scored += scoredNow - scoredBefore; snd.blip(420, 0.1, 'triangle', 0.7, 600); }
+      S.flash = v.f ? 'Extra Five: +100 bonus!' : '';
+      if (turned && S.p === 0) S.cursor = Math.max(0, D.IDS.findIndex(id => card0().s[id] === null));
+      if (refused) { flash(`${peerName}’s Arcade didn’t take that move.`); return; }
+      paint();
+      if (S.over && !S.ended) finishSoon();
+    }
+    if (host) {
+      link = hostLink(NET, {
+        view, dead: () => dead,
+        act: a => { S.inAct = true; try { return friendMove(a); } finally { S.inAct = false; } },
+      });
+    } else if (guest) link = guestLink(NET, { show, dead: () => dead });
+
     layoutMode();
     newGame();
 
@@ -428,6 +535,7 @@ export default {
         dead = true;
         S.runId++;
         clearTimeout(S.endT);
+        link?.stop();
         brain?.close();
         loop.stop();
         window.removeEventListener('keydown', onKey);
@@ -439,13 +547,23 @@ export default {
       },
       /* test hook (inert unless a test calls it): 'seed' restarts the game on a repeatable dice sequence */
       hook(cmd, arg) {
+        if (guest) return false;
         if (cmd === 'seed') { rng = D.makeRng(arg); newGame(); return true; }
+        /* 'fill' { cards: [{ box: points }, …] }: boxes already written (side 0 is this screen), for a quick end */
+        if (cmd === 'fill' && arg && Array.isArray(arg.cards)) {
+          arg.cards.slice(0, NP()).forEach((sc, i) => { for (const [id, v] of Object.entries(sc || {})) if (D.IDS.includes(id) && Number.isInteger(v)) S.cards[i].s[id] = v; });
+          S.cursor = Math.max(0, D.IDS.findIndex(id => card0().s[id] === null));
+          paint();
+          changed();
+          return true;
+        }
         return false;
       },
       peek: () => ({
         mode, names, p: S.p, dice: S.dice.slice(), held: S.held.slice(), rolls: S.rolls, rolling: rolling(), over: S.over, ended: S.ended,
         cards: S.cards.map(c => ({ ...c.s })), extra: S.cards.map(c => c.extra), totals: S.cards.map(D.totals), thinking: S.thinking, worker: !!brain?.worker,
         allowed: S.rolls ? D.allowed(card0(), S.dice) : [], cursor: D.IDS[S.cursor], geo: { dice: S.geo.dice.map(d => ({ ...d })) }, status: statusEl.textContent, scored: S.scored,
+        online: NET ? { role: NET.role, step: link?.step ?? -1, rejected: link?.rejected ?? 0, pending: S.pending, badViews: S.badViews || 0, first: firstP } : null,
       }),
     };
   },

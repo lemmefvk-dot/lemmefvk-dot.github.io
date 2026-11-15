@@ -7,9 +7,10 @@
    copied from elsewhere. The plain website starter lives in
    code.js (STARTER); the entries here are the others.
 
-   TEMPLATES[i] = { id, name, hint, icon, dir, open, files: { name: text } }
-     dir    the folder name in ~/Projects (made unique when it exists)
-     open   the file to show first
+   TEMPLATES[i] = { id, name, hint, icon, dir, open, preview, files: { name: text } }
+     dir      the folder name in ~/Projects (made unique when it exists)
+     open     the file to show first
+     preview  what the pane beside it shows: 'web', 'py', 'sql' or 'glsl'
    ============================================================ */
 
 const CANVAS_HTML = name => `<!doctype html>
@@ -334,6 +335,81 @@ const PY_GREET = `def hello(name):
 const PY_NOTES = `This file sits next to main.py, so the program can read it.
 `;
 
+const PY_DRAW = `# Drawing with Python. Press Run (top right) to draw the picture.
+# The draw module puts lines, circles, rectangles and text on a canvas
+# beside the output. x goes right and y goes down, in pixels.
+from draw import *
+
+canvas(400, 300, "skyblue")
+
+# the ground and the sun
+rect(0, 220, 400, 80, fill="seagreen")
+circle(330, 60, 35, fill="gold")
+
+# a house
+rect(80, 140, 120, 90, fill="tomato")
+polygon([(70, 140), (140, 90), (210, 140)], fill="saddlebrown")
+rect(125, 180, 30, 50, fill="white")
+
+# a row of flowers, made with a loop
+for i in range(6):
+    x = 240 + i * 25
+    line(x, 250, x, 225, colour="darkgreen", thickness=3)
+    circle(x, 220, 7, fill="hotpink")
+
+text(12, 12, "My first drawing", colour="navy", size=20)
+print("Drawn! Change a colour or a number and press Run again.")
+`;
+
+const SHADER = `// Colour waves. A fragment shader runs once for every pixel, every frame,
+// on the graphics card. Change a number and the picture changes as you type.
+// u_time is seconds, u_resolution the canvas size in pixels, u_mouse the pointer.
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / u_resolution;   // 0 to 1, across and up
+  float t = u_time * 0.6;
+
+  // three waves drifting at different speeds
+  float w = sin(uv.x * 10.0 + t) + sin(uv.y * 8.0 - t * 1.3) + sin((uv.x + uv.y) * 6.0 + t * 0.7);
+  vec3 col = 0.5 + 0.5 * cos(w + vec3(0.0, 2.0, 4.0));
+
+  // a soft light where the pointer is
+  vec2 m = u_mouse / u_resolution;
+  col += 0.25 * (0.15 / (distance(uv, m) + 0.15));
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+const SQL_QUERIES = `-- database: shop
+-- A playground for SQL. Press Run to run every query in this file, or
+-- select some lines first to run only those. The Corner shop database
+-- (made up) has three tables: products, customers and orders.
+
+-- Everything in one table
+SELECT * FROM products;
+
+-- Only some rows, in order
+SELECT name, price
+FROM products
+WHERE category = 'Dairy'
+ORDER BY price DESC;
+
+-- Count and average
+SELECT category, COUNT(*) AS items, ROUND(AVG(price), 2) AS average_price
+FROM products
+GROUP BY category
+ORDER BY items DESC;
+
+-- Join tables: who bought what
+SELECT customers.name, products.name AS product, orders.quantity
+FROM orders
+JOIN customers ON customers.id = orders.customer_id
+JOIN products ON products.id = orders.product_id
+ORDER BY customers.name
+LIMIT 10;
+`;
+
 export const TEMPLATES = [
   {
     id: 'canvas-game', name: 'Canvas game', hint: 'A small catch-the-stars game', icon: 'gamepad', dir: 'star-catcher', open: 'script.js', preview: 'web',
@@ -346,6 +422,18 @@ export const TEMPLATES = [
   {
     id: 'python', name: 'Python program', hint: 'Asks your name, imports a file, reads a file', icon: 'terminal', dir: 'python-hello', open: 'main.py', preview: 'py',
     files: () => ({ 'main.py': PY_MAIN, 'greet.py': PY_GREET, 'notes.txt': PY_NOTES }),
+  },
+  {
+    id: 'python-draw', name: 'Python drawing', hint: 'A picture made with lines, circles and colours', icon: 'palette', dir: 'python-drawing', open: 'main.py', preview: 'py',
+    files: () => ({ 'main.py': PY_DRAW }),
+  },
+  {
+    id: 'shader', name: 'Shader', hint: 'Colour waves drawn on the graphics card', icon: 'sparkles', dir: 'shader-playground', open: 'waves.frag', preview: 'glsl',
+    files: () => ({ 'waves.frag': SHADER }),
+  },
+  {
+    id: 'sql', name: 'SQL playground', hint: 'Queries on a sample shop database', icon: 'database', dir: 'sql-playground', open: 'queries.sql', preview: 'sql',
+    files: () => ({ 'queries.sql': SQL_QUERIES }),
   },
 ];
 

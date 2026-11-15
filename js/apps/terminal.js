@@ -4,12 +4,26 @@
    neofetch is the showpiece. Scrollback + a prompt row that is
    always the last line. All colour comes from .term__* in
    css/apps.css — nothing here hardcodes a hex.
+
+   It opens as a normal window anywhere; on the Linux drive the
+   wallpaper terminal (shell/deskterm.js) mounts this same engine.
+
+   Pipes: `a | b | c`. Each stage's output is collected (put() fills
+   `cap` instead of the screen) and handed to the next command as its
+   stdin, the fourth argument of run(). Messages meant for the person
+   (ok, dim, err) always go to the screen. `> file` and `>> file` on a
+   stage write its output to a file.
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import * as UC from '../core/usercmds.js';
+import * as M from '../core/metrics.js';
 
 const BOOT = Date.now();
 const ACCENTS = ['aether', 'violet', 'azure', 'mint', 'amber'];
+/* the first accent is stored as 'aether' but called "static" to the person */
+const accentName = id => (id === 'aether' ? 'static' : id);
+const accentId = name => (name === 'static' ? 'aether' : name);
+const NA = 'not available to a web page';
 
 /* palette swatches for neofetch — tokens, not literals */
 const PAL = ['--bg-2', '--aether-900', '--aether-700', '--aether-500',
@@ -32,32 +46,112 @@ const ART = [
   '         \\  /  \\ /',
   '          \\/____\\/',
   '',
-  '      a e t h e r',
-];
-
-const PROCS = [
-  [1, 'root', 0.0, 0.1, '/sbin/aetherinit'],
-  [412, 'root', 0.3, 0.4, 'aether-compositor --wayland'],
-  [455, 'root', 0.1, 0.2, 'aetherd --system'],
-  [781, 'aether', 2.4, 1.8, 'aether-shell'],
-  [802, 'aether', 0.6, 0.9, 'aether-widgets'],
-  [860, 'aether', 0.2, 0.3, 'aether-notifyd'],
-  [913, 'aether', 0.4, 0.5, 'pipewire'],
-  [988, 'aether', 0.1, 0.3, 'aether-indexer --idle'],
+  '      s t a t i c',
 ];
 
 const GROUPS = [
-  ['Filesystem', ['ls', 'cd', 'pwd', 'cat', 'tree', 'find', 'mkdir', 'touch', 'rm', 'mv', 'cp', 'echo', 'open', 'stat', 'du']],
-  ['Text', ['grep', 'head', 'tail', 'wc']],
+  ['Filesystem', ['ls', 'cd', 'pwd', 'cat', 'tree', 'find', 'mkdir', 'touch', 'rm', 'mv', 'cp', 'echo', 'open', 'stat', 'du', 'zip', 'unzip']],
+  ['Text', ['grep', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'diff']],
   ['System', ['neofetch', 'uname', 'whoami', 'hostname', 'date', 'uptime', 'df', 'free', 'ps', 'top', 'metrics']],
   ['Network', ['curl', 'proxy', 'weather', 'define']],
   ['Tools', ['calc', 'hash', 'base64', 'rot13', 'reverse', 'count', 'color', 'uuid']],
   ['Fun', ['roll', 'flip', '8ball', 'matrix']],
   ['Library', ['games', 'anime', 'roblox']],
-  ['Shell', ['help', 'history', 'clear', 'exit', 'apps', 'launch', 'close', 'settings', 'system', 'theme', 'wallpaper', 'music', 'volume', 'notify', 'which', 'man', 'aether', 'command']],
+  ['Productivity', ['todo', 'note', 'timer']],
+  ['Shell', ['help', 'history', 'clear', 'exit', 'apps', 'launch', 'close', 'settings', 'system', 'theme', 'wallpaper', 'music', 'volume', 'notify', 'which', 'man', 'alias', 'unalias', 'static', 'command']],
 ];
 
-const ALIAS = { fetch: 'neofetch', cls: 'clear', quit: 'exit', '?': 'help' };
+const ALIAS = { fetch: 'neofetch', cls: 'clear', quit: 'exit', '?': 'help', aether: 'static' };
+
+/* ---------------- manual pages ------------------------------------------
+   `man <command>` prints NAME, SYNOPSIS (from the command), DESCRIPTION,
+   OPTIONS, EXAMPLES and SEE ALSO. Every command has an entry here; the
+   terminal suite checks that none is missing. e: [what you type, what it does]. */
+const MAN = {
+  ls: { d: 'Lists what is in a folder. With several paths it labels each one.', o: [['-a', 'include hidden names (starting with a dot)'], ['-l', 'one line each: permissions, size, date, name']], e: [['ls', 'the current folder'], ['ls -l ~/Documents', 'details for Documents'], ['ls | grep png', 'only the names containing png']], s: ['tree', 'find', 'cd'] },
+  cd: { d: 'Changes the current folder. With no path it goes home; "-" goes back to the previous folder.', o: [], e: [['cd Documents', 'into Documents'], ['cd ..', 'up one'], ['cd -', 'back where you were']], s: ['pwd', 'ls'] },
+  pwd: { d: 'Prints the full path of the current folder.', o: [], e: [['pwd', 'where am I']], s: ['cd'] },
+  cat: { d: 'Prints files. With several it labels each. In a pipe, with no file, it passes its input through.', o: [], e: [['cat notes.txt', 'show a file'], ['cat a.txt b.txt', 'both, labelled'], ['cat notes.txt | wc -l', 'count its lines']], s: ['head', 'tail', 'grep'] },
+  tree: { d: 'Draws a folder and what is inside it, two levels deep unless told otherwise (at most 5).', o: [['-L N', 'how many levels']], e: [['tree', 'this folder'], ['tree -L 3 ~/Documents', 'three levels']], s: ['ls', 'find'] },
+  find: { d: 'Searches every file and folder name in StaticOS for some text.', o: [], e: [['find report', 'names containing "report"']], s: ['grep', 'ls'] },
+  mkdir: { d: 'Makes folders. The parent has to exist.', o: [], e: [['mkdir Notes', 'one folder'], ['mkdir a b c', 'three']], s: ['touch', 'rm'] },
+  touch: { d: 'Makes an empty file, or marks an existing one as just changed.', o: [], e: [['touch todo.txt', 'new empty file']], s: ['mkdir', 'echo'] },
+  rm: { d: 'Removes files or folders by moving them to the Trash. Inside the Trash it deletes for good.', o: [['-r', 'needed for a folder']], e: [['rm old.txt', 'to the Trash'], ['rm -r Old', 'a folder and what is in it']], s: ['mv', 'ls'] },
+  mv: { d: 'Moves a file or folder into another folder, or renames it.', o: [], e: [['mv a.txt Documents', 'move into Documents'], ['mv a.txt b.txt', 'rename']], s: ['cp', 'rm'] },
+  cp: { d: 'Copies a file, or a whole folder with -r.', o: [['-r', 'copy a folder and what is in it']], e: [['cp a.txt b.txt', 'a copy'], ['cp -r Photos Backup', 'a folder']], s: ['mv', 'zip'] },
+  echo: { d: 'Prints its words. "> file" writes them to a file instead, ">> file" adds to the end.', o: [], e: [['echo hello', 'print hello'], ['echo buy milk >> todo.txt', 'add a line to a file'], ['echo b a b | wc -w', 'in a pipe']], s: ['cat', 'touch'] },
+  open: { d: 'Opens a file in the app that handles it.', o: [], e: [['open photo.png', 'in Photos'], ['open notes.txt', 'in Notes']], s: ['launch'] },
+  stat: { d: 'Shows a file\'s type and size, and its line count or the number of items.', o: [], e: [['stat notes.txt', 'details']], s: ['du', 'ls'] },
+  du: { d: 'Adds up how much space a folder takes and how many files are in it.', o: [], e: [['du', 'this folder'], ['du ~/Pictures', 'Pictures']], s: ['stat', 'df'] },
+  zip: { d: 'Packs files and folders into a real .zip beside them. They must all be in one folder. A name already taken gets " 2", " 3"…, nothing is overwritten.', o: [], e: [['zip Documents', 'makes Documents.zip'], ['zip homework.zip a.txt b.txt', 'a named archive'], ['unzip -l homework.zip', 'look inside']], s: ['unzip', 'cp'] },
+  unzip: { d: 'Unpacks a .zip into a new folder named after it.', o: [['-l', 'only list what is inside'], ['-h', 'unpack here, in the archive\'s own folder']], e: [['unzip homework.zip', 'into a folder'], ['unzip -l homework.zip', 'the contents']], s: ['zip'] },
+  grep: { d: 'Prints the lines that match a pattern (a regular expression), from files or from a pipe.', o: [['-i', 'ignore case'], ['-n', 'show line numbers'], ['-v', 'lines that do not match'], ['-c', 'only count the matching lines'], ['-r', 'search inside a folder']], e: [['grep -i hello notes.txt', 'in one file'], ['grep -rn TODO ~/Code', 'through a folder'], ['ls | grep png', 'in a pipe']], s: ['find', 'sort', 'wc'] },
+  head: { d: 'Prints the first lines of a file or of piped text (10 unless told).', o: [['-n N', 'how many lines (head -3 works too)']], e: [['head -n 5 notes.txt', 'first five'], ['ls | head -3', 'first three names']], s: ['tail', 'cat'] },
+  tail: { d: 'Prints the last lines of a file or of piped text (10 unless told).', o: [['-n N', 'how many lines (tail -3 works too)']], e: [['tail log.txt', 'the last ten'], ['history | tail -5', 'your last five commands']], s: ['head', 'cat'] },
+  wc: { d: 'Counts lines, words and bytes in files or piped text.', o: [['-l', 'lines only'], ['-w', 'words only'], ['-c', 'bytes only']], e: [['wc notes.txt', 'all three'], ['cat notes.txt | wc -l', 'just the lines']], s: ['grep', 'count'] },
+  sort: { d: 'Sorts lines alphabetically, from files or a pipe.', o: [['-r', 'reverse'], ['-n', 'by the number each line starts with'], ['-u', 'drop repeated lines']], e: [['sort names.txt', 'A to Z'], ['ls | sort -r', 'Z to A']], s: ['uniq', 'cut'] },
+  uniq: { d: 'Collapses lines that repeat right after each other. Sort first to catch every repeat.', o: [['-c', 'put the number of repeats in front'], ['-d', 'only lines that repeat']], e: [['sort words.txt | uniq -c', 'how often each word appears']], s: ['sort', 'wc'] },
+  cut: { d: 'Takes part of each line: some fields split by a character, or some characters.', o: [['-d C', 'the character that splits fields (tab if left out)'], ['-f LIST', 'which fields: 1, 1,3 or 2-4'], ['-c LIST', 'which characters, same kind of list']], e: [['cut -d , -f 2 data.csv', 'the second column of a CSV'], ['cut -c 1-3 names.txt', 'the first three letters']], s: ['sort', 'grep'] },
+  diff: { d: 'Shows how two text files differ: lines starting with - are only in the first, + only in the second, with two lines of context around each change.', o: [], e: [['diff old.txt new.txt', 'what changed']], s: ['cat', 'grep'] },
+  neofetch: { d: 'Prints a card about this StaticOS: only what the browser can really tell, with "not available" where it cannot.', o: [], e: [['neofetch', 'the card']], s: ['system', 'uname'] },
+  uname: { d: 'Prints the system name; -a adds the host, platform and browser. A web page has no kernel, so there is no version.', o: [['-a', 'everything it knows']], e: [['uname -a', 'the full line']], s: ['neofetch'] },
+  whoami: { d: 'Prints your handle.', o: [], e: [['whoami', 'who am I']], s: ['hostname'] },
+  hostname: { d: 'Prints this computer\'s name inside StaticOS.', o: [], e: [['hostname', 'its name']], s: ['whoami'] },
+  date: { d: 'Prints today\'s date and the time.', o: [], e: [['date', 'right now']], s: ['uptime', 'timer'] },
+  uptime: { d: 'How long this page has been open. The browser does not know when the computer started.', o: [], e: [['uptime', 'session time']], s: ['top'] },
+  df: { d: 'Shows this site\'s storage quota as the browser reports it. Disks and other mounts are not visible to a web page.', o: [], e: [['df', 'used and free']], s: ['du', 'free'] },
+  free: { d: 'Shows the JavaScript heap where the browser reports it (Chromium). Total and free RAM are not visible to a web page.', o: [], e: [['free', 'memory']], s: ['top', 'df'] },
+  ps: { d: 'Lists the windows open in this session. Other processes cannot be seen from a web page.', o: [], e: [['ps', 'open windows']], s: ['top', 'close'] },
+  top: { d: 'A snapshot of what the browser can measure: open windows, JS heap and storage.', o: [], e: [['top', 'a snapshot']], s: ['metrics', 'ps'] },
+  metrics: { d: 'Real readings: frame rate, heap, storage, transfer, page load, cores and windows, then a list of what a browser cannot measure.', o: [], e: [['metrics', 'everything measurable']], s: ['top'] },
+  apps: { d: 'Lists every installed app with its id and category.', o: [], e: [['apps', 'the list'], ['apps | grep -i games', 'search it']], s: ['launch'] },
+  launch: { d: 'Opens an app by its id (see apps).', o: [], e: [['launch calculator', 'open Calculator']], s: ['apps', 'close'] },
+  close: { d: 'Closes an app\'s windows, or all of them with "all". The terminal itself stays.', o: [], e: [['close notes', 'close Notes'], ['close all', 'close every window']], s: ['launch', 'ps'] },
+  settings: { d: 'Opens Settings, optionally at one section.', o: [], e: [['settings', 'open it'], ['settings keyboard', 'at Keyboard']], s: ['theme', 'wallpaper'] },
+  system: { d: 'A snapshot of this StaticOS: version, drive, windows, apps, connection and storage.', o: [], e: [['system', 'the snapshot']], s: ['neofetch'] },
+  theme: { d: 'Sets the accent colour: static, violet, azure, mint or amber.', o: [], e: [['theme mint', 'switch to mint']], s: ['static', 'wallpaper'] },
+  wallpaper: { d: 'Lists wallpapers (the current one has a star) or sets one by id.', o: [], e: [['wallpaper', 'list them'], ['wallpaper <id>', 'set one']], s: ['theme', 'settings'] },
+  music: { d: 'Controls the Music app: play, pause, next, prev, open, or status for what is playing.', o: [], e: [['music play', 'play'], ['music status', 'what is on']], s: ['volume'] },
+  volume: { d: 'Sets the output volume from 0 to 100.', o: [], e: [['volume 40', 'forty percent']], s: ['music'] },
+  notify: { d: 'Raises a desktop notification with your words.', o: [], e: [['notify build finished', 'a toast']], s: ['timer'] },
+  which: { d: 'Says whether a command exists in this shell and what an alias stands for.', o: [], e: [['which ls', 'is it there'], ['which fetch', 'an alias for neofetch']], s: ['man', 'alias'] },
+  man: { d: 'Shows the manual page for a command, including your own aliases and commands.', o: [], e: [['man grep', 'how grep works'], ['help', 'every command, one line each']], s: ['help', 'which'] },
+  help: { d: 'Lists every command in groups, then your own commands.', o: [], e: [['help', 'the list'], ['help | grep -i zip', 'find one']], s: ['man'] },
+  history: { d: 'Prints the commands you typed in this terminal. Press Ctrl+R to search them as you type.', o: [['-c', 'forget them all']], e: [['history', 'the list'], ['history | grep git', 'search it'], ['history -c', 'clear it']], s: ['alias'] },
+  clear: { d: 'Wipes the scrollback. Ctrl+L does the same.', o: [], e: [['clear', 'start fresh']], s: ['history'] },
+  exit: { d: 'Closes this terminal window. On the Linux desktop it logs out and starts a fresh session.', o: [], e: [['exit', 'bye']], s: ['close'] },
+  alias: { d: 'Gives a command a short name. Aliases are saved as lines in ~/.staticrc, which runs each time a terminal starts. With no arguments it lists them. Edit ~/.staticrc in Notes or Code to add any commands you want at start.', o: [], e: [['alias gs=games', 'gs now runs games'], ['alias ll="ls -l"', 'with options'], ['alias', 'list them']], s: ['unalias', 'which'] },
+  unalias: { d: 'Removes an alias, and its line in ~/.staticrc.', o: [], e: [['unalias gs', 'forget gs']], s: ['alias'] },
+  todo: { d: 'Your Static Tasks list, from the terminal. It reads and writes the same lists as the Tasks app and the To-dos widget. Numbers stay the same between listings.', o: [['add TEXT --due DAY', 'a new task; DAY is today, tomorrow or YYYY-MM-DD'], ['done N / undo N', 'tick or untick task N'], ['rm N', 'delete task N'], ['-a', 'with the list: show finished ones too']], e: [['todo add read chapter 4 --due tomorrow', 'a task due tomorrow'], ['todo', 'the open ones'], ['todo done 2', 'tick the second']], s: ['note', 'timer'] },
+  note: { d: 'Your Notes, from the terminal: the same notes the Notes app shows. Close the Notes window first when adding, or it would overwrite the new note.', o: [['add TEXT', 'a new note'], ['show N', 'print note N'], ['open [N]', 'open Notes, at note N']], e: [['note add call dentist friday', 'a quick note'], ['note', 'the list'], ['note show 1', 'read it']], s: ['todo', 'timer'] },
+  timer: { d: 'Starts a timer that goes off with a notification, using the same reminders as the rest of StaticOS (they show in Reminders). From 1 second to 24 hours.', o: [['list', 'running timers'], ['rm N', 'cancel timer N']], e: [['timer 10m', 'ten minutes'], ['timer 1h30m tea', 'a labelled one'], ['timer list', 'what is running']], s: ['todo', 'notify'] },
+  static: { d: 'Controls StaticOS itself: accents, the dock, and a short about card.', o: [], e: [['static theme list', 'the accents'], ['static theme set violet', 'change it'], ['static dock reset', 'default dock'], ['static about', 'a short card']], s: ['theme', 'system'] },
+  command: { d: 'Makes your own commands out of small JavaScript files. They run in a sandbox: they cannot see your files, settings or accounts, and stop after 20 seconds or Ctrl+C.', o: [], e: [['command new hello', 'start from a template'], ['command list', 'yours'], ['command remove hello', 'to the Trash']], s: ['help'] },
+  games: { d: 'Searches the Static Games catalogue by name.', o: [], e: [['games mario', 'matches'], ['launch aether-games', 'open the app']], s: ['anime', 'roblox'] },
+  roblox: { d: 'Searches Roblox experiences in the catalogue, with how many are playing.', o: [], e: [['roblox obby', 'matches']], s: ['games'] },
+  anime: { d: 'Searches the anime library by title.', o: [], e: [['anime naruto', 'matches']], s: ['games'] },
+  curl: { d: 'Fetches a URL through the Static proxy and prints the readable text.', o: [], e: [['curl example.com', 'a page as text']], s: ['proxy'] },
+  proxy: { d: 'Opens Static Proxy, optionally at a site.', o: [], e: [['proxy example.com', 'open there']], s: ['curl'] },
+  weather: { d: 'The current weather for a city, from Open-Meteo (needs internet).', o: [], e: [['weather Paris', 'now in Paris']], s: ['define'] },
+  define: { d: 'Looks a word up in dictionaryapi.dev (needs internet).', o: [], e: [['define serendipity', 'its meanings']], s: ['weather'] },
+  calc: { d: 'A calculator for + - * / % ^ and ( ), with sqrt, sin, cos, tan, abs, log, ln, round, floor, ceil, pi and e.', o: [], e: [['calc 2 * (3 + 4)', '14'], ['calc sqrt(144)', '12']], s: ['count'] },
+  hash: { d: 'The SHA-256 of some text, as 64 hex characters.', o: [], e: [['hash hello', 'its SHA-256']], s: ['base64', 'uuid'] },
+  base64: { d: 'Encodes text as base64, or decodes it with -d.', o: [['-d', 'decode']], e: [['base64 hello', 'aGVsbG8='], ['base64 -d aGVsbG8=', 'hello']], s: ['hash', 'rot13'] },
+  rot13: { d: 'Rotates every letter 13 places; do it twice to undo it.', o: [], e: [['rot13 hello', 'uryyb']], s: ['base64'] },
+  reverse: { d: 'Prints text backwards.', o: [], e: [['reverse stressed', 'desserts']], s: ['rot13'] },
+  count: { d: 'Counts the characters, words and lines of the text you type after it.', o: [], e: [['count the quick brown fox', 'counts']], s: ['wc'] },
+  color: { d: 'Shows a colour with its rgb and hsl values.', o: [], e: [['color #ff456d', 'a swatch'], ['color 0af', 'short hex works']], s: ['theme'] },
+  uuid: { d: 'Makes a random UUID.', o: [], e: [['uuid', 'a fresh one']], s: ['hash'] },
+  roll: { d: 'Rolls dice written like 2d6 (two six-sided dice). The default is one d6.', o: [], e: [['roll 2d6', 'two dice'], ['roll d20', 'one twenty-sided']], s: ['flip', '8ball'] },
+  flip: { d: 'Flips a coin.', o: [], e: [['flip', 'heads or tails']], s: ['roll'] },
+  '8ball': { d: 'Ask a yes/no question and get an answer.', o: [], e: [['8ball will it rain', 'it shakes']], s: ['flip'] },
+  matrix: { d: 'Digital rain for a few seconds. Press any key to stop it.', o: [], e: [['matrix', 'rain']], s: ['cmatrix'] },
+  cmatrix: { d: 'The same as matrix.', o: [], e: [['cmatrix', 'rain']], s: ['matrix'] },
+  fortune: { d: 'A fortune.', o: [], e: [['fortune', 'one fortune']], s: ['cowsay'] },
+  cowsay: { d: 'A cow says your words.', o: [], e: [['cowsay moo', 'a cow']], s: ['fortune'] },
+  sl: { d: 'What happens when you mistype ls.', o: [], e: [['sl', 'choo choo']], s: ['ls'] },
+  sudo: { d: 'Not in the sudoers file. This incident will be reported (nowhere).', o: [], e: [['sudo rm -rf /', 'no']], s: ['whoami'] },
+};
 
 const tokenize = s => (s.match(/"[^"]*"|'[^']*'|\S+/g) || []).map(t => t.replace(/^["']|["']$/g, ''));
 
@@ -82,14 +176,12 @@ defineApp({
   icon: 'terminal',
   g1: '#6f7a91', g2: '#1b1f2b',
   category: 'System',
-  keywords: ['shell', 'console', 'staticsh', 'cli', 'bash', 'neofetch'],
+  keywords: ['terminal', 'shell', 'console', 'staticsh', 'cli', 'command line', 'bash', 'neofetch'],
   desc: 'A working shell for StaticOS',
-  /* Hidden: there is no Terminal window. The engine below is mounted into
-     the Linux drive's wallpaper by shell/deskterm.js, and every
-     open('terminal') is redirected there. Registered (not removed) so that
-     mount stays reachable. */
-  hidden: true,
-  win: { w: 600, h: 330, minW: 380, minH: 200, class: 'win--terminal' },
+  /* A normal window. On the Linux drive the same engine is also mounted
+     into the wallpaper by shell/deskterm.js, which answers open('terminal')
+     there unless a window is asked for ({ window: true }). */
+  win: { w: 680, h: 420, minW: 380, minH: 200, class: 'win--terminal' },
 
   mount(ctx) {
     const { root, win, opts, api } = ctx;
@@ -117,7 +209,12 @@ defineApp({
       hist: [], hi: -1, draft: '',
       old: vfs.HOME, back: [], fwd: [],
       running: null,          /* a custom command in flight: { name, stop } */
+      alias: new Map(),       /* alias name -> what it stands for (saved in ~/.staticrc) */
+      rc: false,              /* ~/.staticrc is running: stay quiet, don't rewrite it */
     };
+    const RC_FILE = () => `${vfs.HOME}/.staticrc`;
+    /* a pipeline stage's output: put() fills this instead of the screen */
+    let cap = null;
 
     /* ---------------- dom ------------------ */
     const input = h('input', {
@@ -138,14 +235,21 @@ defineApp({
     /* ---------------- writing -------------- */
     const L = (...kids) => h('span.term__line', ...kids);
     const T = (t, cls) => h(cls ? `span.${cls}` : 'span', { text: String(t) });
-    function put(...nodes) {
+    function show(...nodes) {
       for (const n of nodes.flat()) if (n) out.insertBefore(n, inRow);
       out.scrollTop = out.scrollHeight;
     }
+    /* command output: collected when it feeds a pipe, else printed */
+    function put(...nodes) {
+      if (cap) { for (const n of nodes.flat()) if (n) cap.push(n.textContent); return; }
+      show(...nodes);
+    }
     const say = (t, cls) => put(L(T(t, cls)));
-    const err = t => say(t, 'term__err');
-    const ok = t => say(t, 'term__ok');
-    const dim = t => say(t, 'term__dim');
+    /* messages to the person always reach the screen, never a pipe */
+    const msg = (t, cls) => show(L(T(t, cls)));
+    const err = t => msg(t, 'term__err');
+    const ok = t => msg(t, 'term__ok');
+    const dim = t => msg(t, 'term__dim');
     const gap = () => put(L(T(' ')));
     /* inline chip — the kit has no inline swatch, so this is a one-off style */
     const swatch = bg => h('i', { style: {
@@ -212,7 +316,9 @@ defineApp({
     }
 
     /* ---------------- system bits ---------- */
-    const upSecs = () => (store.get('system.uptimeBase', 0) + Math.floor((Date.now() - BOOT) / 1000));
+    /* Session uptime: how long this page has been open. The browser knows
+       nothing about when the computer started. */
+    const upSecs = () => Math.floor(performance.now() / 1000);
     function upStr() {
       const s = upSecs(), hh = Math.floor(s / 3600), mm = Math.floor(s % 3600 / 60);
       const parts = [];
@@ -222,12 +328,8 @@ defineApp({
     }
     const clockStr = (d = new Date()) =>
       `${fmt.pad2(d.getHours())}:${fmt.pad2(d.getMinutes())}:${fmt.pad2(d.getSeconds())}`;
-    const memTotal = () => store.get('system.ramTotal', 16) * 1e9 / 1024 ** 3;
-    const memUsed = () => memTotal() * (api.live?.ram ?? 38) / 100;
-    const loadAvg = () => {
-      const c = (api.live?.cpu ?? 23) / 100;
-      return [c * 2.2, c * 2.0 + 0.1, c * 1.7 + 0.16].map(v => v.toFixed(2)).join(', ');
-    };
+    /* navigator.deviceMemory is rounded and capped by the browser (never above 8) */
+    const memHint = () => (navigator.deviceMemory ? `${navigator.deviceMemory} GB or more (rounded by the browser)` : NA);
     const meter = (pct, w = 16) => {
       const n = fmt.clamp(Math.round(pct / 100 * w), 0, w);
       return `[${'#'.repeat(n)}${'-'.repeat(w - n)}]`;
@@ -236,24 +338,22 @@ defineApp({
 
     /* ---------------- neofetch ------------- */
     function fetchBlock() {
-      const sys = api.system, live = api.live || {}, u = store.get('user.handle', 'aether');
+      const sys = api.system, hw = M.hardware(), u = store.get('user.handle', 'static');
       const rows = [
-        ['OS', `${sys.os} x86_64`],
-        ['Host', 'Static Ridge 14 (rev 3.0)'],
-        ['Kernel', sys.kernel],
-        ['Uptime', upStr()],
-        ['Packages', sys.packages],
+        ['OS', sys.os],
+        ['Host', `${hw.browser} on ${hw.platform}`],
+        ['Uptime', `${upStr()} (this session)`],
         ['Shell', sys.shell],
-        ['Resolution', `${sys.resolution} @ 165Hz`],
+        ['Display', `${hw.screen} @ ${hw.dpr}x`],
         ['DE', sys.de],
         ['WM', sys.wm],
         /* the live accent — a drive or a wallpaper theme may be tinting it */
-        ['Theme', `${sys.theme} / accent ${getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || store.get('prefs.accent')}`],
+        ['Theme', `${sys.theme} / accent ${getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || accentName(store.get('prefs.accent'))}`],
         ['Icons', sys.icons],
         ['Terminal', sys.term],
-        ['CPU', `${sys.cpu} (16) @ 5.1GHz [${live.cpu ?? 0}%]`],
-        ['GPU', `${sys.gpu} [${live.gpu ?? 0}%]`],
-        ['Memory', `${memUsed().toFixed(2)}GiB / ${memTotal().toFixed(2)}GiB`],
+        ['CPU', hw.cores ? `${hw.cores} logical cores (model ${NA})` : NA],
+        ['GPU', NA],
+        ['Memory', memHint()],
       ];
       const head = opts?.who ? WHO : `${u}@${sys.hostname}`;
       const kv = h('dl.term__kv',
@@ -269,7 +369,7 @@ defineApp({
 
     /* ---------------- listings ------------- */
     const permsOf = n => n.type === 'dir' ? 'drwxr-xr-x'
-      : /\.(sh|aether)$/.test(n.name) ? '-rwxr-xr-x' : '-rw-r--r--';
+      : /\.(sh|static|aether)$/.test(n.name) ? '-rwxr-xr-x' : '-rw-r--r--';
 
     function lsLong(kids) {
       dim(`total ${kids.length}`);
@@ -278,7 +378,7 @@ defineApp({
         const when = `${fmt.monthName(d, 1)} ${String(d.getDate()).padStart(2)} ${fmt.pad2(d.getHours())}:${fmt.pad2(d.getMinutes())}`;
         put(L(
           T(permsOf(n) + '  ', 'term__dim'),
-          T('aether  aether  ', 'term__dim'),
+          T('static  static  ', 'term__dim'),
           T(String(n.type === 'dir' ? '-' : fmt.fmtBytes(n.size)).padStart(8) + '  ', 'term__key'),
           T(when + '  ', 'term__dim'),
           T(n.name, n.type === 'dir' ? 'term__path' : null)));
@@ -330,12 +430,13 @@ defineApp({
     /** true when `dest` is `src` itself or lives underneath it */
     const inside = (dest, src) => dest === src || dest.startsWith(src + '/');
 
-    function setAccent(v) {
-      if (!ACCENTS.includes(v)) { err(`theme: unknown accent '${v}' — ${ACCENTS.join(', ')}`); return; }
+    function setAccent(name) {
+      const v = accentId(name);
+      if (!ACCENTS.includes(v)) { err(`theme: unknown accent '${name}' — ${ACCENTS.map(accentName).join(', ')}`); return; }
       store.set('prefs.accent', v);
       document.documentElement.setAttribute('data-accent', v);
       api.bus.emit('theme:change', api.prefs);
-      ok(`accent set to ${v}`);
+      ok(`accent set to ${accentName(v)}`);
     }
 
     /* ---------------- commands ------------- */
@@ -355,7 +456,7 @@ defineApp({
       if (mine.length) for (const n of mine) put(L(T('  ' + n.padEnd(11), 'term__key'), T('your command (~/.commands)', null)));
       else dim("  none yet — 'command new <name>' or 'command import <name>'");
       gap();
-      dim('Tab completes · ↑/↓ history · ⌃L clear · ⌃C cancel · ⌃D exit');
+      dim('Tab completes · ↑/↓ history · ⌃R search history · ⌃L clear · ⌃C cancel · ⌃D exit');
     });
 
     /* ---------------- your own commands (core/usercmds.js) ---------- */
@@ -492,79 +593,207 @@ defineApp({
       }
     }
 
-    cmd('grep', 'grep [-i] [-n] [-r] <pattern> <path…>', 'search file contents', (rest, flags) => {
+    /** The text a filter reads: the files named, or what was piped in.
+        -> [[label, text]…], or null when there is neither. */
+    function sources(name, files, stdin) {
+      if (!files.length) return stdin != null ? [['', stdin]] : null;
+      const got = [];
+      for (const a of files) {
+        const node = vfs.node(resolve(a));
+        if (!node) { err(`${name}: ${a}: No such file or directory`); continue; }
+        if (node.type === 'dir') { err(`${name}: ${a}: Is a directory`); continue; }
+        got.push([a, String(node.content || '')]);
+      }
+      return got;
+    }
+    /* a file's lines: "a\nb\n" is two lines, not three */
+    const linesOf = body => { const l = String(body).split('\n'); if (l.length && l[l.length - 1] === '') l.pop(); return l; };
+
+    cmd('grep', 'grep [-i] [-n] [-v] [-c] [-r] <pattern> [path…]', 'search file contents', (rest, flags, argstr, stdin) => {
       if (rest.length < 1) return usage('grep');
       const [pattern, ...paths] = rest;
-      const targets = paths.length ? paths : ['.'];
       let re;
-      try { re = new RegExp(pattern, flags.i ? 'i' : ''); }
+      try { re = new RegExp(pattern, flags.has('i') ? 'i' : ''); }
       catch (e) { return err(`grep: invalid pattern: ${e.message}`); }
+      const want = line => re.test(line) !== flags.has('v');
 
       let hits = 0;
-      for (const t of targets) {
+      const scan = (label, body) => {
+        let n = 0;
+        linesOf(body).forEach((line, i) => {
+          if (!want(line)) return;
+          n++; hits++;
+          if (flags.has('c')) return;
+          put(L(
+            label ? T(label, 'term__key') : T(''),
+            flags.has('n') ? T(`${i + 1}:`, 'term__dim') : T(''),
+            T(line.length > 400 ? `${line.slice(0, 400)}…` : line)));
+        });
+        if (flags.has('c')) put(L(label ? T(label, 'term__key') : T(''), T(String(n))));
+      };
+      if (!paths.length && stdin != null) { scan('', stdin); if (!hits && !flags.has('c')) dim('no matches'); return; }
+      for (const t of paths.length ? paths : ['.']) {
         const base = resolve(t);
         const node = vfs.node(base);
         if (!node) { err(`grep: ${t}: No such file or directory`); continue; }
-        if (node.type === 'dir' && !flags.r) { err(`grep: ${t}: Is a directory (use -r)`); continue; }
+        if (node.type === 'dir' && !flags.has('r')) { err(`grep: ${t}: Is a directory (use -r)`); continue; }
         const files = node.type === 'dir' ? [...walkFiles(base)] : [[base, node]];
         for (const [path, file] of files) {
           const body = String(file.content || '');
-          if (!body) continue;
-          body.split('\n').forEach((line, i) => {
-            if (!re.test(line)) return;
-            hits++;
-            const label = files.length > 1 ? `${path}:` : '';
-            put(L(
-              label ? T(label, 'term__key') : T(''),
-              flags.n ? T(`${i + 1}:`, 'term__dim') : T(''),
-              T(line.length > 400 ? `${line.slice(0, 400)}…` : line)));
-          });
+          if (body) scan(files.length > 1 ? `${path}:` : '', body);
         }
       }
-      if (!hits) dim('no matches');
+      if (!hits && !flags.has('c')) dim('no matches');
     });
 
-    cmd('head', 'head [-n N] <file…>', 'first lines of a file', (rest, flags) => {
-      if (!rest.length) return usage('head');
-      sliceFile(rest, flags, true);
-    });
-
-    cmd('tail', 'tail [-n N] <file…>', 'last lines of a file', (rest, flags) => {
-      if (!rest.length) return usage('tail');
-      sliceFile(rest, flags, false);
-    });
-
-    function sliceFile(rest, flags, fromTop) {
-      const n = Math.max(1, Number(flags.n) || 10);
-      const files = rest.filter(a => !/^\d+$/.test(a));
-      for (const a of files) {
-        const node = vfs.node(resolve(a));
-        if (!node) { err(`${fromTop ? 'head' : 'tail'}: ${a}: No such file or directory`); continue; }
-        if (node.type === 'dir') { err(`${fromTop ? 'head' : 'tail'}: ${a}: Is a directory`); continue; }
-        const lines = String(node.content || '').split('\n');
-        if (files.length > 1) put(L(T(`==> ${a} <==`, 'term__dim')));
-        const take = fromTop ? lines.slice(0, n) : lines.slice(-n);
-        for (const line of take) put(L(T(line)));
+    /* `head -n 3 f`, `head -3 f`, `head f`: the count may come as a flag or as -N */
+    function countArg(rest, flags) {
+      let n = 10, took = false;
+      const files = [];
+      for (const a of rest) {
+        if (/^-\d+$/.test(a)) n = +a.slice(1);
+        else if (flags.has('n') && !took && /^\d+$/.test(a)) { n = +a; took = true; }
+        else files.push(a);
+      }
+      return { n: Math.max(1, n), files };
+    }
+    cmd('head', 'head [-n N] [file…]', 'first lines of a file', (rest, flags, argstr, stdin) => sliceFile('head', rest, flags, stdin, true));
+    cmd('tail', 'tail [-n N] [file…]', 'last lines of a file', (rest, flags, argstr, stdin) => sliceFile('tail', rest, flags, stdin, false));
+    function sliceFile(name, rest, flags, stdin, fromTop) {
+      const { n, files } = countArg(rest, flags);
+      const src = sources(name, files, stdin);
+      if (!src) return usage(name);
+      for (const [label, body] of src) {
+        const lines = linesOf(body);
+        if (files.length > 1) put(L(T(`==> ${label} <==`, 'term__dim')));
+        for (const line of fromTop ? lines.slice(0, n) : lines.slice(-n)) put(L(T(line)));
       }
     }
 
-    cmd('wc', 'wc <file…>', 'count lines, words and bytes', rest => {
-      if (!rest.length) return usage('wc');
+    cmd('wc', 'wc [-l] [-w] [-c] [file…]', 'count lines, words and bytes', (rest, flags, argstr, stdin) => {
+      const src = sources('wc', rest, stdin);
+      if (!src) return usage('wc');
+      const any = flags.has('l') || flags.has('w') || flags.has('c');
+      const row = (l, w, b, label) => put(L(
+        ...(!any || flags.has('l') ? [T(String(l).padStart(7), 'term__key')] : []),
+        ...(!any || flags.has('w') ? [T(String(w).padStart(8))] : []),
+        ...(!any || flags.has('c') ? [T(String(b).padStart(9))] : []),
+        T(label ? '  ' + label : '', 'term__dim')));
       let tl = 0, tw = 0, tb = 0;
-      for (const a of rest) {
-        const node = vfs.node(resolve(a));
-        if (!node) { err(`wc: ${a}: No such file or directory`); continue; }
-        const body = String(node.content || '');
-        const l = body ? body.split('\n').length : 0;
+      for (const [label, body] of src) {
+        const l = linesOf(body).length;
         const w = body.trim() ? body.trim().split(/\s+/).length : 0;
         const b = new Blob([body]).size;
         tl += l; tw += w; tb += b;
-        put(L(T(String(l).padStart(7), 'term__key'), T(String(w).padStart(8)),
-              T(String(b).padStart(9)), T('  ' + a, 'term__dim')));
+        row(l, w, b, label);
       }
-      if (rest.length > 1) {
-        put(L(T(String(tl).padStart(7), 'term__key'), T(String(tw).padStart(8)),
-              T(String(tb).padStart(9)), T('  total', 'term__dim')));
+      if (src.length > 1) row(tl, tw, tb, 'total');
+    });
+
+    cmd('sort', 'sort [-r] [-n] [-u] [file…]', 'sort lines', (rest, flags, argstr, stdin) => {
+      const src = sources('sort', rest, stdin);
+      if (!src) return usage('sort');
+      const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+      let lines = src.flatMap(([, body]) => linesOf(body));
+      if (flags.has('n')) {
+        const num = x => { const m = /^\s*(-?\d+(?:\.\d+)?)/.exec(x); return m ? parseFloat(m[1]) : 0; };
+        lines.sort((a, b) => num(a) - num(b) || cmp(a, b));
+      } else lines.sort(cmp);
+      if (flags.has('u')) lines = lines.filter((l, i) => !i || l !== lines[i - 1]);
+      if (flags.has('r')) lines.reverse();
+      for (const l of lines) put(L(T(l)));
+    });
+
+    cmd('uniq', 'uniq [-c] [-d] [file]', 'collapse repeated neighbouring lines', (rest, flags, argstr, stdin) => {
+      const src = sources('uniq', rest.slice(0, 1), stdin);
+      if (!src) return usage('uniq');
+      const runs = [];
+      for (const [, body] of src) {
+        for (const l of linesOf(body)) {
+          const last = runs[runs.length - 1];
+          if (last && last.l === l) last.n++; else runs.push({ l, n: 1 });
+        }
+      }
+      for (const r of runs) {
+        if (flags.has('d') && r.n < 2) continue;
+        put(L(flags.has('c') ? T(String(r.n).padStart(7) + ' ', 'term__dim') : T(''), T(r.l)));
+      }
+    });
+
+    /* cut -d <char> -f <fields>   or   cut -c <columns>;  lists like 1,3 and ranges like 2-4 */
+    cmd('cut', 'cut -d <char> -f <list>  |  cut -c <list>  [file…]', 'pick fields or characters from each line', (rest, flags, argstr, stdin) => {
+      const toks = tokenize(argstr);
+      let delim = '\t', fields = null, chars = null;
+      const files = [];
+      for (let i = 0; i < toks.length; i++) {
+        const m = /^-([dfc])(.*)$/.exec(toks[i]);
+        if (!m) { files.push(toks[i]); continue; }
+        const v = m[2] !== '' ? m[2] : (toks[++i] ?? '');
+        if (m[1] === 'd') delim = v; else if (m[1] === 'f') fields = v; else chars = v;
+      }
+      const spec = fields ?? chars;
+      if (spec == null) return usage('cut');
+      const parts = [];
+      for (const piece of String(spec).split(',')) {
+        const m = /^(\d*)(-?)(\d*)$/.exec(piece);
+        if (!m || (!m[1] && !m[3])) return err(`cut: invalid list '${spec}'`);
+        parts.push([m[1] ? +m[1] : 1, m[2] ? (m[3] ? +m[3] : Infinity) : +m[1]]);
+      }
+      const inList = k => parts.some(([a, b]) => k >= a && k <= b);
+      if (fields != null && [...delim].length !== 1) return err('cut: the delimiter must be a single character');
+      const src = sources('cut', files, stdin);
+      if (!src) return usage('cut');
+      for (const [, body] of src) {
+        for (const line of linesOf(body)) {
+          if (fields != null) {
+            if (!line.includes(delim)) put(L(T(line)));
+            else put(L(T(line.split(delim).filter((_, k) => inList(k + 1)).join(delim))));
+          } else put(L(T([...line].filter((_, k) => inList(k + 1)).join(''))));
+        }
+      }
+    });
+
+    cmd('diff', 'diff <file1> <file2>', 'show how two files differ', rest => {
+      if (rest.length !== 2) return usage('diff');
+      const read = a => {
+        const node = vfs.node(resolve(a));
+        if (!node) { err(`diff: ${a}: No such file or directory`); return null; }
+        if (node.type === 'dir') { err(`diff: ${a}: Is a directory`); return null; }
+        return linesOf(node.content || '');
+      };
+      const A = read(rest[0]), B = read(rest[1]);
+      if (!A || !B) return;
+      if (A.length > 2000 || B.length > 2000) return err('diff: files over 2,000 lines are too long to compare here');
+      /* longest common subsequence, then walk it into -/+ lines */
+      const n = A.length, m = B.length;
+      const lcs = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+      for (let i = n - 1; i >= 0; i--) {
+        for (let j = m - 1; j >= 0; j--) {
+          lcs[i][j] = A[i] === B[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+        }
+      }
+      const ops = [];
+      let i = 0, j = 0;
+      while (i < n || j < m) {
+        if (i < n && j < m && A[i] === B[j]) { ops.push([' ', A[i], i + 1, j + 1]); i++; j++; }
+        else if (j < m && (i >= n || lcs[i][j + 1] >= lcs[i + 1][j])) { ops.push(['+', B[j], i + 1, j + 1]); j++; }
+        else { ops.push(['-', A[i], i + 1, j + 1]); i++; }
+      }
+      const changed = ops.map((o, k) => (o[0] !== ' ' ? k : -1)).filter(k => k >= 0);
+      if (!changed.length) return dim('the files are identical');
+      /* hunks: each change with 2 lines of context either side, merged when they touch */
+      const hunks = [];
+      for (const k of changed) {
+        const lo = Math.max(0, k - 2), hi = Math.min(ops.length - 1, k + 2);
+        const last = hunks[hunks.length - 1];
+        if (last && lo <= last[1] + 1) last[1] = hi; else hunks.push([lo, hi]);
+      }
+      put(L(T(`--- ${rest[0]}`, 'term__dim')), L(T(`+++ ${rest[1]}`, 'term__dim')));
+      for (const [lo, hi] of hunks) {
+        const seg = ops.slice(lo, hi + 1);
+        const na = seg.filter(o => o[0] !== '+').length, nb = seg.filter(o => o[0] !== '-').length;
+        put(L(T(`@@ -${seg[0][2]},${na} +${seg[0][3]},${nb} @@`, 'term__key')));
+        for (const [t, line] of seg) put(L(T(t + line, t === '-' ? 'term__err' : t === '+' ? 'term__ok' : null)));
       }
     });
 
@@ -610,18 +839,272 @@ defineApp({
       }
     });
 
-    cmd('man', 'man <command>', 'usage for a command', rest => {
+    cmd('man', 'man <command>', 'the manual page for a command', rest => {
       if (!rest.length) return usage('man');
-      const name = ALIAS[rest[0]] || rest[0];
-      const c = CMDS[name];
-      if (!c) return err(`man: no manual entry for ${rest[0]}`);
+      const asked = rest[0];
+      const name = ALIAS[asked] || asked;
+      const c = CMDS[name], page = MAN[name];
+      const mineAlias = S.alias.get(asked);
+      if (!c && mineAlias != null) {
+        say(asked.toUpperCase(), 'term__ok'); gap();
+        say('  ALIAS', 'term__dim');
+        put(L(T(`    ${asked} stands for: `), T(mineAlias, 'term__key')));
+        return dim('    saved in ~/.staticrc — "unalias ' + asked + '" removes it');
+      }
+      if (!c && UC.has(asked)) {
+        say(asked.toUpperCase(), 'term__ok'); gap();
+        say('  YOUR COMMAND', 'term__dim');
+        put(L(T(`    ${UC.fileOf(asked).replace(vfs.HOME, '~')}`)));
+        return dim(`    command show ${asked} prints it · command edit ${asked} changes it`);
+      }
+      if (!c) return err(`man: no manual entry for ${asked}`);
       say(name.toUpperCase(), 'term__ok');
+      gap();
+      say('  NAME', 'term__dim');
+      put(L(T(`    ${name} - ${c.d}`)));
       gap();
       say('  SYNOPSIS', 'term__dim');
       put(L(T('    ' + c.u, 'term__key')));
-      gap();
-      say('  DESCRIPTION', 'term__dim');
-      put(L(T('    ' + c.d)));
+      if (page) {
+        gap();
+        say('  DESCRIPTION', 'term__dim');
+        put(L(T('    ' + page.d)));
+        if (page.o.length) {
+          gap();
+          say('  OPTIONS', 'term__dim');
+          for (const [f, t] of page.o) put(L(T('    ' + f.padEnd(20), 'term__key'), T(t)));
+        }
+        gap();
+        say('  EXAMPLES', 'term__dim');
+        for (const [x, t] of page.e) put(L(T('    $ ' + x.padEnd(32), 'term__key'), T(t, 'term__dim')));
+        if (page.s?.length) {
+          gap();
+          say('  SEE ALSO', 'term__dim');
+          put(L(T('    ' + page.s.join(', '))));
+        }
+      }
+      if (ALIAS[asked]) { gap(); dim(`    (${asked} is another name for ${name})`); }
+    });
+
+    /* ---------------- zip, unzip (core/archive.js, the Files app's own) ---- */
+    const zipLine = r => `${r.files} file${r.files === 1 ? '' : 's'}${r.folders ? `, ${r.folders} folder${r.folders === 1 ? '' : 's'}` : ''}`;
+    cmd('zip', 'zip [name.zip] <file|folder…>', 'pack files into a .zip', async rest => {
+      let out = null, items = rest.slice();
+      if (items.length > 1 && /\.zip$/i.test(items[0]) && !vfs.node(resolve(items[0]))) out = items.shift();
+      if (!items.length) return usage('zip');
+      const dirs = new Set(), names = [];
+      for (const a of items) {
+        const p = resolve(a);
+        if (!vfs.node(p)) return err(`zip: ${a}: No such file or directory`);
+        dirs.add(vfs.parentPath(p)); names.push(vfs.baseName(p));
+      }
+      if (dirs.size > 1) return err('zip: everything has to be in the same folder — cd there first');
+      const dir = [...dirs][0];
+      const A = await import('../core/archive.js');
+      let r;
+      try { r = await A.compress(dir, names); } catch (e) { return err(`zip: ${e.message}`); }
+      let final = r.name;
+      if (out) {
+        const want = /\.zip$/i.test(out) ? out : `${out}.zip`;
+        if (vfs.baseName(want) !== want || want === '..') { /* a path: keep the generated name */ dim(`(kept the name ${r.name}: a zip's name can't be a path)`); }
+        else if (vfs.node(`${dir}/${want}`)) dim(`(${want} already exists, so it is ${r.name})`);
+        else if (vfs.rename(r.path, want)) final = want;
+      }
+      ok(`${final}: ${zipLine(r)}, ${fmt.fmtBytes(r.size)}`);
+      for (const s of r.skipped) dim(`  left out: ${s.name} — ${s.why}`);
+    });
+
+    cmd('unzip', 'unzip [-l] [-h] <file.zip>', 'unpack a .zip', async (rest, flags) => {
+      if (!rest.length) return usage('unzip');
+      const p = resolve(rest[0]);
+      const n = vfs.node(p);
+      if (!n || n.type !== 'file') return err(`unzip: ${rest[0]}: No such file`);
+      const A = await import('../core/archive.js');
+      if (flags.has('l')) {
+        let l;
+        try { l = await A.listing(p); } catch (e) { return err(`unzip: ${e.message}`); }
+        say('      Size  Name', 'term__dim');
+        for (const e of l.entries) put(L(T((e.dir ? '-' : fmt.fmtBytes(e.size)).padStart(10) + '  ', 'term__key'), T(e.name, e.dir ? 'term__path' : null)));
+        return dim(`${l.entries.length} entr${l.entries.length === 1 ? 'y' : 'ies'}, ${fmt.fmtBytes(l.size)} zipped`);
+      }
+      let r;
+      try { r = await A.extract(p, { here: flags.has('h') }); } catch (e) { return err(`unzip: ${e.message}`); }
+      ok(`unpacked ${zipLine(r)}${r.folder ? ` into ${sp(r.folder)}/` : ' here'}`);
+      for (const s of r.skipped) dim(`  skipped: ${s.name} — ${s.why}`);
+    });
+
+    /* ---------------- alias, ~/.staticrc ---------------------------------- */
+    const unq = v => v.trim().replace(/^(["'])([\s\S]*)\1$/, '$2');
+    const rcLines = () => { const t = vfs.read(RC_FILE()); return t == null ? [] : String(t).split('\n'); };
+    const rcSave = lines => { while (lines.length && !lines[lines.length - 1].trim()) lines.pop(); vfs.write(RC_FILE(), lines.length ? lines.join('\n') + '\n' : ''); };
+    const aliasLine = name => new RegExp(`^\\s*alias\\s+${name.replace(/[.\-]/g, '\\$&')}\\s*=`);
+    cmd('alias', 'alias [name=command]', 'give a command another name (saved in ~/.staticrc)', (rest, flags, argstr) => {
+      if (!argstr) {
+        if (!S.alias.size) return dim("no aliases — try: alias ll='ls -l'");
+        for (const [k, v] of [...S.alias].sort()) put(L(T(`alias ${k}=`, 'term__key'), T(`'${v}'`)));
+        return;
+      }
+      const m = /^([\w.-]+)\s*=\s*([\s\S]*)$/.exec(argstr);
+      if (!m) {
+        const v = S.alias.get(argstr.trim());
+        return v == null ? err(`alias: ${argstr.trim()}: not found`) : put(L(T(`alias ${argstr.trim()}=`, 'term__key'), T(`'${v}'`)));
+      }
+      const [, name] = m, value = unq(m[2]);
+      if (name === 'alias' || name === 'unalias') return err(`alias: '${name}' can't be an alias`);
+      if (!value) return err('alias: what should it stand for? — alias ll="ls -l"');
+      if (value.includes("'") && value.includes('"')) return err('alias: use either \' or " inside, not both');
+      S.alias.set(name, value);
+      if (S.rc) return;
+      const q = value.includes("'") ? '"' : "'";
+      const lines = rcLines().filter(l => !aliasLine(name).test(l));
+      lines.push(`alias ${name}=${q}${value}${q}`);
+      rcSave(lines);
+      ok(`alias ${name}='${value}'`);
+      dim('saved in ~/.staticrc, which runs when a terminal starts');
+    });
+    cmd('unalias', 'unalias <name>', 'remove an alias', rest => {
+      if (!rest.length) return usage('unalias');
+      for (const name of rest) {
+        const had = S.alias.delete(name);
+        const lines = rcLines(), kept = lines.filter(l => !aliasLine(name).test(l));
+        if (kept.length !== lines.length) rcSave(kept);
+        if (had || kept.length !== lines.length) ok(`removed alias ${name}`); else err(`unalias: ${name}: not found`);
+      }
+    });
+    /** Run ~/.staticrc: one command a line, # for comments. Quiet apart from one line. */
+    function runRc() {
+      const text = vfs.read(RC_FILE());
+      if (text == null) return;
+      const lines = String(text).split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).slice(0, 200);
+      if (!lines.length) return;
+      S.rc = true;
+      try { for (const l of lines) runLine(l, false); }
+      finally { S.rc = false; }
+      dim(`ran ~/.staticrc (${lines.length} line${lines.length === 1 ? '' : 's'})`);
+    }
+
+    /* ---------------- todo, note, timer: the apps' own data ------------------
+       todo reads and writes core/tasks.js (so reminders stay in sync), note the
+       Notes store through core/notesfmt.js, timer core/automations.js. */
+    const when = ms => { const d = new Date(ms); return `${fmt.monthName(d, 1)} ${d.getDate()}`; };
+    cmd('todo', 'todo [add <text> [--due day]|done N|undo N|rm N|-a]', 'your Static Tasks list', async (rest, flags, argstr) => {
+      const T2 = await import('../core/tasks.js');
+      const data = T2.read();
+      const rows = [];
+      for (const l of data.lists) for (const t of l.tasks) rows.push({ l, t });
+      const sub = (rest[0] || '').toLowerCase();
+      const pick = () => {
+        const i = Number(rest[1]);
+        if (!Number.isInteger(i) || i < 1 || i > rows.length) { err(`todo: no task ${rest[1] ?? ''} — 'todo -a' shows the numbers`); return null; }
+        return rows[i - 1];
+      };
+      if (sub === 'add') {
+        let text = argstr.replace(/^add\s+/i, '');
+        let due = null;
+        const dm = /\s--due(?:=|\s+)(\S+)\s*$/.exec(text) || /^--due(?:=|\s+)(\S+)\s+/.exec(text);
+        if (dm) {
+          text = text.replace(dm[0], ' ').trim();
+          const w = dm[1].toLowerCase();
+          due = w === 'today' ? T2.dayOf() : w === 'tomorrow' ? T2.dayOf(Date.now() + 864e5) : T2.validDay(w) ? w : null;
+          if (!due) return err('todo: --due takes today, tomorrow or a day like 2026-12-31');
+        }
+        text = unq(text).trim();
+        if (!text) return usage('todo');
+        let list = data.lists.find(l => l.id === data.activeId) || data.lists[0];
+        if (!list) { list = T2.normList({ name: 'My Tasks' }); data.lists.push(list); data.activeId = list.id; }
+        list.tasks.push(T2.normTask({ id: T2.uid('t'), text, due, created: Date.now() }));
+        T2.write(data);
+        return ok(`added to ${list.name}: ${text.slice(0, T2.TEXT_MAX)}${due ? `  (due ${due})` : ''}`);
+      }
+      if (sub === 'done' || sub === 'undo') {
+        const r = pick(); if (!r) return;
+        /* a repeating task moves on to its next due day, as it does in Static Tasks */
+        const rolled = sub === 'done' && !r.t.done && T2.nextDue(r.t) ? T2.completeTask(r.t) : null;
+        if (!rolled) T2.setDone(r.t, sub === 'done');
+        T2.write(data);
+        return ok(rolled ? `done: ${r.t.text} — it repeats, next due ${rolled.next}` : `${sub === 'done' ? 'done' : 'not done'}: ${r.t.text}`);
+      }
+      if (sub === 'rm') {
+        const r = pick(); if (!r) return;
+        r.l.tasks.splice(r.l.tasks.indexOf(r.t), 1);
+        T2.write(data);
+        return ok(`removed: ${r.t.text}`);
+      }
+      if (sub === 'open') { api.openApp('tasks', {}); return ok('opening Static Tasks'); }
+      if (sub && sub !== 'list' && !flags.has('a')) return err('usage: todo [add <text> [--due day] | done N | undo N | rm N | open | -a]');
+      const shown = rows.map((r, i) => ({ ...r, n: i + 1 })).filter(r => flags.has('a') || !r.t.done);
+      if (!shown.length) return dim(rows.length ? "everything is done — 'todo -a' shows the finished ones" : "no tasks — todo add buy milk --due tomorrow");
+      const lists = data.lists.length > 1;
+      for (const r of shown) {
+        put(L(T(String(r.n).padStart(3) + '  ', 'term__dim'), T(r.t.done ? '[x] ' : '[ ] ', r.t.done ? 'term__ok' : 'term__key'), T(r.t.text),
+          T(r.t.due ? `  due ${r.t.due}` : '', 'term__dim'), T(lists ? `  · ${r.l.name}` : '', 'term__dim')));
+      }
+    });
+
+    cmd('note', 'note [add <text>|show N|open [N]]', 'your Notes', async (rest, flags, argstr) => {
+      const NF = await import('../core/notesfmt.js');
+      const list = Array.isArray(store.get('notes')) ? store.get('notes').filter(n => n && n.id) : [];
+      const sub = (rest[0] || '').toLowerCase();
+      const pick = () => {
+        const n = list[Number(rest[1]) - 1];
+        if (!n) err(`note: no note ${rest[1] ?? ''} — 'note' lists them`);
+        return n;
+      };
+      if (sub === 'add') {
+        const text = unq(argstr.replace(/^add\s+/i, '')).trim();
+        if (!text) return usage('note');
+        /* Notes keeps its list in memory and saves all of it: an open window would overwrite this one */
+        if (api.wm.list().some(w => w.appId === 'notes')) return err('note: close the Notes window first — it would overwrite the new note');
+        const title = text.split('\n')[0].slice(0, 40);
+        const mine = { id: `note-${Date.now().toString(36)}-t${list.length}`, title, body: NF.fromPlain(text), fmt: NF.FMT, mtime: new Date().toISOString() };
+        store.set('notes', [mine, ...list]);
+        return ok(`note saved: ${title}`);
+      }
+      if (sub === 'show') {
+        const n = pick(); if (!n) return;
+        say(n.title || 'Untitled note', 'term__ok');
+        return put(L(T(NF.noteText(n))));
+      }
+      if (sub === 'open') {
+        const n = rest[1] ? pick() : null;
+        if (rest[1] && !n) return;
+        api.openApp('notes', n ? { noteId: n.id } : {});
+        return ok(n ? `opening ${n.title || 'Untitled note'}` : 'opening Notes');
+      }
+      if (sub && sub !== 'list') return err('usage: note [add <text> | show N | open [N]]');
+      if (!list.length) return dim('no notes yet — note add call dentist friday');
+      list.forEach((n, i) => put(L(T(String(i + 1).padStart(3) + '  ', 'term__dim'), T((n.title || 'Untitled note').slice(0, 40).padEnd(42), 'term__key'),
+        T(n.mtime ? when(Date.parse(n.mtime)) : '', 'term__dim'))));
+    });
+
+    cmd('timer', 'timer <10m|1h30m> [label]  |  timer list  |  timer rm N', 'a timer that notifies you', async (rest, flags, argstr) => {
+      const AM = await import('../core/automations.js');
+      const QR = await import('../core/quickremind.js');
+      const running = () => AM.reminders().filter(r => r.timer && ['scheduled', 'snoozed'].includes(AM.reminderState(r).state));
+      const sub = (rest[0] || '').toLowerCase();
+      if (!sub || sub === 'list') {
+        const list = running();
+        if (!list.length) return dim('no timers running — timer 10m');
+        list.forEach((r, i) => {
+          const at = r.snooze || AM.nextDue(r);
+          put(L(T(String(i + 1).padStart(3) + '  ', 'term__dim'), T(QR.say(r.timer).padEnd(12), 'term__key'), T(r.text.padEnd(20)),
+            T(`rings ${AM.untilText(at)}`, 'term__dim')));
+        });
+        return;
+      }
+      if (sub === 'rm' || sub === 'cancel') {
+        const r = running()[Number(rest[1]) - 1];
+        if (!r) return err(`timer: no timer ${rest[1] ?? ''} — 'timer list' shows the numbers`);
+        AM.removeReminder(r.id);
+        return ok(`cancelled: ${r.text}`);
+      }
+      const secs = QR.parseDuration(rest[0]);
+      if (!secs) return err('timer: how long? — timer 10m, timer 1h30m, timer 90s (1 second to 24 hours)');
+      const label = unq(argstr.replace(/^\S+\s*/, '')).trim();
+      const res = AM.addTimer({ seconds: secs, text: label || `${QR.say(secs)} timer`, timer: true });
+      if (!res.ok) return err(`timer: ${res.issues?.[0]?.text || 'it could not be set'}`);
+      ok(`timer set for ${QR.say(secs)}${label ? ` — ${label}` : ''}`);
+      dim(`it rings at ${clockStr(new Date(res.at))} with a notification; Automations lists it under Reminders`);
     });
 
     /* ---------------- the rest of the OS ------------------------------
@@ -864,7 +1347,9 @@ defineApp({
         if (n.type === 'file') return put(L(T(n.name)));
         const kids = vfs.ls(p, { hidden: flags.has('a') });
         if (!kids.length) return dim('  (empty directory)');
-        flags.has('l') ? lsLong(kids) : lsShort(kids);
+        if (flags.has('l')) lsLong(kids);
+        else if (cap) for (const k of kids) put(L(T(k.name)));      /* one a line, so a pipe can read it */
+        else lsShort(kids);
       });
     });
 
@@ -880,7 +1365,8 @@ defineApp({
 
     cmd('pwd', 'pwd', 'print working directory', () => put(L(T(S.cwd, 'term__path'))));
 
-    cmd('cat', 'cat <file…>', 'print a file', rest => {
+    cmd('cat', 'cat [file…]', 'print a file', (rest, flags, argstr, stdin) => {
+      if (!rest.length && stdin != null) return put(L(T(stdin)));
       if (!rest.length) return usage('cat');
       for (const a of rest) {
         const p = resolve(a), n = vfs.node(p);
@@ -1015,13 +1501,13 @@ defineApp({
       api.openFile(p) ? ok(`opening ${sp(p)}`) : err(`open: no app handles ${rest[0]}`);
     });
 
-    cmd('uname', 'uname [-a]', 'print kernel info', (rest, flags) => {
-      const sys = api.system;
+    cmd('uname', 'uname [-a]', 'print system info', (rest, flags) => {
+      const sys = api.system, hw = M.hardware();
       if (!flags.has('a')) return put(L(T('StaticOS')));
-      put(L(T(`StaticOS ${sys.hostname} ${sys.kernel.replace('Linux ', '')} #1 SMP PREEMPT_DYNAMIC x86_64 GNU/Static`)));
+      put(L(T(`StaticOS ${sys.hostname} ${hw.platform} ${hw.browser} (a web page: no kernel version to report)`)));
     });
 
-    cmd('whoami', 'whoami', 'print the current user', () => put(L(T(store.get('user.handle', 'aether')))));
+    cmd('whoami', 'whoami', 'print the current user', () => put(L(T(store.get('user.handle', 'static')))));
     cmd('hostname', 'hostname', 'print the hostname', () => put(L(T(api.system.hostname))));
 
     cmd('date', 'date', 'print the date and time', () => {
@@ -1029,65 +1515,60 @@ defineApp({
       put(L(T(`${fmt.dayName(d, 1)} ${fmt.monthName(d, 1)} ${fmt.pad2(d.getDate())} ${clockStr(d)} ${d.getFullYear()}`)));
     });
 
-    cmd('uptime', 'uptime', 'how long the session has been up', () => {
-      put(L(T(`${clockStr()} up ${upStr()},  1 user,  load average: ${loadAvg()}`)));
+    cmd('uptime', 'uptime', 'how long this session has been up', () => {
+      put(L(T(`${clockStr()} up ${upStr()} (since this page opened),  load average: ${NA}`)));
     });
 
-    cmd('df', 'df', 'report filesystem usage', () => {
-      const total = store.get('system.diskTotal', 512), used = store.get('system.diskUsed', 282);
-      const rowsOf = [
-        ['/dev/aether0', `${total}G`, `${used}G`, `${total - used}G`, `${Math.round(used / total * 100)}%`, '/'],
-        ['/dev/aether1', '1.0G', '128M', '896M', '13%', '/boot'],
-        ['tmpfs', '7.4G', '312M', '7.1G', '5%', '/dev/shm'],
-      ];
-      const cells = (sz, us, av, pc) => sz.padStart(6) + us.padStart(7) + av.padStart(7) + pc.padStart(6) + '   ';
-      say('Filesystem'.padEnd(14) + cells('Size', 'Used', 'Avail', 'Use%') + 'Mounted on', 'term__dim');
-      for (const [fsn, sz, us, av, pc, mt] of rowsOf) {
-        put(L(T(fsn.padEnd(14), 'term__key'),
-          T(cells(sz, us, av, pc)),
-          T(mt, 'term__path')));
-      }
+    cmd('df', 'df', 'report storage usage', async () => {
+      const st = await M.storage();
+      if (!st) return err(`df: ${NA} (this browser does not report storage)`);
+      const cells = (sz, us, av, pc) => sz.padStart(10) + us.padStart(10) + av.padStart(10) + pc.padStart(6) + '   ';
+      say('Filesystem'.padEnd(18) + cells('Size', 'Used', 'Avail', 'Use%') + 'Mounted on', 'term__dim');
+      put(L(T('browser storage'.padEnd(18), 'term__key'),
+        T(cells(M.formatBytes(st.quota), M.formatBytes(st.used), M.formatBytes(Math.max(0, st.quota - st.used)), `${st.pct}%`)),
+        T('/', 'term__path')));
+      dim(`this site's quota, as the browser reports it; disks and other mounts: ${NA}`);
     });
 
     cmd('free', 'free', 'report memory usage', () => {
-      const t = memTotal(), u = memUsed();
-      /* ram can reach 92% in Game Mode — free must never go negative */
-      const avail = Math.max(0, t - u), cache = Math.min(t * 0.14, avail), free = avail - cache;
-      const g = v => `${v.toFixed(2)}Gi`.padStart(12);
-      say('       ' + ['total', 'used', 'free', 'buff/cache', 'available'].map(s => s.padStart(12)).join(''), 'term__dim');
-      put(L(T('Mem:   '), T(g(t) + g(u) + g(free) + g(cache) + g(avail), 'term__key')));
-      put(L(T('Swap:  '), T(g(4) + g(0) + g(4), 'term__dim')));
+      const heap = M.heap();
+      say('Mem:   total ' + memHint(), 'term__dim');
+      put(L(T('       used and free: ', 'term__dim'), T(NA)));
+      if (heap) {
+        put(L(T('JS heap  ', 'term__key'),
+          T(`${M.formatBytes(heap.used)} used of ${M.formatBytes(heap.limit)} limit (${heap.pct}%), ${M.formatBytes(heap.total)} allocated`)));
+      } else {
+        put(L(T('JS heap  ', 'term__key'), T(`${NA} (only Chromium reports it)`)));
+      }
+      dim('a page is never told how much of the machine\'s RAM is in use; swap: ' + NA);
     });
 
-    cmd('ps', 'ps', 'list running processes', () => {
-      say('  PID USER      %CPU  %MEM  COMMAND', 'term__dim');
-      const rows = PROCS.map(p => [...p]);
-      for (const w of api.wm.list()) {
-        rows.push([1400 + w.id * 7, 'aether', fmt.round(0.4 + w.id * 0.37, 1), fmt.round(0.8 + w.id * 0.21, 1),
-          `aether-app ${w.appId}`]);
+    cmd('ps', 'ps', 'list this session\'s open windows', () => {
+      say('  WIN  APP                  STATE', 'term__dim');
+      const wins = api.wm.list();
+      for (const w of wins) {
+        const state = w.minimized || w.min ? 'minimised' : 'open';
+        put(L(T(String(w.id).padStart(5) + '  ', 'term__dim'),
+          T(String(w.appId).padEnd(20), 'term__key'),
+          T(state)));
       }
-      for (const [pid, user, cpu, mem, command] of rows) {
-        put(L(T(String(pid).padStart(5) + ' ', 'term__dim'),
-          T(user.padEnd(9)),
-          T(cpu.toFixed(1).padStart(5) + mem.toFixed(1).padStart(6) + '  ', 'term__key'),
-          T(command)));
-      }
-      dim(`${rows.length} of 214 tasks shown`);
+      dim(`${wins.length} window${wins.length === 1 ? '' : 's'} open; other processes: ${NA}`);
     });
 
-    cmd('top', 'top', 'snapshot the live telemetry', () => {
-      const live = api.live || {};
-      put(L(T('aethertop', 'term__ok'), T(` - ${clockStr()} up ${upStr()},  1 user,  load average: ${loadAvg()}`)));
-      say('Tasks: 214 total,   2 running, 212 sleeping,   0 stopped', 'term__dim');
-      const mib = v => (v * 1024).toFixed(0).padStart(8);
-      say(`MiB Mem :${mib(memTotal())} total,${mib(memUsed())} used,${mib(memTotal() - memUsed())} free`, 'term__dim');
-      const bars = [['CPU', live.cpu ?? 0, '%'], ['GPU', live.gpu ?? 0, '%'], ['RAM', live.ram ?? 0, '%'],
-        ['NET', live.net ?? 0, ' Mb/s'], ['TEMP', live.temp ?? 0, '°C']];
-      for (const [label, v, unit] of bars) {
-        put(L(T('  ' + label.padEnd(6), 'term__key'),
-          T(meter(v, 18) + ' ', heat(v)),
-          T(`${fmt.round(v, 1)}${unit}`)));
-      }
+    cmd('top', 'top', 'snapshot what the browser can measure', async () => {
+      put(L(T('statictop', 'term__ok'), T(` - ${clockStr()} up ${upStr()} (this session)`)));
+      say(`Windows: ${api.wm.list().length} open`, 'term__dim');
+      say(`CPU, GPU, load average, temperature: ${NA}`, 'term__dim');
+      const heap = M.heap(), st = await M.storage();
+      if (heap) {
+        put(L(T('  ' + 'JS HEAP'.padEnd(9), 'term__key'), T(meter(heap.pct, 18) + ' ', heat(heap.pct)),
+          T(`${M.formatBytes(heap.used)} of ${M.formatBytes(heap.limit)}`)));
+      } else say(`JS heap: ${NA} (only Chromium reports it)`, 'term__dim');
+      if (st) {
+        put(L(T('  ' + 'STORAGE'.padEnd(9), 'term__key'), T(meter(st.pct, 18) + ' ', heat(st.pct)),
+          T(`${M.formatBytes(st.used)} of ${M.formatBytes(st.quota)}`)));
+      } else say(`Storage: ${NA}`, 'term__dim');
+      say(`Memory: ${memHint()}`, 'term__dim');
     });
 
     cmd('apps', 'apps', 'list installed apps', () => {
@@ -1173,8 +1654,8 @@ defineApp({
       try { const L2 = await import('../portal/live.js'); row('live channel', L2.status()); } catch (e) {}
     });
 
-    cmd('theme', 'theme <accent>', `set the accent (${ACCENTS.join('|')})`, rest => {
-      if (!rest.length) return err(`usage: theme <${ACCENTS.join('|')}> — current: ${store.get('prefs.accent')}`);
+    cmd('theme', 'theme <accent>', `set the accent (${ACCENTS.map(accentName).join('|')})`, rest => {
+      if (!rest.length) return err(`usage: theme <${ACCENTS.map(accentName).join('|')}> — current: ${accentName(store.get('prefs.accent'))}`);
       setAccent(rest[0].toLowerCase());
     });
 
@@ -1191,7 +1672,7 @@ defineApp({
       ok('notification sent');
     });
 
-    cmd('history', 'history [-c]', 'show the command history', (rest, flags) => {
+    cmd('history', 'history [-c]', 'show the command history (⌃R searches it)', (rest, flags) => {
       if (flags.has('c')) { S.hist.length = 0; return dim('history cleared'); }
       if (!S.hist.length) return dim('no history yet');
       S.hist.forEach((c, i) => put(L(T(String(i + 1).padStart(4) + '  ', 'term__dim'), T(c))));
@@ -1240,7 +1721,7 @@ defineApp({
     cmd('exit', 'exit', EMB ? 'log out — a fresh session starts' : 'close the terminal',
       () => { dim('logout'); win.close(); });
 
-    cmd('aether', 'aether <theme|dock|about> …', 'the StaticOS control command', rest => {
+    cmd('static', 'static <theme|dock|about> …', 'the StaticOS control command', rest => {
       const [sub, verb, val] = rest;
       if (sub === 'theme') {
         if (verb === 'list') {
@@ -1248,53 +1729,122 @@ defineApp({
           const cur = store.get('prefs.accent');
           for (const a of ACCENTS) {
             put(L(T('  '), swatch(a === cur ? 'var(--accent)' : 'var(--ink-4)'),
-              T(' ' + a.padEnd(9), a === cur ? 'term__ok' : null),
+              T(' ' + accentName(a).padEnd(9), a === cur ? 'term__ok' : null),
               T(a === cur ? '(current)' : '', 'term__dim')));
           }
           return;
         }
         if (verb === 'set' && val) return setAccent(val.toLowerCase());
-        return err('usage: aether theme list | aether theme set <accent>');
+        return err('usage: static theme list | static theme set <accent>');
       }
       if (sub === 'dock') {
-        if (verb !== 'reset') return err('usage: aether dock reset');
+        if (verb !== 'reset') return err('usage: static dock reset');
         store.set('dock', [...store.defaults.dock]);
         return ok('dock restored to defaults');
       }
       if (sub === 'about') {
         const sys = api.system;
         put(L(T('StaticOS', 'term__ok'), T(`  ${sys.os.replace('StaticOS ', '')}`, null)));
-        for (const [k, v] of [['kernel', sys.kernel], ['shell', sys.shell], ['compositor', sys.wm],
-          ['desktop', sys.de], ['accent', store.get('prefs.accent')], ['uptime', upStr()]]) {
+        for (const [k, v] of [['shell', sys.shell], ['window manager', sys.wm],
+          ['desktop', sys.de], ['accent', accentName(store.get('prefs.accent'))], ['uptime', upStr()]]) {
           put(L(T('  ' + k.padEnd(12), 'term__key'), T(v)));
         }
-        return dim('built for the aether theme · no telemetry, no network');
+        return dim('no telemetry, no network');
       }
-      err('usage: aether theme list|set <accent> · aether dock reset · aether about');
+      err('usage: static theme list|set <accent> · static dock reset · static about');
     });
 
     /* ---------------- exec ----------------- */
+    /** Split on `ch` wherever it is not inside quotes. */
+    function splitOut(str, ch) {
+      const parts = [];
+      let q = null, curr = '';
+      for (const c of str) {
+        if (q) { curr += c; if (c === q) q = null; }
+        else if (c === '"' || c === "'") { q = c; curr += c; }
+        else if (c === ch) { parts.push(curr); curr = ''; }
+        else curr += c;
+      }
+      parts.push(curr);
+      return parts;
+    }
+    /** A trailing `> file` / `>> file` on a stage -> { text, append, target }, or null. */
+    function redirectOf(stage) {
+      const masked = stage.replace(/"[^"]*"|'[^']*'/g, s => '\u0001'.repeat(s.length));
+      const m = /\s*(>>?)\s*(\S+)\s*$/.exec(masked);
+      if (!m) return null;
+      return { text: stage.slice(0, m.index), append: m[1] === '>>', target: unq(stage.slice(stage.length - m[2].length)) };
+    }
+    /** An alias stands in for the first word, once. */
+    function expandAlias(stage) {
+      const m = /^\s*([\w.-]+)/.exec(stage);
+      return m && S.alias.has(m[1]) ? S.alias.get(m[1]) + stage.slice(m[0].length) : stage;
+    }
+
+    /** Run one stage. -> its collected output ('' when printed), or undefined when it failed. */
+    async function runStage(text, stdin, collect) {
+      const argv = tokenize(text);
+      if (!argv.length) return '';
+      const name = argv[0].toLowerCase();
+      const def = CMDS[name] || CMDS[ALIAS[name]];
+      if (!def && UC.has(name)) {
+        if (collect) { err(`staticsh: ${argv[0]} is your own command, and those can't be piped`); return undefined; }
+        runUserCmd(name, argv.slice(1));
+        return '';
+      }
+      if (!def) { err(`staticsh: command not found: ${argv[0]} — try 'help'`); return undefined; }
+      const { flags, rest } = parseArgs(argv.slice(1));
+      const argstr = text.trim().slice(argv[0].length).trim();
+      const prev = cap;
+      let got = null;
+      cap = collect ? [] : null;
+      /* Some commands are async (the catalogues, the proxy tunnel). The sync
+         ones have printed by the time this reaches its first await. */
+      try {
+        const r = def.run(rest, flags, argstr, stdin);
+        if (r && typeof r.then === 'function') await r;
+      } catch (e) { err(`staticsh: ${name}: ${e.message}`); got = []; return undefined; }
+      finally { if (!got) got = cap; cap = prev; }
+      return collect ? got.join('\n') : '';
+    }
+
+    function writeRedirect(r, data) {
+      const p = resolve(r.target);
+      const par = vfs.node(vfs.parentPath(p));
+      if (!par || par.type !== 'dir') return err(`staticsh: ${r.target}: No such directory`);
+      if (vfs.node(p)?.type === 'dir') return err(`staticsh: ${r.target}: Is a directory`);
+      vfs.write(p, (r.append ? (vfs.read(p) || '') : '') + data + '\n');
+      dim(`wrote ${fmt.fmtBytes(vfs.node(p).size)} to ${sp(p)}`);
+    }
+
+    async function runPipeline(stages) {
+      let data = null;
+      for (let i = 0; i < stages.length; i++) {
+        let text = stages[i];
+        const first = (tokenize(text)[0] || '').toLowerCase();
+        /* echo understands > itself; every other stage gets the generic one */
+        const redir = first === 'echo' ? null : redirectOf(text);
+        if (redir) text = redir.text;
+        const got = await runStage(text, data, i < stages.length - 1 || !!redir);
+        if (got === undefined) return;
+        data = got;
+        if (redir) writeRedirect(redir, data);
+      }
+    }
+
+    /** One line of input: aliases, then `|` stages. */
+    function runLine(line) {
+      const stages = splitOut(line, '|').flatMap(s => splitOut(expandAlias(s), '|')).map(s => s.trim());
+      if (stages.length > 1 && stages.some(s => !s)) { err("staticsh: syntax error near '|'"); return; }
+      return runPipeline(stages).catch(e => err(`staticsh: ${e.message}`));
+    }
+
     function exec(raw) {
       const str = raw.trim();
       echoCmd(str);
       if (!str) return;
       S.hist.push(str);
-      const argv = tokenize(str);
-      const name = argv[0].toLowerCase();
-      const def = CMDS[name] || CMDS[ALIAS[name]];
-      if (!def && UC.has(name)) return runUserCmd(name, argv.slice(1));
-      if (!def) return err(`staticsh: command not found: ${argv[0]} — try 'help'`);
-      const { flags, rest } = parseArgs(argv.slice(1));
-      const argstr = str.slice(argv[0].length).trim();
-      /* Some commands are async now (they reach for the catalogues or the
-         proxy tunnel). A rejected promise would otherwise vanish as an
-         unhandled rejection instead of printing an error line. */
-      try {
-        const out = def.run(rest, flags, argstr);
-        if (out && typeof out.then === 'function') {
-          out.catch(e => err(`staticsh: ${name}: ${e.message}`));
-        }
-      } catch (e) { err(`staticsh: ${name}: ${e.message}`); }
+      return runLine(str);
     }
 
     /* ---------------- completion ----------- */
@@ -1303,8 +1853,8 @@ defineApp({
       const parts = v.split(' ');
       const frag = parts.pop();
       let pool, quoted = false;
-      if (!parts.length) {
-        pool = [...Object.keys(CMDS), ...Object.keys(ALIAS), ...UC.list()].filter(k => k.startsWith(frag)).sort();
+      if (!parts.length || parts[parts.length - 1] === '|') {
+        pool = [...Object.keys(CMDS), ...Object.keys(ALIAS), ...S.alias.keys(), ...UC.list()].filter(k => k.startsWith(frag)).sort();
       } else {
         const cut = frag.lastIndexOf('/');
         const dir = cut >= 0 ? resolve(frag.slice(0, cut) || '/') : S.cwd;
@@ -1334,6 +1884,43 @@ defineApp({
       input.setSelectionRange(input.value.length, input.value.length);
     }
 
+    /* ---------------- Ctrl+R: search the history as you type ------------ */
+    const RS = { on: false, q: '', n: 0, draft: '', row: null, hit: null };
+    function rsMatches() {
+      const seen = new Set(), list = [];
+      const q = RS.q.toLowerCase();
+      for (let i = S.hist.length - 1; i >= 0; i--) {
+        const c = S.hist[i];
+        if (!seen.has(c) && c.toLowerCase().includes(q)) { seen.add(c); list.push(c); }
+      }
+      return list;
+    }
+    function rsPaint() {
+      const list = rsMatches();
+      RS.hit = list.length ? list[RS.n % list.length] : null;
+      api.clear(RS.row);
+      RS.row.append(
+        T(RS.hit || !RS.q ? '(reverse-i-search)' : '(failed reverse-i-search)', 'term__dim'),
+        T(`\`${RS.q}': `, 'term__dim'),
+        T(RS.hit || '', 'term__key'),
+        T('   Enter uses it · Ctrl+R next · Esc cancels', 'term__dim'));
+      out.scrollTop = out.scrollHeight;
+    }
+    function rsStart() {
+      if (!S.hist.length) return dim('no history yet');
+      RS.on = true; RS.draft = input.value; RS.q = ''; RS.n = 0;
+      input.value = '';
+      RS.row = L();
+      show(RS.row);
+      rsPaint();
+    }
+    function rsEnd(accept) {
+      RS.on = false;
+      RS.row?.remove();
+      input.value = accept && RS.hit ? RS.hit : RS.draft;
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+
     /* ---------------- chrome --------------- */
     const btnBack = h('button.ibtn.tip', { 'data-tip': 'Previous directory', 'aria-label': 'Previous directory',
       onclick: () => hop(-1) }, icon('chevron-left'));
@@ -1351,9 +1938,8 @@ defineApp({
     }
 
     win.setTools(
-      h('button.ibtn.tip', { 'data-tip': 'New tab', 'aria-label': 'New tab',
-        onclick: () => api.notify({ app: 'Static Terminal', icon: 'plus', title: 'Tabs are coming',
-          message: 'staticsh 3.1 ships split panes and tabs.' }) }, icon('plus')),
+      h('button.ibtn.tip', { 'data-tip': 'New terminal window', 'aria-label': 'New terminal window',
+        onclick: () => api.openApp('terminal', { window: true }) }, icon('plus')),
       h('button.ibtn.tip', { 'data-tip': 'Copy scrollback', 'aria-label': 'Copy scrollback',
         onclick: copyAll }, icon('copy')),
       h('button.ibtn.tip', { 'data-tip': 'Clear', 'aria-label': 'Clear',
@@ -1362,6 +1948,14 @@ defineApp({
 
     /* ---------------- events --------------- */
     const offKey = api.on(input, 'keydown', e => {
+      if (RS.on) {
+        if (e.key === 'Enter') { e.preventDefault(); rsEnd(true); }
+        else if (e.key === 'Escape' || (e.ctrlKey && (e.key === 'g' || e.key === 'c'))) { e.preventDefault(); e.stopPropagation(); rsEnd(false); }
+        else if (e.ctrlKey && e.key.toLowerCase() === 'r') { e.preventDefault(); RS.n++; rsPaint(); }
+        else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Home', 'End'].includes(e.key)) { e.preventDefault(); rsEnd(true); }
+        return;
+      }
+      if (e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'r') { e.preventDefault(); rsStart(); return; }
       if (e.key === 'Enter') {
         const v = input.value;
         input.value = ''; S.hi = -1; S.draft = '';
@@ -1378,6 +1972,8 @@ defineApp({
       else if (e.ctrlKey && e.key === 'u') { e.preventDefault(); input.value = ''; }
       else if (e.ctrlKey && e.key === 'd') { e.preventDefault(); if (!input.value) { dim('logout'); win.close(); } }
     });
+
+    const offIn = api.on(input, 'input', () => { if (RS.on) { RS.q = input.value; RS.n = 0; rsPaint(); } });
 
     /* clicking the scrollback focuses the prompt — unless text was selected */
     const offClick = api.on(out, 'click', () => {
@@ -1410,11 +2006,12 @@ defineApp({
     put(fetchBlock());
     dim("type 'help' for the command list");
     gap();
+    runRc();
     if (opts?.run) exec(opts.run);
     /* embedded, it mounts behind the boot menu — taking focus there would
        let boot-screen keystrokes land in the shell */
     if (!EMB) input.focus();
 
-    return () => { S.running?.stop(); offTrack(); offKey(); offClick(); offDown(); offFs(); };
+    return () => { S.running?.stop(); offTrack(); offKey(); offIn(); offClick(); offDown(); offFs(); };
   },
 });

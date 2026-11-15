@@ -49,6 +49,27 @@
      valentineHearts  true   hearts drifting over the wallpaper
      springTheme      true   spring, March 1 – April 30 (leaf-and-blossom accent)
      springBlossoms   true   cherry blossoms drifting over the wallpaper
+   And the rest of the year (js/shell/seasons-more.js draws them, Settings ›
+   Celebrations switches them):
+     autumnTheme      true   autumn, November 2–30 (warm accent)
+     autumnLeaves     true   leaves falling over the wallpaper
+     autumnGratitude  true   the gratitude list (and its card on Thanksgiving)
+     lunarTheme       true   Lunar New Year: its eve to the Lantern Festival
+     lunarLanterns    true   lanterns rising, fireworks once on the day
+     stpatrickTheme   true   St Patrick's Day, March 10–17 (green accent)
+     cloverHunt       true   clovers hidden on the desktop, one with four leaves
+     pidayTheme       true   Pi Day, March 14
+     piChallenge      true   the digit challenge and the little puzzles
+     earthTheme       true   Earth Day, April 20–22
+     earthSeeds       true   seeds and leaves drifting up
+     summerTheme      true   summer, June 1 – August 14 (sea-glass accent)
+     summerSparkle    true   sun glints and bubbles drifting up
+     summerCountdown  true   the countdown to the holidays, once you set the day
+     schoolTheme      true   back to school, August 15 – September 14
+     schoolKit        true   the planner kit (a checklist and the study apps)
+     firstsnowTheme   false  first snow where you live: opt in, and the place
+                             and the weather check are yours to allow
+     firstsnowFlakes  true   flakes over the wallpaper for the day it snows
    The four newer ones live in js/shell/celebrate.js, which keeps one
    canvas for all of them (see there for who wins when they overlap).
    ============================================================ */
@@ -78,6 +99,24 @@ export const DEFAULTS = {
   valentineHearts: true,
   springTheme: true,
   springBlossoms: true,
+  autumnTheme: true,
+  autumnLeaves: true,
+  autumnGratitude: true,
+  lunarTheme: true,
+  lunarLanterns: true,
+  stpatrickTheme: true,
+  cloverHunt: true,
+  pidayTheme: true,
+  piChallenge: true,
+  earthTheme: true,
+  earthSeeds: true,
+  summerTheme: true,
+  summerSparkle: true,
+  summerCountdown: true,
+  schoolTheme: true,
+  schoolKit: true,
+  firstsnowTheme: false,
+  firstsnowFlakes: true,
 };
 
 const pref = k => store.get('prefs.' + k, DEFAULTS[k]);
@@ -104,6 +143,72 @@ export const isValentineSeason = (d = new Date()) => d.getMonth() === 1 && d.get
 
 /** Spring: March 1 – April 30, inclusive. */
 export const isSpringSeason = (d = new Date()) => d.getMonth() === 2 || d.getMonth() === 3;
+
+/** Autumn: November 2 – 30, inclusive (Halloween ends on the 1st, winter starts on December 1). */
+export const isAutumnSeason = (d = new Date()) => d.getMonth() === 10 && d.getDate() >= 2;
+
+/** St Patrick's Day: March 10 – 17, inclusive. */
+export const isStPatrickSeason = (d = new Date()) => d.getMonth() === 2 && d.getDate() >= 10 && d.getDate() <= 17;
+
+/** Pi Day: March 14. */
+export const isPiDay = (d = new Date()) => d.getMonth() === 2 && d.getDate() === 14;
+
+/** Earth Day: April 20 – 22. */
+export const isEarthSeason = (d = new Date()) => d.getMonth() === 3 && d.getDate() >= 20 && d.getDate() <= 22;
+
+/** Summer: June 1 – August 14. */
+export const isSummerSeason = (d = new Date()) => d.getMonth() === 5 || d.getMonth() === 6 || (d.getMonth() === 7 && d.getDate() <= 14);
+
+/** Back to school: August 15 – September 14. */
+export const isSchoolSeason = (d = new Date()) => (d.getMonth() === 7 && d.getDate() >= 15) || (d.getMonth() === 8 && d.getDate() <= 14);
+
+/* Lunar New Year moves: the first day of the first month of the Chinese
+   calendar. 2025–2040 are written down (the official dates). For later years
+   the browser's own Chinese calendar (Intl) is asked; it works the new moon
+   out itself and can be a day out in a year when the moon is within minutes
+   of midnight, which is why the table comes first. */
+const LNY_TABLE = { 2025: [1, 29], 2026: [2, 17], 2027: [2, 6], 2028: [1, 26], 2029: [2, 13], 2030: [2, 3], 2031: [1, 23], 2032: [2, 11], 2033: [1, 31], 2034: [2, 19], 2035: [2, 8], 2036: [1, 28], 2037: [2, 15], 2038: [2, 4], 2039: [1, 24], 2040: [2, 12] };
+const lnyCache = new Map();
+/** The date of Lunar New Year's Day in `year`: [month 1–12, day], or null. */
+export function lunarNewYear(year) {
+  if (lnyCache.has(year)) return lnyCache.get(year);
+  let out = LNY_TABLE[year] || null;
+  if (!out) try {
+    const f = new Intl.DateTimeFormat('en-u-ca-chinese', { month: 'numeric', day: 'numeric', timeZone: 'Asia/Shanghai' });
+    const end = Date.UTC(year, 2, 1);
+    for (let t = Date.UTC(year, 0, 19, 4); t < end; t += 86400000) {
+      const p = Object.fromEntries(f.formatToParts(new Date(t)).map(x => [x.type, x.value]));
+      if (p.month === '1' && p.day === '1') { const u = new Date(t); out = [u.getUTCMonth() + 1, u.getUTCDate()]; break; }
+    }
+  } catch (e) { out = null; }
+  lnyCache.set(year, out);
+  return out;
+}
+/** Lunar New Year's Eve through the Lantern Festival (the 15th day), inclusive. */
+export function isLunarSeason(d = new Date()) {
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const m = lunarNewYear(d.getFullYear());
+  if (!m) return false;
+  const n = Math.round((t - new Date(d.getFullYear(), m[0] - 1, m[1])) / 86400000);
+  return n >= -1 && n <= 14;
+}
+/** Lunar New Year's Day itself (the fireworks' day)? */
+export function isLunarDay(d = new Date()) {
+  const m = lunarNewYear(d.getFullYear());
+  return !!m && d.getMonth() + 1 === m[0] && d.getDate() === m[1];
+}
+/** The fourth Thursday of November (US Thanksgiving): the day of the month. */
+export const thanksgivingDay = year => 1 + ((4 - new Date(year, 10, 1).getDay() + 7) % 7) + 21;
+export const isThanksgiving = (d = new Date()) => d.getMonth() === 10 && d.getDate() === thanksgivingDay(d.getFullYear());
+
+/** First snow where you live: the 24 hours after snow was found
+    (js/core/firstsnow.js keeps the moment in portal.firstSnow). Never by date. */
+export function isFirstSnow(d = new Date()) {
+  const v = store.get('portal.firstSnow', null);
+  const at = Number(v && v.at);
+  const ago = d.getTime() - at;
+  return Number.isFinite(at) && at > 0 && ago >= 0 && ago < 24 * 3600 * 1000;
+}
 
 /** The saved birthday as [month 1–12, day], or null. Month and day only, no
     year, kept in prefs.birthday as 'MM-DD' and never sent anywhere. */
@@ -169,13 +274,111 @@ export const SEASONS = {
     parts: { effects: 'springBlossoms' },
   },
 };
+/* the ones that run on a date, in the order Settings lists them */
+Object.assign(SEASONS, {
+  autumn: {
+    id: 'autumn', name: 'Autumn', test: isAutumnSeason, master: 'autumnTheme',
+    parts: { effects: 'autumnLeaves', gratitude: 'autumnGratitude' },
+  },
+  lunar: {
+    id: 'lunar', name: 'Lunar New Year', test: isLunarSeason, master: 'lunarTheme',
+    parts: { effects: 'lunarLanterns' },
+  },
+  stpatrick: {
+    id: 'stpatrick', name: 'St Patrick’s Day', test: isStPatrickSeason, master: 'stpatrickTheme',
+    parts: { hunt: 'cloverHunt' },
+  },
+  piday: {
+    id: 'piday', name: 'Pi Day', test: isPiDay, master: 'pidayTheme',
+    parts: { challenge: 'piChallenge' },
+  },
+  earth: {
+    id: 'earth', name: 'Earth Day', test: isEarthSeason, master: 'earthTheme',
+    parts: { effects: 'earthSeeds' },
+  },
+  summer: {
+    id: 'summer', name: 'Summer', test: isSummerSeason, master: 'summerTheme',
+    parts: { effects: 'summerSparkle', countdown: 'summerCountdown' },
+  },
+  school: {
+    id: 'school', name: 'Back to school', test: isSchoolSeason, master: 'schoolTheme',
+    parts: { kit: 'schoolKit' },
+  },
+  firstsnow: {
+    id: 'firstsnow', name: 'First snow', test: isFirstSnow, master: 'firstsnowTheme',
+    parts: { effects: 'firstsnowFlakes' },
+  },
+});
+/* the seasons with a look of their own: the ones Settings can put on for a minute
+   (New Year's is a moment at midnight and a birthday is yours, so neither is) */
+export const PREVIEWABLE = ['spooky', 'winter', 'valentine', 'spring', 'autumn', 'lunar', 'stpatrick', 'piday', 'earth', 'summer', 'school', 'firstsnow'];
 export const SEASON_IDS = Object.keys(SEASONS);
 
-/** Is the season's stretch of the calendar running? */
-export const inSeason = (id, d = new Date()) => !!SEASONS[id]?.test(d);
+/* ---------- when the next season starts -----------------------------
+   Worked out from the same date tests the seasons themselves use, a day at
+   a time (about a year ahead), so it can never disagree with them. New
+   Year's, which turns on at 6 pm, your birthday and first snow (the day it
+   snows) have no start date to announce, so they are left out.
 
-/** The season is running and the person has not switched it off. */
-export const seasonOn = (id, d = new Date()) => inSeason(id, d) && pref(SEASONS[id].master) !== false;
+   schedule(from?) -> { now: [{ id, name, endsOn: Date }],
+                        next: [{ id, name, start: Date, days: number, until: Date }] }
+   `days` is how many days from `from` the season starts; `until` is its last day. */
+const NOT_ANNOUNCED = ['newyear', 'birthday', 'firstsnow'];
+export function schedule(from = new Date()) {
+  const at = i => new Date(from.getFullYear(), from.getMonth(), from.getDate() + i, 12);
+  const now = [], next = [];
+  for (const id of SEASON_IDS) {
+    if (NOT_ANNOUNCED.includes(id)) continue;
+    const S = SEASONS[id];
+    let i = 0;
+    if (S.test(at(0))) {
+      while (i < 400 && S.test(at(i))) i++;
+      now.push({ id, name: S.name, endsOn: at(i - 1) });
+    }
+    for (; i < 400; i++) {
+      if (!S.test(at(i))) continue;
+      let j = i;
+      while (j < i + 60 && S.test(at(j + 1))) j++;
+      next.push({ id, name: S.name, start: at(i), days: i, until: at(j) });
+      break;
+    }
+  }
+  next.sort((a, b) => a.days - b.days);
+  return { now, next };
+}
+
+/* ---------- trying a season for a minute -----------------------------
+   Settings › Celebrations puts any season in PREVIEWABLE on for one minute,
+   whatever the date. It lives only in memory (a reload ends it), is the
+   season's own look and nothing more — it claims no show, saves nothing —
+   and it ends by itself. */
+export const PREVIEW_MS = 60_000;
+let tryOut = null;
+let tryTimer = 0;
+/** The season on trial, { id, until }, or null. */
+export const trying = () => (tryOut && Date.now() < tryOut.until ? tryOut : null);
+export function tryFor(id, ms = PREVIEW_MS) {
+  if (!PREVIEWABLE.includes(id)) return false;
+  clearTimeout(tryTimer);
+  tryOut = { id, until: Date.now() + ms };
+  tryTimer = setTimeout(stopTrying, ms + 20);
+  applyRoot();
+  bus.emit('season:try', tryOut);
+  return true;
+}
+export function stopTrying() {
+  clearTimeout(tryTimer);
+  const had = !!tryOut;
+  tryOut = null;
+  if (had) { applyRoot(); bus.emit('season:try', null); }
+}
+
+/** Is the season's stretch of the calendar running? (or on trial) */
+export const inSeason = (id, d = new Date()) => trying()?.id === id || !!SEASONS[id]?.test(d);
+
+/** The season is running and the person has not switched it off. A season on
+    trial is on whatever its switch says (they asked to see it). */
+export const seasonOn = (id, d = new Date()) => trying()?.id === id || (!!SEASONS[id]?.test(d) && pref(SEASONS[id].master) !== false);
 
 /** Is one part of a season live right now? feature 'theme' is the season itself. */
 export function part(id, feature = 'theme', d = new Date()) {
@@ -189,6 +392,17 @@ export function part(id, feature = 'theme', d = new Date()) {
 
 /** The season whose dates are running now (on or switched off), or null. */
 export const current = (d = new Date()) => SEASONS[SEASON_IDS.find(id => SEASONS[id].test(d))] || null;
+
+/** Time left until the holidays begin, for the day set in Settings › Celebrations
+    (prefs.summerBreak, 'YYYY-MM-DD'): midnight at the start of it, local time.
+    null until a day is set: no day is ever assumed. */
+export function holidays(d = new Date()) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(store.get('prefs.summerBreak', '') || ''));
+  if (!m) return null;
+  const t = new Date(+m[1], +m[2] - 1, +m[3], 0, 0, 0, 0);
+  if (t.getFullYear() !== +m[1] || t.getMonth() !== +m[2] - 1 || t.getDate() !== +m[3]) return null;
+  return until(t, d);
+}
 
 /* ---------- spooky, by its old names ---------------------------------
    feature: 'theme' | 'countdown' | 'effects' | 'wallpaper' | 'sounds' | 'ghosts'
@@ -258,6 +472,7 @@ export function applyRoot(root = typeof document !== 'undefined' ? document.docu
 }
 
 export default {
+  tryFor, stopTrying, trying, PREVIEW_MS, PREVIEWABLE, holidays, lunarNewYear, isLunarSeason, isLunarDay, thanksgivingDay, isThanksgiving, isAutumnSeason, isStPatrickSeason, isPiDay, isEarthSeason, isSummerSeason, isSchoolSeason, isFirstSnow,
   DEFAULTS, SEASONS, isSpookySeason, isWinterSeason, isNewYearSeason, isValentineSeason, isSpringSeason, isBirthday, birthdayIn, parseBirthday, inHalloween, inSeason, seasonOn, part, current,
   spookyOn, spooky, winterOn, winter, spookyLevel, until, halloween, christmas, applyRoot,
 };

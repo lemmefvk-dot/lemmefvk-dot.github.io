@@ -1,0 +1,93 @@
+/* ==================================================================
+   The rail's widgets that read other apps (js/shell/widgets.more.js)
+   and the rail's edit mode (js/shell/widgets.js).
+   ================================================================== */
+
+/* ---- edit mode: drag a card from anywhere, ✕ takes it out ---- */
+.wgr__edit{opacity:0;transition:opacity var(--t-fast)}
+.widgets:hover .wgr__edit,.wgr__edit:focus-visible,.widgets.is-editing .wgr__edit{opacity:1}
+.wgr__add[hidden]{display:none}
+.wg__shield,.wg__rm{display:none}
+.widgets.is-editing .wg__shield{display:block;position:absolute;inset:0;z-index:2;cursor:grab;border-radius:inherit;touch-action:none;
+  outline:1px dashed var(--line-accent);outline-offset:-1px;background:rgba(var(--accent-rgb)/.04)}
+.widgets.is-editing .wg.is-drag .wg__shield{cursor:grabbing}
+.widgets.is-editing .wg__rm{display:grid;place-items:center;position:absolute;top:6px;left:6px;z-index:4;
+  width:22px;height:22px;border-radius:var(--r-pill);background:var(--glass-2);color:var(--ink-1);border:1px solid var(--line-1)}
+.widgets.is-editing .wg__rm:hover{background:#d23a3f;color:#fff;border-color:transparent}
+.widgets.is-editing .wg__rm .icon{width:12px;height:12px}
+.widgets.is-editing .wg__grip{opacity:1;z-index:4}
+body.reduce-motion .widgets.is-editing .wg__shield{outline-style:solid}
+
+/* ---- due next ---- */
+.wg-due{align-items:flex-start;gap:var(--sp-3)}
+.wg-due .icon{margin-top:2px}
+.wg-due__t{display:flex;flex-direction:column;min-width:0}
+.wg-due__t b{font-weight:600;color:var(--ink-0);font-size:var(--fs-11)}
+.wg-due__t small{color:var(--ink-3);font-size:var(--fs-10)}
+.wg-due__d{flex:none;color:var(--ink-2);font-size:var(--fs-10);font-variant-numeric:tabular-nums}
+.wg-due.is-overdue .wg-due__d{color:#ff7a8f;font-weight:650}
+.wg-due.is-today .wg-due__d{color:var(--accent);font-weight:650}
+
+/* ---- next class ---- */
+.wg-class__k{font-size:var(--fs-10);color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;margin:var(--sp-2) 0 2px}
+.wg-class{display:flex;align-items:center;gap:var(--sp-3);min-width:0}
+.wg-class__dot{flex:none;width:8px;height:28px;border-radius:var(--r-pill)}
+.wg-class b{font-size:var(--fs-12);color:var(--ink-0);font-weight:620;display:block}
+.wg-class small{font-size:var(--fs-10);color:var(--ink-3);display:block}
+
+/* ---- focus ---- */
+.wg-focus__p{font-size:var(--fs-10);color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}
+.wg-focus__t{font-size:calc(30px * var(--fs-k,1));font-weight:640;color:var(--ink-0);font-variant-numeric:tabular-nums;line-height:1.15}
+
+/* ---- screen time ---- */
+.wg-st{display:block;width:100%;padding:0;text-align:left}
+.wg-st__n{font-size:calc(22px * var(--fs-k,1));font-weight:640;color:var(--ink-0)}
+.wg-st > small{color:var(--ink-3);font-size:var(--fs-10)}
+.wg-st__rows{display:flex;flex-direction:column;gap:5px;margin-top:var(--sp-3)}
+.wg-st__r{display:grid;grid-template-columns:minmax(0,5.5em) 1fr auto;align-items:center;gap:var(--sp-3);font-size:var(--fs-10);color:var(--ink-2)}
+.wg-st__r i{display:block;height:5px;border-radius:var(--r-pill);background:var(--fill-1);overflow:hidden}
+.wg-st__r i b{display:block;height:100%;border-radius:inherit;background:var(--accent)}
+.wg-st__r small{color:var(--ink-3);font-variant-numeric:tabular-nums}
+
+/* ---- habits ---- */
+.wg-hab{display:flex;align-items:center;gap:var(--sp-3);padding:4px 2px;font-size:var(--fs-11);color:var(--ink-1)}
+.wg-hab__tick{flex:none;width:18px;height:18px;display:grid;place-items:center;border-radius:var(--r-sm);border:1.5px solid var(--line-2,var(--ink-4));color:var(--accent-ink)}
+.wg-hab__tick[aria-checked="true"]{background:var(--accent);border-color:var(--accent)}
+.wg-hab__tick:disabled{opacity:.4}
+.wg-hab__s{flex:none;color:var(--ink-3);font-size:var(--fs-10)}
+
+/* ---- world clock ---- */
+.wg-wc{display:flex;align-items:baseline;gap:var(--sp-3);padding:5px 0;border-top:1px solid var(--line-0)}
+.wg-wc:first-child{border-top:0}
+.wg-wc b{display:block;font-size:var(--fs-11);color:var(--ink-0);font-weight:600}
+.wg-wc small{font-size:var(--fs-10);color:var(--ink-3)}
+.wg-wc__t{font-size:var(--fs-14,15px);font-weight:620;color:var(--ink-0);font-variant-numeric:tabular-nums}
+
+/* ---- photo frame ---- */
+.wg-photo{display:block;width:100%;padding:0;border-radius:var(--r-md);overflow:hidden;aspect-ratio:4/3;background:var(--fill-1)}
+.wg-photo__img{width:100%;height:100%;background-size:cover;background-position:center;transition:opacity var(--t-med,.25s)}
+.wg-photo__bar{display:flex;align-items:center;gap:var(--sp-2);margin-top:var(--sp-2)}
+.wg-photo__bar small{color:var(--ink-3);font-size:var(--fs-10)}
+
+/* ---- quote of the day ---- */
+.wg-quote{margin:0}
+.wg-quote blockquote{margin:0;font-size:var(--fs-12);line-height:1.5;color:var(--ink-0);font-style:italic}
+.wg-quote figcaption{margin-top:var(--sp-3);display:flex;flex-direction:column;gap:1px}
+.wg-quote figcaption b{font-size:var(--fs-11);color:var(--ink-1);font-weight:620}
+.wg-quote figcaption small{font-size:var(--fs-10);color:var(--ink-3)}
+
+/* ---- Try it ---- */
+.wg-try__sum{display:grid;grid-template-columns:auto 1fr;gap:0 var(--sp-3);align-items:baseline;margin-bottom:var(--sp-3)}
+.wg-try__sum b{font-size:var(--fs-12);color:var(--ink-0)}
+.wg-try__sum small{color:var(--ink-3);font-size:var(--fs-10)}
+.wg-try__bar{grid-column:1/-1;display:block;height:4px;margin-top:var(--sp-2);border-radius:var(--r-pill);background:var(--fill-1);overflow:hidden}
+.wg-try__bar b{display:block;height:100%;background:var(--accent);border-radius:inherit}
+.wg-try{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.wg-try li{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-11);color:var(--ink-1)}
+.wg-try__c{flex:none;width:15px;height:15px;display:grid;place-items:center;border-radius:50%;border:1.5px solid var(--ink-4);color:var(--accent-ink)}
+.wg-try li.is-done .wg-try__c{background:var(--accent);border-color:var(--accent)}
+.wg-try li.is-done .wg-try__l{color:var(--ink-3);text-decoration:line-through}
+.wg-try li{align-items:flex-start}
+.wg-try__c{margin-top:1px}
+.wg-try__x{display:flex;flex-direction:column;min-width:0}
+.wg-try__x small{font-size:var(--fs-10);color:var(--ink-3);line-height:1.35}

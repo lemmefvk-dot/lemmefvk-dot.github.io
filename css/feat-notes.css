@@ -68,6 +68,119 @@
 .notes__figmiss .icon{width:14px;height:14px;flex:0 0 auto}
 .notes__view ul.notes__checks>li{list-style:none}
 
+/* ---- quotes, dividers, tables (format 3) ----------------------------- */
+.notes__doc blockquote.notes__quote{margin:0;padding:0 0 0 12px;border-left:3px solid var(--line-accent);color:var(--ink-2);min-height:1.7em}
+.notes__doc :not(blockquote)+blockquote.notes__quote{margin-top:.25em}
+.notes__doc blockquote.notes__quote+:not(blockquote){margin-top:.25em}
+.notes__hr{position:relative;display:block;margin:.35em 0;padding:9px 0;border-radius:var(--r-sm);line-height:0;user-select:none;cursor:default}
+.notes__hr hr,.notes__doc hr.notes__rule{border:0;border-top:1px solid var(--line-2);margin:0}
+.notes__doc hr.notes__rule{margin:.8em 0}
+.notes__hr.is-sel{outline:2px solid var(--accent);outline-offset:1px}
+.notes__hr:hover .notes__figx,.notes__hr.is-sel .notes__figx{opacity:1}
+.notes__hr .notes__figx{top:-4px;right:0}
+.notes__doc table.notes__table{border-collapse:collapse;margin:.35em 0;max-width:100%;font-size:inherit;line-height:1.55}
+.notes__table th,.notes__table td{border:1px solid var(--line-2);padding:3px 9px;min-width:64px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.notes__table th{background:var(--fill-1);color:var(--ink-0);font-weight:650}
+.notes__rich .notes__table td:focus-within,.notes__rich .notes__table th:focus-within{box-shadow:inset 0 0 0 1px var(--line-accent)}
+
+/* ---- View mode: [[links]] and #tags ---------------------------------- */
+.notes__wikilink,.notes__tag{display:inline;padding:0 2px;margin:0;border-radius:var(--r-xs);font:inherit;color:var(--accent-soft);text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;cursor:pointer;background:none}
+.notes__wikilink:hover,.notes__tag:hover{background:var(--fill-accent)}
+.notes__wikilink:focus-visible,.notes__tag:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.notes__wikilink.is-missing{color:var(--ink-3);text-decoration-style:dashed}
+.notes__tag{text-decoration:none;font-weight:600}
+
+/* ---- the sidebar: tags, the list's buttons, pins, the Trash --------- */
+.notes__tags{flex:0 1 auto;max-height:22%;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+.notes__tags[hidden]{display:none}
+.notes__tags .side__label{padding:0}
+.notes__tagrow{display:flex;flex-wrap:wrap;gap:4px}
+.notes__tagchip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:var(--r-pill);background:var(--fill-0);border:1px solid var(--line-1);color:var(--ink-1);font-size:var(--fs-10);max-width:100%}
+.notes__tagchip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes__tagchip small{color:var(--ink-3)}
+.notes__tagchip:hover{background:var(--fill-1)}
+.notes__tagchip.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0)}
+.notes__tagchip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.notes__lhead{gap:2px}
+.notes__lhead .ibtn{width:24px;height:24px}
+.notes__lhead .ibtn[hidden]{display:none}
+.notes__pinned{display:inline-flex;vertical-align:-1px;margin-right:4px;color:var(--accent-soft)}
+.notes__pinned .icon{width:10px;height:10px}
+.notes__item b.trunc{display:block}
+.notes__ititle{display:flex;align-items:center;min-width:0}
+.notes__ititle b.trunc{flex:1;min-width:0}
+.notes__trashrow{margin-top:2px}
+.list.is-drop{box-shadow:inset 0 0 0 2px var(--accent);background:var(--fill-accent);border-radius:var(--r-sm)}
+
+/* ---- under the title: the Trash, a twin title, a linked event -------- */
+.notes__meta{display:flex;flex-direction:column;gap:var(--sp-2);flex:0 0 auto;margin:-6px 0 var(--sp-3)}
+.notes__meta[hidden]{display:none}
+.notes__trashbar,.notes__dup{display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-2);padding:5px 10px;border-radius:var(--r-sm);font-size:var(--fs-11);color:var(--ink-1)}
+.notes__trashbar{background:var(--fill-1);border:1px solid var(--line-1)}
+.notes__dup{background:rgba(255,190,60,.1);border:1px solid rgba(255,190,60,.32)}
+.notes__trashbar>.icon,.notes__dup>.icon{width:14px;height:14px;flex:0 0 auto;color:var(--ink-2)}
+.notes__trashbar>span:not(.icon),.notes__dup>span:not(.icon){flex:1 1 200px}
+.notes__evlink{display:inline-flex;align-items:center;align-self:flex-start;max-width:100%;border-radius:var(--r-pill);background:var(--fill-0);border:1px solid var(--line-1);font-size:var(--fs-11)}
+.notes__evgo{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 6px 0 9px;color:var(--ink-0);min-width:0;border-radius:var(--r-pill) 0 0 var(--r-pill)}
+.notes__evgo>span:not(.icon){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.notes__evgo small{color:var(--ink-3)}
+.notes__evgo .icon{width:12px;height:12px;color:var(--accent-soft);flex:0 0 auto}
+.notes__evgo:hover:not(:disabled){background:var(--fill-1)}
+.notes__evx{display:grid;place-items:center;width:24px;height:24px;border-radius:0 var(--r-pill) var(--r-pill) 0;color:var(--ink-3)}
+.notes__evx .icon{width:11px;height:11px}
+.notes__evx:hover{background:var(--fill-1);color:var(--ink-0)}
+.notes__evlink.is-gone .notes__evgo>span:not(.icon){text-decoration:line-through;color:var(--ink-3)}
+
+/* ---- under the page: what links here --------------------------------- */
+.notes__back{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;flex:0 0 auto;padding-top:var(--sp-2);margin-top:var(--sp-2);border-top:1px solid var(--line-0);font-size:var(--fs-11)}
+.notes__back[hidden]{display:none}
+.notes__backlbl{display:inline-flex;align-items:center;gap:5px;color:var(--ink-3)}
+.notes__backlbl .icon{width:12px;height:12px}
+.notes__backlink{height:22px;padding:0 9px;border-radius:var(--r-pill);background:var(--fill-0);border:1px solid var(--line-1);color:var(--ink-1);max-width:220px}
+.notes__backlink span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes__backlink:hover{background:var(--fill-1);color:var(--ink-0)}
+.notes__back small{color:var(--ink-3)}
+
+/* ---- the menus at the caret: "/" and "[[" ---------------------------- */
+.notes__pop{position:fixed;z-index:var(--z-menu);width:260px;max-height:320px;overflow-y:auto;padding:4px;border-radius:var(--r-md);background:var(--glass-3);
+  -webkit-backdrop-filter:var(--blur-3);backdrop-filter:var(--blur-3);border:1px solid var(--line-2);box-shadow:var(--sh-4);display:flex;flex-direction:column;gap:1px}
+.notes__poprow{display:flex;align-items:center;gap:8px;width:100%;min-height:28px;padding:3px 8px;border-radius:var(--r-sm);text-align:left;color:var(--ink-1);font-size:var(--fs-12)}
+.notes__poprow .icon{width:14px;height:14px;flex:0 0 auto;color:var(--ink-3)}
+.notes__poprow>span:not(.icon){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes__poprow small{flex:0 1 auto;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-3);font-size:var(--fs-10)}
+.notes__poprow.is-on,.notes__poprow:hover{background:rgba(var(--accent-rgb)/.18);color:var(--ink-0)}
+.notes__poprow.is-on .icon{color:var(--accent-soft)}
+.notes__popnone{padding:8px 10px;color:var(--ink-3);font-size:var(--fs-11)}
+
+/* ---- find and replace (js/apps/notestools.js) ------------------------ */
+.notes-find{display:flex;flex-direction:column;gap:4px;flex:0 0 auto;padding:6px 8px;margin-bottom:var(--sp-3);border-radius:var(--r-sm);background:var(--fill-0);border:1px solid var(--line-1)}
+.notes-find[hidden]{display:none}
+.notes-find__row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.notes-find__row>.icon{width:13px;height:13px;color:var(--ink-3);flex:0 0 auto}
+.notes-find__in{flex:1 1 140px;min-width:0;height:26px;padding:0 8px;border-radius:var(--r-sm);background:var(--fill-1);border:1px solid var(--line-1);color:var(--ink-0);font-size:var(--fs-12)}
+.notes-find__in:focus{outline:none;border-color:var(--line-accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb)/.14)}
+.notes-find__in:disabled{opacity:.5}
+.notes-find__n{min-width:62px;color:var(--ink-3);font-size:var(--fs-11);font-variant-numeric:tabular-nums}
+.notes-find__case{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-11);color:var(--ink-2)}
+::highlight(notes-find){background-color:rgba(255,200,40,.32);color:inherit}
+::highlight(notes-find-now){background-color:rgba(255,160,20,.75);color:#000}
+::highlight(notes-read){background-color:rgba(var(--accent-rgb)/.28)}
+.ibtn.is-on{color:var(--accent-soft);background:var(--fill-accent)}
+
+/* ---- Summarise / Quiz me ---------------------------------------------- */
+.notes-ai{position:absolute;top:var(--sp-3);right:var(--sp-3);z-index:4;width:min(340px,calc(100% - 24px));max-height:calc(100% - 24px);overflow-y:auto;
+  display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4);border-radius:var(--r-lg);border:1px solid var(--line-1);background:var(--glass-3);box-shadow:var(--sh-3);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);font-size:var(--fs-11);color:var(--ink-1);line-height:1.45}
+.notes-ai[hidden]{display:none}
+.notes-ai__head{display:flex;align-items:center;gap:var(--sp-2)}
+.notes-ai__head>.icon{width:15px;height:15px;color:var(--accent-soft)}
+.notes-ai__head b{flex:1;font-size:var(--fs-13);color:var(--ink-0)}
+.notes-ai__state{margin:0;color:var(--ink-2)}
+.notes-ai__out{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-12);line-height:1.55;color:var(--ink-0);padding:var(--sp-3);border-radius:var(--r-sm);background:var(--fill-0);min-height:2.4em}
+.notes-ai__out:empty{display:none}
+.notes-ai__acts{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.notes-ai__fine{margin:0;color:var(--ink-3);font-size:var(--fs-10)}
+
 /* ---- picture picker -------------------------------------------------- */
 .notes__picpick{width:330px}
 .notes__pickres.notes__pics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
@@ -95,6 +208,12 @@
   .notes-print ul.notes__checks li{display:flex;gap:8px;align-items:baseline}
   .notes-print .notes__fig{break-inside:avoid;margin:8pt 0}
   .notes-print .notes__fig img{max-width:100%;max-height:9cm}
+  .notes-print blockquote.notes__quote{border-left:2pt solid #888;padding-left:8pt;margin:0;color:#333 !important}
+  .notes-print hr.notes__rule{border:0;border-top:1px solid #999;margin:8pt 0}
+  .notes-print table.notes__table{border-collapse:collapse;margin:6pt 0;break-inside:auto}
+  .notes-print .notes__table th,.notes-print .notes__table td{border:1px solid #777;padding:3pt 6pt;text-align:left;vertical-align:top}
+  .notes-print .notes__table th{background:#eee !important;font-weight:700}
+  .notes-print .notes__table tr{break-inside:avoid}
 }
 
 /* ---- Write together (js/apps/notes-coop.js) -------------------------- */
@@ -135,6 +254,16 @@
 .notes-co__who{display:inline-flex;align-items:center;gap:5px;font-weight:600;color:var(--ink-0);min-width:0}
 .notes-co__who span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .notes-co__state{color:var(--ink-2)}
+.notes-co__fr{padding:0 5px;border-radius:var(--r-pill);background:hsl(var(--h,200) 70% 45% / .25);color:var(--ink-0);font-size:var(--fs-10);font-weight:600}
+.notes-co__ro{display:flex;align-items:flex-start;gap:6px;color:var(--ink-1)}
+.notes-co__ro input{margin-top:2px}
+.notes-co__recent{display:flex;flex-direction:column;gap:4px;padding-top:var(--sp-2);border-top:1px solid var(--line-0)}
+.notes-co__recent>b{font-size:var(--fs-11);color:var(--ink-0)}
+.notes-co__room{display:flex;align-items:center;gap:6px}
+.notes-co__rt{flex:1;min-width:0;display:flex;flex-direction:column}
+.notes-co__rt span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-0);font-weight:600}
+.notes-co__rt small{color:var(--ink-3);font-size:var(--fs-10);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes-co__room .ibtn{width:22px;height:22px}
 /* the friend's caret and selection, over the page (nothing here takes a click) */
 .notes-co__layer{position:absolute;inset:0;z-index:2;overflow:hidden;pointer-events:none;--h:200}
 .notes-co__layer[hidden]{display:none}

@@ -37,7 +37,7 @@ import { key, local } from './profiles.js';
 
 /* plain text that becomes an editable vfs file */
 export const TEXT_EXT = new Set(['txt', 'md', 'json', 'js', 'css', 'html', 'csv',
-  'log', 'xml', 'yml', 'yaml', 'toml', 'ini', 'conf', 'sh', 'py', 'ts', 'tsv']);
+  'log', 'xml', 'yml', 'yaml', 'toml', 'ini', 'conf', 'sh', 'py', 'ts', 'tsv', 'sql', 'frag', 'glsl', 'vert']);
 export const TEXT_MAX = 200 * 1024;
 const VFS_KEY = key('staticos.vfs.v1');
 const VFS_ROOM = 2_400_000;
@@ -191,6 +191,8 @@ export async function importFiles(dir, list, { folders = [], onProgress } = {}) 
     /* media.save announces the files it stores; text goes straight into the
        file system, so say it here (achievements count a first save) */
     if (r.ok && r.kind === 'text') bus.emit('file:saved', { path: r.path, app: 'files' });
+    /* a file that finished landing in ~/Downloads: Static Automations' "when a download finishes" */
+    if (r.ok && typeof r.path === 'string' && r.path.startsWith(`${vfs.HOME}/Downloads/`)) bus.emit('download:done', { name: r.as || r.name, path: r.path, size: r.size });
     results.push(r);
   }
   return results;

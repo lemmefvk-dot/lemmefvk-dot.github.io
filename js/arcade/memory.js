@@ -1,12 +1,15 @@
 /* ============================================================
-   arcade/memory.js — Memory: 16 cards, 8 pairs.
+   arcade/memory.js — Memory: flip cards, find the pairs.
 
+   Two boards, each an Arcade mode with its own best (ctx.mode):
+   4 × 4 (8 pairs, the usual one) and 6 × 6 (18 pairs).
    Flip two cards; a pair stays up, anything else turns back over.
    One player: score = moves (one move = two cards turned), lower is
-   better; the clock is shown for interest but is not the score.
-   Two players take turns on the same screen; finding a pair earns
-   another turn, and whoever holds more pairs at the end wins (the
-   result names the winner, or a draw).
+   better. The fewest possible is one move a pair, and the finished
+   card says how close you came. The clock is shown for interest but
+   is not the score. Two players take turns on the same screen;
+   finding a pair earns another turn, and whoever holds more pairs at
+   the end wins (the result names the winner, or a draw).
 
    Every card is a real <button> with a spoken label ("Card 6, row 2
    column 2, face down" → "Card 6, star"), arrow keys move between
@@ -14,14 +17,21 @@
    outcome. With two cards showing that don't match, turning a third
    card flips them back straight away — nobody has to wait out the
    reveal timer.
+
+   ONLINE RACE (ctx.online.kit, js/arcade/race.js): the cards are laid
+   out from the room's seed, so both screens get the same 4 × 4
+   layout. The clock runs from the start for both; every pair found
+   moves your bar on the friend's screen, and when the board is clear
+   your moves and time go to the race kit. Fewest moves wins; with the
+   same moves, the faster.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
+import { rng } from './kit.js';
 
-const SIZE = 4;
 const REVEAL_MS = 900;
 
-/* shape + hue both differ, so no pair relies on colour alone */
+/* shape + hue both differ, so no pair relies on colour alone; 6 × 6 uses all eighteen */
 const SYMBOLS = [
   { icon: 'heart', name: 'heart', hue: '#fb7185' },
   { icon: 'star', name: 'star', hue: '#fbbf24' },
@@ -31,7 +41,19 @@ const SYMBOLS = [
   { icon: 'flame', name: 'flame', hue: '#fb923c' },
   { icon: 'droplet', name: 'water drop', hue: '#22d3ee' },
   { icon: 'globe', name: 'globe', hue: '#60a5fa' },
+  { icon: 'cherry', name: 'cherries', hue: '#f43f5e' },
+  { icon: 'ghost', name: 'ghost', hue: '#e5e7eb' },
+  { icon: 'snowflake', name: 'snowflake', hue: '#7dd3fc' },
+  { icon: 'sun', name: 'sun', hue: '#fde047' },
+  { icon: 'bell', name: 'bell', hue: '#eab308' },
+  { icon: 'gift', name: 'present', hue: '#f472b6' },
+  { icon: 'cat', name: 'cat', hue: '#fdba74' },
+  { icon: 'coffee', name: 'coffee cup', hue: '#d6a77a' },
+  { icon: 'camera', name: 'camera', hue: '#a5b4fc' },
+  { icon: 'shield', name: 'shield', hue: '#34d399' },
 ];
+/* the boards, by mode: cards a side */
+export const BOARDS = { four: 4, six: 6 };
 const P2 = '#38bdf8';
 
 const CSS = `
@@ -53,7 +75,10 @@ const CSS = `
 .arx-mem__turn{margin-left:auto;align-self:center;font-style:normal;font-size:var(--fs-10,10px);font-weight:700;letter-spacing:.08em;text-transform:uppercase;
   padding:3px 7px;border-radius:99px;background:var(--pc);color:var(--accent-ink,#fff)}
 .arx-mem__pl.is-p2 .arx-mem__turn{color:#04121c}
-.arx-mem__board{position:relative;width:min(100%,calc(100cqh - 96px),640px);aspect-ratio:1;display:grid;grid-template-columns:repeat(${SIZE},1fr);gap:clamp(6px,1.6cqmin,12px);perspective:900px}
+.arx-mem__board{position:relative;width:min(100%,calc(100cqh - 96px),640px);aspect-ratio:1;display:grid;grid-template-columns:repeat(var(--n,4),1fr);gap:clamp(6px,1.6cqmin,12px);perspective:900px}
+.arx-mem__board.is-six{gap:clamp(4px,1cqmin,8px)}
+.arx-mem__board.is-six .arx-mem__card{border-radius:var(--r-md,11px)}
+.arx-mem__board.is-six .arx-mem__own{right:4px;top:4px;width:7px;height:7px}
 .arx-mem__card{position:relative;border:0;padding:0;background:none;border-radius:var(--r-lg,15px);cursor:pointer;outline:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .arx-mem__card:focus-visible{outline:3px solid var(--ink-0,#fff);outline-offset:3px}
 .arx-mem__in{position:absolute;inset:0;transform-style:preserve-3d;transition:transform .42s cubic-bezier(.3,1.25,.5,1);border-radius:inherit}
@@ -89,9 +114,9 @@ const CSS = `
 @container (max-width:520px){.arx-mem{padding:var(--sp-3,8px);gap:var(--sp-3,8px)}.arx-mem__stat{padding:6px 8px}.arx-mem__top,.arx-mem__board{width:min(100%,calc(100cqh - 80px))}}
 `;
 
-function shuffle(a) {
+function shuffle(a, rand = Math.random) {
   for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rand() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
@@ -106,10 +131,15 @@ export default {
   mount(el, ctx = {}) {
     const onScore = typeof ctx.onScore === 'function' ? ctx.onScore : () => {};
     const onEnd = typeof ctx.onEnd === 'function' ? ctx.onEnd : () => {};
-    const two = Number(ctx.players) === 2;
+    /* an online race: the shell's race kit, the room's seed — the same layout for both, always 4 × 4 */
+    const RACE = ctx.online?.kit && Number.isInteger(ctx.online.seed) ? ctx.online : null;
+    const two = !RACE && Number(ctx.players) === 2;
+    const SIZE = RACE ? 4 : BOARDS[ctx.mode] || 4;
+    const PAIRS = (SIZE * SIZE) / 2;
 
     let dead = false, paused = false, over = false;
-    const deck = shuffle([...SYMBOLS.keys(), ...SYMBOLS.keys()]);
+    const kinds = [...SYMBOLS.keys()].slice(0, PAIRS);
+    const deck = shuffle([...kinds, ...kinds], RACE ? rng(RACE.seed >>> 0) : Math.random);
     const up = new Set();        // face up, not yet matched
     const done = new Set();      // matched
     const owner = [];            // who found each matched card (2P)
@@ -149,7 +179,7 @@ export default {
           h('span.arx-mem__side.arx-mem__face', icon(S.icon))));
       return btn;
     });
-    const board = h('div.arx-mem__board', { role: 'group', 'aria-label': 'Memory cards, 4 by 4' }, cards);
+    const board = h('div.arx-mem__board' + (SIZE === 6 ? '.is-six' : ''), { role: 'group', 'aria-label': `Memory cards, ${SIZE} by ${SIZE}`, style: { '--n': String(SIZE) } }, cards);
     const reduced = !!ctx.reduced || document.body.classList.contains('reduce-motion')
       || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
     const root = h('div.arx-mem' + (reduced ? '.is-reduced' : ''), { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } },
@@ -197,6 +227,12 @@ export default {
       }
     }
 
+    function startClock() {
+      if (started) return;
+      started = true; startAt = performance.now();
+      if (!two) ticker = setInterval(() => { if (!dead && !paused && !over) paintTop(); }, 500);
+    }
+
     function flipBack() {
       clearTimeout(hideTimer); hideTimer = 0;
       if (!showing) return;
@@ -215,7 +251,7 @@ export default {
       if (dead || paused || over) return;
       if (showing) flipBack();
       if (done.has(i) || up.has(i)) return;
-      if (!started) { started = true; startAt = performance.now(); if (!two) ticker = setInterval(() => { if (!dead && !paused && !over) paintTop(); }, 500); }
+      startClock();
       up.add(i);
       paintCard(i);
       if (up.size < 2) { say(`${SYMBOLS[deck[i]].name}`); return; }
@@ -230,6 +266,7 @@ export default {
         paintCard(a); paintCard(b);
         paintTop();
         onScore(moves);
+        RACE?.progress(done.size / deck.length);
         if (done.size === deck.length) return finish();
         say(`Match, ${SYMBOLS[deck[a]].name}.${two ? ` Player ${turn + 1} goes again.` : ''}`);
       } else {
@@ -256,10 +293,12 @@ export default {
         sub = `${pairs[0]}–${pairs[1]} in pairs · ${moves} moves`;
         detail = winner ? `Player ${winner} wins ${Math.max(...pairs)}–${Math.min(...pairs)} · ${moves} moves` : `Draw ${pairs[0]}–${pairs[1]} · ${moves} moves`;
       } else {
-        kicker = 'Solved';
+        /* the fewest possible is one move a pair: how close this came, from the real moves */
+        const extra = moves - PAIRS;
+        kicker = RACE ? 'Board cleared' : 'Solved';
         big = `${moves} moves`;
-        sub = `${deck.length / 2} pairs in ${time}${moves === deck.length / 2 ? ' · a perfect game' : ''}`;
-        detail = `${deck.length / 2} pairs in ${moves} moves · ${time}`;
+        sub = `${PAIRS} pairs in ${time} · ${extra ? `${extra} more than the fewest possible (${PAIRS})` : 'a perfect game'}`;
+        detail = `${SIZE} × ${SIZE}: ${PAIRS} pairs in ${moves} moves (the fewest possible is ${PAIRS}) · ${time}`;
       }
       const endCard = h('div.arx-mem__end', h('div.arx-mem__endcard', { role: 'status' },
         h('div.arx-mem__kicker', { text: kicker }),
@@ -267,7 +306,8 @@ export default {
         h('div.arx-mem__sub', { text: sub })));
       board.appendChild(endCard);
       say(`${big}. ${sub}.`);
-      onEnd({ score: moves, won: true, detail, winner: two ? winner : undefined, pairs: two ? pairs.slice() : undefined, ms: Math.round(banked) });
+      onEnd({ score: moves, won: true, detail, winner: two ? winner : undefined, pairs: two ? pairs.slice() : undefined, ms: Math.round(banked),
+        ...(RACE ? { race: { done: true, ms: Math.round(banked), mv: moves, p: 1 } } : {}) });
     }
 
     listen(board, 'click', e => {
@@ -320,6 +360,8 @@ export default {
     cards.forEach((_, i) => paintCard(i));
     paintTop();
     if (two) say('Player 1 starts.');
+    /* a race was counted down by the Arcade: the clock runs from now, for both */
+    if (RACE) { startClock(); RACE.progress(0); say(`A race: the same cards as ${RACE.peer?.name || 'your friend'}. Fewest moves wins.`); }
     requestAnimationFrame(() => { if (!dead) cards[0].focus({ preventScroll: true }); });
 
     return {
@@ -340,6 +382,9 @@ export default {
         paused = false;
         if (started && !over) startAt = performance.now();
       },
+      /* a read-only snapshot for automated play-tests */
+      peek: () => ({ size: SIZE, pairs: PAIRS, deck: deck.slice(), moves, done: [...done], up: [...up], over, turn, players: two ? 2 : 1,
+        race: RACE ? { seed: RACE.seed } : null, ms: Math.round(elapsed()) }),
     };
   },
 };

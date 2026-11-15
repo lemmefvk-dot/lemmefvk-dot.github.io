@@ -18,6 +18,15 @@
        with speed; a ball under 4 px/s stops
    Simplified: no spin (english, follow, draw, masse), no jumping.
 
+   SAME ON EVERY SCREEN. An online game (./pool.js) sends only each
+   shot — the cue's direction and power — and both screens run this
+   to rest, so it must give the same table everywhere: it only adds,
+   multiplies, divides and takes square roots (exactly rounded by
+   every browser), never Math.hypot, sin or cos, never the clock or
+   a random number, and it advances in fixed steps whatever the
+   frame rate. strikeDir() takes the direction as two whole numbers
+   for the same reason.
+
    A Sim records what judges need: the first ball the cue ball
    touched, every pocketed ball in order, whether a ball touched a
    cushion after that first contact, and which object balls
@@ -28,6 +37,8 @@ export const DT = 1 / 480;
 export const MAXV = 1800;
 const E_BALL = 0.95, E_RAIL = 0.75;
 const FR_C = 45, FR_V = 0.28, STOP = 4;
+/* a length with nothing but exactly rounded operations (Math.hypot may differ between browsers) */
+const len = (x, y) => Math.sqrt(x * x + y * y);
 
 export const POCKETS = [
   { x: 0, y: 0, r: 22 }, { x: W / 2, y: -4, r: 19 }, { x: W, y: 0, r: 22 },
@@ -46,20 +57,36 @@ export const groupOf = id => (id === 0 ? 'cue' : id === 8 ? 'eight' : id < 8 ? '
 const RACK = [[1], [9, 2], [3, 8, 10], [11, 4, 5, 12], [6, 13, 14, 7, 15]];
 export function makeBalls() {
   const balls = [{ id: 0, x: 200, y: H / 2, vx: 0, vy: 0, in: true }];
-  const dx = 2 * R * Math.cos(Math.PI / 6) + 0.15;
+  const dx = 2 * R * (Math.sqrt(3) / 2) + 0.15;        /* cos 30°, by a square root: the same on every browser */
   RACK.forEach((row, r) => row.forEach((id, k) => {
     balls.push({ id, x: 600 + r * dx, y: H / 2 + (k - (row.length - 1) / 2) * (2 * R + 0.15), vx: 0, vy: 0, in: true });
   }));
   return balls.sort((a, b) => a.id - b.id);
+}
+/* 9-ball: nine balls in a diamond, the 1 on the foot spot and the 9 in the middle */
+const DIAMOND = [[1], [2, 3], [4, 9, 5], [6, 7], [8]];
+export function makeBalls9() {
+  const balls = [{ id: 0, x: 200, y: H / 2, vx: 0, vy: 0, in: true }];
+  const dx = 2 * R * (Math.sqrt(3) / 2) + 0.15;
+  DIAMOND.forEach((row, r) => row.forEach((id, k) => {
+    balls.push({ id, x: 600 + r * dx, y: H / 2 + (k - (row.length - 1) / 2) * (2 * R + 0.15), vx: 0, vy: 0, in: true });
+  }));
+  return balls.sort((a, b) => a.id - b.id);
+}
+/* the triangle's fifteen spots, apex first (straight pool re-racks into them) */
+export function rackSpots() {
+  const dx = 2 * R * (Math.sqrt(3) / 2) + 0.15, out = [];
+  for (let r = 0; r < 5; r++) for (let k = 0; k <= r; k++) out.push({ x: 600 + r * dx, y: H / 2 + (k - r / 2) * (2 * R + 0.15) });
+  return out;
 }
 export const cloneBalls = balls => balls.map(b => ({ ...b }));
 
 /* may the cue ball sit at (x, y)? inside the cushions and clear of every other ball */
 export function canPlace(balls, x, y) {
   if (!(x >= R && x <= W - R && y >= R && y <= H - R)) return false;
-  for (const b of balls) if (b.id !== 0 && b.in && Math.hypot(b.x - x, b.y - y) < 2 * R + 0.5) return false;
+  for (const b of balls) if (b.id !== 0 && b.in && len(b.x - x, b.y - y) < 2 * R + 0.5) return false;
   /* never inside a pocket's mouth */
-  for (const p of POCKETS) if (Math.hypot(p.x - x, p.y - y) < p.r + R) return false;
+  for (const p of POCKETS) if (len(p.x - x, p.y - y) < p.r + R) return false;
   return true;
 }
 
@@ -80,7 +107,7 @@ export function createSim(balls, dt = DT) {
     const L = live();
     for (const b of L) {
       if (!moving(b)) continue;
-      let sp = Math.hypot(b.vx, b.vy);
+      let sp = len(b.vx, b.vy);
       const d = (FR_C + FR_V * sp) * dt;
       if (sp <= d || sp < STOP) { b.vx = b.vy = 0; continue; }
       sp -= d;
@@ -117,7 +144,7 @@ export function createSim(balls, dt = DT) {
         const dx = s[2] - s[0], dy = s[3] - s[1], l2 = dx * dx + dy * dy;
         const t = Math.max(0, Math.min(1, ((b.x - s[0]) * dx + (b.y - s[1]) * dy) / l2));
         const px = s[0] + dx * t, py = s[1] + dy * t;
-        let nx = b.x - px, ny = b.y - py, d = Math.hypot(nx, ny);
+        let nx = b.x - px, ny = b.y - py, d = len(nx, ny);
         if (d >= R) continue;
         if (d < 1e-6) { const l = Math.sqrt(l2); nx = -dy / l; ny = dx / l; if (nx * (W / 2 - b.x) + ny * (H / 2 - b.y) < 0) { nx = -nx; ny = -ny; } d = 1e-6; } else { nx /= d; ny /= d; }
         b.x = px + nx * R; b.y = py + ny * R;
@@ -128,7 +155,7 @@ export function createSim(balls, dt = DT) {
     /* pockets */
     for (const b of L) {
       for (const p of POCKETS) {
-        if (Math.hypot(b.x - p.x, b.y - p.y) < p.r) {
+        if (len(b.x - p.x, b.y - p.y) < p.r) {
           b.in = false; b.vx = b.vy = 0; b.pocket = POCKETS.indexOf(p);
           ev.pocketed.push(b.id);
           if (sound) sound('pocket', 0);
@@ -152,4 +179,14 @@ export function strike(balls, angle, power) {
   const c = balls[0];
   const sp = Math.max(0, Math.min(1, power)) * MAXV;
   c.vx = Math.cos(angle) * sp; c.vy = Math.sin(angle) * sp;
+}
+/* the online shot: the direction as whole numbers (ux, uy), power 0..1 — the same velocity on every browser */
+export const DIR_SCALE = 1e6;
+export function strikeDir(balls, ux, uy, power) {
+  const c = balls[0];
+  const l = len(ux, uy);
+  if (!(l > 0)) return false;
+  const sp = Math.max(0, Math.min(1, power)) * MAXV;
+  c.vx = ux / l * sp; c.vy = uy / l * sp;
+  return true;
 }

@@ -55,9 +55,13 @@ export const accepts = (lex, tiles, answer) => {
   return a.length === tiles.length && keyOf(a) === keyOf(tiles) && lex.has(a);
 };
 
-/** the next puzzle: { word, tiles, len } — a fresh dealt word (not one in `used`), scrambled */
-export function nextPuzzle(lex, solved, used, random = Math.random, cache = {}) {
-  const len = lengthFor(solved);
+/* the lengths a round can be set to, instead of growing */
+export const LENGTHS = [4, 5, 6, 7, 8];
+
+/** the next puzzle: { word, tiles, len } — a fresh dealt word (not one in `used`), scrambled.
+    `fixed`: one of LENGTHS to keep every word that long (0 = grow with `solved`) */
+export function nextPuzzle(lex, solved, used, random = Math.random, cache = {}, fixed = 0) {
+  const len = LENGTHS.includes(fixed) ? fixed : lengthFor(solved);
   const pool = cache[len] || (cache[len] = dealable(lex, len));
   for (let tries = 0; tries < 80; tries++) {
     const word = pool[Math.floor(random() * pool.length)];

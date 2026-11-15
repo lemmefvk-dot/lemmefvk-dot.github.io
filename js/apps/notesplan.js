@@ -12,13 +12,20 @@
 
    The outline reorders the note's real blocks through Notes' own
    undoable edit, so Ctrl/⌘+Z in the note (or in the outline) puts
-   it back. Nothing here writes a note itself.
+   it back. Nothing here writes a note itself. H1 · H2 · H3 in its head
+   folds it down to that level of heading.
+
+   The strip also holds a goal for every day, with the streak of days
+   it was met, and a 15-minute writing sprint (writegoals.js says what
+   is counted). A note you are writing with a friend isn't counted
+   towards the day: their words would be in it too.
 
    Everything the person typed is drawn as text, never as markup.
    ============================================================ */
 import * as OL from '../core/outline.js';
 import * as NF from '../core/notesfmt.js';
 import * as WG from '../core/writegoals.js';
+import { t as tr } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-planning-css')) {
   const link = document.createElement('link');
@@ -32,7 +39,8 @@ const PREF = 'prefs.notesPlan';
 const MOD = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '') ? '⌘' : 'Ctrl+';
 
 /**
- * hooks: { api, note(): the open note or null (never a file),
+ * hooks: { api, note(): the open note or null (never a file), byId(id): any note,
+ *          counts(note): its words count towards the day (false while shared),
  *          blocks(): the note's blocks as they are now,
  *          change(fn): one undoable edit — fn(blocks) edits the array in place,
  *          jump(i): put the caret on block i, undo(), redo() }
@@ -50,32 +58,43 @@ export function mountPlan(hooks) {
   const savePref = () => { try { store.set(PREF, { outline: S.outline, goal: S.goal }); } catch (e) { /* fine */ } };
 
   /* ---------------- toolbar buttons ---------------- */
-  const outlineBtn = h('button.ibtn.tip.np-toggle', { type: 'button', 'data-tip': 'Outline', 'aria-label': 'Outline', 'aria-pressed': String(S.outline), dataset: { fk: 'np-outline-btn' }, onmousedown: keep, onclick: () => { S.outline = !S.outline; savePref(); show(); if (S.outline) paintOutline(); } }, icon('align-left'));
-  const goalBtn = h('button.ibtn.tip.np-toggle', { type: 'button', 'data-tip': 'Word goal and timer', 'aria-label': 'Word goal and timer', 'aria-pressed': String(S.goal), dataset: { fk: 'np-goal-btn' }, onmousedown: keep, onclick: () => { S.goal = !S.goal; savePref(); show(); if (S.goal) paintStrip(); } }, icon('clock'));
+  const outlineBtn = h('button.ibtn.tip.np-toggle', { type: 'button', 'data-tip': tr('Outline'), 'aria-label': tr('Outline'), 'aria-pressed': String(S.outline), dataset: { fk: 'np-outline-btn' }, onmousedown: keep, onclick: () => { S.outline = !S.outline; savePref(); show(); if (S.outline) paintOutline(); } }, icon('align-left'));
+  const goalBtn = h('button.ibtn.tip.np-toggle', { type: 'button', 'data-tip': tr('Word goal and timer'), 'aria-label': tr('Word goal and timer'), 'aria-pressed': String(S.goal), dataset: { fk: 'np-goal-btn' }, onmousedown: keep, onclick: () => { S.goal = !S.goal; savePref(); show(); if (S.goal) paintStrip(); } }, icon('clock'));
   const buttons = [outlineBtn, goalBtn];
 
   /* ---------------- the goal strip ---------------- */
-  const target = h('input.np-in', { type: 'number', min: '1', max: String(WG.MAX_TARGET), step: '1', inputmode: 'numeric', 'aria-label': 'Word goal', placeholder: 'e.g. 500', dataset: { fk: 'np-target' },
+  const target = h('input.np-in', { type: 'number', min: '1', max: String(WG.MAX_TARGET), step: '1', inputmode: 'numeric', 'aria-label': tr('Word goal'), placeholder: 'e.g. 500', dataset: { fk: 'np-target' },
     onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); commitTarget(); } },
     onchange: () => commitTarget() });
-  const modeTotal = h('button.np-seg__b', { type: 'button', dataset: { fk: 'np-mode-total' }, onclick: () => setMode('total') }, 'Whole note');
-  const modeSession = h('button.np-seg__b', { type: 'button', dataset: { fk: 'np-mode-session' }, onclick: () => setMode('session') }, 'This session');
-  const seg = h('div.np-seg', { role: 'group', 'aria-label': 'What the goal counts' }, modeTotal, modeSession);
-  const newSession = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'np-new-session' }, onclick: () => { const n = hooks.note(); if (n) { WG.set(n.id, { base: WG.wordsOf(n) }); paintStrip(); say('New session: counting from here.'); } } }, 'New session');
-  const clearGoal = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'np-clear' }, onclick: () => { const n = hooks.note(); if (n) { WG.clearGoal(n.id); target.value = ''; paintStrip(); say('Goal removed.'); } } }, 'Remove goal');
-  const bar = h('div.np-bar', { role: 'progressbar', 'aria-label': 'Word goal progress', 'aria-valuemin': '0', dataset: { fk: 'np-bar' } }, h('i'));
+  const modeTotal = h('button.np-seg__b', { type: 'button', dataset: { fk: 'np-mode-total' }, onclick: () => setMode('total') }, tr('Whole note'));
+  const modeSession = h('button.np-seg__b', { type: 'button', dataset: { fk: 'np-mode-session' }, onclick: () => setMode('session') }, tr('This session'));
+  const seg = h('div.np-seg', { role: 'group', 'aria-label': tr('What the goal counts') }, modeTotal, modeSession);
+  const newSession = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'np-new-session' }, onclick: () => { const n = hooks.note(); if (n) { WG.set(n.id, { base: WG.wordsOf(n) }); paintStrip(); say('New session: counting from here.'); } } }, tr('New session'));
+  const clearGoal = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'np-clear' }, onclick: () => { const n = hooks.note(); if (n) { WG.clearGoal(n.id); target.value = ''; paintStrip(); say('Goal removed.'); } } }, tr('Remove goal'));
+  const bar = h('div.np-bar', { role: 'progressbar', 'aria-label': tr('Word goal progress'), 'aria-valuemin': '0', dataset: { fk: 'np-bar' } }, h('i'));
   const prog = h('span.np-prog', { dataset: { fk: 'np-progress' } });
-  const timeEl = h('span.np-time', { role: 'timer', 'aria-live': 'off', 'aria-label': 'Writing time', dataset: { fk: 'np-time' }, text: '0:00' });
+  const timeEl = h('span.np-time', { role: 'timer', 'aria-live': 'off', 'aria-label': tr('Writing time'), dataset: { fk: 'np-time' }, text: '0:00' });
   const timerBtn = h('button.btn.btn--sm.np-tbtn', { type: 'button', dataset: { fk: 'np-timer-toggle' }, onclick: () => toggleTimer() });
-  const resetBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'np-timer-reset' }, 'aria-label': 'Reset writing time to zero', onclick: () => { const n = hooks.note(); if (n) { WG.resetTimer(n.id); paintStrip(); say('Writing time reset.'); } } }, icon('rotate-ccw'));
-  const note = h('small.np-note', { text: 'A word is anything between spaces with a letter or number in it (the same rule as the Words tab). Headings’ # marks, bullets, tick boxes and picture names are not words. The timer counts only while it runs.' });
+  const resetBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'np-timer-reset' }, 'aria-label': tr('Reset writing time to zero'), onclick: () => { const n = hooks.note(); if (n) { WG.resetTimer(n.id); paintStrip(); say('Writing time reset.'); } } }, icon('rotate-ccw'));
+  const note = h('small.np-note', { text: tr('A word is anything between spaces with a letter or number in it (the same rule as the Words tab). Headings’ # marks, bullets, tick boxes and picture names are not words. The timer counts only while it runs. “Every day” counts the words you add to your notes in Notes today; pasting counts too.') });
   const msg = h('small.np-msg', { role: 'status', dataset: { fk: 'np-msg' } });
-  const strip = h('div.np-strip', { role: 'group', 'aria-label': 'Word goal and writing timer', hidden: true },
+  /* every day, and the streak */
+  const dayIn = h('input.np-in', { type: 'number', min: '1', max: String(WG.MAX_TARGET), step: '1', inputmode: 'numeric', 'aria-label': tr('Words to write every day'), placeholder: 'e.g. 300', dataset: { fk: 'np-day-target' },
+    onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); commitDay(); } },
+    onchange: () => commitDay() });
+  const dayProg = h('span.np-prog', { dataset: { fk: 'np-day' } });
+  const streakEl = h('span.np-streak', { dataset: { fk: 'np-streak' } });
+  /* the sprint */
+  const sprintBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'np-sprint' }, onclick: () => toggleSprint() });
+  const sprintEl = h('span.np-sprintst', { role: 'timer', 'aria-live': 'off', dataset: { fk: 'np-sprint-state' } });
+  const strip = h('div.np-strip', { role: 'group', 'aria-label': tr('Word goal and writing timer'), hidden: true },
     h('div.np-strip__row',
-      h('label.np-lab', { text: 'Goal' }, target, h('span', { text: 'words' })),
+      h('label.np-lab', { text: tr('Goal') }, target, h('span', { text: 'words' })),
       seg, newSession, clearGoal),
     h('div.np-strip__row', prog, bar),
-    h('div.np-strip__row', h('span.np-lab', icon('clock'), 'Writing time'), timeEl, timerBtn, resetBtn, msg),
+    h('div.np-strip__row', h('span.np-lab', icon('clock'), tr('Writing time')), timeEl, timerBtn, resetBtn, msg),
+    h('div.np-strip__row', h('label.np-lab', { text: tr('Every day') }, dayIn, h('span', { text: 'words' })), dayProg, streakEl),
+    h('div.np-strip__row', h('span.np-lab', icon('zap'), tr('Sprint')), sprintBtn, sprintEl),
     note);
 
   function say(t) { S.msg = t; msg.textContent = t; }
@@ -90,6 +109,62 @@ export function mountPlan(hooks) {
     WG.set(n.id, { target: v, mode: g.target ? g.mode : 'total', base: g.mode === 'session' && g.target ? g.base : 0 });
     paintStrip();
     say(`Goal set: ${v.toLocaleString()} words.`);
+  }
+  function commitDay() {
+    const raw = dayIn.value.trim();
+    if (!raw) { WG.setDayGoal(0); paintDay(); say('Daily goal removed.'); return; }
+    const v = Number(raw);
+    if (!Number.isInteger(v) || v < 1 || v > WG.MAX_TARGET) { say(`Enter a whole number of words from 1 to ${WG.MAX_TARGET.toLocaleString()}.`); return; }
+    WG.setDayGoal(v);
+    paintDay();
+    say(`Every day: ${v.toLocaleString()} words.`);
+  }
+  function paintDay() {
+    const g = WG.dayGoal();
+    if (document.activeElement !== dayIn) dayIn.value = g.target ? String(g.target) : '';
+    dayProg.textContent = g.target
+      ? `Today: ${g.today.toLocaleString()} of ${g.target.toLocaleString()}${g.met ? ' · met' : ''}`
+      : `Today: ${g.today.toLocaleString()} word${g.today === 1 ? '' : 's'} added`;
+    api.render(streakEl, g.target ? [icon('flame'), h('span', { text: g.streak ? tr('{streak}-day streak', { streak: g.streak }) : tr('no streak yet') })] : []);
+    streakEl.classList.toggle('is-on', g.streak > 0);
+  }
+  /* ---------------- the 15-minute sprint ---------------- */
+  const SP = { id: null, start: 0, end: 0, base: 0, t: 0 };
+  const sprintWords = () => { const n = SP.id ? hooks.byId?.(SP.id) : null; return n ? WG.wordsOf(n) - SP.base : null; };
+  function toggleSprint() {
+    if (SP.id) { endSprint(true); return; }
+    const n = hooks.note();
+    if (!n) return;
+    SP.id = n.id; SP.start = Date.now(); SP.end = SP.start + WG.SPRINT_MS; SP.base = WG.wordsOf(n);
+    SP.t = setInterval(() => { if (Date.now() >= SP.end) endSprint(false); else paintSprint(); }, 1000);
+    say('Sprint: 15 minutes, starting now.');
+    paintSprint();
+  }
+  function endSprint(early, quiet = false) {
+    if (!SP.id) return;
+    clearInterval(SP.t);
+    SP.t = 0;
+    const words = sprintWords() ?? 0;
+    const ms = Math.min(WG.SPRINT_MS, Math.max(0, Date.now() - SP.start));
+    WG.logSprint({ at: SP.start, ms, words, id: SP.id });
+    SP.id = null;
+    const w = `${words < 0 ? '−' : ''}${Math.abs(words).toLocaleString()} word${Math.abs(words) === 1 ? '' : 's'}`;
+    const t = early ? `Sprint stopped: ${w} in ${WG.clock(ms)}` : `Sprint over: ${w} in 15 minutes`;
+    if (!quiet) { say(t); api.notify({ app: 'Notes', icon: 'zap', title: t, message: early ? '' : tr('Take a short break, then go again if you like.'), timeout: 8000 }); }
+    paintSprint();
+  }
+  function paintSprint() {
+    if (SP.id) {
+      const w = sprintWords();
+      api.render(sprintBtn, icon('square'), 'Stop');
+      sprintEl.textContent = `${WG.clock(SP.end - Date.now())} left${w === null ? '' : ` · ${w > 0 ? '+' : w < 0 ? '−' : ''}${Math.abs(w).toLocaleString()} words`}`;
+      sprintBtn.setAttribute('aria-pressed', 'true');
+      return;
+    }
+    api.render(sprintBtn, icon('play'), 'Start a 15-minute sprint');
+    sprintBtn.setAttribute('aria-pressed', 'false');
+    const last = WG.sprints().slice(-1)[0];
+    sprintEl.textContent = last ? `Last sprint: ${last.words.toLocaleString()} word${Math.abs(last.words) === 1 ? '' : 's'} in ${WG.clock(last.ms)}` : '';
   }
   function setMode(m) {
     const n = hooks.note();
@@ -145,21 +220,36 @@ export function mountPlan(hooks) {
     api.render(timerBtn, icon(run ? 'pause' : 'play'), run ? 'Pause' : (WG.elapsed(n.id) ? 'Resume' : 'Start'));
     timerBtn.setAttribute('aria-pressed', String(run));
     paintTime();
+    paintDay();
+    paintSprint();
   }
 
   /* ---------------- the outline ---------------- */
-  const tree = h('div.np-tree', { role: 'tree', 'aria-label': 'Outline of this note', dataset: { fk: 'np-tree' } });
+  const tree = h('div.np-tree', { role: 'tree', 'aria-label': tr('Outline of this note'), dataset: { fk: 'np-tree' } });
+  const lvBtns = [1, 2, 3].map(lv => h('button.np-seg__b.np-lv', {
+    type: 'button', dataset: { fk: `np-level-${lv}` }, 'aria-pressed': 'false',
+    'aria-label': lv === 3 ? tr('Show every heading') : tr('Show headings down to level {lv}', { lv }), title: lv === 3 ? tr('Every heading') : tr('Down to H{lv}', { lv }),
+    onclick: () => setLevel(lv),
+  }, `H${lv}`));
+  /** Fold the outline so headings down to level lv show (H3: everything). */
+  function setLevel(lv) {
+    S.level = lv;
+    S.collapsed.clear();
+    for (const n of build().flat) if (n.children.length && n.level >= lv) S.collapsed.add(n.key);
+    paintOutline();
+  }
   const status = h('small.np-status', { role: 'status', dataset: { fk: 'np-status' } });
-  const panel = h('aside.np-panel', { 'aria-label': 'Outline', hidden: true, dataset: { fk: 'np-panel' } },
+  const panel = h('aside.np-panel', { 'aria-label': tr('Outline'), hidden: true, dataset: { fk: 'np-panel' } },
     h('div.np-panel__head',
-      h('b', { text: 'Outline' }),
+      h('b', { text: tr('Outline') }),
       h('span.np-grow'),
-      h('button.ibtn.tip', { type: 'button', 'data-tip': 'Expand all', 'aria-label': 'Expand all', dataset: { fk: 'np-expand' }, onclick: () => { S.collapsed.clear(); paintOutline(); } }, icon('chevron-down')),
-      h('button.ibtn.tip', { type: 'button', 'data-tip': 'Collapse all', 'aria-label': 'Collapse all', dataset: { fk: 'np-collapse' }, onclick: () => { for (const n of build().flat) if (n.children.length) S.collapsed.add(n.key); paintOutline(); } }, icon('chevron-right')),
-      h('button.ibtn.tip', { type: 'button', 'data-tip': 'Close outline', 'aria-label': 'Close outline', onclick: () => { S.outline = false; savePref(); show(); } }, icon('x'))),
+      h('div.np-seg.np-levels', { role: 'group', 'aria-label': tr('Fold the outline to a heading level') }, ...lvBtns),
+      h('button.ibtn.tip', { type: 'button', 'data-tip': tr('Expand all'), 'aria-label': tr('Expand all'), dataset: { fk: 'np-expand' }, onclick: () => { S.level = null; S.collapsed.clear(); paintOutline(); } }, icon('chevron-down')),
+      h('button.ibtn.tip', { type: 'button', 'data-tip': tr('Collapse all'), 'aria-label': tr('Collapse all'), dataset: { fk: 'np-collapse' }, onclick: () => { S.level = null; for (const n of build().flat) if (n.children.length) S.collapsed.add(n.key); paintOutline(); } }, icon('chevron-right')),
+      h('button.ibtn.tip', { type: 'button', 'data-tip': tr('Close outline'), 'aria-label': tr('Close outline'), onclick: () => { S.outline = false; savePref(); show(); } }, icon('x'))),
     tree,
     status,
-    h('small.np-hint', { text: `Drag a row, or use Alt+↑ ↓ to move it, Alt+← → to promote or demote. A section moves with everything under it. Undo with ${MOD}Z.` }));
+    h('small.np-hint', { text: tr('Drag a row, or use Alt+↑ ↓ to move it, Alt+← → to promote or demote. A section moves with everything under it. Undo with {MOD}Z.', { MOD }) }));
 
   /* a heading's identity across redraws: level, text and which of its twins it is */
   const keys = flat => { const seen = new Map(); return flat.map(n => { const k = `${n.level}|${n.title}`; const c = (seen.get(k) || 0) + 1; seen.set(k, c); return `${k}|${c}`; }); };
@@ -239,6 +329,7 @@ export function mountPlan(hooks) {
 
   function paintOutline() {
     if (!S.outline || !hooks.note()) return;
+    lvBtns.forEach((b, k) => { const on = S.level === k + 1; b.setAttribute('aria-pressed', String(on)); b.classList.toggle('is-on', on); });
     /* redrawing the rows mid-drag would delete the row being dragged, and the browser then drops nothing:
        wait until the drag is over (dropped, cancelled or ended), then draw */
     if (S.drag !== null && S.drag !== undefined) { S.late = true; return; }
@@ -260,10 +351,10 @@ export function mountPlan(hooks) {
     const out = [];
     const lead = o.lead.stats;
     if (o.lead.end > 0 && (lead.words || lead.items || lead.pictures)) {
-      out.push(h('div.np-lead', { dataset: { fk: 'np-lead' }, role: 'note' }, h('span.np-t', { text: 'Before the first heading' }), h('small.np-meta', { text: OL.describe(lead) })));
+      out.push(h('div.np-lead', { dataset: { fk: 'np-lead' }, role: 'note' }, h('span.np-t', { text: tr('Before the first heading') }), h('small.np-meta', { text: OL.describe(lead) })));
     }
     if (!o.flat.length) {
-      out.push(h('p.np-empty', { dataset: { fk: 'np-empty' }, text: 'No headings yet. Turn a line into a heading (the Heading button, or # at the start of a line) and it will appear here.' }));
+      out.push(h('p.np-empty', { dataset: { fk: 'np-empty' }, text: tr('No headings yet. Turn a line into a heading (the Heading button, or # at the start of a line) and it will appear here.') }));
     }
     for (const r of rows) {
       const sibs = r.n.parent ? r.n.parent.children : o.nodes;
@@ -279,7 +370,7 @@ export function mountPlan(hooks) {
     }
     status.textContent = S.msg && S.outline ? S.msg : '';
   }
-  function toggle(key) { if (S.collapsed.has(key)) S.collapsed.delete(key); else S.collapsed.add(key); paintOutline(); }
+  function toggle(key) { S.level = null; if (S.collapsed.has(key)) S.collapsed.delete(key); else S.collapsed.add(key); paintOutline(); }
 
   /** Run one outline edit as a single undoable change of the note. */
   function run(compute, n, verb, other) {
@@ -369,7 +460,10 @@ export function mountPlan(hooks) {
     if (id !== S.noteId) {
       /* a timer belongs to the note it was started on: leaving it pauses it */
       if (WG.running() !== null && WG.running() !== id) { WG.pause(); ticking(); }
-      S.noteId = id; S.msg = ''; msg.textContent = ''; S.cur = null; S.collapsed.clear();
+      /* the note left a moment after its last key: those words count too */
+      if (S.noteId) { clearTimeout(S.tRepaint); count(hooks.byId?.(S.noteId)); }
+      S.noteId = id; S.msg = ''; msg.textContent = ''; S.cur = null; S.collapsed.clear(); S.level = null;
+      count(n);
       show();
       paintStrip(); paintOutline();
       return;
@@ -377,17 +471,23 @@ export function mountPlan(hooks) {
     clearTimeout(S.tRepaint);
     S.tRepaint = setTimeout(() => {
       if (S.dead) return;
+      count(hooks.note());
       show();
       if (S.goal && hooks.note()) paintStrip();
       if (S.outline) paintOutline();
     }, 120);
   }
-  function forget(id) { if (WG.running() === id) { WG.pause(); ticking(); } WG.forget(id); }
+  /* the open note's words, towards today's count */
+  function count(n) { if (n && (!hooks.counts || hooks.counts(n))) WG.track(n.id, WG.wordsOf(n)); }
+  function forget(id) { if (WG.running() === id) { WG.pause(); ticking(); } if (SP.id === id) endSprint(true, true); WG.forget(id); }
   function close() {
+    if (!S.dead && S.noteId) count(hooks.byId?.(S.noteId));
     S.dead = true;
     clearTimeout(S.tRepaint);
     if (S.tTick) { clearInterval(S.tTick); S.tTick = 0; }
     WG.pause();
+    /* closing the window ends a sprint: what it had is kept */
+    endSprint(true, true);
   }
 
   return { buttons, strip, panel, changed, forget, close, refresh: () => { show(); paintStrip(); paintOutline(); } };

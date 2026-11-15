@@ -15,6 +15,7 @@ import { bus } from '../core/bus.js';
 import { covered } from '../core/cover.js';
 import * as wm from '../core/wm.js';
 import * as KM from '../core/keymap.js';
+import { t } from '../core/i18n.js';
 
 const SHOW_DELAY = 420;
 const HIDE_DELAY = 260;
@@ -22,29 +23,29 @@ const HIDE_DELAY = 260;
 /* each layout: CSS grid template, then [side, grid-area, name] per zone */
 export const LAYOUTS = [
   { name: 'Halves', cols: '1fr 1fr', rows: '1fr', zones: [
-    ['left', '1 / 1 / 2 / 2', 'Left half'], ['right', '1 / 2 / 2 / 3', 'Right half']] },
+    ['left', '1 / 1 / 2 / 2', t('Left half')], ['right', '1 / 2 / 2 / 3', t('Right half')]] },
   { name: 'Thirds', cols: '1fr 1fr 1fr', rows: '1fr', zones: [
-    ['l3', '1 / 1 / 2 / 2', 'Left third'], ['c3', '1 / 2 / 2 / 3', 'Middle third'], ['r3', '1 / 3 / 2 / 4', 'Right third']] },
-  { name: 'Two thirds and a third', cols: '2fr 1fr', rows: '1fr', zones: [
-    ['l23', '1 / 1 / 2 / 2', 'Left two thirds'], ['r3', '1 / 2 / 2 / 3', 'Right third']] },
-  { name: 'A third and two thirds', cols: '1fr 2fr', rows: '1fr', zones: [
-    ['l3', '1 / 1 / 2 / 2', 'Left third'], ['r23', '1 / 2 / 2 / 3', 'Right two thirds']] },
+    ['l3', '1 / 1 / 2 / 2', t('Left third')], ['c3', '1 / 2 / 2 / 3', t('Middle third')], ['r3', '1 / 3 / 2 / 4', t('Right third')]] },
+  { name: t('Two thirds and a third'), cols: '2fr 1fr', rows: '1fr', zones: [
+    ['l23', '1 / 1 / 2 / 2', t('Left two thirds')], ['r3', '1 / 2 / 2 / 3', t('Right third')]] },
+  { name: t('A third and two thirds'), cols: '1fr 2fr', rows: '1fr', zones: [
+    ['l3', '1 / 1 / 2 / 2', t('Left third')], ['r23', '1 / 2 / 2 / 3', t('Right two thirds')]] },
   { name: 'Quarters', cols: '1fr 1fr', rows: '1fr 1fr', zones: [
-    ['tl', '1 / 1 / 2 / 2', 'Top left quarter'], ['tr', '1 / 2 / 2 / 3', 'Top right quarter'],
-    ['bl', '2 / 1 / 3 / 2', 'Bottom left quarter'], ['br', '2 / 2 / 3 / 3', 'Bottom right quarter']] },
-  { name: 'A half and two quarters', cols: '1fr 1fr', rows: '1fr 1fr', zones: [
-    ['left', '1 / 1 / 3 / 2', 'Left half'], ['tr', '1 / 2 / 2 / 3', 'Top right quarter'], ['br', '2 / 2 / 3 / 3', 'Bottom right quarter']] },
-  { name: 'Top and bottom', cols: '1fr', rows: '1fr 1fr', zones: [
-    ['up', '1 / 1 / 2 / 2', 'Top half'], ['down', '2 / 1 / 3 / 2', 'Bottom half']] },
-  { name: 'Full screen', cols: '1fr', rows: '1fr', zones: [
-    ['max', '1 / 1 / 2 / 2', 'Fill the screen']] },
+    ['tl', '1 / 1 / 2 / 2', t('Top left quarter')], ['tr', '1 / 2 / 2 / 3', t('Top right quarter')],
+    ['bl', '2 / 1 / 3 / 2', t('Bottom left quarter')], ['br', '2 / 2 / 3 / 3', t('Bottom right quarter')]] },
+  { name: t('A half and two quarters'), cols: '1fr 1fr', rows: '1fr 1fr', zones: [
+    ['left', '1 / 1 / 3 / 2', t('Left half')], ['tr', '1 / 2 / 2 / 3', t('Top right quarter')], ['br', '2 / 2 / 3 / 3', t('Bottom right quarter')]] },
+  { name: t('Top and bottom'), cols: '1fr', rows: '1fr 1fr', zones: [
+    ['up', '1 / 1 / 2 / 2', t('Top half')], ['down', '2 / 1 / 3 / 2', t('Bottom half')]] },
+  { name: t('Full screen'), cols: '1fr', rows: '1fr', zones: [
+    ['max', '1 / 1 / 2 / 2', t('Fill the screen')]] },
 ];
 
 const reduced = () => document.body.classList.contains('reduce-motion')
   || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
 
 export function mountSnapLayouts(host) {
-  const panel = h('div.snap-picker', { role: 'menu', 'aria-label': 'Snap layouts' });
+  const panel = h('div.snap-picker', { role: 'menu', 'aria-label': t('Snap layouts') });
   const S = { win: null, btn: null, showT: 0, hideT: 0, returnFocus: null };
 
   function build(w) {

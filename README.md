@@ -79,7 +79,7 @@ The Proxy toolbar's **Open in localhost tab** action targets
 `http://localhost:8000/#app=aether-proxy`; run the local StaticOS server first
 (`./serve.sh` on macOS/Linux) for that tab to open.
 
-Browser, VS Code, TikTok, Spotify, Roblox, and Xbox Cloud use locally rendered branded SVG icons.
+Browser, Static Code, TikTok, Spotify, Roblox, and Xbox Cloud use locally rendered branded SVG icons.
 
 **Static Roblox** shows 1,311 experiences with genuine `rbxcdn` artwork and **live** player counts,
 ratings and public server lists, read through a CORS mirror of Roblox's own API — no setup, no key.
@@ -122,7 +122,7 @@ state) and is honest that it runs locally rather than pretending to be a model. 
 a swappable engine: see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Apps** — Files · Browser (the Static start page) · Static Roblox · Static Store · Settings · Music · TikTok ·
-Photos · Videos · VS Code · Notes · Calculator · Calendar · Weather · System Monitor ·
+Photos · Videos · Static Code · Notes · Calculator · Calendar · Weather · System Monitor ·
 Camera · Clock · Lens · Feedback · Cloud VMs · About. Settings → Privacy can export or
 replace saved StaticOS data from a JSON backup and download the full website ZIP for USB.
 The terminal (a real shell over the virtual

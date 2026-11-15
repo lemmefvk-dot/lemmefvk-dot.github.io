@@ -138,6 +138,21 @@
 :root[data-contrast="high"] .sp-art__mono{background:rgba(0,0,0,.6);border-radius:var(--r-xs);padding:0 .15em}
 /* Music's idle seek row was dimmed to 45% */
 :root[data-contrast="high"] .mu-hero.is-empty .mu-seekrow{opacity:1}
+/* found by the every-app check (tests/a11y-apps-kit.mjs) */
+/* Calendar's days from the months either side were dimmed to 35% */
+:root[data-contrast="high"] .cal__cell.is-out{opacity:.72}
+/* a filled accent button whose text took the plain ink colour */
+:root[data-contrast="high"] :is(.mg__btn--go,.mk__btn--go,.bk__btn--go,.sl__btn--go,.pt__btn--go){color:var(--accent-ink)}
+/* the Arcade's neon buttons, and its small grey captions */
+/* (their gradients run from bright to deep violet, which no one text colour reads on) */
+:root[data-contrast="high"] .arc-rand{background:#1c0a2a;color:#fff;box-shadow:0 0 0 2px #ff4fd8 inset}
+:root[data-contrast="high"] .arc-rand--join{box-shadow:0 0 0 2px #2bb8ff inset}
+:root[data-contrast="high"] :is(.arc-brand__sub,.arc-find__sortlab,.arc-chip small,.arc-daily__title small){color:var(--ink-2)}
+/* a game's name set into its stand-in cover, as on Static Play's cards */
+:root[data-contrast="high"] .cx-card__mono{background:rgba(0,0,0,.6);border-radius:var(--r-xs)}
+/* QR's small captions */
+:root[data-contrast="high"] :is(.qr-seg__face small,.qr-emptywrap .empty small){color:var(--ink-1)}
+:root[data-contrast="high"] .qr-seg__in:checked + .qr-seg__face small{color:var(--ink-0)}
 
 /* On a light canvas the accents are light colours, so as text they fail
    (Static Crimson's soft pink is 2.3:1 on white). Increased contrast
@@ -188,3 +203,68 @@
 .ra__btn--main:hover:not(:disabled){box-shadow:var(--glow);color:var(--accent-ink)}
 .ra__word{font-size:var(--fs-10);color:var(--ink-3)}
 body.is-mobile .ra{bottom:var(--sp-5)}
+
+/* ============================================================
+   Settings › Accessibility additions (js/core/appearance.js sets the
+   attributes on <html>; js/shell/a11yplus.js draws the rest)
+   ============================================================ */
+
+/* ---- focus ring size: Normal / Large / Extra large ----------------
+   Normal is what every rule above draws (2px). Large and Extra large
+   thicken it for the keyboard only, on anything that takes focus. The
+   window itself keeps its own ring (it takes script focus on open). */
+:root[data-focussize="large"][data-input="keyboard"] :focus-visible:not(.win){outline:4px solid var(--accent) !important;outline-offset:3px !important}
+:root[data-focussize="xlarge"][data-input="keyboard"] :focus-visible:not(.win){outline:6px solid var(--accent) !important;outline-offset:4px !important}
+:root[data-focussize="large"][data-input="keyboard"] .win:focus{outline-width:4px;outline-offset:-4px}
+:root[data-focussize="xlarge"][data-input="keyboard"] .win:focus{outline-width:6px;outline-offset:-6px}
+:root[data-focussize="large"][data-focusrings="always"] :is(a,button,input,select,textarea,summary,[tabindex]):focus{outline-width:4px;outline-offset:3px}
+:root[data-focussize="xlarge"][data-focusrings="always"] :is(a,button,input,select,textarea,summary,[tabindex]):focus{outline-width:6px;outline-offset:4px}
+
+/* ---- large pointer ------------------------------------------------
+   The arrow is set on <html> and inherited by everything that doesn't
+   choose its own, so a crosshair in Paint or a resize edge still means
+   what it says. Controls get a big hand and text fields a big I-beam.
+   A pointer from the advent calendar or Halloween (data-cursor-skin)
+   keeps its own look. */
+:root[data-bigpointer="on"]:not([data-cursor-skin]){
+  --ptr-arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 24 24'%3E%3Cpath d='M4 2.2v17.6l4.5-4.2 3.3 6.9 3.2-1.5-3.2-6.7 6.3-.3z' fill='%23000' stroke='%23fff' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --ptr-hand:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 24 24'%3E%3Cpath d='M9.2 2.6c-1 0-1.8.8-1.8 1.8v8.3l-1.4-1.4c-.7-.7-1.8-.7-2.4 0-.5.5-.5 1.3 0 1.8l4.5 5.5c.8 1 2 1.6 3.3 1.6h4.4c2 0 3.6-1.6 3.6-3.6v-4.8c0-.9-.7-1.6-1.6-1.6-.3 0-.5.1-.8.2-.1-.8-.8-1.4-1.6-1.4-.4 0-.8.2-1.1.4-.2-.7-.9-1.2-1.6-1.2-.3 0-.5 0-.7.2V4.4c0-1-.8-1.8-1.8-1.8z' fill='%23000' stroke='%23fff' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --ptr-text:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 24 24'%3E%3Cpath d='M8 3h8v2h-3v14h3v2H8v-2h3V5H8z' fill='%23000' stroke='%23fff' stroke-width='1.3' stroke-linejoin='round'/%3E%3C/svg%3E");
+  cursor:var(--ptr-arrow) 4 3,default;
+}
+:root[data-bigpointer="on"]:not([data-cursor-skin]) :is(body,.win,button,select){cursor:var(--ptr-arrow) 4 3,default}
+:root[data-bigpointer="on"]:not([data-cursor-skin]) :is(a[href],[role="button"],[role="tab"],[role="menuitem"],[role="switch"],[role="option"],summary,label,.dock__item,.desk-icon,.tray-btn,.btn,.ibtn,.switch,.menu__item,input[type="checkbox"],input[type="radio"],input[type="range"],input[type="button"],input[type="submit"]):not(:disabled,[aria-disabled="true"]){cursor:var(--ptr-hand) 9 3,pointer}
+:root[data-bigpointer="on"]:not([data-cursor-skin]) :is(input:not([type="checkbox"],[type="radio"],[type="range"],[type="button"],[type="submit"],[type="color"],[type="file"]),textarea,[contenteditable="true"],[contenteditable=""]){cursor:var(--ptr-text) 12 12,text}
+
+/* ---- high contrast: black, white and yellow ----------------------
+   Settings › Accessibility › Contrast › "High contrast". It sits on top
+   of Increased contrast (data-contrast="high" is set with it, so every
+   fix above still applies) and repaints the shell with no colour but
+   those three: a black desktop, white text and lines, yellow for
+   whatever you can act on. Pictures keep their colours. */
+html:root:root[data-hc="on"][data-contrast="high"] body{
+  --bg-0:#000; --bg-1:#000; --bg-2:#000;
+  --ink-0:#fff; --ink-1:#fff; --ink-2:#fff; --ink-3:#e6e6e6; --ink-4:#a6a6a6;
+  --line-0:#8f8f8f; --line-1:#fff; --line-2:#fff;
+  --fill-0:#0d0d0d; --fill-1:#1c1c1c; --fill-2:#2b2b2b; --fill-3:#3b3b3b;
+  --glass-1:#000; --glass-2:#000; --glass-3:#000; --glass-hi:transparent;
+  --accent:#ffe600; --accent-soft:#ffe600; --accent-base:#ffe600; --accent-ink:#000; --accent-rgb:255 230 0;
+  --fill-accent:#2e2900; --fill-accent-hi:#4d4500;
+  --line-accent:#ffe600;
+  --glow:none; --glow-lg:none;
+  --sh-1:none; --sh-2:none; --sh-3:0 0 0 1px #fff; --sh-4:0 0 0 1px #fff;
+  background:#000;color:#fff;
+}
+/* the wallpaper goes: black, whatever was behind the glass */
+:root[data-hc="on"] .desktop .wp{background:#000 !important}
+:root[data-hc="on"] .desktop .wp > *,
+:root[data-hc="on"] .desktop .wp::before,
+:root[data-hc="on"] .desktop .wp::after{display:none !important}
+/* things you can act on are yellow and underlined */
+:root[data-hc="on"] a{color:#ffe600;text-decoration:underline}
+:root[data-hc="on"] .btn--primary,
+:root[data-hc="on"] .btn--primary:hover{background:#ffe600;color:#000;border-color:#ffe600}
+:root[data-hc="on"] :is(.switch.is-on){background:#ffe600}
+:root[data-hc="on"] :focus-visible:not(.win){outline:3px solid #ffe600;outline-offset:2px}
+/* the top bar and dock draw their glass with a literal gradient: black here */
+:root[data-hc="on"] :is(.topbar,.dock){background:#000 !important}

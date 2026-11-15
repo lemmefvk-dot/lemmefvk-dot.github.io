@@ -11,10 +11,21 @@
    installed) the tab says so in plain words, shows no listen button,
    and offers the one honest fallback: look at the word for three
    seconds, then type it from memory.
+
+   In a sentence: during a round, "Hear it in a sentence" asks the Free
+   Dictionary API (js/core/dictionary.js, dictionaryapi.dev) for the
+   word and, only when one of its example sentences really contains
+   the word, reads that sentence (and shows it with the word blanked
+   out). No example, no sentence: it says so; nothing is made up.
+   Only asked when the button is pressed.
+
+   After a round the summary goes over each miss (what you typed, the
+   letters that differ) and offers a round of just those words.
    Saved on this device ('portal.drillsSpelling').
    ============================================================ */
 import * as speech from '../core/speech.js';
-import { LEVELS, parseList } from './words-data.js';
+import * as dict from '../core/dictionary.js';
+import { LEVELS, parseList, BUILT_IN } from './words-data.js';
 import { spellGrade, spellWeight, pickRound, BOXES } from './sched.js';
 
 const KEY = 'portal.drillsSpelling';
@@ -24,6 +35,26 @@ const MAX_LISTS = 12;
 const DEFAULT = { v: 1, words: {}, lists: [], rounds: [], turn: 0, p: { list: 'l1', how: 'listen' } };
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const MISSED = 'missed';
+const REVIEW = 'review';
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** An example sentence from a dictionary reply that really uses the word, or ''. */
+export function exampleFor(word, entry) {
+  if (!entry || entry.status !== 'ok') return '';
+  const re = new RegExp(`(^|[^A-Za-z])${reEsc(word)}`, 'i');
+  for (const m of entry.meanings || []) for (const d of m.definitions || []) {
+    const ex = String(d.example || '').trim();
+    if (ex && ex.length <= 240 && re.test(ex)) return ex;
+  }
+  return '';
+}
+/** The sentence with the word (and its endings, as in "believes") blanked out. */
+export const blankOut = (word, sentence) => sentence.replace(new RegExp(`(^|[^A-Za-z])${reEsc(word)}[A-Za-z]*`, 'gi'), (m, pre) => `${pre}_____`);
+/** Where two spellings differ: [{ ch, bad }] for the typed word, letter by letter (case ignored). */
+export function letterDiff(typed, word) {
+  const a = [...String(typed)], b = [...String(word).toLowerCase()];
+  return a.map((ch, i) => ({ ch, bad: ch.toLowerCase() !== b[i] }));
+}
 
 function normalize(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
@@ -96,6 +127,7 @@ export function mountSpelling(host, ctx) {
     S.run = null;
     const d = S.data, p = d.p;
     const opts = listOptions();
+    if (p.list === REVIEW) p.list = 'l1';
     if (!opts.some(o => o[0] === p.list)) p.list = 'l1';
     const sel = h('select.select.dr-sel', { 'aria-label': 'Word list', dataset: { fk: 'sp-list' }, onchange: e => { p.list = e.target.value; save(); paintHome(); } },
       ...opts.map(([id, label]) => h('option', { value: id, text: label })));
@@ -105,6 +137,7 @@ export function mountSpelling(host, ctx) {
     if (S.summary) kids.push(S.summary);
     kids.push(h('div.dr-card', h('h3.dr-h', { text: 'Spell the word you hear' }), voiceNote(),
       h('div.dr-row', h('small.dim', { text: 'List' }), sel),
+      h('small.dim', { dataset: { fk: 'sp-builtin', n: String(BUILT_IN) }, text: `The built-in lists hold ${BUILT_IN} words: ${LEVELS.length} levels of about ${Math.round(BUILT_IN / LEVELS.length)}. That is a short list, so add the words you get at school as your own list below.` }),
       h('div.dr-row', h('small.dim', { text: 'How' }), h('div.dr-chips', { role: 'group', 'aria-label': 'Listen or look' },
         h('button.dr-chip', { type: 'button', class: how() === 'listen' ? 'is-on' : '', 'aria-pressed': how() === 'listen' ? 'true' : 'false', disabled: !canListen(), dataset: { fk: 'sp-how-listen' }, title: canListen() ? '' : 'No voice is available here', onclick: () => { p.how = 'listen'; save(); paintHome(); } }, 'Listen and type'),
         h('button.dr-chip', { type: 'button', class: how() === 'look' ? 'is-on' : '', 'aria-pressed': how() === 'look' ? 'true' : 'false', dataset: { fk: 'sp-how-look' }, onclick: () => { p.how = 'look'; save(); paintHome(); } }, `Look for ${LOOK_MS / 1000} s, then type`))),
@@ -160,7 +193,14 @@ export function mountSpelling(host, ctx) {
     const words = wordsOf(d, d.p.list);
     if (!words.length) return;
     S.summary = null;
-    S.run = { words: pickRound(words, d.words, ROUND, Math.random), i: 0, ok: 0, missed: [], phase: 'ask', word: '', seen: false, how: how() };
+    S.run = { words: pickRound(words, d.words, ROUND, Math.random), list: d.p.list, i: 0, ok: 0, missed: [], typed: {}, phase: 'ask', word: '', seen: false, how: how() };
+    next();
+  }
+  /* the summary's "practise these again": exactly the words just missed, in a new order */
+  function startReview(words) {
+    if (!words.length) return;
+    S.summary = null;
+    S.run = { words: pickRound(words, {}, words.length, Math.random), list: REVIEW, i: 0, ok: 0, missed: [], typed: {}, phase: 'ask', word: '', seen: false, how: how() };
     next();
   }
   function next() {
@@ -170,6 +210,7 @@ export function mountSpelling(host, ctx) {
     R.phase = 'ask';
     R.seen = false;
     R.fix = null;
+    R.sentence = null;
     paintRun();
     if (R.how === 'listen') say(R.word); else showWord();
   }
@@ -205,6 +246,7 @@ export function mountSpelling(host, ctx) {
       inp.disabled = true;
     } else {
       R.missed.push(R.word);
+      R.typed[R.word] = typed;
       R.phase = 'fix';
       if (fb) { fb.className = 'dr-fb is-bad'; fb.replaceChildren(document.createTextNode('The word is '), h('b', { dataset: { fk: 'sp-correct' }, text: R.word }), document.createTextNode(`, you typed ${typed}. Type it correctly to go on.`)); }
       inp.value = '';
@@ -214,12 +256,19 @@ export function mountSpelling(host, ctx) {
   function finish() {
     const R = S.run;
     const d = S.data;
-    d.rounds.push({ t: Date.now(), list: d.p.list, n: R.words.length, ok: R.ok });
+    d.rounds.push({ t: Date.now(), list: R.list, n: R.words.length, ok: R.ok });
     save();
+    const missed = [...R.missed];
     S.summary = h('div.dr-card.dr-result', { role: 'status', dataset: { fk: 'sp-summary', n: String(R.words.length), ok: String(R.ok) } },
-      h('h3.dr-h', { text: 'Round finished' }),
+      h('h3.dr-h', { text: R.list === REVIEW ? 'Review finished' : 'Round finished' }),
       h('p', { text: `${R.ok} of ${plural(R.words.length, 'word')} right first time.` }),
-      R.missed.length ? h('p', { dataset: { fk: 'sp-missed' }, text: `Missed: ${R.missed.join(', ')}. They will come back sooner next time.` }) : h('p', { text: 'No misses.' }));
+      missed.length ? h('p', { dataset: { fk: 'sp-missed' }, text: `Missed: ${missed.join(', ')}. They will come back sooner next time.` }) : h('p', { text: 'No misses.' }),
+      missed.length ? h('ul.dr-review', { dataset: { fk: 'sp-review' }, 'aria-label': 'Your mistakes' }, ...missed.map(w => h('li', { dataset: { word: w } },
+        h('b', { text: w }), h('span.dim', { text: ' you typed ' }),
+        h('span.dr-typed', { 'aria-label': `you typed ${R.typed[w]}` }, ...letterDiff(R.typed[w] || '', w).map(x => (x.bad ? h('mark', { text: x.ch }) : document.createTextNode(x.ch)))),
+        (R.typed[w] || '').length !== w.length ? h('small.dim', { text: ` (${R.typed[w].length} letters for ${w.length})` }) : null))) : null,
+      missed.length ? h('div.dr-row', h('button.btn.btn--primary', { type: 'button', dataset: { fk: 'sp-review-go' }, onclick: () => startReview(missed) }, icon('refresh'),
+        h('span', { text: `Practise ${missed.length === 1 ? 'it' : `these ${missed.length}`} again` }))) : null);
     if (S.spoke) speech.stop();
     S.run = null;
     paintHome();
@@ -232,8 +281,11 @@ export function mountSpelling(host, ctx) {
     root.replaceChildren(h('div.dr-card.dr-run',
       h('div.dr-run__top', h('span', { dataset: { fk: 'sp-count' }, text: `Word ${Math.min(R.i + 1, R.words.length)} of ${R.words.length}` })),
       R.how === 'listen'
-        ? h('div.dr-row', h('button.btn.btn--primary', { type: 'button', dataset: { fk: 'sp-hear' }, onclick: () => say(R.word) }, icon('play'), h('span', { text: 'Hear the word again' })))
-        : h('div.dr-row', h('div.dr-look', { dataset: { fk: 'sp-word' }, 'aria-live': 'polite' }), h('button.btn', { type: 'button', dataset: { fk: 'sp-show' }, onclick: showWord }, 'Show it again')),
+        ? h('div.dr-row', h('button.btn.btn--primary', { type: 'button', dataset: { fk: 'sp-hear' }, onclick: () => say(R.word) }, icon('play'), h('span', { text: 'Hear the word again' })),
+          h('button.btn', { type: 'button', dataset: { fk: 'sp-sentence' }, onclick: () => sentence(R) }, h('span', { text: 'Hear it in a sentence' })))
+        : h('div.dr-row', h('div.dr-look', { dataset: { fk: 'sp-word' }, 'aria-live': 'polite' }), h('button.btn', { type: 'button', dataset: { fk: 'sp-show' }, onclick: showWord }, 'Show it again'),
+          h('button.btn', { type: 'button', dataset: { fk: 'sp-sentence' }, onclick: () => sentence(R) }, h('span', { text: 'Show it in a sentence' }))),
+      h('p.dr-sentence', { dataset: { fk: 'sp-sent' }, role: 'status' }),
       h('small.dr-warn', { dataset: { fk: 'sp-speech-err' }, role: 'status', text: S.speechErr }),
       R.how === 'listen' && S.speechErr ? h('div.dr-row', h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'sp-fallback' }, onclick: () => { R.how = 'look'; paintRun(); showWord(); } }, `Look at the word for ${LOOK_MS / 1000} s instead`)) : null,
       inp,
@@ -241,6 +293,32 @@ export function mountSpelling(host, ctx) {
       h('div.dr-row', h('button.btn.btn--primary', { type: 'button', dataset: { fk: 'sp-submit' }, onclick: submit }, 'Check'),
         h('button.btn.btn--ghost', { type: 'button', dataset: { fk: 'sp-stop' }, onclick: () => { if (S.spoke) speech.stop(); S.run = null; paintHome(); } }, 'Stop'))));
     inp.focus();
+  }
+
+  /* ---- a sentence from the dictionary, only when it has one that uses the word ---- */
+  const sentCache = new Map();
+  async function sentence(R) {
+    const el = () => root.querySelector('[data-fk="sp-sent"]');
+    const word = R.word;
+    const show = (text, kind) => { const e = el(); if (e && S.run === R && R.word === word) { e.textContent = text; e.dataset.kind = kind; } };
+    if (R.sentence) { if (R.how === 'listen' && R.sentence.text) say(R.sentence.text); show(R.sentence.shown, R.sentence.kind); return; }
+    show('Looking in the dictionary…', 'wait');
+    let entry = sentCache.get(word.toLowerCase());
+    if (!entry) { entry = await dict.lookup(word); if (entry.status === 'ok' || entry.status === 'notfound') sentCache.set(word.toLowerCase(), entry); }
+    if (S.dead || S.run !== R || R.word !== word) return;
+    const ex = exampleFor(word, entry);
+    if (ex) {
+      R.sentence = { text: ex, kind: 'ok', shown: `“${blankOut(word, ex)}” (example from the Free Dictionary API, dictionaryapi.dev)` };
+      if (R.how === 'listen') say(ex);
+    } else if (entry.status === 'ok' || entry.status === 'notfound') {
+      R.sentence = { text: '', kind: 'none', shown: 'The dictionary has no example sentence for this word.' };
+    } else {
+      /* offline, rate-limited or unreachable: said as it is, and the button can try again */
+      show(entry.status === 'error' ? entry.detail : dict.MESSAGES[entry.status] || 'The dictionary could not be asked.', 'error');
+      return;
+    }
+    show(R.sentence.shown, R.sentence.kind);
+    root.querySelector('[data-fk="sp-in"]')?.focus();
   }
 
   paintHome();

@@ -7,11 +7,16 @@
    the squares inside each dashed cage hold different digits that add
    up to the small number in the cage's corner.
 
-   Easy is 4×4 with digits 1–4; Medium and Hard are 6×6 with digits
-   1–6. Medium leaves a few cages of a single square (a given digit);
-   Hard has none, and bigger cages. Every puzzle is dealt by
-   sumgridlogic.js, which only keeps one that an exhaustive search
-   proves has exactly one solution.
+   Kids is 3×3 with digits 1–3 and no boxes: just rows, columns and
+   cages of one or two squares. Easy is 4×4 with digits 1–4; Medium and
+   Hard are 6×6 with digits 1–6. Medium leaves a few cages of a single
+   square (a given digit); Hard has none, and bigger cages. Every
+   puzzle is dealt by sumgridlogic.js, which only keeps one that an
+   exhaustive search proves has exactly one solution.
+
+   Today's puzzle: one a day, the same for everyone on that date
+   (dailykit.js: the seed is the date), its level set by the weekday;
+   the streak of days solved is kept on this device.
 
    Controls
      mouse / touch  tap a square, then a digit on the pad (or Erase)
@@ -26,16 +31,28 @@
 
    Score = seconds, lower is better. The best per level is kept on
    this device (portal.arcadePuzzles.sumgrid); an unfinished puzzle is
-   saved (level, seed and your entries) and comes back after a reload.
+   saved (level, seed and your entries) and comes back after a reload,
+   today's puzzle in a slot of its own. A Kids round is an easier
+   mode: it keeps its own best here but doesn't change the Arcade's.
+
+   ONLINE RACE (ctx.online.kit, ./race.js): both screens deal the same
+   Medium 6×6 puzzle from the room's seed and the clock runs from the
+   deal. No level, Today, New, Hint or Show mistakes in a race, and
+   nothing is saved. Every digit typed that isn't the solution's counts
+   as a mistake (+10 s).
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { ownsKey, randomSeed, sounder } from './kit.js';
 import { CSS as BASE, load, save, fmtTime, reducedMotion, bag, clock } from './puzzlekit.js';
 import { generate, conflicts, isSolved, combos, LEVELS, LEVEL, rowOf, colOf, boxOf } from './sumgridlogic.js';
+import * as daily from './dailykit.js';
 
 const GAME = 'sumgrid';
-const LABEL = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
+const LABEL = { kids: 'Kids', easy: 'Easy', medium: 'Medium', hard: 'Hard' };
+/* today's puzzle by weekday, Sunday first */
+const DAILY = ['hard', 'easy', 'medium', 'medium', 'medium', 'hard', 'hard'];
+export const dailyFor = (day = daily.dayKey()) => ({ day, level: DAILY[daily.parseDay(day).getDay()], seed: daily.daySeed(GAME, day) });
 
 const CSS = `${BASE}
 .pz-sg__board{--n:6;position:relative;width:min(100cqw,100cqh);height:min(100cqw,100cqh);display:grid;grid-template-columns:repeat(var(--n),1fr);grid-template-rows:repeat(var(--n),1fr);gap:1px;
@@ -60,6 +77,9 @@ const CSS = `${BASE}
 .pz-sg__pad button{padding:9px 0 10px;font:700 clamp(15px,4.2cqw,22px)/1 var(--font,system-ui);color:var(--ink-0,#fff);background:var(--fill-1,rgba(255,255,255,.07));border:1px solid var(--line-1,rgba(255,255,255,.1));border-radius:9px;cursor:pointer}
 .pz-sg__pad button:focus-visible{outline:2px solid var(--ga);outline-offset:1px}
 @media (hover:hover){.pz-sg__pad button:hover{background:var(--fill-2,rgba(255,255,255,.13))}}
+.pz-sg__day small{display:inline-flex;align-items:center;gap:2px;font-weight:700;color:#ffb46b;margin-left:2px}
+.pz-sg__day small:empty{display:none}
+.pz-sg__day small .icon,.pz-sg__day small svg{width:12px;height:12px}
 .pz-sg__card{position:absolute;inset:0;display:grid;place-items:center;z-index:4;background:rgba(10,8,16,.78);border-radius:8px;text-align:center;padding:16px}
 .pz-sg__card div{max-width:34ch}
 .pz-sg__card b{display:block;font-size:22px;margin-bottom:6px;color:#fff}
@@ -76,9 +96,12 @@ export default {
     const L = bag();
     const snd = sounder(ctx);
     let dead = false, paused = false;
-    const saved = load(GAME);
+    /* an online race: the room's seed, Medium, nothing saved */
+    const NET = ctx.online?.kit && Number.isInteger(ctx.online.seed) ? ctx.online : null;
+    const saved = NET ? {} : load(GAME);
     const bests = { ...(saved.best || {}) };
     const prefs = { level: LEVELS.includes(saved.level) ? saved.level : 'easy', show: !!saved.show };
+    let day = '';                       /* the date of today's puzzle while it is on the board */
     let P = null;                       /* the puzzle (sumgridlogic.generate) */
     let G = null;                       /* the game on the board: { vals, notes, hints, done } */
     let sel = -1, notesMode = false, hintCell = -1, msg = '';
@@ -92,7 +115,10 @@ export default {
     const timeRead = h('div.pz__read', { title: 'Time', 'aria-label': 'Time' }, icon('clock'), timeV);
     const bestV = h('small', { text: '' });
     const newBtn = h('button.pz__btn', { type: 'button', title: 'Deal a new puzzle', 'aria-label': 'New puzzle' }, icon('refresh'), h('span.pz__long', { text: 'New' }));
-    const top = h('div.pz__top', seg, timeRead, bestV, newBtn);
+    const dayStreak = h('small');
+    const dayBtn = h('button.pz__btn.pz-sg__day', { type: 'button', 'aria-pressed': 'false', dataset: { act: 'daily' }, title: 'Today’s puzzle: the same one for everyone today' }, icon('calendar'), h('span', { text: 'Today' }), dayStreak);
+    const top = h('div.pz__top', seg, dayBtn, timeRead, bestV, newBtn);
+    if (NET) for (const b of [seg, dayBtn, bestV, newBtn]) b.hidden = true;
     const board = h('div.pz-sg__board', { role: 'grid', tabindex: '0', 'aria-label': 'Sum Grid board' });
     const stage = h('div.pz__stage', board);
     const pad = h('div.pz-sg__pad');
@@ -102,6 +128,8 @@ export default {
     const hintBtn = h('button.pz__btn', { type: 'button', title: 'Fill one square (H). Counted, and a puzzle solved with hints sets no best time.' }, icon('sparkles'), h('span', { text: 'Hint' }), h('small', { text: '0' }));
     const mistakeBtn = h('button.pz__btn', { type: 'button', 'aria-pressed': 'false', title: 'Mark digits that are not the solution' }, icon('eye'), h('span.pz__long', { text: 'Show mistakes' }));
     const bar = h('div.pz__bar', undoBtn, eraseBtn, notesBtn, hintBtn, mistakeBtn);
+    if (NET) { hintBtn.hidden = true; mistakeBtn.hidden = true; }
+    const showWrong = () => prefs.show && !NET;
     const foot = h('div.pz__foot');
     const live = h('div.pz__live', { 'aria-live': 'polite' });
     const root = h('div.pz' + (reduced ? '.is-reduced' : ''), { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } },
@@ -119,31 +147,44 @@ export default {
     const paintFoot = () => foot.replaceChildren(msg
       ? h('span', { text: msg })
       : sel >= 0 && P ? h('span', { text: cageInfo() })
-        : h('span.pz__hint', { html: 'digits fill a square · <kbd>N</kbd> notes · <kbd>H</kbd> hint · <kbd>Z</kbd> undo · arrows move' }));
+        : h('span.pz__hint', { html: `digits fill a square · <kbd>N</kbd> notes${NET ? '' : ' · <kbd>H</kbd> hint'} · <kbd>Z</kbd> undo · arrows move` }));
 
     /* ---------- state helpers ---------- */
     const snapshot = () => ({ v: G.vals.slice(), n: G.notes.slice() });
     const pushUndo = () => { undo.push(snapshot()); if (undo.length > 300) undo.shift(); };
     const persist = () => {
-      if (!G || G.done) return;
-      save(GAME, { game: { level: P.level, seed: P.seed, vals: G.vals.join(''), notes: G.notes.slice(), secs: Math.round(clk.secs), hints: G.hints } });
+      if (!G || G.done || NET) return;
+      const rec = { level: P.level, seed: P.seed, vals: G.vals.join(''), notes: G.notes.slice(), secs: Math.round(clk.secs), hints: G.hints };
+      /* today's puzzle keeps its own slot, so a normal deal never loses it */
+      if (day) save(GAME, { dgame: { ...rec, day }, last: 'daily' });
+      else save(GAME, { game: rec, last: 'normal' });
     };
-    const persistPrefs = () => save(GAME, { level: prefs.level, show: prefs.show });
+    const persistPrefs = () => { if (!NET) save(GAME, { level: prefs.level, show: prefs.show }); };
+    /* the race's progress: the share of the open squares filled in (right or not — the
+       bar on your own screen must not work as a check), never all of it until it's solved */
+    const progress = () => {
+      if (!NET || !G) return;
+      let n = 0, ok = 0;
+      G.vals.forEach((v, i) => { if (P.cages[P.cageOf[i]].cells.length > 1) { n++; if (v) ok++; } });
+      NET.progress(G.done ? 1 : Math.min(0.99, n ? ok / n : 1));
+    };
 
     function adopt(puzzle, d = {}) {
       P = puzzle;
+      day = d.day || '';
       /* a cage of one square is a given digit: it starts filled in */
       const start = new Array(P.n * P.n).fill(0);
       P.cages.forEach(c => { if (c.cells.length === 1) start[c.cells[0]] = c.sum; });
-      G = { vals: d.vals ? [...d.vals].map(Number) : start, notes: d.notes || new Array(P.n * P.n).fill(0), hints: d.hints || 0, done: false };
+      G = { vals: d.vals ? [...d.vals].map(Number) : start, notes: d.notes || new Array(P.n * P.n).fill(0), hints: d.hints || 0, done: !!d.done, err: 0 };
       undo.length = 0; sel = -1; hintCell = -1; notesMode = false; msg = '';
-      prefs.level = P.level;
+      if (!day) prefs.level = P.level;
       clk.secs = d.secs || 0; timeV.textContent = fmtTime(clk.secs);
       paused = false;
       stage.querySelector('.pz__cover')?.remove();
       stage.querySelector('.pz-sg__card')?.remove();
       build();
-      if (d.vals && clk.secs > 0) clk.start(); else clk.stop();
+      /* a race's clock runs from the deal, the same moment on both screens */
+      if (!G.done && ((d.vals && clk.secs > 0) || NET)) clk.start(); else clk.stop();
       render(); persistPrefs(); persist();
     }
     function build() {
@@ -166,6 +207,22 @@ export default {
       adopt(p);
       say(`${LABEL[level]}: ${LEVEL[level].n}×${LEVEL[level].n}, ${p.cages.length} cages, one solution.`);
     }
+    /* today's puzzle: carry on with it, or deal it from the date */
+    function playDaily(d0 = daily.dayKey()) {
+      const D = dailyFor(d0), st = daily.status(GAME, d0);
+      const p = generate(D.level, D.seed);
+      const dg = load(GAME).dgame;
+      if (!st.solved && dg && dg.day === d0 && dg.seed === D.seed && typeof dg.vals === 'string' && dg.vals.length === p.n * p.n) {
+        adopt(p, { vals: dg.vals, notes: Array.isArray(dg.notes) && dg.notes.length === p.n * p.n ? dg.notes : null, secs: dg.secs, hints: dg.hints, day: d0 });
+        say(`Today’s puzzle, where you left it: ${daily.weekday(d0)}’s is ${LABEL[D.level]}.`);
+      } else if (st.solved) {
+        adopt(p, { vals: p.sol.join(''), secs: st.secs, hints: st.hints, day: d0, done: true });
+        say(`You solved today’s puzzle in ${fmtTime(st.secs)}. A new one comes at midnight.`);
+      } else {
+        adopt(p, { day: d0 });
+        say(`Today’s puzzle (${daily.weekday(d0)}): ${LABEL[D.level]} ${p.n}×${p.n}, ${p.cages.length} cages — the same for everyone today.`);
+      }
+    }
 
     /* ---------- render ---------- */
     function render() {
@@ -174,11 +231,12 @@ export default {
       const sv = sel >= 0 ? G.vals[sel] : 0, selCage = sel >= 0 ? P.cageOf[sel] : -1;
       nodes.forEach((c, i) => {
         const v = G.vals[i], given = P.cages[P.cageOf[i]].cells.length === 1;
-        const wrong = prefs.show && v && v !== P.sol[i];
+        const wrong = showWrong() && v && v !== P.sol[i];
         const r = rowOf(n, i), cl = colOf(n, i), ck = P.cageOf[i];
         const same = j => j >= 0 && P.cageOf[j] === ck;
         const peer = sel >= 0 && i !== sel && (rowOf(n, sel) === r || colOf(n, sel) === cl || boxOf(P, sel) === boxOf(P, i));
-        c.className = 'pz-sg__c' + (cl % P.boxC === P.boxC - 1 && cl < n - 1 ? ' bR' : '') + (r % P.boxR === P.boxR - 1 && r < n - 1 ? ' bB' : '')
+        const boxes = P.boxes !== false;
+        c.className = 'pz-sg__c' + (boxes && cl % P.boxC === P.boxC - 1 && cl < n - 1 ? ' bR' : '') + (boxes && r % P.boxR === P.boxR - 1 && r < n - 1 ? ' bB' : '')
           + (r === 0 || !same(i - n) ? ' cT' : '') + (r === n - 1 || !same(i + n) ? ' cB' : '') + (cl === 0 || !same(i - 1) ? ' cL' : '') + (cl === n - 1 || !same(i + 1) ? ' cR' : '')
           + (given ? ' is-given' : '') + (i === sel ? ' is-sel' : i !== sel && ck === selCage ? ' is-cage' : peer ? ' is-peer' : '')
           + (sv && v === sv && i !== sel ? ' is-same' : '') + (bad.has(i) ? ' is-clash' : '') + (wrong ? ' is-wrong' : '') + (i === hintCell ? ' is-hint' : '');
@@ -193,13 +251,18 @@ export default {
         c.setAttribute('aria-label', `Row ${r + 1}, column ${cl + 1}, cage ${P.cages[ck].sum}, ${v ? v : m ? 'notes' : 'empty'}${bad.has(i) ? ', breaks a rule' : ''}`);
         if (i === sel) c.setAttribute('aria-selected', 'true'); else c.removeAttribute('aria-selected');
       });
-      levelBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.level === P.level)));
+      levelBtns.forEach(b => b.setAttribute('aria-pressed', String(!day && b.dataset.level === P.level)));
+      const st = daily.status(GAME);
+      dayBtn.setAttribute('aria-pressed', String(!!day));
+      const sk = st.streak ? `s${st.streak}` : st.solved ? 'ok' : '';
+      if (dayStreak.dataset.k !== sk) { dayStreak.dataset.k = sk; dayStreak.replaceChildren(...(st.streak ? [icon('flame'), String(st.streak)] : st.solved ? [icon('check')] : [])); }
+      dayBtn.title = `Today’s puzzle: the same one for everyone today${st.solved ? ' · solved' : ''}${st.streak ? ` · ${st.streak}-day streak on this device` : ''}${st.best ? ` · best streak ${st.best}` : ''}`;
       notesBtn.setAttribute('aria-pressed', String(notesMode));
       mistakeBtn.setAttribute('aria-pressed', String(prefs.show));
       hintBtn.lastChild.textContent = String(G.hints);
       undoBtn.disabled = !undo.length || G.done;
       padBtns.forEach(b => { b.disabled = G.done; });
-      bestV.textContent = bests[P.level] != null ? `Best ${LABEL[P.level]}: ${fmtTime(bests[P.level])}` : `No ${LABEL[P.level]} time yet`;
+      bestV.textContent = day ? `${daily.weekday(day)}: ${LABEL[P.level]}` : bests[P.level] != null ?`Best ${LABEL[P.level]}: ${fmtTime(bests[P.level])}` : `No ${LABEL[P.level]} time yet`;
       paintFoot();
     }
 
@@ -212,6 +275,8 @@ export default {
       begin(); pushUndo(); snd.wake();
       G.vals[i] = G.vals[i] === d ? 0 : d;
       G.notes[i] = 0;
+      /* a race counts every wrong digit typed, even one put right later */
+      if (NET && G.vals[i] && G.vals[i] !== P.sol[i]) G.err++;
       if (G.vals[i]) for (const p of peersOf(i)) G.notes[p] &= ~(1 << (d - 1));
       hintCell = -1; msg = '';
       if (G.vals[i]) snd.blip(340 + d * 45, 0.05, 'triangle', 0.5);
@@ -239,19 +304,20 @@ export default {
     function afterChange() {
       render();
       persist();
+      progress();
       if (G.vals.every(Boolean)) {
         if (isSolved(P, G.vals)) win();
-        else say(prefs.show ? 'The board is full, but the red squares are wrong.' : 'The board is full, but a rule is broken — look for red digits.');
+        else say(showWrong() ? 'The board is full, but the red squares are wrong.' : 'The board is full, but a rule is broken — look for red digits.');
       }
     }
     function doUndo() {
       if (!undo.length || G.done || paused) return;
       const s = undo.pop();
       G.vals = s.v; G.notes = s.n; hintCell = -1; msg = '';
-      render(); persist();
+      render(); persist(); progress();
     }
     function hint() {
-      if (G.done || paused) return;
+      if (G.done || paused || NET) return;
       const wrongOrEmpty = i => editable(i) && G.vals[i] !== P.sol[i];
       let i = sel >= 0 && wrongOrEmpty(sel) ? sel : G.vals.findIndex((v, k) => wrongOrEmpty(k) && !v);
       if (i < 0) i = G.vals.findIndex((v, k) => wrongOrEmpty(k));
@@ -266,18 +332,35 @@ export default {
     function win() {
       G.done = true; clk.stop();
       const secs = Math.max(1, Math.round(clk.secs));
+      if (NET) {
+        snd.blip(520, 0.09, 'triangle', 0.8); snd.blip(780, 0.12, 'triangle', 0.7);
+        render();
+        const pen = G.err ? ` · ${G.err} mistake${G.err === 1 ? '' : 's'}` : '';
+        stage.appendChild(h('div.pz-sg__card', h('div', h('b', { text: 'Solved!' }), h('span', { text: `In ${fmtTime(secs)}${pen}.` }))));
+        say(`Solved in ${fmtTime(secs)}${pen}.`);
+        NET.progress(1);
+        onScore(secs);
+        onEnd({ score: secs, won: true, detail: `Race · ${LABEL[P.level]} ${P.n}×${P.n} · ${P.cages.length} cages${pen}`, race: { done: true, ms: Math.round(clk.secs * 1000), err: G.err, p: 1 } });
+        return;
+      }
       const clean = G.hints === 0;
       const prev = bests[P.level];
       const fresh = clean && (prev == null || secs < prev);
       if (fresh) bests[P.level] = secs;
-      save(GAME, { best: bests, game: null });
+      let dayLine = '';
+      if (day) {
+        const st = daily.solved(GAME, day, secs, G.hints);
+        save(GAME, { best: bests, dgame: null, last: 'normal' });
+        dayLine = st.already ? '' : ` Today’s puzzle is done: ${st.streak === 1 ? 'a 1-day streak' : `${st.streak} days in a row`} on this device.`;
+      } else save(GAME, { best: bests, game: null });
       snd.blip(520, 0.09, 'triangle', 0.8); snd.blip(780, 0.12, 'triangle', 0.7);
       render();
       stage.appendChild(h('div.pz-sg__card', h('div', h('b', { text: 'Solved!' }),
-        h('span', { text: `${LABEL[P.level]} in ${fmtTime(secs)}${G.hints ? ` with ${G.hints} hint${G.hints === 1 ? '' : 's'} — no best time` : fresh ? (prev == null ? ' — your first ' : ' — a new best for ') + LABEL[P.level] : ''}.` }))));
-      say(`Solved in ${fmtTime(secs)}.`);
+        h('span', { text: `${LABEL[P.level]} in ${fmtTime(secs)}${G.hints ? ` with ${G.hints} hint${G.hints === 1 ? '' : 's'} — no best time` : fresh ? (prev == null ? ' — your first ' : ' — a new best for ') + LABEL[P.level] : ''}.${dayLine}` }))));
+      say(`Solved in ${fmtTime(secs)}.${dayLine}`);
       onScore(secs);
-      onEnd({ score: clean ? secs : null, won: true, detail: `${LABEL[P.level]} ${P.n}×${P.n} · ${P.cages.length} cages${G.hints ? ` · ${G.hints} hint${G.hints === 1 ? '' : 's'}` : ''}` });
+      /* Kids is an easier mode: its time is kept here, not as the Arcade's best */
+      onEnd({ score: clean ? secs : null, won: true, ...(P.level === 'kids' ? { assisted: true } : {}), detail: `${day ? 'Today’s puzzle · ' : ''}${LABEL[P.level]} ${P.n}×${P.n} · ${P.cages.length} cages${G.hints ? ` · ${G.hints} hint${G.hints === 1 ? '' : 's'}` : ''}` });
     }
 
     /* ---------- input ---------- */
@@ -292,9 +375,10 @@ export default {
     L.on(undoBtn, 'click', () => { doUndo(); board.focus({ preventScroll: true }); });
     L.on(notesBtn, 'click', () => { notesMode = !notesMode; render(); board.focus({ preventScroll: true }); });
     L.on(hintBtn, 'click', () => { hint(); board.focus({ preventScroll: true }); });
-    L.on(mistakeBtn, 'click', () => { prefs.show = !prefs.show; persistPrefs(); render(); board.focus({ preventScroll: true }); });
-    L.on(seg, 'click', e => { const b = e.target.closest?.('button[data-level]'); if (b && !dead && b.dataset.level !== P.level) deal(b.dataset.level); });
-    L.on(newBtn, 'click', () => { if (!dead) deal(P.level); });
+    L.on(mistakeBtn, 'click', () => { if (NET) return; prefs.show = !prefs.show; persistPrefs(); render(); board.focus({ preventScroll: true }); });
+    L.on(seg, 'click', e => { const b = e.target.closest?.('button[data-level]'); if (b && !dead && !NET && (day || b.dataset.level !== P.level)) deal(b.dataset.level); });
+    L.on(newBtn, 'click', () => { if (!dead && !NET) deal(day ? prefs.level : P.level); });
+    L.on(dayBtn, 'click', () => { if (!dead && !day && !NET) playDaily(); });
     const MOVE = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
     L.on(window, 'keydown', e => {
       if (dead || paused || !ownsKey(root, e)) return;
@@ -313,15 +397,25 @@ export default {
     });
 
     /* ---------- start: the saved puzzle if there is one ---------- */
-    const sg = saved.game;
+    const sg = saved.game, today = daily.dayKey();
     let resumed = false;
-    if (sg && LEVELS.includes(sg.level) && Number.isFinite(sg.seed) && typeof sg.vals === 'string') {
+    if (NET) {
+      deal('medium', NET.seed >>> 0);
+      say(`Race: the same Medium puzzle as ${NET.peer?.name || 'your friend'}, ${P.cages.length} cages. Each wrong digit adds 10 seconds.`);
+      progress();
+      resumed = true;
+    } else if (saved.last === 'daily' && saved.dgame?.day === today && !daily.status(GAME, today).solved) {
+      try { playDaily(today); resumed = day === today; } catch (err) { resumed = false; }
+    }
+    if (resumed) { /* today's puzzle, as it was left */ }
+    else if (sg && LEVELS.includes(sg.level) && Number.isFinite(sg.seed) && typeof sg.vals === 'string') {
       try {
         const p = generate(sg.level, sg.seed);
         if (sg.vals.length === p.n * p.n) { adopt(p, { vals: sg.vals, notes: Array.isArray(sg.notes) && sg.notes.length === p.n * p.n ? sg.notes : null, secs: sg.secs, hints: sg.hints }); resumed = true; }
       } catch (err) { /* a puzzle that will not regenerate is just not resumed */ }
     }
-    if (resumed) say(`Welcome back: your ${LABEL[P.level]} puzzle, as you left it.`);
+    if (NET) { /* the race's puzzle, dealt above */ }
+    else if (resumed) say(day ? 'Welcome back: today’s puzzle is where you left it.' : `Welcome back: your ${LABEL[P.level]} puzzle, as you left it.`);
     else deal(prefs.level);
     requestAnimationFrame(() => { if (!dead) board.focus({ preventScroll: true }); });
     onScore(0);
@@ -351,8 +445,10 @@ export default {
       peek: () => P && ({
         level: P.level, seed: P.seed, n: P.n, boxR: P.boxR, boxC: P.boxC, cages: P.cages.map(c => ({ cells: c.cells.slice(), sum: c.sum })), sol: P.sol.slice(),
         vals: G.vals.slice(), notes: G.notes.slice(), sel, notesMode, hints: G.hints, done: G.done, paused, secs: clk.secs, best: { ...bests }, running: clk.running,
-        clash: [...conflicts(P, G.vals)], undo: undo.length, resumed,
+        clash: [...conflicts(P, G.vals)], undo: undo.length, resumed, day, boxes: P.boxes !== false, daily: daily.status(GAME),
+        thick: nodes.filter(c => c.classList.contains('bR') || c.classList.contains('bB')).length,
         shown: nodes.map(c => c.querySelector('.pz-sg__v')?.textContent || '').join(''),
+        race: NET ? { seed: NET.seed >>> 0, err: G.err } : null,
       }),
       /* test hook — nothing in the game calls it: deal({ level, seed }) */
       hook(cmd, arg) {

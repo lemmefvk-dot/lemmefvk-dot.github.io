@@ -57,20 +57,24 @@ export function decodeWav(bytes) {
   return { rate: fmt.rate, ch };
 }
 
-export function encodeWav(clip) {
-  const chans = clip.ch.length, len = length(clip), rate = clip.rate;
-  const bytes = 44 + len * chans * 2;
+/** PCM WAV bytes at 8, 16 or 24 bits (16 unless asked). 8-bit is unsigned, as the format says. */
+export function encodeWav(clip, bits = 16) {
+  if (![8, 16, 24].includes(bits)) bits = 16;
+  const chans = clip.ch.length, len = length(clip), rate = clip.rate, bps = bits / 8;
+  const bytes = 44 + len * chans * bps + ((len * chans * bps) & 1);
   const ab = new ArrayBuffer(bytes), dv = new DataView(ab);
   const ws = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
   ws(0, 'RIFF'); dv.setUint32(4, bytes - 8, true); ws(8, 'WAVE');
   ws(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, chans, true);
-  dv.setUint32(24, rate, true); dv.setUint32(28, rate * chans * 2, true); dv.setUint16(32, chans * 2, true); dv.setUint16(34, 16, true);
-  ws(36, 'data'); dv.setUint32(40, len * chans * 2, true);
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate * chans * bps, true); dv.setUint16(32, chans * bps, true); dv.setUint16(34, bits, true);
+  ws(36, 'data'); dv.setUint32(40, len * chans * bps, true);
   let o = 44;
   for (let i = 0; i < len; i++) {
-    for (let c = 0; c < chans; c++, o += 2) {
+    for (let c = 0; c < chans; c++, o += bps) {
       const v = clamp(clip.ch[c][i], -1, 1);
-      dv.setInt16(o, Math.round(v < 0 ? v * 32768 : v * 32767), true);
+      if (bits === 16) dv.setInt16(o, Math.round(v < 0 ? v * 32768 : v * 32767), true);
+      else if (bits === 8) dv.setUint8(o, clamp(Math.round(v * 127) + 128, 0, 255));
+      else { const q = Math.round(v < 0 ? v * 8388608 : v * 8388607); dv.setUint8(o, q & 255); dv.setUint8(o + 1, (q >> 8) & 255); dv.setUint8(o + 2, (q >> 16) & 255); }
     }
   }
   return ab;
@@ -82,7 +86,7 @@ const span = (c, from, to) => {
   const a = clamp(Math.round(from), 0, n), b = clamp(Math.round(to), 0, n);
   return [Math.min(a, b), Math.max(a, b)];
 };
-const mapCh = (c, fn) => ({ rate: c.rate, ch: c.ch.map(fn) });
+const mapCh = (c, fn) => ({ rate: c.rate, ch: c.ch.map((d, i) => fn(d, i)) });
 
 /** keep only [from, to) */
 export function trim(c, from, to) { const [a, b] = span(c, from, to); return mapCh(c, d => d.slice(a, b)); }
@@ -116,6 +120,117 @@ export function gain(c, from, to, factor) {
 }
 export const dbToGain = db => Math.pow(10, db / 20);
 export const gainToDb = g => (g > 0 ? 20 * Math.log10(g) : -Infinity);
+
+
+/** reverse [from, to) in place of itself */
+export function reverse(c, from, to) {
+  const [a, b] = span(c, from, to);
+  return mapCh(c, d => { const o = d.slice(); for (let i = 0; i < b - a; i++) o[a + i] = d[b - 1 - i]; return o; });
+}
+
+/** make [from, to) silent (the length stays) */
+export function silence(c, from, to) {
+  const [a, b] = span(c, from, to);
+  return mapCh(c, d => { const o = d.slice(); o.fill(0, a, b); return o; });
+}
+
+/** put `n` frames of silence in at `at` (the clip grows) */
+export function insertSilence(c, at, n) {
+  const len = length(c), p = clamp(Math.round(at), 0, len), k = Math.max(0, Math.round(n));
+  return mapCh(c, d => { const o = new Float32Array(len + k); o.set(d.subarray(0, p)); o.set(d.subarray(p), p + k); return o; });
+}
+
+/** a copy of [from, to) as its own clip (the thing a clipboard holds) */
+export function slice(c, from, to) { const [a, b] = span(c, from, to); return mapCh(c, d => d.slice(a, b)); }
+
+/** put `frag` (same rate; channels are matched) in at `at`; the clip grows */
+export function paste(c, at, frag) {
+  const len = length(c), p = clamp(Math.round(at), 0, len), k = length(frag);
+  return mapCh(c, (d, i) => { const src = frag.ch[Math.min(i, frag.ch.length - 1)]; const o = new Float32Array(len + k); o.set(d.subarray(0, p)); o.set(src, p); o.set(d.subarray(p), p + k); return o; });
+}
+
+/** linear-interpolation resample of one channel to `n` frames */
+export function stretch(d, n) {
+  n = Math.max(1, Math.round(n));
+  const o = new Float32Array(n), m = d.length;
+  if (!m) return o;
+  const step = n > 1 ? (m - 1) / (n - 1) : 0;
+  for (let i = 0; i < n; i++) { const x = i * step, j = Math.floor(x), f = x - j; o[i] = j + 1 < m ? d[j] * (1 - f) + d[j + 1] * f : d[m - 1]; }
+  return o;
+}
+
+/** change the speed of [from, to) by `factor` (2 = twice as fast and an octave up; pitch follows speed) */
+export function speed(c, from, to, factor) {
+  const [a, b] = span(c, from, to);
+  const n = Math.max(1, Math.round((b - a) / factor));
+  return mapCh(c, d => { const mid = stretch(d.subarray(a, b), n); const o = new Float32Array(d.length - (b - a) + n); o.set(d.subarray(0, a)); o.set(mid, a); o.set(d.subarray(b), a + n); return o; });
+}
+
+/** the same sound at another sample rate and channel count, so two files can be joined */
+export function conform(c, rate, chans) {
+  const n = Math.max(1, Math.round(length(c) * rate / c.rate));
+  const ch = Array.from({ length: chans }, (_, i) => { const src = c.ch[Math.min(i, c.ch.length - 1)]; return c.rate === rate ? src.slice() : stretch(src, n); });
+  return { rate, ch };
+}
+
+/** `b` after `a` (b is converted to a's rate and channel count first) */
+export function join(a, b) {
+  const x = conform(b, a.rate, a.ch.length);
+  return mapCh(a, (d, i) => { const o = new Float32Array(d.length + x.ch[i].length); o.set(d); o.set(x.ch[i], d.length); return o; });
+}
+
+/** the first and last frame that are louder than thresholdDb; null when it is all quieter than that */
+export function loudSpan(c, thresholdDb = -50) {
+  const t = dbToGain(thresholdDb), n = length(c);
+  let first = -1, last = -1;
+  for (let i = 0; i < n && first < 0; i++) for (const d of c.ch) if (Math.abs(d[i]) > t) { first = i; break; }
+  if (first < 0) return null;
+  for (let i = n - 1; i >= first && last < 0; i--) for (const d of c.ch) if (Math.abs(d[i]) > t) { last = i; break; }
+  return [first, last + 1];
+}
+
+/** the quiet at both ends removed */
+export function trimSilence(c, thresholdDb = -50) {
+  const s = loudSpan(c, thresholdDb);
+  return s ? trim(c, s[0], s[1]) : null;
+}
+
+/** root-mean-square level of [from, to) over every channel, in dBFS (-Infinity when silent) */
+export function rmsDb(c, from = 0, to = length(c)) {
+  const [a, b] = span(c, from, to);
+  let sum = 0, cnt = 0;
+  for (const d of c.ch) for (let i = a; i < b; i++) { sum += d[i] * d[i]; cnt++; }
+  return cnt && sum > 0 ? 10 * Math.log10(sum / cnt) : -Infinity;
+}
+
+/** A noise gate's gain curve: one value per `hop` frames, 1 where the sound is above
+    thresholdDb and 0 where it has been below it for `holdMs`, with attack and release
+    ramps so it never clicks. The caller applies it (Audio Editor does, in an
+    OfflineAudioContext, after the low-cut). */
+export function gateCurve(c, thresholdDb, { hop = 64, holdMs = 80, attackMs = 5, releaseMs = 60 } = {}) {
+  const n = length(c), m = Math.max(1, Math.ceil(n / hop)), t = dbToGain(thresholdDb);
+  const open = new Uint8Array(m);
+  for (let k = 0; k < m; k++) {
+    let pk = 0;
+    for (const d of c.ch) for (let i = k * hop, e = Math.min(n, i + hop); i < e; i++) { const v = d[i] < 0 ? -d[i] : d[i]; if (v > pk) pk = v; }
+    open[k] = pk > t ? 1 : 0;
+  }
+  const hold = Math.ceil(holdMs / 1000 * c.rate / hop);
+  const g = new Float32Array(m);
+  let since = 1e9, cur = 0;
+  const up = hop / Math.max(1, attackMs / 1000 * c.rate), down = hop / Math.max(1, releaseMs / 1000 * c.rate);
+  for (let k = 0; k < m; k++) {
+    since = open[k] ? 0 : since + 1;
+    const target = since <= hold ? 1 : 0;
+    if (k === 0) cur = target;                       /* starts as it finds the sound: no fade-in from nothing */
+    cur = target > cur ? Math.min(target, cur + up) : Math.max(target, cur - down);
+    g[k] = cur;
+  }
+  return { gain: g, hop };
+}
+
+/** loud-to-quiet check: how much of [from, to) a gate at thresholdDb would close (0..1) */
+export function gatedShare(curve) { let z = 0; for (const v of curve.gain) if (v < 0.5) z++; return curve.gain.length ? z / curve.gain.length : 0; }
 
 /** the biggest |sample| across every channel in [from, to) */
 export function peakOf(c, from = 0, to = length(c)) {
@@ -194,4 +309,4 @@ export function rotate(d, n) {
   return o;
 }
 
-export default { rotate, decodeWav, encodeWav, trim, cut, fade, gain, normalise, peakOf, mix, pyramid, peaks, dbToGain, gainToDb, length, seconds };
+export default { reverse, silence, insertSilence, slice, paste, stretch, speed, conform, join, loudSpan, trimSilence, rmsDb, gateCurve, gatedShare, rotate, decodeWav, encodeWav, trim, cut, fade, gain, normalise, peakOf, mix, pyramid, peaks, dbToGain, gainToDb, length, seconds };

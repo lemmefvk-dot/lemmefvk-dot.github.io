@@ -12,6 +12,7 @@ import vfs from './vfs.js';
 import { getApp, listApps, categories, appForFile, appForExt, defineApp } from './registry.js';
 import * as fmt from './util.js';
 import { launchItem } from './launch.js';
+import { openAppShortcut } from './shortcuts.js';
 
 export const api = {
   /* building blocks */
@@ -30,13 +31,15 @@ export const api = {
     const n = vfs.node(path);
     if (!n) return null;
     if (n.type === 'dir') return wmMod.open('files', { path });
-    /* a game shortcut (.aethergame) launches the game itself */
+    /* a game shortcut (.staticgame, or an older .aethergame) launches the game itself */
     if (!appId && n.kind === 'game') {
       try {
         const g = JSON.parse(n.content || '{}');
         if (g && g.id) return launchItem(g);
       } catch (err) { /* not a shortcut after all — fall through */ }
     }
+    /* an app shortcut (.staticapp) opens the app it names */
+    if (!appId && n.kind === 'appref') return openAppShortcut(n, id => wmMod.open(id, {}));
     if (!appId && n.kind === 'clip') return wmMod.open('aether-library', {});
     /* a file kept as bytes in IndexedDB that no media app plays (a PDF, an
        archive, big read-only text…) would show up in Notes as its storage
@@ -65,10 +68,9 @@ export const api = {
   lock()   { bus.emit('power:lock'); },
   sleep()  { bus.emit('power:sleep'); },
   restart(){ bus.emit('power:restart'); },
+  shutdown(){ bus.emit('power:shutdown'); },
   overview(){ bus.emit('overview:toggle'); },
 
-  /* live telemetry — widgets and Monitor both read this */
-  get live() { return store.get('live'); },
   get system() { return store.get('system'); },
   get prefs() { return store.get('prefs'); },
 };

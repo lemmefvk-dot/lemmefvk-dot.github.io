@@ -23,6 +23,7 @@ import { icon } from './icons.js';
 import * as DESK from './desktops.js';
 import * as M from './metrics.js';
 import * as KM from './keymap.js';
+import { t } from './i18n.js';
 
 const wins = new Map();
 let seq = 0;
@@ -148,6 +149,11 @@ const syncAway = w => w.el.classList.toggle('is-away', !here(w));
    dragged by its title bar can be dropped onto another's (tabs.over/drop). */
 let tabs = null;
 export function useTabs(t) { tabs = t; }
+/* Each app's last size and place (js/core/winlayouts.js): open() asks it for
+   the rect an app should start in, unless the caller gave one. It returns
+   { x, y, w, h } or null. */
+let memory = null;
+export function useMemory(fn) { memory = typeof fn === 'function' ? fn : null; }
 const shown = w => !w.min && !w.tabHidden;
 /** The window that should be in front on a desktop: highest z, not minimised. */
 const topOn = desk => [...wins.values()].filter(x => shown(x) && x.desk === desk).sort((a, b) => b.z - a.z)[0] || null;
@@ -228,7 +234,9 @@ export function open(appId, opts = {}) {
   }
 
   const id = ++seq;
-  const own = { ...placeNew(app), ...pickRect(opts) };
+  const asked = pickRect(opts);
+  const recalled = memory && !Object.keys(asked).length && !(opts && (opts.seat || opts.restore === true)) ? memory(appId, app) : null;
+  const own = { ...placeNew(app), ...(recalled ? fitRect(app, recalled) : null), ...asked };
   const row = claimRow(appId, opts || {});
   const desk = pickDesk(appId, opts || {}, row);
   /* opts.seat { max } or { snapped: side }: open in that layout straight
@@ -240,10 +248,10 @@ export function open(appId, opts = {}) {
   const rect = seatRect ? { x: Math.round(seatRect.x), y: Math.round(seatRect.y), w: Math.round(seatRect.w), h: Math.round(seatRect.h) } : own;
 
   const lights = h('div.win__lights',
-    h('button.light.light--close', { title: 'Close', 'aria-label': 'Close' }, icon('x')),
-    h('button.light.light--min', { title: 'Minimize', 'aria-label': 'Minimize' }, icon('minus')),
+    h('button.light.light--close', { title: t('Close'), 'aria-label': t('Close') }, icon('x')),
+    h('button.light.light--min', { title: t('Minimize'), 'aria-label': t('Minimize') }, icon('minus')),
     /* no title tooltip: hovering this shows the snap layouts (shell/snaplayouts.js) */
-    h('button.light.light--max', { 'aria-label': 'Maximize', 'aria-haspopup': 'true' }, icon('maximize')),
+    h('button.light.light--max', { 'aria-label': t('Maximize'), 'aria-haspopup': 'true' }, icon('maximize')),
   );
   const leadEl  = h('div.win__lead');
   const titleTx = h('span', { text: app.name });
@@ -251,9 +259,9 @@ export function open(appId, opts = {}) {
   /* the app icon doubles as the window menu (move, size, snap, close from
      the keyboard — js/shell/a11y.js draws the menu), like a classic
      system menu. It is a real button, so it is reachable with Tab. */
-  const menuBtn = h('button.win__menu', { type: 'button', title: 'Window menu', 'aria-label': `${app.name} window menu`, 'aria-haspopup': 'menu' }, icon(app.icon));
+  const menuBtn = h('button.win__menu', { type: 'button', title: t('Window menu'), 'aria-label': t('{name} window menu', { name: app.name }), 'aria-haspopup': 'menu' }, icon(app.icon));
   /* shown only while the window is kept on top (.is-pinned); a click stops that */
-  const pinBtn = h('button.win__pin', { type: 'button', title: 'Kept on top — click to stop', 'aria-label': 'Kept on top. Stop keeping it on top' }, icon('pin'));
+  const pinBtn = h('button.win__pin', { type: 'button', title: t('Kept on top — click to stop'), 'aria-label': t('Kept on top. Stop keeping it on top') }, icon('pin'));
   const titleEl = h('div.win__title', menuBtn, titleTx, subEl, pinBtn);
   const toolsEl = h('div.win__tools');
   const bar = h('header.win__bar', lights, leadEl, titleEl, toolsEl);
@@ -283,7 +291,7 @@ export function open(appId, opts = {}) {
        snapped: the snap layout it sits in ('left', 'tr', 'l3' …) or null. */
     min: false, max: !!seatRect && !seatSide, prev: seatRect ? own : null, free: seatRect ? own : null, snapped: seatSide, desk, z: z0,
     /* pinned: kept on top. group / tabHidden: its tab group and whether it waits behind another tab (js/core/wintabs.js) */
-    pinned: false, group: null, tabHidden: false,
+    pinned: false, group: null, tabHidden: false, alpha: 100,
     hooks: { close: [], resize: [], focus: [], blur: [], reopen: [] },
     /* what it was opened with; js/core/reopen.js brings it back from these
        (and from state.reopen, which an app keeps current as it moves on) */
@@ -339,7 +347,7 @@ export function open(appId, opts = {}) {
     if (typeof teardown === 'function') w.hooks.close.push(teardown);
   } catch (err) {
     console.error(`[wm] ${appId} failed to mount`, err);
-    body.appendChild(h('div.empty', icon('alert'), h('b', { text: 'This app crashed on launch' }),
+    body.appendChild(h('div.empty', icon('alert'), h('b', { text: t('This app crashed on launch') }),
       h('small', { text: String(err && err.message || err) })));
   }
 
@@ -355,6 +363,21 @@ export function open(appId, opts = {}) {
   bus.emit('win:list', list());
   remember();
   return w;
+}
+
+/** A remembered rect, made to fit this screen and this app's smallest size, and
+    stepped aside from any window of the same app already standing exactly there. */
+function fitRect(app, r) {
+  const a = workArea();
+  const w = clamp(r.w, app.win.minW, Math.max(app.win.minW, a.w - 24));
+  const hh = clamp(r.h, app.win.minH, Math.max(app.win.minH, a.h));
+  let x = clamp(r.x, 0, Math.max(0, a.w - w)), y = clamp(r.y, a.y, Math.max(a.y, a.y + a.h - hh));
+  const taken = (px, py) => [...wins.values()].some(o => o.app === app && !o.min && o.x === px && o.y === py);
+  for (let i = 0; i < 8 && taken(x, y); i++) {
+    x = x + 26 + w > a.w ? Math.max(0, x - 26 * 5) : x + 26;
+    y = y + 26 + hh > a.y + a.h ? a.y : y + 26;
+  }
+  return { x, y, w, h: hh };
 }
 
 function pickRect(opts) {
@@ -670,6 +693,33 @@ export function resizeBy(w, dw, dh) {
   bus.emit('win:resize', w);
 }
 export function setRect(w, r) { if (w && r) applyRect(w, r); }
+
+/** Put a window at a rect on purpose (tiling, a saved layout): animated, and a
+    free window afterwards — not snapped, not maximised — whose size is its own. */
+export function arrange(w, r) {
+  if (!w || !r || w.min) return;
+  if (w.max) { w.max = false; w.el.classList.remove('is-max'); }
+  w.snapped = null; w.free = null;
+  const a = workArea();
+  const fixed = w.app.win.resizable === false;
+  animateTo(w, {
+    x: clamp(r.x, -w.w + 90, a.w - 90), y: Math.max(a.y, r.y),
+    w: fixed ? w.w : Math.max(w.app.win.minW, r.w), h: fixed ? w.h : Math.max(w.app.win.minH, r.h),
+  }, 'win:tile');
+  bus.emit('win:move', w);
+}
+
+/** See-through: 60–100 % (100 is solid). The window's own glass goes and its
+    bar and app are drawn at that opacity, so the desktop shows through. */
+export function setOpacity(w, pct) {
+  if (!w || !wins.has(w.id)) return 100;
+  const v = Math.round(clamp(Number(pct) || 100, 60, 100));
+  w.alpha = v;
+  w.el.style.setProperty('--win-a', String(v / 100));
+  w.el.classList.toggle('is-see', v < 100);
+  bus.emit('win:opacity', w);
+  return v;
+}
 
 /** Show (or with side null, hide) where a window would land — the layout picker uses it. */
 export function previewSnap(w, side) { showGhost(side || null, w ? w.rect : null); }
@@ -1158,7 +1208,7 @@ function bindGlobalKeys() {
 export const wm = {
   mountWM, open, close, closeApp, focus, blur, minimize, restore, toggleMax, snap, snapRect, previewSnap,
   list, byApp, get, getActive, stacked, cycle, toggleApp, workArea, redirectApp,
-  focusInto, moveBy, resizeBy, setRect, setPinned, beginMove, useTabs,
+  focusInto, moveBy, resizeBy, setRect, setPinned, beginMove, useTabs, useMemory, arrange, setOpacity,
   switchDesktop, switchBy, moveToDesktop, removeDesktop, addDesktop, deskDrag, onDesktop, desktops: DESK,
 };
 export default wm;

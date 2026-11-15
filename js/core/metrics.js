@@ -96,12 +96,53 @@ function haltLoop() {
 
 export function start(owner = 'shared') {
   holders.add(owner);
+  watchLongTasks();
   runLoop();
 }
 
 export function stop(owner = 'shared') {
   holders.delete(owner);
   if (!holders.size) haltLoop();
+}
+
+/* ---------- long tasks -------------------------------------- *
+ * Tasks that kept the page busy for 50 ms or more, from the
+ * browser's own PerformanceObserver (Chromium reports them; other
+ * browsers do not, and then longTasks() is null — there is no
+ * estimate to fall back on). The observer starts with the first
+ * claim; `buffered` brings in what the browser already recorded
+ * since the page loaded, so the count starts at page load.       */
+let ltObs = null;
+const lt = { count: 0, total: 0, worst: 0, at: [] };
+
+function watchLongTasks() {
+  if (ltObs || typeof PerformanceObserver === 'undefined') return;
+  if (!(PerformanceObserver.supportedEntryTypes || []).includes('longtask')) return;
+  try {
+    ltObs = new PerformanceObserver(list => {
+      for (const e of list.getEntries()) {
+        lt.count++;
+        lt.total += e.duration;
+        lt.worst = Math.max(lt.worst, e.duration);
+        lt.at.push(performance.timeOrigin + e.startTime);
+      }
+      if (lt.at.length > 500) lt.at.splice(0, lt.at.length - 500);
+    });
+    ltObs.observe({ type: 'longtask', buffered: true });
+  } catch (err) { ltObs = null; }
+}
+
+/** Long tasks since the page loaded, or null where the browser does not report them. */
+export function longTasks() {
+  if (!ltObs) return null;
+  const cut = Date.now() - 60000;
+  return {
+    real: true,
+    count: lt.count,
+    totalMs: Math.round(lt.total),
+    worstMs: Math.round(lt.worst),
+    lastMinute: lt.at.filter(t => t >= cut).length,
+  };
 }
 
 /** Who is currently holding the sampler open — for diagnostics. */

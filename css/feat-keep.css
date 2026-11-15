@@ -1,0 +1,77 @@
+/* ==================================================================
+   Looking after your data (js/core/backup.js, snapshots.js,
+   js/shell/housekeeping.js, js/shell/users.js, js/apps/settings-data.js)
+   .bk-*        what is inside a backup, and what to restore
+   .dlg-err     the line a confirm sheet shows when it won't close yet
+   .hk-offline  the "you're offline" bar and its list of apps
+   .snap__*     Settings › Storage › Daily snapshots
+   .inst__*     Settings › About › Install, Send to my phone
+   .users-*     the last-used line, the guest bar's profile button
+   ================================================================== */
+
+/* a confirm sheet that checks before it closes */
+.dlg-err{min-height:0;color:var(--bad,#ff6b6b);font-size:var(--fs-12);line-height:1.4}
+.dlg-err:empty{display:none}
+
+/* ---- what is in a backup ---- */
+.bk-preview{display:flex;flex-direction:column;gap:var(--sp-3)}
+.bk-list{display:flex;flex-direction:column;gap:2px;padding:var(--sp-3);border-radius:var(--r-md);background:var(--fill-1);border:1px solid var(--line-1)}
+.bk-line{display:flex;justify-content:space-between;gap:var(--sp-3);font-size:var(--fs-12);color:var(--ink-2)}
+.bk-line b{color:var(--ink-0);font-weight:600;text-align:right}
+.bk-parts{display:flex;flex-direction:column;gap:var(--sp-2)}
+.bk-part{display:flex;gap:var(--sp-3);align-items:flex-start;padding:var(--sp-2) var(--sp-3);border-radius:var(--r-md);cursor:pointer;border:1px solid transparent}
+.bk-part:hover{background:var(--fill-1)}
+.bk-part input{margin-top:3px;accent-color:var(--accent)}
+.bk-part span{display:flex;flex-direction:column;gap:1px}
+.bk-part b{font-size:var(--fs-13);color:var(--ink-0)}
+.bk-part small{font-size:var(--fs-11);color:var(--ink-3);line-height:1.35}
+.bk-part.is-off{opacity:.5;cursor:not-allowed}
+.bk-leave{display:flex}
+
+/* ---- the profile picker and guest bar ---- */
+.users-tile__used{display:block;margin-top:1px;font-size:var(--fs-10);color:rgba(255,255,255,.55);min-height:1em}
+.users-guest__acts{display:flex;flex-wrap:wrap;gap:var(--sp-2);justify-content:center}
+.users-acts--move{margin-top:var(--sp-2)}
+.users-guestbar__keep{padding:6px 12px;border-radius:99px;background:rgba(var(--accent-rgb)/.28);color:var(--ink-0);font-size:var(--fs-11);cursor:pointer;white-space:nowrap}
+.users-guestbar__keep:hover{background:rgba(var(--accent-rgb)/.42)}
+body.is-mobile .users-guestbar__keep{display:none}
+.tray-btn--who{max-width:160px}
+.tray-btn__who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px}
+
+/* ---- you're offline ---- */
+.hk-offline{
+  position:absolute;left:50%;transform:translateX(-50%);bottom:calc(var(--sp-3) + 62px);z-index:calc(var(--z-toast) + 1);
+  display:flex;align-items:flex-start;gap:var(--sp-3);width:min(560px,calc(100vw - 24px));padding:10px 12px;border-radius:var(--r-lg);
+  background:var(--glass-2);border:1px solid var(--line-1);box-shadow:var(--sh-2);color:var(--ink-1);font-size:var(--fs-12);line-height:1.4;
+  backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);
+}
+.hk-offline > .icon,.hk-offline > .icon svg{width:16px;height:16px;margin-top:2px;color:var(--accent-soft);flex:none}
+.hk-offline__main{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.hk-offline__txt b{color:var(--ink-0)}
+.hk-offline__more{display:flex;flex-direction:column;gap:6px;max-height:34vh;overflow:auto;color:var(--ink-2)}
+.hk-offline__more p{margin:0}
+.hk-offline__fine{color:var(--ink-3);font-size:var(--fs-11)}
+.hk-offline__btn{padding:4px 10px;border-radius:99px;background:var(--fill-1);color:var(--ink-0);font-size:var(--fs-11);cursor:pointer;white-space:nowrap;flex:none}
+.hk-offline__btn:hover{background:var(--fill-2)}
+.hk-offline__x{width:22px;height:22px;display:grid;place-items:center;border-radius:99px;color:var(--ink-2);cursor:pointer;flex:none}
+.hk-offline__x:hover{background:var(--fill-1);color:var(--ink-0)}
+.hk-offline__x .icon,.hk-offline__x svg{width:13px;height:13px}
+body.is-mobile .hk-offline{bottom:calc(var(--sp-3) + 8px)}
+
+/* ---- daily snapshots ---- */
+.snap__space{display:flex;flex-wrap:wrap;gap:4px;align-items:baseline;padding:0 var(--sp-2);color:var(--ink-1);font-size:var(--fs-12)}
+.snap__space small{color:var(--ink-3)}
+.snap__item{display:flex;flex-direction:column;border-bottom:1px solid var(--line-1)}
+.snap__item:last-child{border-bottom:0}
+.snap__row{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);flex-wrap:wrap}
+.snap__t{display:flex;flex-direction:column;min-width:0}
+.snap__t small{color:var(--ink-3);font-size:var(--fs-11)}
+.snap__acts{display:flex;gap:var(--sp-2);flex-wrap:wrap}
+.snap__files{display:flex;flex-direction:column;gap:2px;padding:0 var(--sp-4) var(--sp-3);max-height:240px;overflow:auto}
+.snap__file{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-12)}
+.snap__path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:var(--fs-11)}
+
+/* ---- install, send to my phone ---- */
+.inst__send{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap;justify-content:flex-end}
+.inst__qr{width:132px;height:132px;border-radius:var(--r-md);background:#fff;padding:0;image-rendering:pixelated}
+.inst__btns{display:flex;flex-direction:column;gap:var(--sp-2)}

@@ -169,6 +169,7 @@ async function bootAnimWindows(host) {
   requestAnimationFrame(() => overlay.classList.add('is-in'));
   setTimeout(() => sfx.boot('winchime'), 250);
   await new Promise(r => setTimeout(r, reduced() ? 250 : 3200));
+  await shellReady;
   overlay.classList.add('is-out');
   await new Promise(r => setTimeout(r, 420));
   overlay.remove();
@@ -262,12 +263,20 @@ async function bootAnimLinux(host, t = tty(host)) {
     await new Promise(r => setTimeout(r, 300));
   }
 
+  await shellReady;
   stopHum();
   await t.close();
 }
 
 /* the drive's own start-up; plain is the normal splash in boot.js */
 async function playDrive(host, os, t = null) {
+  /* Skip the boot animation (Settings › Desktop › Startup): no kernel log, no splash — the drive's look is already applied */
+  if (store.get('prefs.bootFast') === true) {
+    await shellReady;
+    if (t) await t.close();
+    store.set('session.bootedOnce', true);
+    return;
+  }
   if (os === 'linux') {
     await bootAnimLinux(host, t || undefined);
   } else {
@@ -275,7 +284,7 @@ async function playDrive(host, os, t = null) {
     if (os === 'windows') await bootAnimWindows(host);
     else {
       const m = await import('./boot.js');
-      await m.runBoot(host);
+      await m.runBoot(host, shellReady);
       return;
     }
   }
@@ -295,8 +304,14 @@ const HELP = [
   '…and a few that are not listed.',
 ];
 
-export function runBootPicker(host) {
-  /* the live desktop underneath must not take focus or shortcuts */
+/* main.js starts the boot screens while the rest of the shell is still
+   loading under them: `ready` resolves once it is up, and whichever screen
+   is showing waits for it before it gets out of the way */
+let shellReady = Promise.resolve();
+
+export function runBootPicker(host, ready) {
+  if (ready && typeof ready.then === 'function') shellReady = ready;
+  /* the desktop being built underneath must not take focus or shortcuts */
   cover('boot', true);
   return pick(host).finally(() => cover('boot', false));
 }
@@ -310,7 +325,7 @@ function pick(host) {
   } catch (err) { /* private mode */ }
   if (restarting) {
     applyOS(store.get('session.bootOS', store.get('prefs.bootOS', 'plain')));
-    return import('./boot.js').then(m => m.runBoot(host)).then(() => 'restart');
+    return import('./boot.js').then(m => m.runBoot(host, shellReady)).then(() => 'restart');
   }
 
   const remembered = store.get('prefs.bootOS', 'plain');
@@ -318,7 +333,7 @@ function pick(host) {
 
   /* "skip this menu": boot the remembered drive straight away. Settings >
      Desktop > Startup turns the menu back on. */
-  if (store.get('prefs.bootSkip')) return playDrive(host, remembered).then(() => remembered);
+  if (store.get('prefs.bootSkip') || store.get('prefs.bootFast') === true) return playDrive(host, remembered).then(() => remembered);
 
   return new Promise(resolve => {
     let idx = Math.max(0, DRIVES.findIndex(d => d.id === remembered));

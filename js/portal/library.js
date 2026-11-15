@@ -21,8 +21,8 @@
      Published          projects with `published` set
      Clips              db.kv('clips') — Static Replay clips
      Achievements       achievements.list() with this device's stats
-     Followed Creators  needs accounts on a server; StaticOS has none,
-                        so this page says so instead of faking a feed.
+     (no Followed Creators: that needs accounts on a server, which
+      StaticOS has none of, so the section is not shown at all)
 
    ROUTES
      static://library                    overview
@@ -42,6 +42,8 @@
 import { BRAND, u } from './brand.js';
 import * as C from '../core/collections.js';
 import * as plays from '../core/plays.js';
+import * as ST from '../core/screentime.js';
+import * as shortcuts from '../core/shortcuts.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-library-css')) {
   const l = document.createElement('link');
@@ -77,13 +79,25 @@ const SECTIONS = [
   { id: 'clips',        label: 'Clips',             icon: 'film' },
   { group: 'Progress' },
   { id: 'achievements', label: 'Achievements',      icon: 'star' },
-  { id: 'following',    label: 'Followed Creators', icon: 'users' },
 ];
 const SECTION_IDS = new Set(SECTIONS.filter(s => !s.group).map(s => s.id));
 const sectionOf = id => SECTIONS.find(s => !s.group && s.id === id) || SECTIONS[0];
 
 const DAY = 86400000;
 const CONTINUE_WINDOW = 14 * DAY;
+const QUIET_AFTER = 14 * DAY;       /* "Finish this": unfinished and untouched this long */
+
+const FAV_SORTS = [
+  { id: 'newest', label: 'Newest first' },
+  { id: 'az', label: 'A to Z' },
+  { id: 'played', label: 'Most played here' },
+  { id: 'recent', label: 'Played lately' },
+];
+const FAV_GROUPS = [
+  { id: 'none', label: 'No groups' },
+  { id: 'category', label: 'By category' },
+  { id: 'studio', label: 'By studio' },
+];
 
 const arr = v => (Array.isArray(v) ? v : []);
 const num = n => Number(n || 0).toLocaleString();
@@ -97,7 +111,8 @@ const reduced = store => !!store.get('prefs.reduceMotion') || (() => {
 
 /* ---------------- lazily loaded data modules (shared across builds) ---------------- */
 const once = fn => { let p = null; return () => (p || (p = fn())); };
-const gamesMod    = once(() => import('./games.data.js').then(m => m.load().then(() => m)).catch(() => null));
+let gamesLoaded = null;      /* the games module once its catalogue is in memory (for category names) */
+const gamesMod    = once(() => import('./games.data.js').then(m => m.load().then(() => (gamesLoaded = m))).catch(() => null));
 const robloxMod   = once(() => import('./roblox.data.js').then(m => m.load().then(() => m)).catch(() => null));
 const animeMod    = once(() => import('./anime.data.js').catch(() => null));
 const arcadeMod   = once(() => import('../arcade/index.js').then(m => arr(m.ARCADE || m.default)).catch(() => []));
@@ -167,6 +182,15 @@ function parseRoute(url) {
 
 /* focus the sidebar entry the user picked, across the rebuild navigate() causes */
 let focusSideNext = null;
+/* the filter box follows you from section to section for a few minutes */
+let carriedFilter = { q: '', at: 0 };
+const fold = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+/* every kind of card the filter looks at, and where its title is */
+const FILTERABLE = [
+  ['.libx-card', '.libx-card__t'], ['.libx-cont', '.libx-cont__t'], ['.libx-col:not(.is-new)', '.libx-col__t'],
+  ['.libx-add__row', 'b'], ['.libx-pub', 'h3'], ['.libx-clip', '.libx-clip__t b'], ['.libx-ach', 'b'], ['.libx-fin', '.libx-fin__t'],
+];
+const FILTER_ALL = FILTERABLE.map(f => f[0]).join(',');
 let focusMainNext = false;
 
 /* ============================================================ */
@@ -197,7 +221,44 @@ export function buildLibrary(ctx) {
   root.appendChild(h('div.libx', side, main));
 
   /* per-page view state that survives a live refresh */
-  const view = { recentKind: 'all', colKind: 'all', addTab: 'recent', histQ: '' };
+  const VIEW_KEY = 'portal.library.view';       /* { favSort, favGroup }: how Favorites is sorted and grouped */
+  const savedView = store.get(VIEW_KEY, null) || {};
+  const view = { recentKind: 'all', colKind: 'all', addTab: 'recent', histQ: '',
+    q: Date.now() - carriedFilter.at < 5 * 60_000 ? carriedFilter.q : '',
+    favSort: FAV_SORTS.some(s => s.id === savedView.favSort) ? savedView.favSort : 'newest',
+    favGroup: FAV_GROUPS.some(s => s.id === savedView.favGroup) ? savedView.favGroup : 'none' };
+
+  /* one filter box for every section: it hides cards whose title does not
+     contain the words, and any shelf left with nothing to show */
+  const filterIn = h('input', { type: 'search', placeholder: 'Filter this page', value: view.q, spellcheck: 'false', autocomplete: 'off',
+    'aria-label': 'Filter this page by title', dataset: { fk: 'libfilter' } });
+  const filterCount = h('small.libx-find__n', { 'aria-live': 'polite' });
+  const filterEl = h('label.field.libx-find.libx-find--all', icon('search'), filterIn, filterCount);
+  filterIn.addEventListener('input', () => { view.q = filterIn.value; carriedFilter = { q: view.q, at: Date.now() }; applyFilter(); });
+  filterIn.addEventListener('keydown', e => { if (e.key === 'Escape' && filterIn.value) { e.stopPropagation(); filterIn.value = ''; filterIn.dispatchEvent(new Event('input')); } });
+  function applyFilter() {
+    if (dead) return;
+    const needle = fold(view.q.trim());
+    let total = 0, shown = 0;
+    for (const [item, ttl] of FILTERABLE) {
+      for (const el of main.querySelectorAll(item)) {
+        const hit = !needle || fold(el.querySelector(ttl)?.textContent).includes(needle);
+        el.classList.toggle('is-filtered', !hit);
+        total++;
+        if (hit) shown++;
+      }
+    }
+    for (const g of main.querySelectorAll('.libx-grp, .libx-colitems')) {
+      const its = g.querySelectorAll(FILTER_ALL);
+      g.classList.toggle('is-filtered', !!needle && its.length > 0 && [...its].every(i => i.classList.contains('is-filtered')));
+    }
+    const msg = needle ? (shown ? `${shown} of ${total}` : 'no matches') : '';
+    if (filterCount.textContent !== msg) filterCount.textContent = msg;     /* a write that changes nothing would still wake the observer */
+  }
+  const filterWatch = typeof MutationObserver === 'function' ? new MutationObserver(() => { if (view.q) applyFilter(); }) : null;
+  filterWatch?.observe(main, { childList: true, subtree: true });
+  life.push(() => filterWatch?.disconnect());
+
   let counts = {};
   /* clip key -> { url, sig }: a live refresh reuses the object URL of a clip
      that has not changed, so thumbnails do not flash and nothing is revoked
@@ -207,6 +268,8 @@ export function buildLibrary(ctx) {
   let focusHeading = false;   /* focus the page heading after the first paint */
   /* static://library/clips/<id> opens that clip's player once, on the first paint */
   let clipToOpen = route.clipId;
+  /* a category's name, once the catalogue is in memory (the id, capitalised, until then) */
+  const catLabel = c => { try { if (gamesLoaded) return gamesLoaded.catMeta(c).name; } catch (e) { /* fall back */ } return String(c).charAt(0).toUpperCase() + String(c).slice(1); };
   let arcadeMap = new Map();
   let projMap = new Map();
   let projKnown = false;      /* projMap holds the real list (not a failed read) */
@@ -235,7 +298,7 @@ export function buildLibrary(ctx) {
     paintMain(true);
   };
   const soon = () => { clearTimeout(refreshT); refreshT = setTimeout(run, 70); };
-  for (const k of [C.KEY, 'portal.games.favs', 'portal.watchlist', 'portal.achievements', 'portal.play', 'portal.anime.progress',
+  for (const k of [C.KEY, 'portal.games.favs', 'portal.watchlist', 'portal.achievements', 'portal.play', 'portal.anime.progress', 'portal.anime.status',
     'portal.roblox.favs', 'portal.roblox.recent', 'portal.cloud.favs', 'portal.cloud.played', 'portal.spotify', 'portal.browser.marks', 'proxy.marks']) {
     life.push(store.sub(k, soon));
   }
@@ -404,6 +467,7 @@ export function buildLibrary(ctx) {
       if (n) { n.scrollLeft = l; n.scrollTop = t; }
     }
     if (keep && sc && sc.scrollTop !== top) sc.scrollTop = top;
+    applyFilter();
     const asked = wantFk;
     const want = asked || fk;
     wantFk = null;
@@ -429,7 +493,6 @@ export function buildLibrary(ctx) {
       case 'published': return pagePublished();
       case 'clips': return pageClips();
       case 'achievements': return pageAchievements();
-      case 'following': return pageFollowing();
       default: return pageOverview();
     }
   }
@@ -454,7 +517,7 @@ export function buildLibrary(ctx) {
         h('div.libx-head__k', icon(ic || s.icon), h('span', { text: kicker || 'Library' })),
         h('h1.libx-head__t', { text: title || s.label }),
         sub ? h('p.libx-head__s', { text: sub }) : null),
-      tools ? h('div.libx-head__tools', tools) : null);
+      h('div.libx-head__tools', route.section === 'history' ? null : filterEl, tools));
   }
 
   function group(title, ic, count, content, tools) {
@@ -916,6 +979,77 @@ export function buildLibrary(ctx) {
   }
 
   /* ============================================================
+     THIS WEEK + FINISH THIS (both read straight from this device)
+     ============================================================ */
+  function weekStats() {
+    const now = Date.now();
+    const launched = plays.recent(80).filter(r => Number(r.at) >= now - 7 * DAY);
+    /* web launches are logged one by one (Static Games), so this is a real count */
+    const log = store.get('portal.games.playlog', {});
+    let webLaunches = 0;
+    if (log && typeof log === 'object' && !Array.isArray(log)) {
+      for (const list of Object.values(log)) webLaunches += arr(list).filter(t => typeof t === 'number' && now - t < 7 * DAY).length;
+    }
+    let r = { games: [], total: 0 };
+    try { r = ST.range(7); } catch (e) { /* screen time unreadable: leave the time out */ }
+    const gameSec = r.games.reduce((n, g) => n + g.sec, 0);
+    return { launched, webLaunches, gameSec, top: r.games.filter(g => g.sec >= 60).slice(0, 3) };
+  }
+
+  function weekGroup() {
+    const w = weekStats();
+    if (!w.launched.length && !w.webLaunches && w.gameSec < 60) return null;
+    const tile = (n, label) => h('div.libx-wk', h('b', { text: String(n) }), h('span', { text: label }));
+    return group('This week on this device', 'calendar', null, h('div.libx-week', { dataset: { sec: 'week' } },
+      h('div.libx-week__tiles',
+        w.launched.length ? tile(num(w.launched.length), w.launched.length === 1 ? 'game launched' : 'different games launched') : null,
+        w.webLaunches ? tile(num(w.webLaunches), w.webLaunches === 1 ? 'web game launch' : 'web game launches') : null,
+        w.gameSec >= 60 ? tile(ST.fmtDur(w.gameSec), 'in games') : null),
+      w.top.length ? h('ol.libx-week__top', { 'aria-label': 'Most time in a game this week' }, w.top.map(g => h('li',
+        h('span', { text: g.title }), h('small', { text: ST.fmtDur(g.sec) })))) : null,
+      h('p.libx-note', icon('info'), h('span', { text: 'Counted on this device over the last 7 days, from your own launches and Screen Time. Nothing here is sent anywhere.' }))));
+  }
+
+  /** Things you started and left alone for two weeks: unfinished anime and manga, and creations never published. */
+  async function finishRows() {
+    const now = Date.now();
+    await ensureMaps({ arcade: false });
+    const out = [];
+    const prog = store.get('portal.anime.progress', {}) || {};
+    const status = store.get('portal.anime.status', {}) || {};
+    const quiet = Object.entries(prog).filter(([t, v]) => v && v.ep > 0 && now - (v.at || 0) >= QUIET_AFTER
+      && !['completed', 'dropped'].includes((status[t] || {}).s));
+    if (quiet.length) {
+      const kinds = new Set(quiet.map(([t]) => t.split(':')[0]));
+      const A = kinds.has('anime') ? await animeData('anime') : null;
+      const Mg = kinds.has('manga') ? await animeData('manga') : null;
+      for (const [t, v] of quiet) {
+        const k = t.slice(0, t.indexOf(':')), id = t.slice(t.indexOf(':') + 1);
+        const rec = (k === 'anime' ? A : k === 'manga' ? Mg : null)?.byId(id, k);
+        if (!rec) continue;
+        const of = v.of || (k === 'manga' ? rec.chapters : rec.episodes) || 0;
+        if (!of || v.ep >= of) continue;            /* can't tell it is unfinished without a total */
+        const unit = k === 'manga' ? 'Chapter' : 'Episode';
+        out.push({ at: v.at || 0, e: entry({ kind: 'anime', id: k === 'manga' ? `manga:${rec.id}` : rec.id, title: rec.title, art: rec.image || null },
+          { reason: `${unit} ${v.ep} of ${of} · last marked ${api.fmt.fmtAgo(v.at || 0)}`, prog: { ep: v.ep, of } }) });
+      }
+    }
+    for (const p of projMap.values()) {
+      if (p.published || arr(p.versions).length < 1 || now - (p.updatedAt || 0) < QUIET_AFTER) continue;
+      const days = Math.floor((now - p.updatedAt) / DAY);
+      out.push({ at: p.updatedAt || 0, e: entry({ kind: 'creation', id: p.id, title: p.name },
+        { reason: `Not opened for ${plural(days, 'day')} · not published`, prog: null }) });
+    }
+    return out.sort((a, b) => b.at - a.at).slice(0, 14).map(x => x.e);
+  }
+
+  async function finishGroup() {
+    const rows = await finishRows();
+    if (!rows.length) return null;
+    return railGroup('Finish this', 'flag', rows, null, e => ({ sub: e.reason, progress: e.prog, playHere: e.kind === 'creation' && !e.gone }));
+  }
+
+  /* ============================================================
      OVERVIEW
      ============================================================ */
   async function pageOverview() {
@@ -967,11 +1101,17 @@ export function buildLibrary(ctx) {
       return page;
     }
 
+    page.appendChild(h('div.libx-toolbar', filterEl));
+
     if (cont.length) {
       page.appendChild(group('Continue Playing', 'play', null,
         h('div.libx-conts', cont.slice(0, 4).map(continueCard)),
         cont.length > 4 ? h('button.btn.btn--ghost.btn--sm', { type: 'button', onclick: () => go('continue') }, h('span', { text: 'See all' }), icon('chevron-right')) : null));
     }
+    const fin = await finishGroup();
+    if (fin) page.appendChild(fin);
+    const wk = weekGroup();
+    if (wk) page.appendChild(wk);
 
     /* collections — or the starters, when there are none */
     if (cols.length) {
@@ -1012,14 +1152,17 @@ export function buildLibrary(ctx) {
       title: 'Continue Playing',
       sub: 'What you launched or worked on in the last two weeks. A web game keeps its own saves, so StaticOS cannot see how far you got — only when you last played.',
     }));
+    const fin = await finishGroup();
     if (!rows.length) {
       page.appendChild(empty('play', 'Nothing in progress',
         'Games you launch, creations you edit and episodes you mark as watched show up here for two weeks.',
         [btn('Browse games', 'gamepad', () => api.openApp('aether-games', {}), '.btn--primary'),
           btn('Recently Played', 'clock', () => go('recent'), '.btn--ghost')]));
+      if (fin) page.appendChild(fin);
       return page;
     }
     page.appendChild(h('div.libx-conts', rows.map(continueCard)));
+    if (fin) page.appendChild(fin);
     return page;
   }
 
@@ -1063,18 +1206,85 @@ export function buildLibrary(ctx) {
   /* ============================================================
      FAVORITES
      ============================================================ */
+  /** Favourites whose game is no longer in the catalogue. Only judged once the
+      whole catalogue really loaded, so a failed fetch can never look like "gone". */
+  async function staleFavorites() {
+    const out = { web: [], roblox: [] };
+    const G = await gamesMod();
+    if (G && G.isLoaded() && !G.loadError()) {
+      out.web = arr(store.get('portal.games.favs')).filter(x => typeof x === 'string' && !G.byId(x));
+    }
+    const RB = await robloxMod();
+    if (RB && RB.isLoaded() && !RB.loadError()) {
+      out.roblox = arr(store.get('portal.roblox.favs')).map(String).filter(id => !RB.byId(id));
+    }
+    return out;
+  }
+
+  async function cleanFavorites(stale) {
+    const n = stale.web.length + stale.roblox.length;
+    const yes = await confirmKeep({
+      title: `Remove ${plural(n, 'favourite')} that left the catalogue?`,
+      message: 'The games are not in the catalogue any more, so they cannot be opened. Nothing else is touched.',
+      ok: 'Remove', danger: true,
+    });
+    if (!yes || dead) return;
+    const web = new Set(stale.web), rbx = new Set(stale.roblox);
+    store.set('portal.games.favs', arr(store.get('portal.games.favs')).filter(x => !web.has(x)));
+    store.set('portal.roblox.favs', arr(store.get('portal.roblox.favs')).filter(x => !rbx.has(String(x))));
+    focusHeading = true;
+    api.notify({ app: 'Library', icon: 'trash', title: 'Cleaned up your favourites', message: `${plural(n, 'favourite')} removed.`, timeout: 3500 });
+  }
+
   async function pageFavorites() {
-    const [favs, rbx] = await Promise.all([favoriteGames(), robloxRows('portal.roblox.favs')]);
+    const [favs, rbx, stale, G, played] = await Promise.all([favoriteGames(), robloxRows('portal.roblox.favs'), staleFavorites(), gamesMod(), playedRows()]);
     const cloud = cloudRows('portal.cloud.favs');
     const page = h('div.libx-page', head({ title: 'Favorites', sub: 'Everything you have hearted, across Static Games, Roblox and Cloud.' }));
+    const staleN = stale.web.length + stale.roblox.length;
+    const cleanNote = staleN ? h('div.libx-note.libx-note--act', { dataset: { sec: 'stale' } }, icon('alert'),
+      h('span', { text: `${plural(staleN, 'favourite')} left the catalogue and can no longer be opened.` }),
+      h('button.btn.btn--ghost.btn--sm', { type: 'button', dataset: { fk: 'cleanfav' }, onclick: () => cleanFavorites(stale) },
+        icon('trash'), h('span', { text: staleN === 1 ? 'Remove it' : 'Remove them' }))) : null;
     if (!favs.length && !rbx.length && !cloud.length) {
+      if (cleanNote) page.appendChild(cleanNote);
       page.appendChild(empty('heart', 'No favorites yet', 'Tap the heart on any game and it collects here.',
         [btn('Browse games', 'gamepad', () => api.openApp('aether-games', {}), '.btn--primary'),
           btn('Browse Roblox', 'box', () => api.openApp('aether-roblox', {}), '.btn--ghost')]));
       return page;
     }
-    if (favs.length) page.appendChild(group('Web games', 'gamepad', favs.length,
-      grid(favs, e => ({ sub: e.studio || 'Web game', fav: true, onRemove: unfavGame, removeLabel: 'Remove from favourites' }))));
+    if (cleanNote) page.appendChild(cleanNote);
+    if (favs.length) {
+      /* sort and group: yours alone, remembered on this device */
+      const lastAt = new Map(played.filter(r => r.kind === 'web').map(r => [r.id, r.at]));
+      const counts = new Map(plays.top(400).filter(r => r.kind === 'web').map(r => [r.id, r.plays || 0]));
+      const order = favs.map((e, i) => [e, i]);
+      const SORT = {
+        newest: (a, b) => a[1] - b[1],
+        az: (a, b) => a[0].title.localeCompare(b[0].title) || a[1] - b[1],
+        played: (a, b) => (counts.get(b[0].id) || 0) - (counts.get(a[0].id) || 0) || (lastAt.get(b[0].id) || 0) - (lastAt.get(a[0].id) || 0) || a[1] - b[1],
+        recent: (a, b) => (lastAt.get(b[0].id) || 0) - (lastAt.get(a[0].id) || 0) || a[1] - b[1],
+      };
+      const catOf = e => { const g = G && G.byId(e.id); const c = g && g.cats.find(x => x !== 'featured'); return c ? G.catMeta(c).name : 'Other'; };
+      const holder = h('div.libx-favgroups');
+      const paintFavs = () => {
+        const rows = order.slice().sort(SORT[view.favSort] || SORT.newest).map(x => x[0]);
+        const optsOf = e => ({ sub: e.studio || 'Web game', fav: true, onRemove: unfavGame, removeLabel: 'Remove from favourites' });
+        if (view.favGroup === 'none') { api.render(holder, group('Web games', 'gamepad', rows.length, grid(rows, optsOf))); return; }
+        const by = new Map();
+        for (const e of rows) { const k = view.favGroup === 'studio' ? (e.studio || 'Unknown studio') : catOf(e); if (!by.has(k)) by.set(k, []); by.get(k).push(e); }
+        const parts = [...by.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+        api.render(holder, ...parts.map(([k, es]) => group(k, view.favGroup === 'studio' ? 'user' : 'tag', es.length, grid(es, optsOf))));
+      };
+      const save = () => store.set(VIEW_KEY, { favSort: view.favSort, favGroup: view.favGroup });
+      page.appendChild(h('div.libx-favbar', { dataset: { sec: 'favbar' } },
+        h('div.libx-favbar__g', h('span.libx-favbar__l', { text: 'Sort' }),
+          chips(FAV_SORTS, () => view.favSort, id => { view.favSort = id; save(); paintFavs(); }, 'Sort favourites')),
+        h('div.libx-favbar__g', h('span.libx-favbar__l', { text: 'Group' }),
+          chips(FAV_GROUPS, () => view.favGroup, id => { view.favGroup = id; save(); paintFavs(); }, 'Group favourites'))));
+      paintFavs();
+      page.appendChild(holder);
+      if (view.favSort === 'played') page.appendChild(note('“Most played here” counts launches from this device; a game you have not launched since counting began sorts by when you last played it.'));
+    }
     if (rbx.length) page.appendChild(group('Roblox', 'box', rbx.length, grid(rbx, e => ({ sub: e.creator || 'Roblox', fav: true }))));
     if (cloud.length) page.appendChild(group('Cloud', 'cast', cloud.length, grid(cloud, e => ({ sub: e.year ? String(e.year) : 'Emulated', fav: true }))));
     return page;
@@ -1160,7 +1370,7 @@ export function buildLibrary(ctx) {
   function colMosaic(col) {
     const box = h('div.libx-col__art', { style: { '--h': String(hueOf(col.id)) } });
     const items = col.items.slice(0, 4);
-    if (!items.length) {
+    if (!items.length || col.rule) {
       box.classList.add('is-empty');
       box.appendChild(icon(col.icon, { size: 30 }));
       return box;
@@ -1186,6 +1396,7 @@ export function buildLibrary(ctx) {
       { label: 'Open', icon: 'folder-open', onClick: () => go('collections', col.id) },
       { label: 'Rename…', icon: 'edit-3', onClick: () => renameCol(col) },
       { label: 'Change icon…', icon: col.icon, onClick: () => iconMenu(col, x, y) },
+      { label: 'Pin to desktop', icon: 'monitor', onClick: () => shortcuts.addCollectionToDesktop(col) },
       '-',
       { label: 'Delete collection…', icon: 'trash', danger: true, onClick: () => deleteCol(col, false, el) },
     ], x, y);
@@ -1219,7 +1430,7 @@ export function buildLibrary(ctx) {
   function colCard(col) {
     let el = null;
     const goBtn = h('button.libx-col__go', {
-      type: 'button', 'aria-label': `Open collection ${col.name}, ${plural(col.items.length, 'item')}`,
+      type: 'button', 'aria-label': col.rule ? `Open smart collection ${col.name}` : `Open collection ${col.name}, ${plural(col.items.length, 'item')}`,
       dataset: { fk: `col:${col.id}` },
       onclick: () => go('collections', col.id),
       oncontextmenu: ev => { ev.preventDefault(); colMenu(col, ev.clientX, ev.clientY, el); },
@@ -1232,7 +1443,8 @@ export function buildLibrary(ctx) {
       colMosaic(col),
       h('div.libx-col__b',
         h('div.libx-col__t', icon(col.icon), h('span', { text: col.name })),
-        h('div.libx-col__m', { text: col.items.length ? `${plural(col.items.length, 'item')} · ${kindSummary(col.items)}` : 'Empty — add anything' })),
+        h('div.libx-col__m', { text: col.rule ? `Smart · ${C.describeRule(col.rule, catLabel)}`
+          : col.items.length ? `${plural(col.items.length, 'item')} · ${kindSummary(col.items)}` : 'Empty — add anything' })),
       goBtn, more);
     return el;
   }
@@ -1281,13 +1493,184 @@ export function buildLibrary(ctx) {
     const page = h('div.libx-page', head({
       title: 'Collections',
       sub: 'Your own shelves — games, Arcade games, creations, anime, Roblox and Cloud titles, mixed however you like.',
-      tools: btn('New collection', 'plus', () => newCollection(), '.btn--primary.btn--sm', { dataset: { fk: 'newcol-top' } }),
+      tools: [
+        btn('New collection', 'plus', () => newCollection(), '.btn--primary.btn--sm', { dataset: { fk: 'newcol-top' } }),
+        btn('New smart collection', 'sparkles', () => newSmartCollection(), '.btn--sm', { dataset: { fk: 'newsmart' } }),
+        btn('Import a file…', 'upload', () => importCollectionFile(), '.btn--ghost.btn--sm', { dataset: { fk: 'importcol' } }),
+      ],
     }));
     if (cols.length) page.appendChild(h('div.libx-cols.is-page', [...cols.map(colCard), newColCard()]));
     const st = starters(!cols.length);
     if (st) page.appendChild(cols.length ? group('Suggested starters', 'sparkles', null, st) : st);
     page.appendChild(note('To add something, open its ⋯ menu here, or right-click any game in Static Games and choose “Add to collection…”.', 'bookmark'));
     return page;
+  }
+
+  /* ---- smart collections: the rule sheet ---- */
+  async function askRule({ title = 'New smart collection', ok = 'Create', value = null, withName = true } = {}) {
+    const G = await gamesMod();
+    const cats = G ? G.categories().filter(c => c.id !== 'featured') : [];
+    const prev = document.activeElement;
+    const cur = value ? C.normRule(value) : { src: 'web', state: 'played' };
+    return new Promise(resolve => {
+      const sel = (label, opts, val, onchange) => {
+        const s2 = h('select.libx-dlg__in', { 'aria-label': label, onchange: () => onchange(s2.value) },
+          opts.map(([v, l]) => h('option', { value: v, text: l, selected: v === val })));
+        return h('label.libx-dlg__l', h('span', { text: label }), s2);
+      };
+      const nameIn = h('input.libx-dlg__in', { type: 'text', maxlength: '40', spellcheck: 'false', autocomplete: 'off',
+        'aria-label': 'Name', placeholder: 'e.g. Horror I have played' });
+      const body = h('div.libx-dlg__rule');
+      const okBtn = h('button.btn.btn--primary', { type: 'submit', text: ok });
+      const paintBody = () => {
+        const R = cur;
+        const states = R.src === 'web' ? [['any', 'any'], ['played', 'I have played'], ['fav', 'are in my favorites'], ['unplayed', 'I have not tried yet']]
+          : R.src === 'arcade' ? [['any', 'any'], ['played', 'I have played'], ['unplayed', 'I have not tried yet']]
+          : [['any', 'any'], ['fav', 'are in my favorites'], ['played', 'I have opened']];
+        api.render(body,
+          sel('Show', Object.entries(C.RULE_SRC).map(([k, v]) => [k, v.label]), R.src, v => {
+            cur.src = v;
+            cur.state = v === 'anime' ? undefined : 'any';
+            cur.status = v === 'anime' ? 'watching' : undefined;
+            delete cur.cat;
+            delete cur.players2;
+            paintBody();
+          }),
+          R.src === 'web' && cats.length
+            ? sel('Category', [['', 'Any category'], ...cats.slice(0, 40).map(c => [c.id, c.name])], R.cat || '', v => { if (v) cur.cat = v; else delete cur.cat; })
+            : null,
+          R.src === 'anime'
+            ? sel('Status in Static Anime', Object.entries(C.ANIME_STATUS), R.status || 'watching', v => { cur.status = v; })
+            : sel('That', states, R.state || 'any', v => { cur.state = v; }),
+          R.src === 'arcade' ? h('label.libx-dlg__chk', h('input', { type: 'checkbox', checked: !!R.players2, onchange: e => { cur.players2 = e.target.checked; } }),
+            h('span', { text: 'Only games for two players' })) : null);
+      };
+      const card = h('form.libx-dlg__card.glass', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title,
+        onsubmit: e => {
+          e.preventDefault();
+          const rule = C.normRule(cur);
+          done({ name: nameIn.value.trim() || C.describeRule(rule, catLabel).slice(0, 40), rule });
+        } },
+        h('div.libx-dlg__h', icon('sparkles'), h('b', { text: title })),
+        withName ? h('label.libx-dlg__l', h('span', { text: 'Name' }), nameIn) : null,
+        body,
+        h('small.libx-dlg__hint', { text: 'It is a rule, not a list: Static looks again each time you open it, so it is always up to date.' }),
+        h('div.libx-dlg__acts', h('button.btn.btn--ghost', { type: 'button', text: 'Cancel', onclick: () => done(null) }), okBtn));
+      const wrap = h('div.libx-dlg', { onpointerdown: e => { if (e.target === wrap) done(null); } }, card);
+      const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); } };
+      let closed = false;
+      function done(v) {
+        if (closed) return;
+        closed = true;
+        window.removeEventListener('keydown', onKey, true);
+        wrap.remove();
+        if (prev && prev.isConnected) prev.focus({ preventScroll: true });
+        resolve(v);
+      }
+      paintBody();
+      document.body.appendChild(wrap);
+      window.addEventListener('keydown', onKey, true);
+      (withName ? nameIn : body.querySelector('select')).focus();
+    });
+  }
+
+  async function newSmartCollection() {
+    const r = await askRule();
+    if (!r || dead) return;
+    const col = C.createSmart(r.name, r.rule);
+    if (!col) { api.notify({ app: 'Library', icon: 'alert', title: 'Could not make that collection', message: 'You have reached the limit of 60 collections.' }); return; }
+    go('collections', col.id);
+  }
+
+  /* ---- sharing: a file of ids, or the same list sent to a friend ---- */
+  function saveBlob(name, mime, data) {
+    const url = URL.createObjectURL(new Blob([data], { type: mime }));
+    const a = h('a', { href: url, download: name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  function fileSafe(s) { return String(s || 'collection').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50) || 'collection'; }
+
+  function exportMenu(col, items, x, y) {
+    const n = C.wireIds(items).length;
+    if (!n) {
+      api.notify({ app: 'Library', icon: 'info', title: 'Nothing to export', message: 'Only web games, Arcade games, Roblox and anime can be exported. Creations and Cloud titles stay on this device.' });
+      return;
+    }
+    api.menu([
+      { header: true, label: `${plural(n, 'title')} · a list of ids, no links` },
+      { label: 'Save as a file', icon: 'download', onClick: () => {
+        saveBlob(`${fileSafe(col.name)}.staticos-collection.json`, 'application/json', C.exportJson(col, items));
+        api.notify({ app: 'Library', icon: 'download', title: 'Collection saved', message: `${col.name} · ${plural(n, 'title')}`, timeout: 3000 });
+      } },
+      { label: 'Copy as text', icon: 'copy', onClick: async () => {
+        let okc = false;
+        try { await navigator.clipboard.writeText(C.exportJson(col, items)); okc = true; } catch (e) { okc = false; }
+        api.notify({ app: 'Library', icon: okc ? 'copy' : 'alert', title: okc ? 'Copied' : 'This browser refused clipboard access',
+          message: okc ? `${col.name} · ${plural(n, 'title')}` : 'Use Save as a file instead.', timeout: 3500 });
+      } },
+    ], x, y);
+  }
+
+  async function importCollectionFile() {
+    const input = h('input', { type: 'file', accept: '.json,application/json', hidden: true });
+    document.body.appendChild(input);
+    const f = await new Promise(res => {
+      input.addEventListener('change', () => res(input.files && input.files[0]), { once: true });
+      input.addEventListener('cancel', () => res(null), { once: true });
+      input.click();
+    });
+    input.remove();
+    if (!f || dead) return;
+    let text = '';
+    try { text = await f.text(); } catch (e) { text = ''; }
+    const parsed = text.length < 200_000 ? C.parseExport(text) : null;
+    if (!parsed || !parsed.pairs.length) {
+      api.notify({ app: 'Library', icon: 'alert', title: 'That is not a collection file', message: 'Choose a file saved from a collection’s Export menu.' });
+      return;
+    }
+    const r = await C.importIds(parsed.name, parsed.pairs);
+    if (dead) return;
+    if (!r) { api.notify({ app: 'Library', icon: 'alert', title: 'Could not make that collection', message: 'You have reached the limit of 60 collections.' }); return; }
+    api.notify({ app: 'Library', icon: 'bookmark', title: `Imported “${r.col.name}”`,
+      message: `${r.added} of ${r.added + r.skipped} found in your catalogues${r.skipped ? `; ${r.skipped} this device does not have were left out` : ''}.`, timeout: 5000 });
+    go('collections', r.col.id);
+  }
+
+  /** the friends list with a Send button each; sends the ids, they look them up */
+  async function paintSendPanel(hold, col, items) {
+    const ids = C.wireIds(items);
+    api.render(hold, h('small.dim', { text: 'Looking at your friends…' }));
+    let F = null;
+    try { F = await import('../core/friends.js'); } catch (e) { F = null; }
+    if (dead || !hold.isConnected) return;
+    if (!F || !F.available()) { api.render(hold, h('small.dim', { text: 'Friends are not available here. Sign in to a profile to add friends in Static Social.' })); return; }
+    const list = F.friends();
+    if (!list.length) {
+      api.render(hold, h('small.dim', { text: 'You have no friends added yet.' }),
+        btn('Open Friends', 'users', () => api.openApp('social', { friends: true }), '.btn--sm'));
+      return;
+    }
+    api.render(hold,
+      h('small.dim', { text: `This sends ${plural(ids.length, 'title')} as a list of ids, nothing more. Their StaticOS looks each one up in its own catalogues, and nothing is saved unless they press Save.` }),
+      h('div.libx-send__list', list.map(f => h('div.libx-send__row', { dataset: { fp: f.fp } },
+        h('span', { class: `ag-friend__dot is-${f.presence}`, 'aria-hidden': 'true' }),
+        h('b', { text: f.display }),
+        h('small.dim', { text: f.presence === 'offline' ? 'offline' : f.presence }),
+        h('div.grow'),
+        h('button.btn.btn--sm', { type: 'button', 'aria-label': `Send ${col.name} to ${f.display}`, dataset: { fk: `sendcol:${f.fp}` },
+          onclick: async e => {
+            const b = e.currentTarget;
+            b.disabled = true;
+            const r = await F.sendCollection(f.fp, { name: col.name, ids });
+            b.disabled = false;
+            api.notify({ app: 'Library', icon: r.ok ? 'send' : 'alert', timeout: 5000,
+              title: r.ok ? `Sent to ${f.display}` : 'Could not send it',
+              message: r.ok ? `${col.name} · ${plural(r.count, 'title')}. They will see it when their StaticOS is open.`
+                : r.error === 'wait' ? 'Wait a moment before sending another.' : r.error === 'empty' ? 'Nothing in it can be sent.' : 'That friend is not reachable right now.' });
+          } }, icon('send', { size: 13 }), h('span', { text: 'Send' }))))));
   }
 
   async function pageCollection(id) {
@@ -1297,49 +1680,79 @@ export function buildLibrary(ctx) {
       return h('div.libx-page', empty('layers', 'That collection is gone', 'It was deleted, or the link came from another device.',
         [btn('All collections', 'arrow-left', () => go('collections'), '.btn--primary')]));
     }
+    /* a smart collection is worked out right now from what the stores hold */
+    let items = col.items, smartNote = '';
+    if (col.rule) ({ items, note: smartNote } = await C.evaluate(col));
+    if (dead) return h('div');
     const page = h('div.libx-page');
     const tile = h('div.libx-colhead__ic', { style: { '--h': String(hueOf(col.id)) } }, icon(col.icon));
+    const sendHold = h('div.libx-send', { hidden: true, dataset: { sec: 'send' } });
+    const sendBtn = h('button.btn.btn--sm', { type: 'button', 'aria-expanded': 'false', dataset: { fk: 'send' },
+      onclick: () => {
+        const open = sendHold.hidden;
+        sendHold.hidden = !open;
+        sendBtn.setAttribute('aria-expanded', String(open));
+        if (open) paintSendPanel(sendHold, col, items);
+      } }, icon('send'), h('span', { text: 'Send to a friend' }));
+    const sub = col.rule
+      ? `${plural(items.length, 'item')} right now · Smart: ${C.describeRule(col.rule, catLabel)}`
+      : `${plural(items.length, 'item')}${items.length ? ` · ${kindSummary(items)}` : ''}${col.createdAt ? ` · made ${dateText(col.createdAt)}` : ''}`;
     page.appendChild(h('header.libx-colhead',
       h('button.btn.btn--ghost.btn--sm.libx-back', { type: 'button', onclick: () => go('collections'), dataset: { fk: 'back' } },
         icon('arrow-left'), h('span', { text: 'Collections' })),
       h('div.libx-colhead__main', tile,
         h('div.libx-colhead__txt',
-          h('div.libx-head__k', icon('layers'), h('span', { text: 'Collection' })),
+          h('div.libx-head__k', icon(col.rule ? 'sparkles' : 'layers'), h('span', { text: col.rule ? 'Smart collection' : 'Collection' })),
           h('h1.libx-head__t', { text: col.name }),
-          h('p.libx-head__s', { text: `${plural(col.items.length, 'item')}${col.items.length ? ` · ${kindSummary(col.items)}` : ''}${col.createdAt ? ` · made ${dateText(col.createdAt)}` : ''}` })),
-        h('div.libx-head__tools',
+          h('p.libx-head__s', { text: sub })),
+        h('div.libx-head__tools', filterEl,
           btn('Rename', 'edit-3', () => renameCol(col), '.btn--sm', { dataset: { fk: 'rename' } }),
+          col.rule ? btn('Edit rule', 'sliders', async () => {
+            const r = await askRule({ title: 'Edit the rule', ok: 'Save', value: col.rule, withName: false });
+            if (r && !dead) C.setRule(col.id, r.rule);
+          }, '.btn--sm', { dataset: { fk: 'editrule' } }) : null,
           h('button.btn.btn--sm', { type: 'button', 'aria-haspopup': 'menu', dataset: { fk: 'icon' },
             onclick: ev => { const r = ev.currentTarget.getBoundingClientRect(); iconMenu(col, r.left, r.bottom + 4); } },
             icon(col.icon), h('span', { text: 'Icon' })),
+          h('button.btn.btn--sm', { type: 'button', 'aria-haspopup': 'menu', dataset: { fk: 'export' },
+            onclick: ev => { const r = ev.currentTarget.getBoundingClientRect(); exportMenu(col, items, r.left, r.bottom + 4); } },
+            icon('download'), h('span', { text: 'Export' })),
+          sendBtn,
+          btn('Pin to desktop', 'monitor', () => shortcuts.addCollectionToDesktop(col), '.btn--sm', { dataset: { fk: 'pin' } }),
           btn('Delete', 'trash', () => deleteCol(col, true), '.btn--sm.btn--ghost.libx-danger', { dataset: { fk: 'delete' } })))));
+    page.appendChild(sendHold);
 
-    if (!col.items.length) {
-      page.appendChild(empty(col.icon, 'Nothing in here yet',
-        'Add from the shelf below, from any ⋯ menu in the Library, or right-click a game in Static Games → Add to collection…'));
+    if (!items.length) {
+      page.appendChild(col.rule
+        ? empty(col.icon, 'Nothing matches the rule right now', smartNote || 'Play, favorite or mark something and it appears here by itself. You can change the rule with Edit rule.')
+        : empty(col.icon, 'Nothing in here yet',
+          'Add from the shelf below, from any ⋯ menu in the Library, or right-click a game in Static Games → Add to collection…'));
     } else {
-      const kinds = [...new Set(col.items.map(i => i.kind))];
+      const kinds = [...new Set(items.map(i => i.kind))];
       if (!kinds.includes(view.colKind)) view.colKind = 'all';
       const holder = h('div');
       const paintItems = () => {
-        const items = col.items.filter(i => view.colKind === 'all' || i.kind === view.colKind);
-        api.render(holder, grid(items.map(i => entry(i)), e => ({
-          sub: e.gone ? 'Deleted from this device' : `${e.meta.label} · added ${api.fmt.fmtAgo(e.at)}`,
-          playHere: e.kind === 'creation' && !e.gone,
-          onRemove: x => { C.removeItem(col.id, x); api.notify({ app: 'Library', icon: 'trash', title: `Removed from ${col.name}`, message: x.title, timeout: 3000 }); },
-          removeLabel: 'Remove from this collection',
-        })));
+        const list = items.filter(i => view.colKind === 'all' || i.kind === view.colKind);
+        api.render(holder, grid(list.map(i => entry(i)), e => (col.rule
+          ? { sub: e.at ? `${e.meta.label} · ${api.fmt.fmtAgo(e.at)}` : e.meta.label }
+          : {
+            sub: e.gone ? 'Deleted from this device' : `${e.meta.label} · added ${api.fmt.fmtAgo(e.at)}`,
+            playHere: e.kind === 'creation' && !e.gone,
+            onRemove: x => { C.removeItem(col.id, x); api.notify({ app: 'Library', icon: 'trash', title: `Removed from ${col.name}`, message: x.title, timeout: 3000 }); },
+            removeLabel: 'Remove from this collection',
+          })));
       };
       let bar = null;
       if (kinds.length > 1) {
-        const opts = [{ id: 'all', label: 'All', n: col.items.length },
-          ...kinds.map(k => ({ id: k, label: C.KIND_META[k].short, icon: C.KIND_META[k].icon, n: col.items.filter(i => i.kind === k).length }))];
+        const opts = [{ id: 'all', label: 'All', n: items.length },
+          ...kinds.map(k => ({ id: k, label: C.KIND_META[k].short, icon: C.KIND_META[k].icon, n: items.filter(i => i.kind === k).length }))];
         bar = chips(opts, () => view.colKind, k => { view.colKind = k; paintItems(); }, 'Filter collection');
       }
       paintItems();
       page.appendChild(h('div.libx-colitems', bar, holder));
+      if (col.rule && smartNote) page.appendChild(note(smartNote, 'alert'));
     }
-    page.appendChild(await addShelf(col));
+    if (!col.rule) page.appendChild(await addShelf(col));
     return page;
   }
 
@@ -1703,18 +2116,6 @@ export function buildLibrary(ctx) {
         h('small', { text: `${plural(plays.count(), 'different game')} played · ${plural(plays.total(), 'launch', 'launches')} in all` }))));
     if (got.length) page.appendChild(group('Unlocked', 'check', got.length, h('div.libx-achs', got.map(achCard))));
     if (left.length) page.appendChild(group('Still to earn', 'lock', left.length, h('div.libx-achs', left.map(achCard))));
-    return page;
-  }
-
-  /* ============================================================
-     FOLLOWED CREATORS — honest about why not
-     ============================================================ */
-  async function pageFollowing() {
-    const page = h('div.libx-page', head({ title: 'Followed Creators' }));
-    page.appendChild(empty('users', 'Following needs accounts on a server',
-      'StaticOS runs entirely in your browser — there is no server, so there are no creator accounts to follow and no feed of their updates. Your own games are under Created Games.',
-      [btn('Created Games', 'sparkles', () => go('created'), '.btn--primary'),
-        btn('Published', 'upload', () => go('published'), '.btn--ghost')]));
     return page;
   }
 }

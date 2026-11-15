@@ -39,11 +39,25 @@ export const ENDS = [
   { dist: 70, wind: 7, amp: 1.5, per: 5 },
 ];
 export const ARROWS_PER_END = 3;
+/* Master: five ends from 50 to 90 m, a stronger wind that gusts (a quick
+   wave on top of the slow one, `gust` of its strength), and the target
+   sliding from the second end */
+export const MASTER = [
+  { dist: 50, wind: 6, amp: 0, per: 1, gust: 0.3 },
+  { dist: 60, wind: 7, amp: 0.8, per: 7, gust: 0.4 },
+  { dist: 70, wind: 8, amp: 1.2, per: 6, gust: 0.5 },
+  { dist: 80, wind: 9, amp: 1.5, per: 5, gust: 0.6 },
+  { dist: 90, wind: 10, amp: 1.8, per: 4.5, gust: 0.7 },
+];
 
-/* the crosswind in m/s at game time t: a slow mix of three waves, never beyond ±max */
-export function windAt(t, max, seed = 0) {
+/* the crosswind in m/s at game time t: a slow mix of three waves, never beyond ±max.
+   gust (0–1) mixes in a quicker wave, so the wind can change while an arrow flies */
+export function windAt(t, max, seed = 0, gust = 0) {
   const a = seed * 1.7;
-  return max * (0.55 * Math.sin(0.37 * t + a) + 0.3 * Math.sin(0.91 * t + 2 * a + 1) + 0.15 * Math.sin(2.3 * t + 3 * a + 2));
+  const slow = 0.55 * Math.sin(0.37 * t + a) + 0.3 * Math.sin(0.91 * t + 2 * a + 1) + 0.15 * Math.sin(2.3 * t + 3 * a + 2);
+  if (!gust) return max * slow;
+  const quick = 0.6 * Math.sin(3.1 * t + 5 * a + 0.5) + 0.4 * Math.sin(5.3 * t + 7 * a + 1.3);
+  return max * ((1 - gust) * slow + gust * quick);
 }
 
 /* where the target is at time t (x metres, vx m/s) */

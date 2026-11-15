@@ -149,13 +149,13 @@ export function mountEggs(host) {
   /** A cold boot that never actually happened. */
   function coldBoot() {
     const LINES = [
-      'aether boot rom v3.0.1 — 1600x900 text mode',
+      'static boot rom — text mode',
       'cpu: unavailable to a web page  ·  mem: reported by the browser',
       'probing display .......... ok',
       'probing input ............ ok',
-      'mounting aetherfs ........ ok (in memory)',
+      'mounting staticfs ........ ok (in memory)',
       'starting compositor ...... ok',
-      'starting aether shell .... ok',
+      'starting static shell .... ok',
       '',
       'nothing here is real except the frame rate.',
       'press any key',

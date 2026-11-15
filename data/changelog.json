@@ -1,5 +1,71 @@
 [
   {
+    "version": "5.0",
+    "name": "Spanish, 19 new apps and 30 new games",
+    "date": "2026-11-13",
+    "summary": "The biggest update yet. StaticOS speaks Spanish, 19 new apps arrive (Slides, PDF tools, Books, Maps and more), the Arcade gets 30 new games, Sonora plays inside Music, and you can put apps on your desktop.",
+    "highlights": [
+      {
+        "icon": "globe",
+        "title": "StaticOS in Spanish",
+        "app": "settings",
+        "text": "Settings › Desktop › Language switches StaticOS to Spanish: the desktop, Settings and everyday apps like Files and Notes. A few corners are still in English, and game titles and your own files keep their names."
+      },
+      {
+        "icon": "grid",
+        "title": "19 new apps",
+        "app": "slides",
+        "text": "Slides with a presenter view, PDF tools to mark up, sign, merge and split, Books for EPUBs, Maps, Flowcharts, Timeline, Sheet music, a 3D viewer, Voxel Studio, Maths Lab, Logic Lab, Flipbook, Logo maker, Wallpaper studio, Colour by number, Stop motion, Turtle drawing, and Party Hub and Squad for finding a game to play together."
+      },
+      {
+        "icon": "gamepad",
+        "title": "30 new Arcade games",
+        "app": "arcade",
+        "text": "Twenty-nine original games, from Signal Relay and Bridge Builder to Tread Duel and Pulse Run, a jump-to-the-music runner with practice mode and a level editor, plus a Daily Word puzzle. Every puzzle level is checked by a solver, and many have a computer to play or an online duel with a friend."
+      },
+      {
+        "icon": "star",
+        "title": "More Free Classics",
+        "app": "arcade",
+        "text": "Flight of the Amazon Queen, Lure of the Temptress and Drascula join Free Classics, with Freedoom for Doom. You can also play ScummVM games and Doom from your own copies; your files never leave your browser."
+      },
+      {
+        "icon": "music",
+        "title": "Music and Radio",
+        "app": "music",
+        "text": "Sonora now opens right inside Music, with songs and radio through YouTube, Spotify or Apple Music. Your own music gets synced lyrics, an equalizer, crossfade, a sleep timer and a queue you can edit, there are free audiobooks from LibriVox, and Radio gets search, a wake-up alarm and stations you can send to a friend."
+      },
+      {
+        "icon": "mic",
+        "title": "Make music",
+        "app": "piano",
+        "text": "Piano teaches songs with falling notes, Beats goes up to 32 steps with a melody row, Synth gets an arpeggiator and a sequencer, and Loop Station, Soundboard and the Audio Editor can do much more."
+      },
+      {
+        "icon": "monitor",
+        "title": "Apps on your desktop",
+        "text": "Right-click an app in the dock or the launcher and choose Add to Desktop. New desktops start with Static Games, Static Arcade, Music and Notes."
+      },
+      {
+        "icon": "zap",
+        "title": "Quicker and smoother",
+        "text": "Static Play's game list is half the size, so it loads much sooner, and game and anime pictures you've already seen come back without downloading again. If StaticOS runs slowly on your device, it offers Low graphics mode once, and Settings › Performance shows your screen's refresh rate."
+      },
+      {
+        "icon": "sparkles",
+        "title": "Hundreds of improvements",
+        "text": "Files, Notes, Settings, Spotlight, Tasks, Sheets, Code, Terminal, Videos, Photos, Paint, Manga, Watch Together, Friends and most other apps got new features in this update."
+      }
+    ],
+    "notes": [
+      "PolyTrack now opens Kodub's official game, and games that could only open in a MadKidGames tab are no longer listed",
+      "Pinball balls could escape through a bottom corner; they can't any more",
+      "A rare Crazy Eights hand could go on forever when only eights were left to draw. It now ends, and the fewest points wins",
+      "The main buttons in Books, Slides, PDF tools, Manga and Markets were hard to read on the accent colour. They are easy to read now",
+      "Window toolbars no longer spill sideways on a phone, and Code's buttons are bigger to tap"
+    ]
+  },
+  {
     "version": "4.10",
     "name": "New icons, films and manga",
     "date": "2026-11-03",
@@ -277,7 +343,7 @@
     "version": "4.6",
     "name": "Together",
     "date": "2026-11-01",
-    "summary": "Friends with private codes and game nights, a desktop for each person and a guest mode, notes you write together, Python and templates in VS Code, a new Dev Tools app, free Old Games, 25 new Arcade games, and new celebrations, screensavers, stickers and achievements.",
+    "summary": "Friends with private codes and game nights, a desktop for each person and a guest mode, notes you write together, Python and templates in Static Code, a new Dev Tools app, free Old Games, 25 new Arcade games, and new celebrations, screensavers, stickers and achievements.",
     "highlights": [
       {
         "icon": "users",
@@ -332,13 +398,13 @@
       },
       {
         "icon": "code",
-        "title": "Python in VS Code",
+        "title": "Python in Static Code",
         "app": "code",
         "text": "Open a .py file and press Run. Real Python runs in a sealed sandbox on this device. It downloads the first time you run it, so that first run needs a connection."
       },
       {
         "icon": "file-text",
-        "title": "Templates and shared projects in VS Code",
+        "title": "Templates and shared projects in Static Code",
         "app": "code",
         "text": "Start from a website, canvas game, quiz page or Python template, preview Markdown as you type, and share a web project as a link. A shared project or a public GitHub Gist opens for you to read, and nothing runs until you press Run."
       },
@@ -1109,7 +1175,7 @@
       },
       {
         "icon": "code",
-        "title": "Live preview in VS Code",
+        "title": "Live preview in Static Code",
         "app": "code",
         "text": "Your HTML, CSS and JavaScript run beside the editor as you type, with a console for logs and errors."
       },

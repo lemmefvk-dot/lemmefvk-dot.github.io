@@ -28,17 +28,29 @@
      side or hides itself.
 
    prefs.desktopPet (default on) — Settings › Desktop, or
-   right-click the pet › Hide the pet.
+   right-click the pet › Hide the pet. prefs.petKind picks a cat, a dog
+   or none (spooky season still makes it a ghost), prefs.petName is what
+   you call it.
 
-   Bus in:  pet:pet (Settings' "Pet it" button)
-   Bus out: pet:react { kind, how }  — 'click' | 'stroke' | 'button'
+   It reacts to real things, with a little jump and a few words: a Focus
+   session finishing, a Spotlight timer going off, a badge earned, and a
+   Static Drop transfer finishing (a browser download itself can't be
+   seen by a page). While a Focus session is running it naps, and wakes
+   when the session ends or is paused.
+
+   Bus in:  pet:pet (Settings' "Pet it" button) · focus:change · focus:done
+            timer:done · achievement:unlock · drop:done
+   Bus out: pet:react { kind, how, say? }  — 'click' | 'stroke' | 'button' | 'event'
    ============================================================ */
 import api from '../core/api.js?v=ps5-cloud-proxy-v11';
 import { bus } from '../core/bus.js';
 import { store } from '../core/store.js';
 import * as SEASON from '../core/season.js';
+import * as FOCUS from '../core/focus.js';
 
 const PREF = 'prefs.desktopPet';
+const KIND_PREF = 'prefs.petKind';        /* 'cat' (default) | 'dog' | 'none' */
+const NAME_PREF = 'prefs.petName';
 export const SIT_MS = 4000;          /* pointer still this long: it sits */
 export const SLEEP_MS = 45000;       /* ...and this long: it naps */
 const PW = 48, PH = 40;              /* the sprite's box, CSS px */
@@ -129,6 +141,66 @@ function drawCat(g, pose, frame, scarf) {
   g.restore();
 }
 
+/* the dog: the same poses, a snout, a floppy ear and a tail that wags */
+function drawDog(g, pose, frame) {
+  const fur = '#c9955f', dark = '#7a4a24', light = '#f3dfc0';
+  g.lineWidth = 1.3; g.strokeStyle = INK; g.lineJoin = 'round'; g.lineCap = 'round';
+  const fillStroke = () => { g.fill(); g.stroke(); };
+  const leg = (x, y, h, tilt = 0) => {
+    g.save(); g.translate(x, y); g.rotate(tilt);
+    g.beginPath(); g.roundRect ? g.roundRect(-1.9, 0, 3.8, h, 1.8) : g.rect(-1.9, 0, 3.8, h);
+    g.fillStyle = fur; fillStroke(); g.restore();
+  };
+  const tail = (x, y, lift) => {
+    g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x - 6, y - 2 - lift, x - 5, y - 11 - lift);
+    g.lineWidth = 3.6; g.strokeStyle = INK; g.stroke(); g.lineWidth = 2.2; g.strokeStyle = fur; g.stroke(); g.lineWidth = 1.3; g.strokeStyle = INK;
+  };
+  const head = (cx, cy, mode) => {
+    g.beginPath(); g.ellipse(cx, cy, 6.6, 6.2, 0, 0, Math.PI * 2); g.fillStyle = fur; fillStroke();
+    g.beginPath(); g.ellipse(cx + 5.6, cy + 2.2, 4.6, 3.3, 0.12, 0, Math.PI * 2); g.fillStyle = light; fillStroke();
+    g.beginPath(); g.ellipse(cx + 9.4, cy + 0.9, 1.6, 1.2, 0, 0, Math.PI * 2); g.fillStyle = INK; g.fill();
+    g.beginPath(); g.ellipse(cx - 3.4, cy - 1.5, 2.6, 5, 0.35, 0, Math.PI * 2); g.fillStyle = dark; fillStroke();
+    if (mode === 'sleepy') { g.beginPath(); g.arc(cx + 2.4, cy - 1.2, 1.5, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke(); }
+    else {
+      g.beginPath(); g.ellipse(cx + 2.4, cy - 1.6, 1.1, 1.5, 0, 0, Math.PI * 2); g.fillStyle = INK; g.fill();
+      g.beginPath(); g.arc(cx + 2.7, cy - 2.1, 0.4, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
+    }
+    if (mode === 'happy') { g.beginPath(); g.ellipse(cx + 7.2, cy + 6, 1.5, 2.4, 0, 0, Math.PI * 2); g.fillStyle = '#f08ca0'; fillStroke(); }
+  };
+  if (pose === 'sleep') {
+    g.beginPath(); g.ellipse(22, 32, 14, 7, 0, 0, Math.PI * 2); g.fillStyle = fur; fillStroke();
+    g.beginPath(); g.ellipse(24, 30, 6, 3.4, 0, 0, Math.PI * 2); g.fillStyle = dark; g.fill();
+    g.beginPath(); g.moveTo(9, 33); g.quadraticCurveTo(3, 31, 5, 26); g.lineWidth = 3.4; g.stroke(); g.lineWidth = 2; g.strokeStyle = fur; g.stroke(); g.lineWidth = 1.3; g.strokeStyle = INK;
+    head(35, 30, 'sleepy');
+    return;
+  }
+  if (pose === 'sit') {
+    tail(14, 36, 0);
+    g.beginPath(); g.ellipse(20, 29, 9, 8.5, 0, 0, Math.PI * 2); g.fillStyle = fur; fillStroke();
+    g.beginPath(); g.ellipse(27, 24, 6, 9.5, -0.15, 0, Math.PI * 2); g.fillStyle = fur; fillStroke();
+    g.beginPath(); g.ellipse(29, 26, 3, 6, -0.15, 0, Math.PI * 2); g.fillStyle = light; g.fill();
+    leg(27, 29, 9); leg(31, 29, 9);
+    head(30, 13, 'plain');
+    return;
+  }
+  const walk = pose === 'walk';
+  const wag = walk ? Math.sin(frame * Math.PI / 2) * 3 : 0;
+  tail(12, 24, 1 + wag);
+  const bob = walk && frame % 2 ? -0.8 : 0;
+  if (pose === 'jump') { leg(13, 27, 9, 0.9); leg(16, 28, 9, 0.7); leg(30, 27, 9, -0.8); leg(33, 26, 9, -1); }
+  else {
+    const k = walk ? [[-2, 2, 2, -2], [0, 0, 0, 0], [2, -2, -2, 2], [0, 0, 0, 0]][frame % 4] : [0, 0, 0, 0];
+    leg(14 + k[0], 29 + bob, 8.5 - (k[0] > 0 ? 1.2 : 0)); leg(18 + k[1], 29 + bob, 8.5 - (k[1] > 0 ? 1.2 : 0));
+    leg(28 + k[2], 29 + bob, 8.5 - (k[2] > 0 ? 1.2 : 0)); leg(32 + k[3], 29 + bob, 8.5 - (k[3] > 0 ? 1.2 : 0));
+  }
+  g.save();
+  if (pose === 'jump') { g.translate(23, 25); g.rotate(-0.18); g.translate(-23, -25); }
+  g.beginPath(); g.ellipse(23, 25 + bob, 13, 7, 0, 0, Math.PI * 2); g.fillStyle = fur; fillStroke();
+  g.beginPath(); g.ellipse(22, 21 + bob, 7, 3.4, 0, 0, Math.PI * 2); g.fillStyle = dark; g.fill();
+  head(35, 17 + bob, pose === 'jump' ? 'happy' : 'plain');
+  g.restore();
+}
+
 function drawGhost(g, pose, frame) {
   const sleepy = pose === 'sleep';
   const happy = pose === 'jump';
@@ -172,13 +244,18 @@ export function mountPet(host) {
   const P = {
     x: 0, y: 0, dir: 1, state: 'sit', frame: 0, dist: 0, target: 0,
     lastMove: 0, nextWalk: 0, raf: 0, last: 0, jumpAt: 0, after: 'sit',
-    range: [0, 0], drawn: '', dpr: 1, stroke: 0, strokeX: null, strokeAt: 0, over: false,
+    range: [0, 0], drawn: '', dpr: 1, stroke: 0, strokeX: null, strokeAt: 0, over: false, focusing: false,
   };
 
   /* it arrives sitting: the nap comes SLEEP_MS after the last movement, or after it arrived */
   P.lastMove = Date.now() - SIT_MS;
   const dockEl = () => host.querySelector('.dock');
-  const kind = () => (SEASON.spooky('theme') ? 'ghost' : 'cat');
+  const choice = () => { const k = store.get(KIND_PREF, 'cat'); return k === 'dog' || k === 'none' ? k : 'cat'; };
+  const kind = () => (SEASON.spooky('theme') ? 'ghost' : choice() === 'dog' ? 'dog' : 'cat');
+  const petName = () => String(store.get(NAME_PREF, '') || '').replace(/\s+/g, ' ').trim().slice(0, 20);
+  const called = () => (petName() || `Your desktop ${kind()}`);
+  /* while a Focus session runs the pet sleeps, however the pointer moves */
+  const focusing = () => { try { const s = FOCUS.state(); return s.status === 'running' && s.phase === 'focus'; } catch (e) { return false; } };
   const still = () => reducedMotion() || gameMode();
 
   /* where it may stand: along the dock's top edge, in the host's coordinates */
@@ -196,7 +273,7 @@ export function mountPet(host) {
   }
 
   function wanted() {
-    if (store.get(PREF, true) === false) return false;
+    if (store.get(PREF, true) === false || choice() === 'none') return false;
     if (document.body.classList.contains('is-mobile')) return false;
     const d = dockEl();
     if (!d || d.classList.contains('is-autohide')) return false;
@@ -217,7 +294,7 @@ export function mountPet(host) {
     if (P.dir < 0) { g.translate(PW, 0); g.scale(-1, 1); }
     const pose = P.state === 'stand' ? 'walk' : P.state;
     const frame = P.state === 'stand' ? 1 : P.frame;
-    if (k === 'ghost') drawGhost(g, pose, frame); else drawCat(g, pose, frame, scarf);
+    if (k === 'ghost') drawGhost(g, pose, frame); else if (k === 'dog') drawDog(g, pose, frame); else drawCat(g, pose, frame, scarf);
     el.dataset.kind = k;
   }
 
@@ -233,7 +310,8 @@ export function mountPet(host) {
     if (P.state === s) return;
     P.state = s;
     el.dataset.state = s;
-    el.setAttribute('aria-label', `Your desktop ${kind()}, ${SAY[s]}`);
+    el.setAttribute('aria-label', `${called()}, ${SAY[s]}`);
+    el.title = petName();
     if (s === 'sleep') zzz(); else el.querySelector('.pet__z')?.remove();
     draw();
   }
@@ -302,7 +380,7 @@ export function mountPet(host) {
       setState(P.after);
       place();
     }
-    if (gameMode()) { if (P.state !== 'sleep') setState('sleep'); return; }
+    if (gameMode() || focusing()) { if (P.state !== 'sleep') setState('sleep'); return; }
     if (idle >= SLEEP_MS) { if (P.state !== 'sleep') setState('sleep'); return; }
     if (idle >= SIT_MS) { if (P.state !== 'sit' && P.state !== 'sleep') setState('sit'); return; }
     /* the pointer is moving */
@@ -324,10 +402,27 @@ export function mountPet(host) {
     el.appendChild(hrt);
     setTimeout(() => hrt.remove(), 1300);
   }
-  function react(how) {
+  /* a few words in a bubble above it */
+  /* one at a time: two things happening together (a Focus session ends and
+     earns a badge) are said one after the other, not over each other */
+  const said = [];
+  function say(text) {
+    said.push(petName() ? `${petName()}: ${text}` : text);
+    if (said.length > 3) said.splice(0, said.length - 3);
+    if (!el.querySelector('.pet__say')) nextSay();
+  }
+  function nextSay() {
+    const text = said.shift();
+    if (!text) return;
+    const b = h('span.pet__say', { role: 'status', text });
+    el.appendChild(b);
+    setTimeout(() => { b.remove(); nextSay(); }, 2600);
+  }
+  function react(how, words) {
     if (el.hidden) return false;
     heart();
-    bus.emit('pet:react', { kind: kind(), how });
+    if (words) say(words);
+    bus.emit('pet:react', { kind: kind(), how, ...(words ? { say: words } : {}) });
     if (still()) return true;
     measure();
     P.after = Date.now() - P.lastMove >= SIT_MS ? 'sit' : 'stand';
@@ -344,7 +439,7 @@ export function mountPet(host) {
   el.addEventListener('contextmenu', e => {
     e.preventDefault(); e.stopPropagation();
     api.menu([
-      { label: `Pet the ${kind()}`, icon: 'heart', onClick: () => react('menu') },
+      { label: petName() ? `Pet ${petName()}` : `Pet the ${kind()}`, icon: 'heart', onClick: () => react('menu') },
       { label: 'Hide the pet', icon: 'eye', onClick: () => {
         store.set(PREF, false);
         api.notify({ app: 'Desktop', icon: 'cat', title: 'Pet hidden', message: 'Bring it back in Settings → Desktop.',
@@ -393,7 +488,7 @@ export function mountPet(host) {
     const was = el.hidden;
     el.hidden = false;
     if (!measure()) { el.hidden = true; return; }
-    if (was) { P.drawn = ''; setState(gameMode() ? 'sleep' : 'sit'); el.setAttribute('aria-label', `Your desktop ${kind()}, ${SAY[P.state]}`); }
+    if (was) { P.drawn = ''; setState(gameMode() || focusing() ? 'sleep' : 'sit'); el.setAttribute('aria-label', `${called()}, ${SAY[P.state]}`); }
     if (still() && P.state === 'walk') setState('sit');
     P.drawn = '';
     draw();
@@ -403,6 +498,21 @@ export function mountPet(host) {
 
   const offs = [
     store.sub(PREF, sync),
+    store.sub(KIND_PREF, () => { P.drawn = ''; sync(); draw(); }),
+    store.sub(NAME_PREF, () => { el.setAttribute('aria-label', `${called()}, ${SAY[P.state]}`); el.title = petName(); }),
+    /* real events: it looks up, jumps and says so */
+    bus.on('focus:done', () => react('event', 'Focus session done!')),
+    bus.on('timer:done', e => react('event', e && e.text ? `${String(e.text).slice(0, 30)} is up!` : 'Timer’s up!')),
+    bus.on('achievement:unlock', d => react('event', d && d.name ? `New badge: ${String(d.name).slice(0, 30)}` : 'New badge!')),
+    bus.on('drop:done', () => react('event', 'Transfer finished!')),
+    /* a Focus session starts: nap. It ends or is paused: wake up */
+    bus.on('focus:change', () => {
+      const now = focusing();
+      if (now === P.focusing) return;
+      P.focusing = now;
+      if (!now) P.lastMove = Date.now();
+      tick(); sync();
+    }),
     store.sub('prefs', () => requestAnimationFrame(sync)),       /* dock side, auto-hide, reduce motion */
     bus.on('season:change', () => { P.drawn = ''; draw(); }),
     bus.on('gamemode:change', () => { tick(); sync(); }),

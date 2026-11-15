@@ -13,9 +13,26 @@
    · The legend filters by category.
    · The temperature slider says whether each element is solid, liquid
      or gas, computed from its real melting and boiling points.
+   · Colour by: the category (the default), or any property the data
+     has (mass, electronegativity, density, melting and boiling points,
+     radius, ionisation energy, electron affinity, year discovered,
+     standard state). An element without that value is grey and says
+     "not in the data". The legend gives the range the colours span.
+   · Compare: pick a second element and the panel shows the two side by
+     side, every row from the data.
+   · Each element's panel draws its electron shells from the
+     configuration in the data (js/school/ptprops.js) and can add the
+     element to Static Study as a flashcard, on a click.
+   · Save picture: the table as it is coloured, as a PNG in ~/Pictures.
+   · Tabs: Trends charts a property across the elements, a period or a
+     group (js/school/pttrends.js); Quiz asks rounds of ten
+     (js/school/ptquiz.js); Formulas is molar mass and equations.
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import { h } from '../core/dom.js';
+import { vfs } from '../core/vfs.js';
+import media from '../core/media.js';
+import { PROPS, STATES, STATE_COLOURS, propOf, valueOf, valueText, rangeOf, position, rampColour, RAMP_CSS, shellsOf } from '../school/ptprops.js';
 
 const CATS = [
   ['Alkali metal', 8], ['Alkaline earth metal', 38], ['Transition metal', 205], ['Post-transition metal', 165],
@@ -98,7 +115,7 @@ const CSS = `
 .pt__side{flex:0 0 250px;display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4);border-radius:var(--r-lg);border:1px solid var(--line-1);background:var(--fill-0);align-self:flex-start;max-height:100%;overflow:auto}
 @container (max-width:520px){.pt__side{flex-basis:100%}}
 .pt__tile{--c:var(--ink-3);display:flex;align-items:center;gap:var(--sp-4)}
-.pt__sym{width:68px;height:68px;border-radius:var(--r-md);display:grid;place-items:center;font-size:30px;font-weight:800;color:var(--ink-0);
+.pt__sym{width:68px;height:68px;border-radius:var(--r-md);display:grid;place-items:center;font-size:calc(30px * var(--fs-k,1));font-weight:800;color:var(--ink-0);
   background:color-mix(in srgb,var(--c) 28%,var(--fill-0));border:1px solid color-mix(in srgb,var(--c) 60%,transparent);position:relative}
 .pt__sym small{position:absolute;left:6px;top:3px;font-size:var(--fs-11);font-weight:600;color:var(--ink-2)}
 .pt__name{font-size:var(--fs-18);font-weight:700;color:var(--ink-0)}
@@ -116,6 +133,33 @@ const CSS = `
 .pt--chem .pt__search,.pt--chem .pt__count,.pt--chem .pt__temp,.pt--chem .pt__main{display:none}
 .pt__chem{flex:1;min-height:0;display:flex}
 .pt__chem[hidden]{display:none}
+.pt:not([data-view=table]) .pt__search,.pt:not([data-view=table]) .pt__count,.pt:not([data-view=table]) .pt__temp,.pt:not([data-view=table]) .pt__main,.pt:not([data-view=table]) .pt__tools{display:none}
+.pt__tools{display:flex;gap:var(--sp-3);align-items:center;font-size:var(--fs-12);color:var(--ink-2)}
+.pt__tools select{height:28px;border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--fill-1);color:var(--ink-0);font:inherit;font-size:var(--fs-12);padding:0 6px}
+.pt__act{height:28px;padding:0 10px;border-radius:var(--r-sm);border:1px solid var(--line-1);background:var(--fill-1);color:var(--ink-0);font:inherit;font-size:var(--fs-12);white-space:nowrap}
+.pt__act:hover{background:var(--fill-2)}
+.pt__act[aria-pressed=true]{background:var(--fill-3);border-color:var(--ink-2)}
+.pt:not([data-by=cat]) .pt__c{background:color-mix(in srgb,var(--c) 62%,var(--fill-0));border-color:color-mix(in srgb,var(--c) 85%,transparent)}
+.pt:not([data-by=cat]) .pt__c:hover{background:color-mix(in srgb,var(--c) 75%,var(--fill-1))}
+.pt .pt__c[data-nodata="1"]{--c:var(--ink-3)!important;background:repeating-linear-gradient(135deg,var(--fill-0) 0 4px,var(--fill-1) 4px 8px);border-style:dotted}
+.pt__c.is-cmp{outline:2px dashed var(--accent);outline-offset:1px;z-index:3}
+.pt__ramp{flex-basis:100%;display:flex;flex-direction:column;gap:3px;font-size:var(--fs-10);color:var(--ink-2)}
+.pt__ramp i{display:block;height:9px;border-radius:5px;max-width:320px}
+.pt__ramp span{display:flex;justify-content:space-between;max-width:320px;font-variant-numeric:tabular-nums}
+.pt__states{display:flex;flex-wrap:wrap;gap:4px 10px}
+.pt__states b{display:inline-flex;align-items:center;gap:4px;font-weight:500}
+.pt__states b::before{content:"";width:9px;height:9px;border-radius:3px;background:var(--c)}
+.pt__acts{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.pt__shells{display:flex;flex-direction:column;align-items:center;gap:4px}
+.pt__shells svg{width:100%;max-width:210px;height:auto}
+.pt__shells small{font-size:var(--fs-11);color:var(--ink-2);text-align:center;line-height:1.4}
+.pt__cmp{width:100%;border-collapse:collapse;font-size:var(--fs-12)}
+.pt__cmp th,.pt__cmp td{padding:4px 4px;border-bottom:1px solid var(--line-1);text-align:left;vertical-align:top;font-variant-numeric:tabular-nums}
+.pt__cmp th{color:var(--ink-3);font-weight:500}
+.pt__cmp td.is-none{color:var(--ink-3);font-style:italic}
+.pt__pick{font-size:var(--fs-12);color:var(--ink-1);padding:var(--sp-3);border-radius:var(--r-sm);border:1px dashed var(--accent);line-height:1.5}
+.pt__host{flex:1;min-height:0;display:flex}
+.pt__host[hidden]{display:none}
 `;
 
 defineApp({
@@ -124,8 +168,8 @@ defineApp({
   icon: 'grid',
   g1: '#7be0c3', g2: '#0f7d73',
   category: 'Utilities',
-  keywords: ['chemistry', 'elements', 'atom', 'science', 'periodic', 'element', 'atomic number', 'mass', 'school', 'molar mass', 'formula', 'balance', 'equation', 'molecular weight', 'stoichiometry'],
-  desc: 'All 118 elements and their facts, from PubChem, plus molar mass and equation balancing',
+  keywords: ['chemistry', 'elements', 'atom', 'science', 'periodic', 'element', 'atomic number', 'mass', 'school', 'molar mass', 'formula', 'balance', 'equation', 'molecular weight', 'stoichiometry', 'electronegativity', 'trends', 'electron shells', 'quiz', 'percent composition'],
+  desc: 'All 118 elements and their facts, from PubChem: colour by property, trends, a quiz, molar mass and equation balancing',
   win: { w: 940, h: 640, minW: 560, minH: 420 },
   shortcuts: [
     ['Left / Right / Up / Down', 'Move between elements'],
@@ -133,16 +177,17 @@ defineApp({
     ['/', 'Search'],
   ],
 
-  mount({ root, win, opts }) { return build(root, win, opts); },
+  mount({ root, win, opts, api }) { return build(root, win, opts, api); },
 });
 
-function build(root, win, opts) {
+function build(root, win, opts, api) {
   let dead = false;
   const offs = [];
-  const S = { els: [], sel: null, q: '', cat: null, T: 298 };
+  const S = { els: [], sel: null, q: '', cat: null, T: 298, by: 'cat', cmp: null };   /* cmp: { a, b, picking } */
   const cells = new Map();                       /* number -> button */
   const hue = new Map(CATS);
   const colour = cat => `hsl(${hue.get(cat) ?? 210} 62% 52%)`;
+  const say = (title, message, icon = 'grid', actions) => api && api.notify({ app: 'Periodic Table', icon, title, message, timeout: 7000, actions });
 
   const search = h('input.pt__search', { type: 'search', placeholder: 'Name, symbol or number', 'aria-label': 'Search elements by name, symbol or number', autocomplete: 'off', spellcheck: 'false' });
   const count = h('span.pt__count', { role: 'status', 'aria-live': 'polite' });
@@ -150,30 +195,46 @@ function build(root, win, opts) {
   const tempOut = h('b');
   const grid = h('div.pt__grid', { role: 'group', 'aria-label': 'Periodic table' });
   const side = h('aside.pt__side', { role: 'region', 'aria-label': 'Element details', 'aria-live': 'polite' });
-  const tabBtn = (id, label) => h('button', { type: 'button', 'aria-pressed': String(id === 'table'), dataset: { tab: id }, disabled: id === 'formulas', onclick: () => showTab(id) }, h('span', { text: label }));
-  const tabs = h('div.pt__tabs', { role: 'group', 'aria-label': 'Periodic Table views' }, tabBtn('table', 'Table'), tabBtn('formulas', 'Formulas'));
+  const tabBtn = (id, label) => h('button', { type: 'button', 'aria-pressed': String(id === 'table'), dataset: { tab: id }, disabled: id !== 'table', onclick: () => showTab(id) }, h('span', { text: label }));
+  const tabs = h('div.pt__tabs', { role: 'group', 'aria-label': 'Periodic Table views' }, tabBtn('table', 'Table'), tabBtn('trends', 'Trends'), tabBtn('quiz', 'Quiz'), tabBtn('formulas', 'Formulas'));
   const chemHost = h('div.pt__chem', { hidden: true });
-  const bar = h('div.pt__bar', tabs, search, count, h('label.pt__temp', h('span', { text: 'Temperature' }), range, tempOut));
-  const el = h('div.pt', h('style', { text: CSS }), bar, h('div.pt__main', h('div.pt__tablewrap', grid), side), chemHost);
+  const trendsHost = h('div.pt__host', { hidden: true, dataset: { host: 'trends' } });
+  const quizHost = h('div.pt__host', { hidden: true, dataset: { host: 'quiz' } });
+  const byPick = h('select', { 'aria-label': 'Colour the table by', dataset: { fk: 'pt-colour' }, onchange: e => { S.by = e.target.value; refresh(); } },
+    h('option', { value: 'cat', text: 'Category' }), ...PROPS.map(p => h('option', { value: p.id, text: p.label })), h('option', { value: 'std', text: 'Standard state' }));
+  const tools = h('div.pt__tools', h('span', { text: 'Colour by' }), byPick,
+    h('button.pt__act', { type: 'button', dataset: { fk: 'pt-picture' }, title: 'Save the table, coloured as it is, as a PNG in Pictures', onclick: () => savePicture() }, 'Save picture'));
+  const bar = h('div.pt__bar', tabs, search, count, tools, h('label.pt__temp', h('span', { text: 'Temperature' }), range, tempOut));
+  const el = h('div.pt', { dataset: { view: 'table' } }, h('style', { text: CSS }), bar, h('div.pt__main', h('div.pt__tablewrap', grid), side), chemHost, trendsHost, quizHost);
   root.appendChild(el);
-  let chem = null;
-  /* the Formulas tab: code and the element data are used once it is opened */
+  let chem = null, trends = null, quiz = null;
+  /* the other tabs: their code is loaded the first time each is opened */
   async function showTab(id) {
-    if (id === 'formulas' && !S.els.length) return;
-    const chemOn = id === 'formulas';
-    el.classList.toggle('pt--chem', chemOn);
-    chemHost.hidden = !chemOn;
+    if (id !== 'table' && !S.els.length) return;
+    el.dataset.view = id;
+    el.classList.toggle('pt--chem', id === 'formulas');
+    chemHost.hidden = id !== 'formulas';
+    trendsHost.hidden = id !== 'trends';
+    quizHost.hidden = id !== 'quiz';
     for (const b of tabs.children) b.setAttribute('aria-pressed', String(b.dataset.tab === id));
-    win.setSubtitle(chemOn ? 'Formulas · molar mass and balancing' : '118 elements · PubChem');
-    if (chemOn && !chem) {
+    win.setSubtitle(id === 'formulas' ? 'Formulas · molar mass and balancing' : id === 'trends' ? 'Trends · from PubChem’s data' : id === 'quiz' ? 'Quiz' : '118 elements · PubChem');
+    const load = async (path, mount, host, err) => {
+      try { const m = await import(path); if (dead) return null; return mount(m); } catch (e) { host.replaceChildren(h('div.pt__err', { text: `${err} (${e.message}).` })); return null; }
+    };
+    if (id === 'formulas' && !chem) {
       chem = {};
-      try {
-        const { mountChem } = await import('../school/chem.js');
-        if (dead) return;
-        chem = mountChem(chemHost, { elements: S.els });
-      } catch (err) { chem = null; chemHost.replaceChildren(h('div.pt__err', { text: 'The formula tools could not be loaded (' + err.message + ').' })); }
+      chem = await load('../school/chem.js', m => m.mountChem(chemHost, { elements: S.els }), chemHost, 'The formula tools could not be loaded');
     }
-    if (chemOn && chem && chem.focus) chem.focus();
+    if (id === 'trends' && !trends) {
+      trends = {};
+      trends = await load('../school/pttrends.js', m => m.mountTrends(trendsHost, { elements: S.els, place, onPick: n => { showTab('table'); select(n, true); } }), trendsHost, 'The trend charts could not be loaded');
+    }
+    if (id === 'quiz' && !quiz) {
+      quiz = {};
+      quiz = await load('../school/ptquiz.js', m => m.mountQuiz(quizHost, { elements: S.els, place, isActive: () => win.el.classList.contains('is-active'), onAddCards: list => addCards(list) }), quizHost, 'The quiz could not be loaded');
+    }
+    const now = id === 'formulas' ? chem : id === 'trends' ? trends : id === 'quiz' ? quiz : null;
+    if (now && now.focus) now.focus();
   }
 
   const note = text => { grid.replaceChildren(); side.replaceChildren(h('div.pt__err', { text })); };
@@ -188,7 +249,7 @@ function build(root, win, opts) {
   function init(j) {
     source = j;
     S.els = j.elements;
-    tabs.querySelector('[data-tab="formulas"]').disabled = false;
+    for (const b of tabs.children) b.disabled = false;
     const legend = h('div.pt__legend', { role: 'group', 'aria-label': 'Filter by category' },
       ...CATS.map(([name]) => {
         const b = h('button.pt__chip', { type: 'button', text: name, 'aria-pressed': 'false', dataset: { cat: name }, style: { '--c': colour(name) } });
@@ -212,7 +273,36 @@ function build(root, win, opts) {
     refresh();
     if (want) select(want.n, false);
     else paintSide();
-    if (opts && opts.tab === 'formulas') showTab('formulas');
+    if (opts && ['formulas', 'trends', 'quiz'].includes(opts.tab)) showTab(opts.tab);
+  }
+
+  /* ---- colour by: the category, or a property the data has ---- */
+  function colourOf(e) {
+    if (S.by === 'cat') return { c: colour(e.cat), none: false };
+    if (S.by === 'std') return e.std && STATE_COLOURS[e.std] ? { c: STATE_COLOURS[e.std], none: false } : { c: null, none: true };
+    /* "known since antiquity" is in the data; it just isn't a year, so it gets a colour of its own */
+    if (S.by === 'yr' && e.yr === 'Ancient') return { c: ANCIENT, none: false, ancient: true };
+    const t = position(valueOf(e, S.by), S.rng, S.by);
+    return t === undefined ? { c: null, none: true } : { c: rampColour(t), none: false };
+  }
+  const ANCIENT = 'hsl(24 45% 38%)';
+  function paintLegend() {
+    const legend = el.querySelector('.pt__legend');
+    if (!legend) return;
+    legend.querySelector('.pt__ramp')?.remove();
+    legend.querySelector('.pt__key').hidden = S.by !== 'cat';
+    if (S.by === 'cat') return;
+    const p = propOf(S.by);
+    const missing = S.els.filter(e => colourOf(e).none);
+    const ancient = S.by === 'yr' ? S.els.filter(e => e.yr === 'Ancient').length : 0;
+    const tail = (ancient ? `Brown: known since antiquity (${ancient}). ` : '') + (missing.length ? `Grey, hatched: not in the data (${missing.length} element${missing.length === 1 ? '' : 's'}).` : 'Every element has a value.');
+    const ramp = S.by === 'std'
+      ? h('div.pt__ramp', { dataset: { fk: 'pt-ramp', missing: String(missing.length) } }, h('div.pt__states', ...STATES.filter(s => S.els.some(e => e.std === s)).map(s => h('b', { style: { '--c': STATE_COLOURS[s] }, text: s }))), h('small', { text: `Standard state, as PubChem gives it. ${tail}` }))
+      : h('div.pt__ramp', { dataset: { fk: 'pt-ramp', min: String(S.rng.min), max: String(S.rng.max), missing: String(missing.length) } },
+        h('i', { style: { background: RAMP_CSS } }),
+        h('span', h('b', { text: valueText({ [S.by]: S.rng.min, yr: String(S.rng.min) }, S.by) }), h('b', { text: valueText({ [S.by]: S.rng.max, yr: String(S.rng.max) }, S.by) })),
+        h('small', { text: `${p.label}${p.unit ? (p.unit.startsWith('(') ? ` ${p.unit}` : ` (${p.unit})`) : ''}, low to high${p.log ? ', on a log scale' : ''}. ${tail}` }));
+    legend.append(ramp);
   }
 
   /* ---- search / filter / temperature ---- */
@@ -226,6 +316,8 @@ function build(root, win, opts) {
   }
   function refresh() {
     let shown = 0, first = null;
+    S.rng = S.by !== 'cat' && S.by !== 'std' ? rangeOf(S.els, S.by) : null;
+    el.dataset.by = S.by;
     for (const e of S.els) {
       const b = cells.get(e.n);
       const hit = matches(e);
@@ -235,8 +327,14 @@ function build(root, win, opts) {
       const st = stateAt(e, S.T);
       b.dataset.state = st;
       b.querySelector('i').textContent = STATE_MARK[st];
-      b.setAttribute('aria-label', `${e.name}, number ${e.n}, ${e.cat || 'category unknown'}, ${STATE_TEXT[st].split(' (')[0].toLowerCase()} at ${S.T} kelvin`);
+      const col = colourOf(e);
+      b.style.setProperty('--c', col.c || 'var(--ink-3)');
+      b.dataset.nodata = col.none ? '1' : '0';
+      b.dataset.colour = col.c || '';
+      const by = S.by === 'cat' ? '' : `, ${S.by === 'std' ? 'standard state' : propOf(S.by).label.toLowerCase()} ${valueText(e, S.by)}`;
+      b.setAttribute('aria-label', `${e.name}, number ${e.n}, ${e.cat || 'category unknown'}, ${STATE_TEXT[st].split(' (')[0].toLowerCase()} at ${S.T} kelvin${by}`);
     }
+    paintLegend();
     for (const chip of el.querySelectorAll('.pt__chip')) chip.setAttribute('aria-pressed', String(chip.dataset.cat === S.cat));
     const filtering = !!(S.q.trim() || S.cat);
     count.textContent = filtering ? `${shown} of ${S.els.length}` : `${S.els.length} elements`;
@@ -245,15 +343,35 @@ function build(root, win, opts) {
     if (S.sel) paintSide();
   }
   function select(n, focus) {
+    /* comparing: the next element picked is the second one, and the first stays */
+    if (S.cmp && S.cmp.picking) {
+      if (n !== S.cmp.a) { S.cmp.b = n; S.cmp.picking = false; }
+      for (const [k, b] of cells) { b.classList.toggle('is-cmp', k === S.cmp.b); b.tabIndex = k === n ? 0 : -1; }
+      if (focus) cells.get(n).focus({ preventScroll: true });
+      paintSide();
+      return;
+    }
     S.sel = n;
-    for (const [k, b] of cells) { b.classList.toggle('is-sel', k === n); b.tabIndex = k === n ? 0 : -1; }
+    if (S.cmp && S.cmp.a !== n) S.cmp = null;
+    for (const [k, b] of cells) { b.classList.toggle('is-sel', k === n); b.classList.toggle('is-cmp', !!S.cmp && k === S.cmp.b); b.tabIndex = k === n ? 0 : -1; }
     if (focus) cells.get(n).focus({ preventScroll: true });
+    paintSide();
+  }
+  function startCompare() {
+    if (!S.sel) return;
+    S.cmp = { a: S.sel, b: null, picking: true };
+    paintSide();
+  }
+  function stopCompare() {
+    S.cmp = null;
+    for (const b of cells.values()) b.classList.remove('is-cmp');
     paintSide();
   }
 
   /* ---- the details ---- */
   function paintSide() {
     const e = S.els.find(x => x.n === S.sel);
+    if (e && S.cmp && S.cmp.b) return paintCompare(e, S.els.find(x => x.n === S.cmp.b));
     if (!e) {
       side.replaceChildren(h('div.pt__empty', { text: 'Choose an element to see its number, mass, configuration, melting and boiling points and more. Facts come from PubChem; anything it does not list is left out.' }), srcLine());
       return;
@@ -278,13 +396,148 @@ function build(root, win, opts) {
     add('Electron affinity', e.ea !== undefined ? `${fmt(e.ea)} eV` : undefined);
     add('Oxidation states', e.ox);
     add(`State at ${S.T} K`, STATE_TEXT[st]);
-    side.replaceChildren(
+    side.replaceChildren(...[
       h('div.pt__tile', { style: { '--c': colour(e.cat) } },
         h('div.pt__sym', h('small', { text: String(e.n) }), e.s),
         h('div', h('div.pt__name', { text: e.name }), h('div.pt__cat', { text: e.cat || '' }))),
+      h('div.pt__acts',
+        h('button.pt__act', { type: 'button', dataset: { fk: 'pt-compare' }, 'aria-pressed': String(!!(S.cmp && S.cmp.picking)), onclick: () => (S.cmp && S.cmp.picking ? stopCompare() : startCompare()) }, S.cmp && S.cmp.picking ? 'Cancel compare' : 'Compare with…'),
+        h('button.pt__act', { type: 'button', dataset: { fk: 'pt-card' }, onclick: () => addCards([e]) }, 'Add to flashcards')),
+      S.cmp && S.cmp.picking ? h('div.pt__pick', { role: 'status', dataset: { fk: 'pt-picking' }, text: `Now click another element to compare with ${e.name}.` }) : null,
       h('dl.pt__facts', ...rows),
-      srcLine());
+      shellView(e),
+      srcLine()].filter(Boolean));
     side.dataset.n = e.n;
+  }
+
+  /* the electron shells, from the configuration in the data */
+  function shellView(e) {
+    const sh = shellsOf(e, S.bySym || (S.bySym = Object.fromEntries(S.els.map(x => [x.s, x]))));
+    if (!sh) return h('small.pt__src', { dataset: { fk: 'pt-shells', none: '1' }, text: 'No shell diagram: the electron configuration in the data does not add up to this element’s number of electrons.' });
+    const NS = 'http://www.w3.org/2000/svg';
+    const S2 = (tag, attrs, ...kids) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); n.append(...kids); return n; };
+    const R = 100, gap = Math.min(15, 78 / sh.shells.length), r0 = 20;
+    const svg = S2('svg', { viewBox: `0 0 ${R * 2} ${R * 2}`, role: 'img', 'aria-label': `Electron shells of ${e.name}: ${sh.shells.join(', ')}` });
+    svg.append(S2('circle', { cx: R, cy: R, r: r0 - 4, fill: colour(e.cat), 'fill-opacity': '.35', stroke: 'currentColor', 'stroke-opacity': '.4' }),
+      S2('text', { x: R, y: R + 4, 'text-anchor': 'middle', 'font-size': '12', 'font-weight': '700', fill: 'currentColor' }, e.s));
+    sh.shells.forEach((count, i) => {
+      const rr = r0 + gap * (i + 1);
+      svg.append(S2('circle', { cx: R, cy: R, r: rr, fill: 'none', stroke: 'currentColor', 'stroke-opacity': '.25' }));
+      for (let k = 0; k < count; k++) {
+        const a = (2 * Math.PI * k) / count - Math.PI / 2;
+        svg.append(S2('circle', { cx: (R + rr * Math.cos(a)).toFixed(2), cy: (R + rr * Math.sin(a)).toFixed(2), r: count > 18 ? 1.6 : 2.4, fill: 'var(--accent)', 'data-shell': String(i + 1) }));
+      }
+    });
+    return h('div.pt__shells', { dataset: { fk: 'pt-shells', shells: sh.shells.join(',') } }, svg,
+      h('small', { text: `Electrons per shell: ${sh.shells.join(', ')}. Counted from the configuration ${sh.cfg.replace(/\s*\((predicted|calculated)\)/i, '')} in the data${sh.predicted ? ', which PubChem gives as predicted' : ''}.` }));
+  }
+
+  /* two elements side by side: every row from the data, "not in the data" where it has none */
+  function paintCompare(a, b) {
+    const ROWS = [['Atomic number', x => String(x.n)], ['Symbol', x => x.s], ['Category', x => x.cat || 'not in the data'],
+      ...PROPS.map(p => [p.label, x => valueText(x, p.id), p.id]), ['Standard state', x => x.std || 'not in the data'], ['Electron configuration', x => x.cfg || 'not in the data'],
+      ['Electron shells', x => { const s = shellsOf(x, S.bySym || (S.bySym = Object.fromEntries(S.els.map(y => [y.s, y])))); return s ? s.shells.join(', ') : 'not in the data'; }],
+      ['Oxidation states', x => x.ox || 'not in the data']];
+    const cell = v => h('td', { class: v === 'not in the data' ? 'is-none' : '', text: v });
+    side.replaceChildren(
+      h('div.pt__acts', h('b', { text: `${a.name} and ${b.name}` }), h('button.pt__act', { type: 'button', dataset: { fk: 'pt-cmp-stop' }, onclick: stopCompare }, 'Stop comparing')),
+      h('table.pt__cmp', { dataset: { fk: 'pt-cmp', a: String(a.n), b: String(b.n) }, 'aria-label': `${a.name} compared with ${b.name}` },
+        h('thead', h('tr', h('th', { text: '' }), h('th', { scope: 'col', text: a.s }), h('th', { scope: 'col', text: b.s }))),
+        h('tbody', ...ROWS.map(([label, f, id]) => h('tr', { dataset: { prop: id || label } }, h('th', { scope: 'row', text: label }), cell(f(a)), cell(f(b)))))),
+      srcLine());
+    side.dataset.n = a.n;
+  }
+
+  /* ---- flashcards in Static Study: on a click, into the deck "Periodic Table" ---- */
+  const DECK = 'Periodic Table';
+  async function addCards(list) {
+    const els = list.filter(Boolean);
+    if (!els.length) return;
+    const FC = await import('../core/flashcards.js');
+    if (dead) return;
+    const data = FC.read();
+    let deck = data.decks.find(d => d.name === DECK);
+    if (!deck) {
+      if (data.decks.length >= FC.MAX_DECKS) { say('Study has as many decks as it can hold', `Delete one in Study › Flashcards first (the most is ${FC.MAX_DECKS}).`, 'alert'); return; }
+      deck = FC.normDeck({ name: DECK });
+      data.decks.push(deck);
+    }
+    const have = new Set(deck.cards.map(c => c.front.trim().toLowerCase()));
+    let added = 0, there = 0;
+    for (const e of els) {
+      const front = `${e.s}`;
+      if (have.has(front.toLowerCase())) { there++; continue; }
+      if (deck.cards.length >= FC.MAX_CARDS) break;
+      const back = [`${e.name}, atomic number ${e.n}`, e.cat, e.mass !== undefined ? `atomic mass ${fmt(e.mass, 10)} u` : ''].filter(Boolean).join(' · ');
+      deck.cards.push(FC.normCard({ front, back, tags: ['chemistry'] }));
+      have.add(front.toLowerCase());
+      added++;
+    }
+    const written = FC.write(data);
+    const id = (written.decks.find(d => d.name === DECK) || deck).id;
+    const study = api && api.getApp && api.getApp('study');
+    say(added ? `${added === 1 ? `${els[0].name} added` : `${added} elements added`} to “${DECK}”` : `Already in “${DECK}”`,
+      [`Each card is a symbol, with its name, number${els.some(e => e.mass !== undefined) ? ' and mass' : ''} from PubChem on the back.`, there ? `${there} ${there === 1 ? 'was' : 'were'} there already.` : ''].filter(Boolean).join(' '), 'layers',
+      study ? [{ label: 'Study now', onClick: () => api.openApp('study', { tab: 'cards', deck: id, start: 'study' }) }, { label: 'Open deck', onClick: () => api.openApp('study', { tab: 'cards', deck: id }) }] : []);
+    root.dataset.lastCards = JSON.stringify({ deck: id, added, there });
+  }
+
+  /* ---- the table as a picture, coloured as it is now ---- */
+  async function savePicture() {
+    if (!S.els.length) return;
+    const CW = 54, CH = 58, G = 4, M = 24, TOP = 54;
+    const W = M * 2 + 18 * CW + 17 * G, H = TOP + 10 * CH + 9 * G + 70;
+    const cv = document.createElement('canvas');
+    cv.width = W * 2; cv.height = H * 2;
+    const x = cv.getContext('2d');
+    x.scale(2, 2);
+    x.fillStyle = '#ffffff'; x.fillRect(0, 0, W, H);
+    x.fillStyle = '#1d1a26'; x.font = '700 18px Inter, system-ui, sans-serif'; x.textBaseline = 'alphabetic';
+    const byName = S.by === 'cat' ? 'category' : S.by === 'std' ? 'standard state' : propOf(S.by).label.toLowerCase();
+    x.fillText(`Periodic Table, coloured by ${byName}`, M, 32);
+    x.font = '12px Inter, system-ui, sans-serif'; x.fillStyle = '#5c5868';
+    x.fillText(`Data: ${source ? source.source : 'PubChem'}${source && source.fetched ? `, fetched ${source.fetched}` : ''}`, M, 48);
+    for (const e of S.els) {
+      const [r, c] = place(e.n);
+      const row = r > 7 ? r - 1.5 : r - 1;          /* the lanthanide and actinide rows, half a row below the rest */
+      const cx = M + (c - 1) * (CW + G), cy = TOP + row * (CH + G);
+      const col = colourOf(e);
+      x.fillStyle = col.none ? '#eceaf1' : col.c;
+      x.globalAlpha = col.none ? 1 : 0.55;
+      x.fillRect(cx, cy, CW, CH);
+      x.globalAlpha = 1;
+      x.strokeStyle = col.none ? '#a9a6b3' : col.c; x.lineWidth = 1.2;
+      if (col.none) x.setLineDash([3, 2]);
+      x.strokeRect(cx + 0.5, cy + 0.5, CW - 1, CH - 1);
+      x.setLineDash([]);
+      x.fillStyle = '#1d1a26';
+      x.font = '10px Inter, system-ui, sans-serif'; x.textAlign = 'left'; x.fillText(String(e.n), cx + 4, cy + 12);
+      x.font = '700 18px Inter, system-ui, sans-serif'; x.textAlign = 'center'; x.fillText(e.s, cx + CW / 2, cy + 36);
+      x.font = '8px Inter, system-ui, sans-serif'; x.fillText(e.name.length > 11 ? `${e.name.slice(0, 10)}…` : e.name, cx + CW / 2, cy + 50);
+    }
+    x.textAlign = 'left'; x.font = '12px Inter, system-ui, sans-serif'; x.fillStyle = '#5c5868';
+    const ly = TOP + 10 * (CH + G) + 4;
+    if (S.by === 'cat') {
+      let lx = M;
+      for (const [name] of CATS) { x.fillStyle = colour(name); x.fillRect(lx, ly, 10, 10); x.fillStyle = '#5c5868'; x.fillText(name, lx + 14, ly + 9); lx += x.measureText(name).width + 30; if (lx > W - 140) break; }
+    } else if (S.by === 'std') {
+      x.fillText('Standard state, as PubChem gives it. Grey, dashed: not in the data.', M, ly + 9);
+    } else {
+      const g = x.createLinearGradient(M, 0, M + 240, 0);
+      [0, 0.25, 0.5, 0.75, 1].forEach(t => g.addColorStop(t, rampColour(t)));
+      x.fillStyle = g; x.fillRect(M, ly, 240, 10);
+      x.fillStyle = '#5c5868';
+      const p = propOf(S.by);
+      x.fillText(`${valueText({ [S.by]: S.rng.min, yr: String(S.rng.min) }, S.by)} to ${valueText({ [S.by]: S.rng.max, yr: String(S.rng.max) }, S.by)}${p.log ? ' (log scale)' : ''}.${S.by === 'yr' ? ' Brown: known since antiquity.' : ''} Grey, dashed: not in the data.`, M + 252, ly + 9);
+    }
+    try {
+      const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
+      if (!blob) throw new Error('The picture could not be made.');
+      const out = await media.save(`${vfs.HOME}/Pictures`, 'Periodic table.png', blob);
+      if (dead) return;
+      root.dataset.lastPicture = JSON.stringify({ path: out.path, w: cv.width, h: cv.height, by: S.by });
+      say('Saved a picture', `${out.path.replace(vfs.HOME, '~')} · ${cv.width}×${cv.height}`, 'image');
+    } catch (err) { say('Could not save the picture', String(err.message || err), 'alert'); }
   }
   const srcLine = () => h('div.pt__src', { text: source ? `Source: ${source.source}, fetched ${source.fetched}. Temperature states use the melting and boiling points listed here.` : '' });
 
@@ -321,5 +574,5 @@ function build(root, win, opts) {
   tempOut.textContent = `${S.T} K · ${celsius(S.T)} °C`;
   win.setSubtitle('118 elements · PubChem');
 
-  return () => { dead = true; offs.splice(0).forEach(f => f()); if (chem && chem.teardown) chem.teardown(); };
+  return () => { dead = true; offs.splice(0).forEach(f => f()); for (const v of [chem, trends, quiz]) if (v && v.teardown) v.teardown(); };
 }

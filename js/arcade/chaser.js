@@ -20,6 +20,11 @@
    · A fruit shows up twice a level, for nine seconds.
    · Three lives; a normal ghost's touch costs one. Each level the ghosts
      and you get a little faster and the pellets a little shorter.
+   · Three mazes take turns as the levels go: Garden, Lattice and
+     Courtyard (the same house, tunnel and start in each).
+   · Speed (ctx.mode, each with its own best): Normal; Relaxed, with
+     ghosts at 80% and pellets that last 30% longer; Turbo, with you
+     and the ghosts 22% faster and pellets 20% shorter.
 
    Score: dot 10, pellet 50, fruit 100-1000, ghosts 200..1600.
    Look: StaticOS's own. The walls are raised slabs in the accent colour
@@ -31,7 +36,10 @@
    ============================================================ */
 import { clamp, hsl, FONT, coarse, fitView, surface, ownsKey, sounder, looper, rr, prompt } from './kit.js';
 
-const MAZE = [
+/* Three mazes, one after another as the levels go (then round again). They share the ghost
+   house, the tunnel row and your starting square, so only the corridors change; every dot can
+   be reached (tests/suites/action-3.mjs walks each one). */
+const MAZE0 = [
   '###################',
   '#........#........#',
   '#o##.###.#.###.##o#',
@@ -54,6 +62,53 @@ const MAZE = [
   '#.................#',
   '###################',
 ];
+/* the middle, rows 6 to 12, is the same in every maze: the house, its door and the tunnel */
+const MIDDLE = MAZE0.slice(6, 13);
+const MAZES = [
+  { name: 'Garden', rows: MAZE0 },
+  { name: 'Lattice', rows: [
+    '###################',
+    '#o..#.........#..o#',
+    '#.#.#.###.###.#.#.#',
+    '#.#.............#.#',
+    '#.#.##.#####.##.#.#',
+    '#....#...#...#....#',
+    ...MIDDLE,
+    '#....#.......#....#',
+    '#.##.#.#####.#.##.#',
+    '#o.#...........#.o#',
+    '##.#.###.#.###.#.##',
+    '#....#...#...#....#',
+    '#.##.#.#####.#.##.#',
+    '#.................#',
+    '###################',
+  ] },
+  { name: 'Courtyard', rows: [
+    '###################',
+    '#o...............o#',
+    '#.#####.#.#.#####.#',
+    '#.......#.#.......#',
+    '#.###.#.#.#.#.###.#',
+    '#.....#.....#.....#',
+    ...MIDDLE,
+    '#.................#',
+    '#.#.###.#.#.###.#.#',
+    '#o#.............#o#',
+    '#.#.#.##...##.#.#.#',
+    '#...#...#.#...#...#',
+    '#.#...#.....#...#.#',
+    '#.................#',
+    '###################',
+  ] },
+].map(m => ({ ...m, total: m.rows.join('').split('').filter(c => c === '.' || c === 'o').length }));
+export const MAZE_LIST = MAZES.map(m => ({ name: m.name, rows: m.rows.slice(), total: m.total }));
+const MAZE = MAZE0;
+/* speed choice (ctx.mode, each with its own best): how fast you and the ghosts move, and how long a pellet lasts */
+const SPEEDS = {
+  normal:  { p: 1, g: 1, fr: 1 },
+  relaxed: { p: 1, g: 0.8, fr: 1.3 },
+  turbo:   { p: 1.22, g: 1.22, fr: 0.8 },
+};
 const COLS = 19, ROWS = MAZE.length, CELL = 24, HUD = 34;
 const VW = COLS * CELL, VH = ROWS * CELL + HUD;
 const START = { c: 9, r: 15 }, DOOR = { c: 9, r: 8 }, HOME = { c: 9, r: 9 }, OUT = { c: 9, r: 7 };
@@ -70,9 +125,7 @@ const FRUITS = [
 ];
 const EAT_PTS = [200, 400, 800, 1600];
 const SCHEDULE = [7, 20, 7, 20, 5, 20, 5, Infinity];       /* scatter, chase, scatter, ... */
-const TOTAL_DOTS = MAZE.join('').split('').filter(c => c === '.' || c === 'o').length;
 const wrapC = c => (c + COLS) % COLS;
-const tile = (c, r) => (r < 0 || r >= ROWS ? '#' : MAZE[r][wrapC(c)]);
 
 /* hue and saturation of any CSS colour (the accent may be hex, rgb() or
    a name): the canvas normalises it to #rrggbb or rgba(). */
@@ -92,6 +145,12 @@ function hueSat(css) {
 export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
+    const rate = Number.isFinite(ctx.speed) ? clamp(ctx.speed, 0.5, 1) : 1;   /* the Arcade's game speed: the whole clock runs at this rate */
+    const MODE = SPEEDS[ctx.mode] ? ctx.mode : 'normal', SP = SPEEDS[MODE];
+    /* the level's maze: Garden, Lattice, Courtyard, then round again */
+    let MZ = MAZES[0];
+    let TOTAL_DOTS = MZ.total;
+    const tile = (c, r) => (r < 0 || r >= ROWS ? '#' : MZ.rows[r][wrapC(c)]);
     const snd = sounder(ctx);
     const AC = hueSat(ctx.accent), AH = AC.h, AS = Math.min(90, AC.s);    /* the walls' colour */
     const S = {
@@ -109,7 +168,7 @@ export default {
     /* ------------------------------ set-up ------------------------------ */
     const lvl = () => S.level - 1;
     const pace = () => Math.min(1.4, 1 + 0.05 * lvl());
-    const frightLen = () => Math.max(1.6, 7 - 0.9 * lvl());
+    const frightLen = () => Math.max(1.6, 7 - 0.9 * lvl()) * SP.fr;
 
     function placeActors() {
       S.p = { c: START.c, r: START.r, dx: 0, dy: 0, f: 0, face: [-1, 0], mouth: 0 };
@@ -122,7 +181,9 @@ export default {
       S.fright = 0; S.chain = 0; S.fruit = null;
     }
     function newLevel() {
-      S.dots = MAZE.map(row => [...row].map(ch => ch === '.' || ch === 'o'));
+      MZ = MAZES[(S.level - 1) % MAZES.length];
+      TOTAL_DOTS = MZ.total;
+      S.dots = MZ.rows.map(row => [...row].map(ch => ch === '.' || ch === 'o'));
       S.left = TOTAL_DOTS; S.eaten = 0; S.fruitsShown = 0;
       placeActors();
       S.hold = 1.3;
@@ -267,8 +328,8 @@ export default {
     const gSpeed = g => {
       if (g.state === 'eyes') return 14;
       if (g.state === 'exit' || g.state === 'house') return 4.5;
-      if (g.r === 9 && (g.c <= 3 || g.c >= 15)) return 3.4;
-      return (g.fr ? 3.8 : 6.3) * pace();
+      if (g.r === 9 && (g.c <= 3 || g.c >= 15)) return 3.4 * SP.g;
+      return (g.fr ? 3.8 : 6.3) * pace() * SP.g;
     };
 
     /* ------------------------------ rules ------------------------------ */
@@ -311,7 +372,7 @@ export default {
         }
         if (S.fruit && (S.fruit.t -= dt) <= 0) S.fruit = null;
         S.p.mouth += dt;
-        advance(S.p, 7.2 * pace() * dt, pChoose, eat);
+        advance(S.p, 7.2 * pace() * SP.p * dt, pChoose, eat);
         if (S.state !== 'play') return;
         if (!S.frozen) for (const g of S.ghosts) {
           if (g.state === 'house') { g.wait -= dt; if (g.wait <= 0) g.state = 'exit'; continue; }
@@ -336,7 +397,7 @@ export default {
         if (S.endT >= 1.5) {
           if (S.lives <= 0) {
             S.state = 'over';
-            ctx.onEnd({ score: S.score, won: false, detail: `Level ${S.level} · ${S.eaten} of ${TOTAL_DOTS} dots` });
+            ctx.onEnd({ score: S.score, won: false, detail: `Level ${S.level} (${MZ.name}) · ${S.eaten} of ${TOTAL_DOTS} dots` });
           } else { placeActors(); S.state = 'play'; S.hold = 1.2; }
         }
       } else if (S.state === 'clear') {
@@ -353,7 +414,7 @@ export default {
       S.parts = S.parts.filter(q => q.life > 0);
     }
     const loop = looper(dt => {
-      if (!S.manual) update(dt);
+      if (!S.manual) update(dt * rate);
       draw();
       if (S.state === 'over' && !S.parts.length) loop.stop();
     });
@@ -363,7 +424,7 @@ export default {
       /* raised slabs in the accent colour: each wall tile is a rounded
          block, joined to the wall tiles beside it, lit from above */
       const flash = S.state === 'clear' && !reduced && Math.floor(S.endT * 5) % 2 === 0;
-      const wall = (c, r) => r >= 0 && r < ROWS && c >= 0 && c < COLS && MAZE[r][c] === '#';
+      const wall = (c, r) => r >= 0 && r < ROWS && c >= 0 && c < COLS && MZ.rows[r][c] === '#';
       const I = 4, R = 6;
       const body = hsl(AH, AS, flash ? 62 : 42), lit = hsl(AH, AS, flash ? 84 : 66), dark = hsl(AH, AS, flash ? 40 : 22);
       const slabs = (dx, dy, fill) => {
@@ -381,7 +442,7 @@ export default {
       slabs(0, -1, lit);                   /* its lit upper edge */
       slabs(0, 0, body);
       for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-        if (MAZE[r][c] !== '-') continue;
+        if (MZ.rows[r][c] !== '-') continue;
         g.fillStyle = hsl(0, 0, 92, 0.75); g.fillRect(c * CELL + 2, r * CELL + CELL / 2 - 2, CELL - 4, 4);
       }
     }
@@ -389,7 +450,7 @@ export default {
       for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
         if (!S.dots[r][c]) continue;
         const cx = c * CELL + CELL / 2, cy = r * CELL + CELL / 2;
-        if (MAZE[r][c] === 'o') {
+        if (MZ.rows[r][c] === 'o') {
           const k = reduced ? 1 : 0.8 + 0.2 * Math.sin(S.time * 6);
           g.strokeStyle = hsl(AH, AS, 72); g.lineWidth = 2; g.beginPath(); g.arc(cx, cy, 6.5 * k, 0, Math.PI * 2); g.stroke();
           g.fillStyle = hsl(0, 0, 96); g.beginPath(); g.arc(cx, cy, 3.6 * k, 0, Math.PI * 2); g.fill();
@@ -488,7 +549,7 @@ export default {
       g.fillStyle = '#0a0d12'; g.fillRect(0, by, VW, HUD);
       for (let i = 0; i < Math.max(0, S.lives - (S.state === 'play' || S.state === 'clear' ? 1 : 0)); i++) drawBot(g, 0.3 + i * 1.1, ROWS + 0.2, [1, 0], 0.7, 1);
       g.font = `600 12px ${FONT}`; g.fillStyle = hsl(215, 30, 78); g.textAlign = 'center';
-      g.fillText(`LEVEL ${S.level}`, VW / 2, by + HUD / 2);
+      g.fillText(`LEVEL ${S.level} · ${MZ.name.toUpperCase()}${MODE === 'normal' ? '' : ` · ${MODE.toUpperCase()}`}`, VW / 2, by + HUD / 2);
       g.textAlign = 'right';
       if (S.fright > 0) {
         g.fillStyle = 'rgba(255,255,255,.12)'; rr(g, VW - 150, by + 12, 70, 10, 5); g.fill();
@@ -497,8 +558,8 @@ export default {
       drawFruit(g, FRUITS[Math.min(FRUITS.length - 1, lvl())], COLS - 1.4, ROWS + 0.2);
       g.restore();
 
-      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Swipe to start' : 'Press an arrow key to start', 'Eat every dot. Big pellets turn the ghosts to static.', AH, sf.h * 0.52);
-      else if (S.state === 'play' && S.hold > 0) prompt(g, sf, S.level > 1 || S.lives < 3 ? `Level ${S.level}` : 'Go!', null, AH, sf.h * 0.52);
+      if (S.state === 'ready') prompt(g, sf, coarse() ? 'Swipe to start' : 'Press an arrow key to start', MODE === 'relaxed' ? 'Relaxed: slower ghosts, longer pellets' : MODE === 'turbo' ? 'Turbo: everyone faster, shorter pellets' : 'Eat every dot. Big pellets turn the ghosts to static.', AH, sf.h * 0.52);
+      else if (S.state === 'play' && S.hold > 0) prompt(g, sf, S.level > 1 || S.lives < 3 ? `Level ${S.level} · ${MZ.name}` : 'Go!', null, AH, sf.h * 0.52);
       else if (S.state === 'clear') prompt(g, sf, 'Level clear!', null, 140, sf.h * 0.52);
     }
 
@@ -547,11 +608,11 @@ export default {
     loop.start();
 
     const snap = () => ({
-      state: S.state, paused: S.paused, score: S.score, lives: S.lives, level: S.level, time: S.time,
+      state: S.state, paused: S.paused, score: S.score, lives: S.lives, level: S.level, time: S.time, pace: rate,
       left: S.left, total: TOTAL_DOTS, mode: S.mode, fright: S.fright, hasFruit: !!S.fruit, chain: S.chain,
       player: { x: px(S.p), y: py(S.p), c: S.p.c, r: S.p.r, dx: S.p.dx, dy: S.p.dy },
       ghosts: S.ghosts.map(g => ({ name: g.name, i: g.i, x: px(g), y: py(g), c: g.c, r: g.r, state: g.state, fr: g.fr })),
-      dotAt: (c, r) => !!S.dots[r]?.[c], maze: MAZE.slice(), cell: CELL, view: { ox: V.ox, oy: V.oy, s: V.s },
+      dotAt: (c, r) => !!S.dots[r]?.[c], maze: MZ.rows.slice(), mazeName: MZ.name, speedMode: MODE, speeds: { ...SP }, cell: CELL, view: { ox: V.ox, oy: V.oy, s: V.s },
     });
     return {
       stop() {
@@ -590,6 +651,7 @@ export default {
         }
         else if (cmd === 'dot') out = !!S.dots[arg[1]]?.[arg[0]];
         else if (cmd === 'mode') { S.mode = arg; S.modeT = 99; }
+        else if (cmd === 'level') { S.level = arg; newLevel(); S.hold = 0; if (S.state === 'ready') S.state = 'play'; }
         draw();
         return out;
       },

@@ -23,9 +23,12 @@
    version and level, and read back with a real barcode reader.
 
    APP
-   Seven kinds of content (text, link, Wi-Fi, email, phone, SMS,
-   contact) build the exact text that is encoded; the "Encoded
-   text" disclosure shows it verbatim. The preview is a <canvas>
+   Nine kinds of content (text, link, Wi-Fi, email, phone, SMS,
+   contact, event, location) build the exact text that is encoded;
+   the "Encoded text" disclosure shows it verbatim. An event is a
+   VEVENT (RFC 5545) with local, floating times; a location is a
+   geo: URI (RFC 5870). A caption can be drawn under the code, and
+   goes into every export and print. The preview is a <canvas>
    drawn at devicePixelRatio with every module edge on a whole
    device pixel, so it is crisp at any zoom. Size, quiet zone, error
    correction and colours are adjustable; colours are graded for
@@ -37,12 +40,24 @@
 
    Scan reads a QR code with the camera or from a picture (js/apps/qr-scan.js,
    js/core/scancam.js): a decoded code is shown as text and never opened by
-   itself; only http and https links get an Open button.
+   itself; only http and https links get an Open button. A Wi-Fi code shows
+   its network and a Copy password button; an event, a contact or a place is
+   shown in full and goes into Calendar, Contacts or Weather only when its
+   button is pressed. Scans are kept in a history (store, below) without any
+   Wi-Fi password, and the history can be switched off.
+
+   Many codes: one per line of a list, shown as a grid, downloaded as a ZIP
+   of PNGs or printed. Print sheet: the code on screen and any of Recent,
+   laid out on paper with their captions.
 
    Download PNG / SVG, copy the image, or save it to Pictures (a
    real file via core/media.js, so Photos opens it). "Recent" lists
    only codes you exported; a Wi-Fi password is never written to
-   storage. State lives in store('portal.qr').
+   storage. State lives in store('portal.qr'): the kind, the look,
+   the fields, the caption, Recent, the list for Many codes, and the
+   scan history ({ id, text, kind, at }, newest first, Wi-Fi codes
+   with their password taken out) with keepScans (on unless switched
+   off).
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 
@@ -459,8 +474,41 @@ export function drawCode(ctx, q, px, margin, fg, bg) {
   }
 }
 
-/** The same code as an SVG document (one path, module units). */
-export function svgCode(q, px, margin, fg, bg) {
+/* ---- a caption under the code: a band of the light colour, the text in the dark one ---- */
+export const CAPTION_MAX = 80;
+/** How tall the caption band is under a code drawn `px` wide (0 with no caption). */
+export const captionBand = (px, caption) => (String(caption || '').trim() ? Math.max(20, Math.round(px * 0.12)) : 0);
+/** Paint the caption into the band at y = top. Long text is made smaller, then cut with an ellipsis. */
+export function drawCaption(ctx, caption, px, top, fg, bg) {
+  const text = String(caption || '').replace(/\s+/g, ' ').trim();
+  const band = captionBand(px, text);
+  if (!band) return;
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, top, px, band);
+  ctx.fillStyle = fg;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const room = px * 0.92;
+  let size = Math.round(band * 0.52);
+  const font = n => `600 ${n}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+  ctx.font = font(size);
+  while (size > band * 0.3 && ctx.measureText(text).width > room) { size--; ctx.font = font(size); }
+  let t = text;
+  if (ctx.measureText(t).width > room) {
+    while (t.length > 1 && ctx.measureText(`${t}…`).width > room) t = t.slice(0, -1);
+    t = `${t.trimEnd()}…`;
+  }
+  ctx.fillText(t, px / 2, top + band / 2 + 1);
+}
+/** The code and its caption: a canvas `px` wide and px + band tall. */
+export function drawWithCaption(ctx, q, px, margin, fg, bg, caption) {
+  drawCode(ctx, q, px, margin, fg, bg);
+  drawCaption(ctx, caption, px, px, fg, bg);
+}
+const escXml = s => String(s).replace(/[<>&"']/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[ch]));
+
+/** The same code as an SVG document (one path, module units), with its caption under it. */
+export function svgCode(q, px, margin, fg, bg, caption = '') {
   const n = q.size + margin * 2;
   let d = '';
   for (let y = 0; y < q.size; y++) {
@@ -472,8 +520,12 @@ export function svgCode(q, px, margin, fg, bg) {
       x = x2;
     }
   }
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges">`
-    + `<rect width="${n}" height="${n}" fill="${bg}"/><path fill="${fg}" d="${d}"/></svg>\n`;
+  const cap = String(caption || '').replace(/\s+/g, ' ').trim();
+  const bandPx = captionBand(px, cap), band = bandPx ? (bandPx / px) * n : 0;
+  const H = +(n + band).toFixed(3);
+  const text = cap ? `<text x="${n / 2}" y="${+(n + band / 2).toFixed(3)}" fill="${fg}" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-weight="600" font-size="${(band * 0.52).toFixed(3)}" text-anchor="middle" dominant-baseline="central" shape-rendering="geometricPrecision">${escXml(cap)}</text>` : '';
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px + bandPx}" viewBox="0 0 ${n} ${H}" shape-rendering="crispEdges">`
+    + `<rect width="${n}" height="${H}" fill="${bg}"/><path fill="${fg}" d="${d}"/>${text}</svg>\n`;
 }
 
 /* ====================================================================
@@ -510,6 +562,8 @@ const KINDS = [
   { id: 'phone', label: 'Phone', icon: 'phone', empty: 'Enter a phone number to make a tap-to-call code.' },
   { id: 'sms', label: 'SMS', icon: 'message-circle', empty: 'Enter the number the message goes to.' },
   { id: 'contact', label: 'Contact', icon: 'user', empty: 'Enter a name, phone number or email.' },
+  { id: 'event', label: 'Event', icon: 'calendar', empty: 'Give the event a name and a day.' },
+  { id: 'geo', label: 'Location', icon: 'map-pin', empty: 'Enter a latitude and a longitude, like 48.8584 and 2.2945.' },
 ];
 const KIND = Object.fromEntries(KINDS.map(k => [k.id, k]));
 
@@ -521,8 +575,10 @@ const FIELDS = {
   phone: { number: '' },
   sms: { number: '', message: '' },
   contact: { first: '', last: '', phone: '', email: '', org: '', title: '', url: '' },
+  event: { title: '', date: '', allDay: false, start: '', end: '', location: '', notes: '' },
+  geo: { lat: '', lon: '', name: '' },
 };
-const LONG = { text: 8000, body: 4000, message: 2000 };
+const LONG = { text: 8000, body: 4000, message: 2000, notes: 2000 };
 const SECURITY = [['WPA', 'WPA / WPA2 / WPA3'], ['WEP', 'WEP (old)'], ['nopass', 'None — open network']];
 
 /* schemes that may be followed by digits, so "tel:123" isn't read as host:port */
@@ -532,6 +588,21 @@ const escWifi = s => String(s).replace(/[\\;,:"]/g, ch => `\\${ch}`);
 const escVcard = s => String(s).replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/([,;])/g, '\\$1');
 const oneLine = s => String(s).replace(/\s+/g, ' ').trim();
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+/* iCalendar text (RFC 5545 §3.3.11) */
+const escIcs = s => String(s).replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/([,;])/g, '\\$1');
+const realDay = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d || '')); if (!m) return null; const t = new Date(+m[1], +m[2] - 1, +m[3]); return t.getMonth() === +m[2] - 1 && t.getDate() === +m[3] ? t : null; };
+const isTime = t => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(t || ''));
+const icsDay = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+/** "48.8584, 2.2945" pasted into the latitude field is both numbers. */
+function coordsOf(f) {
+  let lat = String(f.lat || '').trim(), lon = String(f.lon || '').trim();
+  const both = /^(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)$/.exec(lat);
+  if (both && !lon) { lat = both[1]; lon = both[2]; }
+  const ok = v => /^-?\d+(?:\.\d+)?$/.test(v);
+  return { lat: ok(lat) ? Number(lat) : NaN, lon: ok(lon) ? Number(lon) : NaN, rawLat: lat, rawLon: lon };
+}
+/** A coordinate written for a geo: URI: up to 6 decimals (about 10 cm), no trailing zeros. */
+const geoNum = n => String(Number(n.toFixed(6)));
 
 /** -> { text, display, label, notes:[{tone,text}] }. `text` is exactly what is encoded. */
 export function buildPayload(kind, f, secret = {}) {
@@ -602,6 +673,41 @@ export function buildPayload(kind, f, secret = {}) {
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) notes.push({ tone: 'warn', text: 'That doesn’t look like an email address.' });
       return out(L.join('\r\n'), full || org || phone || email);
     }
+    case 'event': {
+      const title = oneLine(f.title || '');
+      const day = realDay(f.date);
+      if (!title && !f.date) return out('', '');
+      if (!title) { notes.push({ tone: 'warn', text: 'Give the event a name.' }); return out('', ''); }
+      if (!day) { notes.push({ tone: 'warn', text: f.date ? 'That day doesn’t exist.' : 'Choose the day it happens.' }); return out('', ''); }
+      const L = ['BEGIN:VEVENT', `SUMMARY:${escIcs(title)}`];
+      if (f.allDay || !isTime(f.start)) {
+        if (!f.allDay && f.start) notes.push({ tone: 'warn', text: 'That start time isn’t a time, so the code is for the whole day.' });
+        const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+        L.push(`DTSTART;VALUE=DATE:${icsDay(day)}`, `DTEND;VALUE=DATE:${icsDay(next)}`);
+      } else {
+        const t = s => s.replace(':', '') + '00';
+        L.push(`DTSTART:${icsDay(day)}T${t(f.start)}`);
+        if (isTime(f.end) && f.end > f.start) L.push(`DTEND:${icsDay(day)}T${t(f.end)}`);
+        else if (f.end) notes.push({ tone: 'warn', text: 'It ends before it starts, so the end time is left out.' });
+        notes.push({ tone: 'info', text: 'Times are on the clock where it happens: a phone shows them as written, in its own time zone.' });
+      }
+      if (oneLine(f.location || '')) L.push(`LOCATION:${escIcs(oneLine(f.location))}`);
+      if (String(f.notes || '').trim()) L.push(`DESCRIPTION:${escIcs(String(f.notes).trim())}`);
+      L.push('END:VEVENT');
+      return out(L.join('\r\n'), title);
+    }
+    case 'geo': {
+      const c = coordsOf(f);
+      if (!c.rawLat && !c.rawLon) return out('', '');
+      const latOk = Number.isFinite(c.lat) && Math.abs(c.lat) <= 90, lonOk = Number.isFinite(c.lon) && Math.abs(c.lon) <= 180;
+      if (!latOk || !lonOk) {
+        notes.push({ tone: 'warn', text: !latOk ? 'Latitude is a number from −90 (south) to 90 (north).' : 'Longitude is a number from −180 (west) to 180 (east).' });
+        return out('', '');
+      }
+      notes.push({ tone: 'info', text: 'Phones open it in their maps app.' });
+      const name = oneLine(f.name || '');
+      return out(`geo:${geoNum(c.lat)},${geoNum(c.lon)}`, name || `${geoNum(c.lat)}, ${geoNum(c.lon)}`);
+    }
     default: {
       const t = String(f.text || '');
       return out(t.trim() ? t : '', t.split('\n').find(l => l.trim()) || '');
@@ -619,6 +725,7 @@ const SIZE_MIN = 128, SIZE_MAX = 2048, SIZE_STEP = 16, SIZE_DEFAULT = 512;
 const MARGIN_MAX = 10, MARGIN_DEFAULT = 4;
 const FG_DEFAULT = '#000000', BG_DEFAULT = '#FFFFFF';
 const RECENT_MAX = 8;
+const LIST_CODES_MAX = 100;
 
 const LEVEL_INFO = {
   L: { pct: '7%', text: 'Recovers about 7% of a damaged code. The smallest code.' },
@@ -652,7 +759,32 @@ function normFields(kind, raw) {
 function normRecent(r) {
   if (!r || typeof r !== 'object' || !KIND[r.kind]) return null;
   if (typeof r.at !== 'string' || Number.isNaN(Date.parse(r.at))) return null;
-  return { id: String(r.id || rid()).slice(0, 40), kind: r.kind, label: String(r.label || '').slice(0, 80), fields: normFields(r.kind, r.fields), at: r.at };
+  return { id: String(r.id || rid()).slice(0, 40), kind: r.kind, label: String(r.label || '').slice(0, 80), fields: normFields(r.kind, r.fields), caption: cleanCaption(r.caption), at: r.at };
+}
+const cleanCaption = v => String(v ?? '').replace(/[\u0000-\u001f\u007f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, ' ').slice(0, CAPTION_MAX);
+const SCANS_MAX = 30, LIST_MAX = 20000;
+/** A remembered scan. A Wi-Fi code's password was taken out before it was ever stored; this checks again. */
+function normScan(r) {
+  if (!r || typeof r !== 'object' || typeof r.text !== 'string' || !r.text) return null;
+  const at = Number(r.at);
+  if (!Number.isFinite(at) || at <= 0) return null;
+  return { id: String(r.id || rid()).slice(0, 40), text: forgetWifiPassword(r.text).slice(0, 4000), at };
+}
+/** WIFI:…;P:secret;… -> the same code without its P: field. */
+export function forgetWifiPassword(text) {
+  const t = String(text || '');
+  if (!/^WIFI:/i.test(t)) return t;
+  const parts = [];
+  let field = '';
+  for (let i = 5; i < t.length; i++) {
+    const ch = t[i];
+    if (ch === '\\' && i + 1 < t.length) { field += ch + t[i + 1]; i++; continue; }
+    if (ch === ';') { parts.push(field); field = ''; continue; }
+    field += ch;
+  }
+  if (field) parts.push(field);
+  const kept = parts.filter(f => f && !/^P:/i.test(f)).join(';');
+  return `WIFI:${kept}${kept ? ';;' : ';'}`;
 }
 function normalize(raw) {
   const d = raw && typeof raw === 'object' ? raw : {};
@@ -666,7 +798,11 @@ function normalize(raw) {
     fg: normHex(d.fg) || FG_DEFAULT,
     bg: normHex(d.bg) || BG_DEFAULT,
     fields,
+    caption: cleanCaption(d.caption),
     recent: Array.isArray(d.recent) ? d.recent.map(normRecent).filter(Boolean).slice(0, RECENT_MAX) : [],
+    list: String(d.list ?? '').slice(0, LIST_MAX),
+    scans: Array.isArray(d.scans) ? d.scans.map(normScan).filter(Boolean).slice(0, SCANS_MAX) : [],
+    keepScans: d.keepScans !== false,
   };
 }
 
@@ -677,8 +813,9 @@ defineApp({
   g1: '#82c431', g2: '#267812',
   category: 'Utilities',
   keywords: ['qr', 'qr code', 'qrcode', 'barcode', 'code', 'generator', 'link', 'url', 'wifi', 'wi-fi', 'share',
-    'scan', 'scan qr', 'qr scanner', 'qr reader', 'read qr', 'camera', 'vcard', 'contact', 'sms', 'email', 'phone'],
-  desc: 'Make QR codes for links, text, Wi-Fi and contacts, or scan one with your camera — all on this device',
+    'scan', 'scan qr', 'qr scanner', 'qr reader', 'read qr', 'camera', 'vcard', 'contact', 'sms', 'email', 'phone',
+    'event', 'calendar', 'location', 'geo', 'map', 'caption', 'print', 'sheet', 'many', 'batch', 'list', 'scan history'],
+  desc: 'Make QR codes for links, text, Wi-Fi, contacts, events and places — one at a time, many from a list, or a printed sheet — or scan one, all on this device',
   singleton: true,
   win: { w: 920, h: 620, minW: 420, minH: 460 },
 
@@ -705,6 +842,8 @@ defineApp({
       heard: { check: '', contrast: '' },
       present: null,
       scanning: false, scanSeq: 0, scanDown: null,
+      listing: false,          /* Many codes is on screen */
+      listCaps: true,          /* each line under its own code */
     };
 
     const timers = new Set();
@@ -721,7 +860,11 @@ defineApp({
     const snapshot = () => ({
       v: 1, kind: S.kind, level: S.level, size: S.size, margin: S.margin, fg: S.fg, bg: S.bg,
       fields: Object.fromEntries(Object.keys(FIELDS).map(k => [k, { ...S.fields[k] }])),
+      caption: S.caption,
       recent: S.recent.map(r => ({ ...r, fields: { ...r.fields } })),
+      list: S.list,
+      scans: S.scans.map(x => ({ ...x, text: forgetWifiPassword(x.text) })),
+      keepScans: S.keepScans,
     });
     function persistSoon() { cancel(persistT); persistT = later(() => { persistT = 0; store.set(STORE_KEY, snapshot()); }, 350); }
 
@@ -739,9 +882,14 @@ defineApp({
     const scanSide = h('button.side__item.qr-kind.qr-scan-btn', { type: 'button', dataset: { fk: 'qr-scan' }, onclick: () => setScan(!S.scanning) },
       icon('camera'), h('span', { text: 'Scan a code' }));
     const sideRead = h('div.side__group', h('div.side__label', { text: 'Read' }), scanSide);
+    const listSide = h('button.side__item.qr-kind', { type: 'button', dataset: { fk: 'qr-list' }, onclick: () => setMode(S.listing ? 'create' : 'list') },
+      icon('list'), h('span', { text: 'Many codes' }));
+    const sheetSide = h('button.side__item.qr-kind', { type: 'button', dataset: { fk: 'qr-sheet' }, onclick: () => openSheet(false) },
+      icon('printer'), h('span', { text: 'Print a sheet…' }));
+    const sideMany = h('div.side__group', h('div.side__label', { text: 'Sheets' }), listSide, sheetSide);
     const recentGroup = h('div.side__group.qr-side__recent');
     const side = h('aside.app__side.qr-side', { 'aria-label': 'Kinds of code' },
-      sideCreate, sideRead, recentGroup,
+      sideCreate, sideRead, sideMany, recentGroup,
       h('div.qr-side__foot', icon('lock'), h('span', { text: 'Made on this device. Nothing is uploaded.' })));
 
     const chipRecent = h('button.chip.qr-chip', { type: 'button', hidden: true, 'aria-haspopup': 'menu', onclick: e => openRecentMenu(e) },
@@ -752,6 +900,9 @@ defineApp({
     const chipScan = h('button.chip.qr-chip.qr-scan-chip', { type: 'button', dataset: { fk: 'qr-scan-chip' }, onclick: () => setScan(!S.scanning) },
       icon('camera'), h('span', { text: 'Scan' }));
     chips.insertBefore(chipScan, chipRecent);
+    const chipList = h('button.chip.qr-chip', { type: 'button', dataset: { fk: 'qr-list-chip' }, onclick: () => setMode(S.listing ? 'create' : 'list') },
+      icon('list'), h('span', { text: 'Many' }));
+    chips.insertBefore(chipList, chipRecent);
 
     /* ---- bar ---- */
     const titleEl = h('div.app__title.qr-title');
@@ -802,6 +953,9 @@ defineApp({
     };
     const fgRow = colorRow('fg'), bgRow = colorRow('bg');
     const contrastEl = h('div.qr-contrast');
+    const capIn = h('input.qr-in', { id: `${uid}-cap`, type: 'text', maxlength: String(CAPTION_MAX), placeholder: 'Scan for the menu', spellcheck: 'false', autocomplete: 'off', dataset: { fk: 'qr-caption' } });
+    capIn.value = S.caption;
+    capIn.addEventListener('input', () => { S.caption = cleanCaption(capIn.value); persistSoon(); paintStage(); scheduleCheck(); });
 
     const lookSec = h('section.qr-sec.qr-look', { 'aria-labelledby': `${uid}-look` },
       h('h2.qr-sec__label', { id: `${uid}-look`, text: 'Appearance' }),
@@ -817,11 +971,16 @@ defineApp({
         h('div.qr-colors', fgRow.el, bgRow.el,
           h('button.ibtn.tip', { type: 'button', 'data-tip': 'Swap', 'aria-label': 'Swap the two colours', onclick: () => { const f = S.fg; S.fg = S.bg; S.bg = f; colorsChanged(); } }, icon('refresh')),
           h('button.ibtn.tip', { type: 'button', 'data-tip': 'Black on white', 'aria-label': 'Reset to black on white', onclick: () => { S.fg = FG_DEFAULT; S.bg = BG_DEFAULT; colorsChanged(); } }, icon('rotate-ccw'))),
-        contrastEl));
+        contrastEl),
+      h('div.qr-group.qr-field',
+        h('div.qr-row', h('label.qr-lbl', { for: `${uid}-cap`, text: 'Caption under the code' })),
+        h('div.field', capIn),
+        h('small.qr-hint', { text: 'Optional. It goes under the code in the image, the large view and prints.' })));
 
     /* ---- preview stage ---- */
     const canvas = h('canvas.qr-canvas', { role: 'img' });
-    const box = h('div.qr-box', canvas);
+    const capEl = h('div.qr-capline', { hidden: true, 'aria-hidden': 'true' });
+    const box = h('div.qr-box', canvas, capEl);
     const emptyEl = h('div.qr-emptywrap');
     const view = h('div.qr-view', box, emptyEl);
     const meta = h('dl.qr-meta');
@@ -831,7 +990,28 @@ defineApp({
     const left = h('div.qr-left', formSec, lookSec);
     const body = h('div.app__content.app__content--flush.qr-body', left, stage);
     const scanHost = h('div.qr-scanhost', { hidden: true });
-    const appEl = h('div.app.qr', side, h('div.app__main', bar, chips, body, scanHost), live);
+
+    /* ---- many codes: one per line ---- */
+    let listT = 0;
+    const listIn = h('textarea.qr-in.qr-in--area.qr-list__in', { id: `${uid}-list`, rows: '8', maxlength: String(LIST_MAX), spellcheck: 'false', dataset: { fk: 'qr-list-in' },
+      placeholder: 'https://example.com/rooms/12\nhttps://example.com/rooms/14\nLocker 7 — ask at the office' });
+    listIn.value = S.list;
+    listIn.addEventListener('input', () => { S.list = listIn.value.slice(0, LIST_MAX); persistSoon(); cancel(listT); listT = later(paintList, 250); });
+    const listCapsIn = h('input', { type: 'checkbox', checked: S.listCaps, dataset: { fk: 'qr-list-caps' }, onchange: e => { S.listCaps = e.target.checked; paintList(); } });
+    const listSum = h('p.qr-hint.qr-list__sum', { role: 'status', dataset: { fk: 'qr-list-sum' } });
+    const listGrid = h('div.qr-grid', { role: 'list', 'aria-label': 'The codes' });
+    const listZip = h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: 'qr-list-zip' }, onclick: () => downloadList() }, icon('download'), h('span', { text: 'Download all (.zip)' }));
+    const listPrint = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'qr-list-print' }, onclick: () => openSheet(true) }, icon('printer'), h('span', { text: 'Print sheet…' }));
+    const listHost = h('div.app__content.qr-listhost', { hidden: true },
+      h('section.qr-sec.qr-list', { 'aria-labelledby': `${uid}-listh` },
+        h('h2.qr-sec__label', { id: `${uid}-listh`, text: 'The list' }),
+        h('div.qr-field', h('label.qr-field__label', { for: `${uid}-list`, text: `One code per line (up to ${LIST_CODES_MAX})` }), h('div.field.qr-field__area', listIn),
+          h('small.qr-hint', { text: 'A web address becomes a link; anything else is text. The colours, margin and error correction are the ones in Appearance.' })),
+        h('label.qr-check-row', listCapsIn, h('span', { text: 'Put each line under its code' })),
+        listSum,
+        h('div.qr-list__go', listZip, listPrint)),
+      listGrid);
+    const appEl = h('div.app.qr', side, h('div.app__main', bar, chips, body, scanHost, listHost), live);
     root.appendChild(appEl);
 
     /* ==================================================================
@@ -916,6 +1096,40 @@ defineApp({
             h('div.qr-pair', input('org', 'Company', { max: 120 }), input('title', 'Job title', { max: 120 })),
             input('url', 'Website', { type: 'url', mode: 'url', max: 500 }));
           break;
+        case 'event': {
+          const adId = `${uid}-f-allday`;
+          const sw = h('button.switch', {
+            id: adId, type: 'button', role: 'switch', 'aria-checked': f.allDay ? 'true' : 'false', 'aria-label': 'All day', class: f.allDay ? 'is-on' : '',
+            onclick: () => { setField('allDay', !S.fields.event.allDay); renderForm(); formFields.querySelector(`#${adId}`)?.focus(); },
+          });
+          formFields.append(
+            input('title', 'Event name', { max: 200, placeholder: 'Science fair' }),
+            input('date', 'Day', { type: 'date', max: 10 }),
+            h('div.qr-field.qr-field--row', h('label.qr-field__label', { for: adId, text: 'All day' }), sw),
+            f.allDay ? null : h('div.qr-pair', input('start', 'Starts', { type: 'time', max: 5 }), input('end', 'Ends (optional)', { type: 'time', max: 5 })),
+            input('location', 'Where (optional)', { max: 200 }),
+            input('notes', 'Notes (optional)', { area: true, rows: 3, spell: true }));
+          break;
+        }
+        case 'geo': {
+          const latF = input('lat', 'Latitude', { mode: 'decimal', max: 40, placeholder: '48.8584' });
+          const lonF = input('lon', 'Longitude', { mode: 'decimal', max: 40, placeholder: '2.2945' });
+          /* "48.8584, 2.2945" pasted into Latitude: split into the two fields, where it can be seen */
+          const latIn = latF.querySelector('input'), lonIn = lonF.querySelector('input');
+          latIn.addEventListener('input', () => {
+            const both = /^\s*(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*$/.exec(latIn.value);
+            if (!both || lonIn.value.trim()) return;
+            latIn.value = both[1]; lonIn.value = both[2];
+            S.fields.geo = { ...S.fields.geo, lat: both[1], lon: both[2] };
+            persistSoon();
+            schedule();
+          });
+          formFields.append(
+            h('div.qr-pair', latF, lonF),
+            input('name', 'Name (optional, for the caption and Recent)', { max: 80, placeholder: 'The front gate' }),
+            h('small.qr-hint', { text: 'North and east are positive; south and west are negative. A pair pasted into Latitude is split for you.' }));
+          break;
+        }
         default:
           formFields.append(input('text', 'Text', { area: true, rows: 6, spell: true, placeholder: 'Type anything — a note, a code, an address…' }));
       }
@@ -924,29 +1138,48 @@ defineApp({
     /* ==================================================================
        state changes
        ================================================================== */
-    /* Scan: the camera side, loaded the first time it is asked for */
-    async function setScan(on) {
-      if (on === S.scanning || S.dead) return;
-      S.scanning = on;
+    /* the scan history Scan keeps through this window: never a Wi-Fi password */
+    const history = {
+      list: () => S.scans,
+      keep: () => S.keepScans,
+      setKeep(on) { S.keepScans = !!on; if (!on) S.scans = []; persistSoon(); },
+      add(text) {
+        if (!S.keepScans || !text) return;
+        const t = forgetWifiPassword(text).slice(0, 4000);
+        S.scans = [{ id: rid(), text: t, at: Date.now() }, ...S.scans.filter(x => x.text !== t)].slice(0, SCANS_MAX);
+        persistSoon();
+      },
+      remove(id) { S.scans = S.scans.filter(x => x.id !== id); persistSoon(); },
+      clear() { S.scans = []; persistSoon(); },
+    };
+    /* Create (the form), Scan (the camera side, loaded the first time it is asked for) or Many codes */
+    async function setMode(mode) {
+      const scan = mode === 'scan', list = mode === 'list';
+      if ((scan === S.scanning && list === S.listing) || S.dead) return;
+      S.scanning = scan;
+      S.listing = list;
       const seq = ++S.scanSeq;
-      for (const x of [body, presentBtn, moreBtn, dlBtn, saveBtn]) x.hidden = on;
-      scanHost.hidden = !on;
+      for (const x of [body, presentBtn, moreBtn, dlBtn, saveBtn]) x.hidden = scan || list;
+      scanHost.hidden = !scan;
+      listHost.hidden = !list;
       if (S.scanDown) { try { S.scanDown(); } catch (e) { console.error(e); } S.scanDown = null; }
       scanHost.replaceChildren();
       paintKinds();
-      if (!on) return;
+      if (list) { paintList(); return; }
+      if (!scan) { fitPreview(); return; }
       try {
         const m = await import('./qr-scan.js');
         if (S.dead || seq !== S.scanSeq || !S.scanning) return;
-        S.scanDown = m.mountScan({ api, root: scanHost });
+        S.scanDown = m.mountScan({ api, root: scanHost, history });
       } catch (err) {
         if (S.dead || seq !== S.scanSeq) return;
         scanHost.replaceChildren(h('div.qrs__msg', icon('alert'), h('b', { text: 'Scan couldn’t load' }), h('small', { text: String(err?.message || err) })));
       }
     }
+    const setScan = on => setMode(on ? 'scan' : 'create');
     function setKind(id) {
       if (!KIND[id]) return;
-      if (S.scanning) setScan(false);
+      if (S.scanning || S.listing) setMode('create');
       if (id !== S.kind) {
         S.kind = id;
         S.showPass = false;
@@ -995,13 +1228,17 @@ defineApp({
        ================================================================== */
     function paintKinds() {
       for (const k of KINDS) {
-        const on = k.id === S.kind && !S.scanning;
+        const on = k.id === S.kind && !S.scanning && !S.listing;
         for (const b of [kindBtns[k.id], chipBtns[k.id]]) {
           b.classList.toggle('is-on', on);
           if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
         }
       }
-      titleEl.textContent = S.scanning ? 'Scan a code' : KIND[S.kind].label;
+      titleEl.textContent = S.scanning ? 'Scan a code' : S.listing ? 'Many codes' : KIND[S.kind].label;
+      for (const b of [listSide, chipList]) {
+        b.classList.toggle('is-on', S.listing);
+        if (S.listing) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+      }
       scanSide.classList.toggle('is-on', !!S.scanning);
       chipScan.classList.toggle('is-on', !!S.scanning);
       if (S.scanning) { scanSide.setAttribute('aria-current', 'true'); chipScan.setAttribute('aria-current', 'true'); }
@@ -1068,7 +1305,9 @@ defineApp({
       const q = S.result;
       if (!q?.ok || box.hidden) return;
       const dpr = window.devicePixelRatio || 1;
-      const avail = S.narrow ? Math.min(view.clientWidth - 16, 360) : Math.min(view.clientWidth, view.clientHeight) - 32;
+      const cap = S.caption.trim();
+      const avail = S.narrow ? Math.min(view.clientWidth - 16, 360)
+        : cap ? Math.min(view.clientWidth - 32, (view.clientHeight - 32) / 1.13) : Math.min(view.clientWidth, view.clientHeight) - 32;
       const n = q.size + 2 * S.margin;
       let px = Math.max(n, Math.floor(Math.max(96, avail) * dpr));
       const per = Math.floor(px / n);
@@ -1076,6 +1315,11 @@ defineApp({
       if (canvas.width !== px) { canvas.width = px; canvas.height = px; }
       canvas.style.width = canvas.style.height = `${px / dpr}px`;
       drawCode(canvas.getContext('2d'), q, px, S.margin, S.fg, S.bg);
+      /* the caption as it will be in the image: the same band, the same colours */
+      const band = captionBand(px, cap) / dpr;
+      capEl.hidden = !band;
+      capEl.textContent = cap;
+      Object.assign(capEl.style, band ? { width: `${px / dpr}px`, height: `${band}px`, lineHeight: `${band}px`, fontSize: `${Math.round(band * 0.52)}px`, background: S.bg, color: S.fg } : {});
     }
     function paintStage() {
       const q = S.result;
@@ -1085,7 +1329,7 @@ defineApp({
       clear(emptyEl);
       if (ok) {
         box.classList.toggle('is-flush', S.margin === 0);
-        canvas.setAttribute('aria-label', `QR code — ${KIND[S.kind].label}: ${S.payload.label || 'untitled'}`);
+        canvas.setAttribute('aria-label', `QR code — ${KIND[S.kind].label}: ${S.payload.label || 'untitled'}${S.caption.trim() ? `, captioned “${S.caption.trim()}”` : ''}`);
         fitPreview();
       } else if (q && q.reason === 'too-long') {
         const [one, many] = MODE_UNIT[q.mode];
@@ -1217,11 +1461,12 @@ defineApp({
     /* ==================================================================
        export
        ================================================================== */
-    function renderExport(q = S.result) {
+    function renderExport(q = S.result, caption = S.caption) {
       const px = exportPx(q);
       const c = document.createElement('canvas');
-      c.width = c.height = px;
-      drawCode(c.getContext('2d'), q, px, S.margin, S.fg, S.bg);
+      c.width = px;
+      c.height = px + captionBand(px, caption);
+      drawWithCaption(c.getContext('2d'), q, px, S.margin, S.fg, S.bg, caption);
       return c;
     }
     const pngBlob = () => new Promise((res, rej) => renderExport().toBlob(b => (b ? res(b) : rej(new Error('The image couldn’t be made.'))), 'image/png'));
@@ -1252,7 +1497,7 @@ defineApp({
     function downloadSvg() {
       if (!S.result?.ok) return;
       try {
-        download(new Blob([svgCode(S.result, exportPx(S.result), S.margin, S.fg, S.bg)], { type: 'image/svg+xml' }), `${fileBase()}.svg`);
+        download(new Blob([svgCode(S.result, exportPx(S.result), S.margin, S.fg, S.bg, S.caption)], { type: 'image/svg+xml' }), `${fileBase()}.svg`);
         remember();
       } catch (err) { fail('Download failed', err); }
     }
@@ -1300,7 +1545,115 @@ defineApp({
         { label: 'Download SVG', icon: 'download', onClick: downloadSvg },
         { label: 'Copy image', icon: 'copy', disabled: !canCopyImage(), onClick: copyImage },
         { label: 'Copy encoded text', icon: 'clipboard', onClick: copyText },
+        '-',
+        { label: 'Print a sheet…', icon: 'printer', onClick: () => openSheet(false) },
       ], ...menuAt(e, moreBtn));
+    }
+
+    /* ==================================================================
+       many codes, and sheets of codes on paper
+       ================================================================== */
+    const looksLikeLink = t => /^https?:\/\/\S+$/i.test(t) || /^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/?#]\S*)?$/i.test(t);
+    /** The list's lines, each with its code. -> { items: [{ line, n, q, caption, label }], cut } */
+    function listItems() {
+      const lines = S.list.split('\n').map(l => l.trim()).filter(Boolean);
+      const items = lines.slice(0, LIST_CODES_MAX).map((line, i) => {
+        const p = looksLikeLink(line) ? buildPayload('link', { url: line }) : buildPayload('text', { text: line });
+        return { line, n: i + 1, q: encodeQR(p.text, { level: S.level }), caption: S.listCaps ? line : '', label: line };
+      });
+      return { items, cut: Math.max(0, lines.length - LIST_CODES_MAX) };
+    }
+    function paintList() {
+      if (!S.listing) return;
+      const { items, cut } = listItems();
+      const good = items.filter(x => x.q.ok), bad = items.filter(x => !x.q.ok);
+      const dpr = window.devicePixelRatio || 1;
+      listGrid.replaceChildren(...items.map(x => {
+        if (!x.q.ok) return h('div.qr-grid__item.is-bad', { role: 'listitem' }, icon('alert'), h('small', { text: `Line ${x.n} is too long for a QR code` }));
+        const n = x.q.size + 2 * S.margin;
+        const per = Math.max(1, Math.floor((128 * dpr) / n));
+        const px = per * n;
+        const c = h('canvas.qr-grid__code', { role: 'img', 'aria-label': `Code ${x.n}: ${x.line}` });
+        c.width = px; c.height = px + captionBand(px, x.caption);
+        /* every tile the same width, whatever the code's version */
+        c.style.width = '128px'; c.style.height = `${(128 * c.height) / px}px`;
+        drawWithCaption(c.getContext('2d'), x.q, px, S.margin, S.fg, S.bg, x.caption);
+        return h('div.qr-grid__item', { role: 'listitem', title: x.line }, c);
+      }));
+      listSum.textContent = !items.length ? 'Type or paste a list: each line becomes its own code.'
+        : [`${good.length} code${good.length === 1 ? '' : 's'}`, bad.length ? `${bad.length} line${bad.length === 1 ? '' : 's'} too long (${bad.slice(0, 3).map(x => x.n).join(', ')})` : '',
+          cut ? `only the first ${LIST_CODES_MAX} lines are made into codes` : ''].filter(Boolean).join(' · ');
+      listZip.disabled = listPrint.disabled = !good.length;
+    }
+    async function downloadList() {
+      const good = listItems().items.filter(x => x.q.ok);
+      if (!good.length) return;
+      listZip.disabled = true;
+      try {
+        const Z = await import('../core/zip.js');
+        const safe = t => t.replace(/^https?:\/\//i, '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40).trim() || 'code';
+        const width = String(good[good.length - 1].n).length;
+        const items = good.map(x => ({
+          name: `${String(x.n).padStart(width, '0')} ${safe(x.line)}.png`, size: 0, date: new Date(),
+          read: () => new Promise((res, rej) => renderExport(x.q, x.caption).toBlob(b => (b ? res(b) : rej(new Error('The image couldn’t be made.'))), 'image/png')),
+        }));
+        const { blob } = await Z.makeZip(items);
+        if (S.dead) return;
+        download(blob, 'QR codes.zip');
+        notify({ app: APP, icon: 'download', title: 'Downloading QR codes.zip', message: `${good.length} PNG${good.length === 1 ? '' : 's'}, numbered in the order of the list.`, timeout: 4000 });
+      } catch (err) { if (!S.dead) fail('The ZIP couldn’t be made', err); }
+      finally { if (!S.dead) listZip.disabled = false; }
+    }
+    /** Choose codes for a sheet, then print it: the list's codes, or the one on screen and Recent. */
+    async function openSheet(fromList) {
+      const choices = fromList
+        ? listItems().items.filter(x => x.q.ok).map(x => ({ id: `l${x.n}`, label: x.line, make: () => ({ q: x.q, caption: x.line }) }))
+        : [
+          ...(S.result?.ok && !S.scanning && !S.listing ? [{ id: 'now', label: `On screen · ${KIND[S.kind].label}: ${S.payload.label || 'untitled'}`, make: () => ({ q: S.result, caption: S.caption.trim() || S.payload.label }) }] : []),
+          ...S.recent.map(r => ({ id: r.id, label: `${KIND[r.kind].label}: ${r.label || KIND[r.kind].label}`, wifi: r.kind === 'wifi', make: () => {
+            const p = buildPayload(r.kind, r.fields, {});
+            return { q: p.text ? encodeQR(p.text, { level: S.level }) : { ok: false }, caption: r.caption || r.label };
+          } })),
+        ];
+      if (!choices.length) { notify({ app: APP, icon: 'printer', title: 'Nothing to print yet', message: 'Make a code, or save one so it is in Recent.', timeout: 4000 }); return; }
+      const picked = new Set(choices.map(c => c.id));
+      const rows = h('div.qr-sheet__list', { dataset: { fk: 'qr-sheet-list' } }, choices.map(c => h('label.qr-check-row',
+        h('input', { type: 'checkbox', checked: true, dataset: { id: c.id }, onchange: e => { if (e.target.checked) picked.add(c.id); else picked.delete(c.id); } }),
+        h('span', { text: c.label }))));
+      const sizeSel = h('select.select.qr-select', { 'aria-label': 'How big each code prints', dataset: { fk: 'qr-sheet-size' } },
+        [['small', 'Small — 5 across'], ['medium', 'Medium — 3 across'], ['large', 'Large — 2 across']].map(([v, t]) => h('option', { value: v, text: t, selected: v === 'medium' })));
+      const capsIn = h('input', { type: 'checkbox', checked: true, dataset: { fk: 'qr-sheet-caps' } });
+      const wifiNote = choices.some(c => c.wifi) ? h('p.qr-hint', { text: 'A Wi-Fi code from Recent prints without its password, which is never saved. To print one with it, open the code, type the password and print the one on screen.' }) : null;
+      const ok = await confirm({
+        title: fromList ? 'Print the list’s codes' : 'Print a sheet of codes',
+        message: 'Choose the codes and how big they print. Each one keeps the colours and margin it has in Appearance.',
+        body: h('div.qr-sheet', rows, h('div.qr-field', h('span.qr-field__label', { text: 'Size' }), sizeSel), h('label.qr-check-row', capsIn, h('span', { text: 'Captions under the codes' })), wifiNote),
+        ok: 'Print',
+      });
+      if (!ok || S.dead) return;
+      const items = choices.filter(c => picked.has(c.id)).map(c => c.make()).filter(x => x.q && x.q.ok);
+      if (!items.length) { notify({ app: APP, icon: 'printer', title: 'Nothing was printed', message: 'No code was chosen.', timeout: 3000 }); return; }
+      printCodes(items, { size: sizeSel.value, captions: capsIn.checked });
+    }
+    let printEl = null;
+    const endPrint = () => { document.documentElement.classList.remove('qr-printing'); printEl?.remove(); printEl = null; window.removeEventListener('afterprint', endPrint); };
+    function printCodes(items, { size = 'medium', captions = true } = {}) {
+      endPrint();
+      const across = { small: 5, medium: 3, large: 2 }[size] || 3;
+      printEl = h('div.qr-print', { 'aria-hidden': 'true', dataset: { across: String(across) }, style: { '--across': String(across) } },
+        items.map(x => {
+          const cap = captions ? String(x.caption || '').trim() : '';
+          const n = x.q.size + 2 * S.margin;
+          const px = Math.max(n, Math.floor(720 / n) * n);
+          const c = document.createElement('canvas');
+          c.width = px; c.height = px + captionBand(px, cap);
+          drawWithCaption(c.getContext('2d'), x.q, px, S.margin, S.fg, S.bg, cap);
+          return h('figure.qr-print__item', h('img', { src: c.toDataURL('image/png'), alt: '' }));
+        }));
+      document.body.appendChild(printEl);
+      document.documentElement.classList.add('qr-printing');
+      window.addEventListener('afterprint', endPrint);
+      try { window.print(); } catch (err) { endPrint(); }
     }
 
     /* ==================================================================
@@ -1310,7 +1663,7 @@ defineApp({
       if (!S.payload.text) return;
       const fields = { ...S.fields[S.kind] };
       const sig = S.kind + JSON.stringify(fields);
-      S.recent = [{ id: rid(), kind: S.kind, label: S.payload.label || KIND[S.kind].label, fields, at: new Date().toISOString() },
+      S.recent = [{ id: rid(), kind: S.kind, label: S.payload.label || KIND[S.kind].label, fields, caption: S.caption, at: new Date().toISOString() },
         ...S.recent.filter(r => r.kind + JSON.stringify(r.fields) !== sig)].slice(0, RECENT_MAX);
       persistSoon();
       paintRecent();
@@ -1322,6 +1675,8 @@ defineApp({
       if (r.kind === 'wifi') S.wifiPass = '';
       S.kind = r.kind;
       S.showPass = false;
+      S.caption = r.caption || '';
+      capIn.value = S.caption;
       renderForm();
       paintKinds();
       persistSoon();
@@ -1402,13 +1757,16 @@ defineApp({
         if (!q?.ok) { closePresent(); return; }
         const dpr = window.devicePixelRatio || 1;
         const n = q.size + 2 * S.margin;
-        const avail = Math.min(ov.clientWidth - 48, ov.clientHeight - 80);
+        const cap = S.caption.trim();
+        const avail = Math.min(ov.clientWidth - 48, (ov.clientHeight - 80) / (cap ? 1.12 : 1));
         let px = Math.max(n, Math.floor(Math.max(120, avail) * dpr));
         const per = Math.floor(px / n);
         if (per >= 2) px = per * n;
-        pc.width = pc.height = px;
-        pc.style.width = pc.style.height = `${px / dpr}px`;
-        drawCode(pc.getContext('2d'), q, px, S.margin, S.fg, S.bg);
+        pc.width = px;
+        pc.height = px + captionBand(px, cap);
+        pc.style.width = `${px / dpr}px`;
+        pc.style.height = `${pc.height / dpr}px`;
+        drawWithCaption(pc.getContext('2d'), q, px, S.margin, S.fg, S.bg, cap);
       };
       const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(draw) : null;
       ro?.observe(ov);
@@ -1510,6 +1868,7 @@ defineApp({
       S.scanSeq++;
       if (S.scanDown) { try { S.scanDown(); } catch (e) { console.error(e); } S.scanDown = null; }
       closePresent(true);
+      endPrint();
       if (raf) cancelAnimationFrame(raf);
       clearInterval(tick);
       timers.forEach(t => clearTimeout(t));

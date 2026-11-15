@@ -29,9 +29,22 @@
 
    "Save as PNG" renders the harmony to a real canvas and writes
    it to Pictures via core/media.js, so it opens in Photos.
+
+   The colour science is js/core/colorsci.js (sources there):
+   · the nearest CSS named colour, by CIEDE2000;
+   · Shades: 10 tints and 10 shades, mixed in sRGB;
+   · Colour blind: the colours as protanopia, deuteranopia and
+     tritanopia (Machado et al. 2009) and achromatopsia might show
+     them — a guide, not anyone's eyes;
+   · Contrast: when text fails WCAG AA, the nearest text colour that
+     passes (checked as the hex it rounds to);
+   · saved swatches in and out: paste or open a list of hex codes (or
+     a .gpl), copy them as CSS variables or JSON, save a GIMP .gpl
+     palette to Documents.
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import { save as saveMedia } from '../core/media.js';
+import * as C from '../core/colorsci.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-palette-css')) {
   const l = document.createElement('link');
@@ -118,15 +131,8 @@ function parseHex(str) {
 }
 const isHex = s => !!parseHex(s);
 
-/* WCAG 2.1 relative luminance + contrast ratio */
-function luminance({ r, g, b }) {
-  const f = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
-  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-}
-function contrastRatio(a, b) {
-  const l1 = luminance(a), l2 = luminance(b);
-  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
-}
+/* WCAG 2.1 contrast ratio (js/core/colorsci.js) */
+const contrastRatio = C.contrast;
 
 const HARMONIES = {
   complementary: { label: 'Complementary', offs: [0, 180] },
@@ -145,8 +151,9 @@ defineApp({
   g1: '#9a7dff', g2: '#4d27cf',
   category: 'Utilities',
   keywords: ['color', 'colour', 'picker', 'hex', 'rgb', 'hsl', 'palette', 'swatch',
-    'gradient', 'contrast', 'wcag', 'harmony', 'design', 'eyedropper', 'hue'],
-  desc: 'Colour picker, harmonies, gradients and WCAG contrast — all offline',
+    'gradient', 'contrast', 'wcag', 'harmony', 'design', 'eyedropper', 'hue',
+    'colour blind', 'color blind', 'protanopia', 'deuteranopia', 'tints', 'shades', 'named colour', 'css variables', 'gpl'],
+  desc: 'Colour picker, harmonies, shades, gradients, WCAG contrast and colour-blind previews — all offline',
   singleton: true,
   win: { w: 800, h: 660, minW: 360, minH: 480 },
 
@@ -237,6 +244,19 @@ defineApp({
     }, icon('scan'), h('span', { text: 'Pick from screen' }));
     function eyeSay(msg) { eyeNote.textContent = msg; eyeNote.hidden = !msg; }
     const bigHex = h('div.pal__bighex.mono');
+    /* the nearest CSS named colour (CIEDE2000); a click copies its name */
+    const namedSw = h('span.pal__namedsw');
+    const namedTx = h('span.pal__namedtx');
+    const namedEl = h('button.pal__named.tip', { type: 'button', 'data-tip': 'Copy the name', onclick: e => copyText(namedEl.dataset.name, e.currentTarget) }, namedSw, namedTx);
+    function paintNamed() {
+      const n = C.nearestNamed(curRgb());
+      namedEl.dataset.name = n.name;
+      namedEl.dataset.de = n.de.toFixed(2);
+      namedSw.style.background = n.hex;
+      const also = n.aliases.length ? ` (or ${n.aliases.join(', ')})` : '';
+      namedTx.textContent = n.de === 0 ? `Named colour: ${n.name}${also}` : `Nearest named colour: ${n.name}${also} · ΔE ${n.de < 0.95 ? n.de.toFixed(1) : Math.round(n.de)}`;
+      namedEl.setAttribute('aria-label', `${namedTx.textContent}, ${n.hex}. Copy the name`);
+    }
 
     /* fields */
     const hexInput = h('input.pal__in.pal__in--hex.mono', { type: 'text', spellcheck: 'false', 'aria-label': 'Hex value', inputmode: 'latin' });
@@ -273,6 +293,59 @@ defineApp({
     );
 
     const savedStrip = h('div.pal__strip', { 'aria-label': 'Saved swatches' });
+
+    /* ---- saved swatches in and out ---- */
+    function copyList(list, kind, btn, prefix = 'color') {
+      if (!list.length) { notify({ app: 'Static Color', icon: 'palette', title: 'Nothing to copy', message: 'There are no colours here yet.', timeout: 2400 }); return; }
+      copyText(kind === 'css' ? C.toCssVars(list, prefix) : C.toJson(list), btn);
+    }
+    const importIn = h('textarea.pal__importin', { rows: '3', spellcheck: 'false', 'aria-label': 'Hex codes to import',
+      placeholder: 'Paste hex codes: #FF456D, 3b9eff #0f0 … or a GIMP palette' });
+    const importNote = h('small.pal__importnote', { role: 'status' });
+    const importFile = h('input', { type: 'file', accept: '.txt,.gpl,.css,.json,.hex,.csv,text/plain', hidden: true,
+      onchange: async () => {
+        const f = importFile.files && importFile.files[0];
+        importFile.value = '';
+        if (!f) return;
+        if (f.size > 1024 * 1024) { importNote.textContent = 'That file is over 1 MB, so it wasn’t read.'; return; }
+        let text = '';
+        try { text = await f.text(); } catch (e) { importNote.textContent = 'That file couldn’t be read.'; return; }
+        if (!S.dead) importColors(text, f.name);
+      } });
+    const importBox = h('div.pal__import', { hidden: true },
+      importIn,
+      h('div.pal__row2',
+        h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { act: 'import-add' }, onclick: () => importColors(importIn.value) }, icon('plus'), h('span', { text: 'Add to swatches' })),
+        h('button.btn.btn--sm', { type: 'button', onclick: () => importFile.click() }, icon('upload'), h('span', { text: 'Open a file…' })),
+        importFile),
+      importNote);
+    function toggleImport(btn) {
+      importBox.hidden = !importBox.hidden;
+      btn.setAttribute('aria-expanded', String(!importBox.hidden));
+      if (!importBox.hidden) importIn.focus();
+    }
+    function importColors(text, from) {
+      const list = C.parseList(text);
+      if (!list.length) { importNote.textContent = `No hex codes found${from ? ` in ${from}` : ''}. Use forms like #FF456D, 3B9EFF or #0F0.`; return; }
+      const fresh = list.filter(hx => !S.swatches.includes(hx));
+      addSwatches(fresh.slice().reverse());              /* the first listed ends up first */
+      const kept = fresh.filter(hx => S.swatches.includes(hx)).length;
+      const dup = list.length - fresh.length;
+      importNote.textContent = `Added ${kept} colour${kept === 1 ? '' : 's'}${dup ? ` · ${dup} already saved` : ''}${kept < fresh.length ? ` · ${fresh.length - kept} left out: 60 swatches is the most kept` : ''}${from ? ` (from ${from})` : ''}.`;
+      if (!from) importIn.value = '';
+    }
+    /* a GIMP palette (.gpl) of the saved swatches, saved in Documents */
+    function exportGpl() {
+      if (!S.swatches.length) { notify({ app: 'Static Color', icon: 'palette', title: 'No swatches to save', message: 'Save a colour first.', timeout: 2400 }); return; }
+      const { vfs } = api;
+      const dir = `${vfs.HOME}/Documents`;
+      if (!vfs.node(dir)) vfs.mkdir(dir);
+      let path = `${dir}/Static Color swatches.gpl`, i = 2;
+      while (vfs.node(path)) path = `${dir}/Static Color swatches ${i++}.gpl`;
+      if (!vfs.touch(path, C.toGpl(S.swatches, 'Static Color swatches'))) { notify({ app: 'Static Color', icon: 'alert', title: 'Could not save', message: 'Documents can’t be written to.' }); return; }
+      notify({ app: 'Static Color', icon: 'download', title: 'Palette saved', message: `${S.swatches.length} colour${S.swatches.length === 1 ? '' : 's'} in ${path} — GIMP, Inkscape and Krita open .gpl files`, timeout: 7000,
+        actions: [{ label: 'Open Files', onClick: () => api.openApp('files', { path: dir }) }] });
+    }
     const pickCol = h('div.pal__pick',
       svArea,
       h('div.pal__sliders',
@@ -282,19 +355,27 @@ defineApp({
           alphaNum, h('span.pal__aunit', { text: '%' }))),
       h('div.pal__preview',
         h('div.pal__bigwrap', bigSwatch),
-        h('div.pal__pinfo', bigHex, eyeNote, h('div.pal__ptools', eyeBtn,
+        h('div.pal__pinfo', bigHex, namedEl, eyeNote, h('div.pal__ptools', eyeBtn,
           h('button.btn.btn--sm.tip', { type: 'button', 'data-tip': 'Save to swatches', onclick: addCurrentSwatch }, icon('plus'), h('span', { text: 'Save' }))))),
       fields,
       h('div.pal__saved',
-        h('div.pal__savedhead', h('span.label', { text: 'Saved swatches' })),
+        h('div.pal__savedhead', h('span.label', { text: 'Saved swatches' }),
+          h('div.pal__sacts',
+            h('button.btn.btn--sm.btn--ghost', { type: 'button', 'aria-expanded': 'false', 'aria-label': 'Import a list of hex codes', dataset: { act: 'import' }, onclick: e => toggleImport(e.currentTarget) }, icon('upload'), h('span', { text: 'Import' })),
+            h('button.btn.btn--sm.btn--ghost', { type: 'button', 'aria-label': 'Copy the saved swatches as CSS variables', dataset: { act: 'css' }, onclick: e => copyList(S.swatches, 'css', e.currentTarget, 'swatch') }, h('span', { text: 'CSS' })),
+            h('button.btn.btn--sm.btn--ghost', { type: 'button', 'aria-label': 'Copy the saved swatches as JSON', dataset: { act: 'json' }, onclick: e => copyList(S.swatches, 'json', e.currentTarget) }, h('span', { text: 'JSON' })),
+            h('button.btn.btn--sm.btn--ghost', { type: 'button', 'aria-label': 'Save the swatches as a GIMP palette (.gpl) in Documents', dataset: { act: 'gpl' }, onclick: exportGpl }, icon('download'), h('span', { text: '.gpl' })))),
+        importBox,
         savedStrip),
     );
 
     /* ============================ tools (tabs) ============================ */
     const TABS = [
       { id: 'harmony', label: 'Harmony', icon: 'sparkles' },
+      { id: 'shades', label: 'Shades', icon: 'grid' },
       { id: 'gradient', label: 'Gradient', icon: 'layers' },
       { id: 'contrast', label: 'Contrast', icon: 'eye' },
+      { id: 'vision', label: 'Colour blind', icon: 'eye-off' },
       { id: 'picture', label: 'From picture', icon: 'image' },
     ];
     const tabBar = h('div.pal__tabs', { role: 'tablist', 'aria-label': 'Tools' });
@@ -356,7 +437,9 @@ defineApp({
           chooser, grid,
           h('div.pal__row2',
             h('button.btn.btn--sm', { type: 'button', onclick: () => { addSwatches(colors); } }, icon('bookmark'), h('span', { text: 'Save all' })),
-            h('button.btn.btn--sm', { type: 'button', onclick: () => savePng(colors) }, icon('image'), h('span', { text: 'Save as PNG' })))),
+            h('button.btn.btn--sm', { type: 'button', onclick: () => savePng(colors) }, icon('image'), h('span', { text: 'Save as PNG' })),
+            h('button.btn.btn--sm', { type: 'button', dataset: { act: 'css' }, onclick: e => copyList(colors, 'css', e.currentTarget, S.harmony) }, h('span', { text: 'Copy as CSS' })),
+            h('button.btn.btn--sm', { type: 'button', dataset: { act: 'json' }, onclick: e => copyList(colors, 'json', e.currentTarget) }, h('span', { text: 'Copy as JSON' })))),
       );
     }
 
@@ -455,8 +538,21 @@ defineApp({
             h('div.pal__cratio.mono', { text: rtxt }),
             h('button.ibtn.tip', { type: 'button', 'data-tip': 'Swap colours', 'aria-label': 'Swap foreground and background', onclick: () => { const t = S.contrast.fg; S.contrast.fg = S.contrast.bg; S.contrast.bg = t; renderContrast(); schedulePersist(); } }, icon('repeat'))),
           h('div.pal__cslots', slot('fg', 'Text'), slot('bg', 'Background')),
-          h('div.pal__checks', ...checkEls)),
+          h('div.pal__checks', ...checkEls),
+          readableFix(fg, bg)),
       );
+    }
+    /* When the text fails AA, the nearest text colour that passes: the same hue,
+       lightness moved as little as it takes, and checked as the hex it rounds to. */
+    function readableFix(fg, bg) {
+      const fix = C.nearestReadable(fg, bg);
+      if (!fix) return null;
+      return h('div.pal__fix', { dataset: { hex: fix.hex, ratio: fix.ratio.toFixed(2) } },
+        h('span.pal__cswatch', { style: { background: fix.hex } }),
+        h('div.pal__fixtx',
+          h('b', { text: `Nearest readable text colour: ${fix.hex}` }),
+          h('small', { text: `${fix.ratio.toFixed(2)}:1 on this background — passes AA for normal text. ${C.toHsl(fg).s === 0 ? `A ${fix.lighter ? 'lighter' : 'darker'} grey` : `Same hue, ${fix.lighter ? 'lighter' : 'darker'}`}.` })),
+        h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { act: 'use-readable' }, onclick: () => { S.contrast.fg = fix.hex; renderContrast(); schedulePersist(); } }, h('span', { text: 'Use it' })));
     }
 
     /* ---------------- from a picture (#114) ---------------- */
@@ -578,9 +674,60 @@ defineApp({
 
     function renderPanel() {
       if (S.tab === 'harmony') renderHarmony();
+      else if (S.tab === 'shades') renderShades();
       else if (S.tab === 'gradient') renderGradient();
+      else if (S.tab === 'vision') renderVision();
       else if (S.tab === 'picture') renderPicture();
       else renderContrast();
+    }
+
+    /* ---------------- shades and tints ---------------- */
+    function renderShades() {
+      clear(panel);
+      const base = curRgb();
+      const row = (title, steps, toward, fk) => {
+        const list = steps.map(s => C.hexOf(s.rgb));
+        return h('div.pal__shrow', { dataset: { fk } },
+          h('div.pal__blockhead', h('span.label', { text: title }), h('span.pal__hint', { text: `0% to 90% ${toward}` })),
+          h('div.pal__shades', ...steps.map((s, i) => h('button.pal__shcard', {
+            type: 'button', title: `Copy ${list[i]}`, 'aria-label': `${s.pct}% ${toward}: ${list[i]}. Copy it`, dataset: { hex: list[i], pct: String(s.pct) },
+            onclick: e => copyText(list[i], e.currentTarget),
+          }, h('span.pal__shchip', { style: { background: list[i] } }), h('span.pal__shpct', { text: `${s.pct}%` }), h('span.pal__shhex.mono', { text: list[i] })))),
+          h('div.pal__row2',
+            h('button.btn.btn--sm', { type: 'button', onclick: () => addSwatches(list.slice().reverse()) }, icon('bookmark'), h('span', { text: 'Save all' })),
+            h('button.btn.btn--sm', { type: 'button', dataset: { act: 'css' }, onclick: e => copyList(list, 'css', e.currentTarget, fk) }, h('span', { text: 'Copy as CSS' })),
+            h('button.btn.btn--sm', { type: 'button', dataset: { act: 'json' }, onclick: e => copyList(list, 'json', e.currentTarget) }, h('span', { text: 'Copy as JSON' }))));
+      };
+      panel.append(h('div.pal__block',
+        h('div.pal__blockhead', h('span.h-sec', { text: 'Shades and tints' }), h('span.pal__hint', { text: 'Mixed in sRGB, as CSS color-mix() does' })),
+        row('Tints', C.tints(base), 'white', 'tint'),
+        row('Shades', C.shades(base), 'black', 'shade')));
+    }
+
+    /* ---------------- colour-blind preview ---------------- */
+    function renderVision() {
+      clear(panel);
+      const colors = [curHexSolid(), ...harmonyColors().filter(hx => hx !== curHexSolid())].slice(0, 6);
+      const saved = S.swatches.slice(0, 10);
+      const fg = parseHex(S.contrast.fg), bg = parseHex(S.contrast.bg);
+      const strip = (list, kind) => h('div.pal__vstrip', ...list.map(hx => {
+        const sim = C.hexOf(C.simulate(parseHex(hx), kind));
+        return h('span.pal__vsw', { style: { background: sim }, title: `${hx} looks like ${sim}`, dataset: { hex: hx, sim } });
+      }));
+      const rows = C.VISION.map(([kind, name, who]) => {
+        const f = C.simulate(fg, kind), b = C.simulate(bg, kind);
+        const ratio = contrastRatio(f, b);
+        return h('div.pal__vrow', { dataset: { kind } },
+          h('div.pal__vname', h('b', { text: name }), who ? h('small', { text: who }) : null),
+          strip(colors, kind),
+          saved.length ? strip(saved, kind) : null,
+          h('div.pal__vtext', { style: { background: C.hexOf(b), color: C.hexOf(f) }, dataset: { ratio: ratio.toFixed(2) } },
+            h('b', { text: 'Aa' }), h('small', { text: `${ratio.toFixed(2)}:1${ratio < C.AA ? ' · below AA' : ''}` })));
+      });
+      panel.append(h('div.pal__block',
+        h('div.pal__blockhead', h('span.h-sec', { text: 'Colour blind' }), h('span.pal__hint', { text: 'The current colour and its harmony, your saved swatches, and the Contrast tab’s text' })),
+        ...rows,
+        h('small.pal__hint', { text: 'Simulated with the matrices of Machado, Oliveira and Fernandes (2009) at full strength; achromatopsia as brightness alone. A guide to what may be hard to tell apart, not how any one person sees.' })));
     }
 
     /* ---------------- saved swatches ---------------- */
@@ -595,6 +742,7 @@ defineApp({
       if (added) { renderStrip(); persist(); }
     }
     function renderStrip() {
+      if (S.tab === 'vision') renderVision();
       clear(savedStrip);
       if (!S.swatches.length) {
         savedStrip.appendChild(h('div.pal__stripempty', { text: 'No saved swatches yet — pick a colour and press Save.' }));
@@ -694,8 +842,11 @@ defineApp({
       if (skip !== sIn) sIn.value = String(round(hsl.s * 100));
       if (skip !== lIn) lIn.value = String(round(hsl.l * 100));
 
-      /* harmony depends on the current colour */
+      paintNamed();
+      /* harmony, shades and the colour-blind preview depend on the current colour */
       if (S.tab === 'harmony') renderHarmony();
+      else if (S.tab === 'shades') renderShades();
+      else if (S.tab === 'vision') renderVision();
     }
 
     /* ---------------- picker interactions ---------------- */

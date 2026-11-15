@@ -23,6 +23,7 @@
      filmstrip(url, dur, n, th)     -> canvas strip of n frames (or null)
      drawCaption(g, W, H, cap)      -> paints cap {text,pos} at the size W×H
      exportCut({url,a,b,cap,...})   -> { blob, ms, w, h, mime, audio }
+     grabFrames({url,a,b,fps,maxW}) -> still frames of the cut, for a GIF
      withDuration(blob, ms)         -> the WebM with its length in the header
      parseClock('1:02.5')           -> 62.5   ·   clockText(62.5, true) -> '1:02.5'
    ============================================================ */
@@ -326,6 +327,45 @@ export async function exportCut({ url, a, b, cap = null, fps = 30, maxSide = 192
   }
 }
 
+/**
+ * Still frames from [a, b) at `fps`, each scaled to at most `maxW` wide with the
+ * caption burnt in while it shows — what a GIF is made from (Static Recorder).
+ * The video is stepped through by seeking, not played, so it takes about a
+ * tenth of a second a frame. -> { width, height, frames: [{ data, delay }] }
+ */
+export async function grabFrames({ url, a, b, fps = 10, maxW = 480, cap = null, onProgress, signal }) {
+  if (!(b - a > 0.05)) throw new CutError('empty', 'The cut is empty — move the end after the start.');
+  const v = hiddenVideo(url);
+  v.muted = true;
+  try {
+    await once(v, 'loadedmetadata', 15000, signal);
+    if (!v.videoWidth || !v.videoHeight) throw new CutError('novideo', 'There’s no picture in this file to make a GIF from.');
+    if (v.readyState < 2) await once(v, 'loadeddata', 15000, signal);
+    const s = Math.min(1, maxW / v.videoWidth);
+    const W = Math.max(2, Math.round(v.videoWidth * s)), H = Math.max(2, Math.round(v.videoHeight * s));
+    const cv = document.createElement('canvas');
+    cv.width = W;
+    cv.height = H;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    const n = Math.max(1, Math.round((b - a) * fps));
+    const frames = [];
+    for (let i = 0; i < n; i++) {
+      if (signal?.aborted) throw new CutError('abort', 'Cancelled.');
+      const t = clamp(a + i / fps, a, Math.max(a, b - 0.02));
+      if (Math.abs(v.currentTime - t) > 0.001) {
+        const seeked = once(v, 'seeked', 15000, signal);
+        v.currentTime = t;
+        await seeked;
+      }
+      g.drawImage(v, 0, 0, W, H);
+      if (captionShowing(cap, t)) drawCaption(g, W, H, cap);
+      frames.push({ data: g.getImageData(0, 0, W, H).data, delay: Math.round(1000 / fps) });
+      onProgress?.((i + 1) / n);
+    }
+    return { width: W, height: H, frames };
+  } finally { dropVideo(v); }
+}
+
 /* ---------------- WebM: write the length into the header ----------------
    A live MediaRecorder writes an unknown-size Segment and no Duration in
    Info, so players show "Infinity" and can't seek. Only the head of the
@@ -406,4 +446,4 @@ export async function withDuration(blob, ms) {
   return blob;
 }
 
-export default { videoRecorderType, canCut, probe, filmstrip, drawCaption, captionBox, captionShowing, exportCut, withDuration, parseClock, clockText, CutError };
+export default { videoRecorderType, canCut, probe, filmstrip, grabFrames, drawCaption, captionBox, captionShowing, exportCut, withDuration, parseClock, clockText, CutError };

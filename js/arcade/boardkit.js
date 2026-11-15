@@ -69,6 +69,27 @@ export const KIT_CSS = `
 .arx-bg__promo .arc-ov__card{width:min(360px,100%)}
 .arx-bg__promo .arc-ov__row button{display:inline-flex;flex-direction:column;align-items:center;gap:4px;height:auto;padding:8px 10px 7px;min-width:64px}
 .arx-bg__promo canvas{width:44px;height:44px}
+.arx-bg__clock{flex:0 0 auto;min-width:52px;padding:4px 7px;border-radius:8px;text-align:center;font:700 var(--fs-13,13px)/1 var(--mono,ui-monospace,monospace);font-variant-numeric:tabular-nums;
+  color:var(--ink-1);background:var(--fill-0);border:1px solid var(--line-0)}
+.arx-bg__clock[hidden]{display:none}
+.arx-bg__pl.is-turn .arx-bg__clock{color:var(--ink-0);background:hsl(var(--h) 60% 40% / .3);border-color:hsl(var(--h) 90% 66% / .5)}
+.arx-bg__clock.is-low{color:#ffd6dc;background:rgba(255,80,100,.22);border-color:rgba(255,110,130,.6)}
+.arx-bg__rec{font-size:var(--fs-11,11px);color:var(--ink-3);padding:0 2px;font-variant-numeric:tabular-nums}
+.arx-bg__rec b{color:var(--ink-1);font-weight:700}
+.arx-bg__dlg{position:absolute;inset:0;z-index:4;display:grid;place-items:center;padding:12px;background:rgba(6,5,10,.6);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+.arx-bg__dlg .arc-ov__card{width:min(380px,100%);max-height:100%;overflow:auto;align-items:stretch;text-align:left}
+.arx-bg__dlg h3{margin:0 0 4px;font-size:var(--fs-15,15px);color:var(--ink-0)}
+.arx-bg__dlg .arx-bg__row--opt{display:flex}
+.arx-bg__themes{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:6px}
+.arx-bg__theme{display:flex;flex-direction:column;align-items:center;gap:5px;padding:7px 4px 6px;border-radius:10px;border:1px solid var(--line-1);background:var(--fill-0);
+  color:var(--ink-2);font:600 var(--fs-11,11px)/1.1 var(--font,system-ui);cursor:pointer}
+.arx-bg__theme[aria-pressed="true"]{color:var(--ink-0);border-color:hsl(var(--h) 90% 66% / .8);background:var(--fill-2)}
+.arx-bg__theme:focus-visible,.arx-bg__chk input:focus-visible{outline:2px solid hsl(var(--h) 100% 72%);outline-offset:2px}
+.arx-bg__sample{width:40px;height:26px;border-radius:5px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}
+.arx-bg__chk{display:flex;align-items:flex-start;gap:9px;padding:6px 2px;font-size:var(--fs-13,13px);color:var(--ink-1);cursor:pointer}
+.arx-bg__chk input{margin:2px 0 0;width:16px;height:16px;accent-color:hsl(var(--h) 90% 60%)}
+.arx-bg__chk small{display:block;color:var(--ink-3);font-size:var(--fs-11,11px);margin-top:2px}
+.arx-bg__rules{margin:0;padding:8px 10px;border-radius:var(--r-md,11px);background:var(--fill-0);border:1px solid var(--line-0);font-size:var(--fs-11,11px);line-height:1.5;color:var(--ink-2)}
 @container (max-aspect-ratio: 11/10){
   .arx-bg{flex-direction:column;padding:var(--sp-3,8px);gap:var(--sp-3,8px)}
   .arx-bg__side{flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:6px}
@@ -197,17 +218,126 @@ export function playerStrip(color, name, note) {
   const sw = h('span.arx-bg__sw', { style: { background: color } });
   const nm = h('b', { text: name });
   const sub = h('small', { text: note || '' });
-  const el = h('div.arx-bg__pl', sw, h('span.arx-bg__who', nm, sub), h('i.arx-bg__think', { 'aria-hidden': 'true' }));
+  /* a game clock, when the game has one (clock: '4:59' shows it, null hides it) */
+  const clk = h('span.arx-bg__clock', { hidden: true, role: 'timer', 'aria-label': 'Time left' });
+  const el = h('div.arx-bg__pl', sw, h('span.arx-bg__who', nm, sub), h('i.arx-bg__think', { 'aria-hidden': 'true' }), clk);
   return {
     el,
-    set({ name: n, note: s, color: c, turn, thinking } = {}) {
+    set({ name: n, note: s, color: c, turn, thinking, clock, low } = {}) {
       if (n !== undefined) nm.textContent = n;
       if (s !== undefined) sub.textContent = s;
       if (c !== undefined) sw.style.background = c;
       if (turn !== undefined) el.classList.toggle('is-turn', !!turn);
       if (thinking !== undefined) el.classList.toggle('is-thinking', !!thinking);
+      if (clock !== undefined) { clk.hidden = clock === null; if (clock !== null && clk.textContent !== clock) clk.textContent = clock; }
+      if (low !== undefined) clk.classList.toggle('is-low', !!low);
     },
   };
+}
+
+/* ---------------------------- against the computer ---------------------------- */
+/* "Your record at Medium: 3 won · 1 lost · 0 drawn" — what records.js keeps
+   from games really finished on this device (the shell writes it from
+   onEnd({ vs })). Nothing is shown before the first game at a level. */
+export function recordLine() {
+  const el = h('div.arx-bg__rec', { dataset: { k: 'vs' } });
+  return {
+    el,
+    set(rec, label) {
+      if (!rec || !(rec.w + rec.l + rec.d)) { el.replaceChildren(h('span', { text: `No games finished against ${label} yet.` })); el.dataset.n = '0'; return; }
+      el.dataset.n = String(rec.w + rec.l + rec.d);
+      el.replaceChildren(h('span', { text: `Your record against ${label}: ` }),
+        h('b', { text: `${rec.w} won` }), ' · ', h('b', { text: `${rec.l} lost` }), ' · ', h('b', { text: `${rec.d} drawn` }));
+    },
+  };
+}
+
+/* ---------------------------- board options ---------------------------- */
+/* The look of a board game's board: a theme (each game draws its own
+   colours for these four), coordinates, and switches of the game's own.
+   The ids are shared so a theme reads the same in every game. */
+export const BOARD_THEMES = [
+  { id: 'arcade', label: 'Arcade' },
+  { id: 'wood', label: 'Wood' },
+  { id: 'paper', label: 'Paper' },
+  { id: 'contrast', label: 'High contrast' },
+];
+export const themeId = v => (BOARD_THEMES.some(t => t.id === v) ? v : 'arcade');
+
+/**
+ * The Board button and its card over the board.
+ *   boardOptions(host, {
+ *     samples: { [themeId]: [colourA, colourB] },   a small two-colour swatch per theme
+ *     coords: true                                   offer the Coordinates switch
+ *     toggles: [{ id, label, note? }]                switches of the game's own
+ *     get() -> { theme, coords, [toggle id]: bool }  the current choices
+ *     set(key, value)                                the game saves and redraws
+ *     rules?: string                                 the rules in play, said plainly
+ *     refocus()
+ *   }) -> { button, open(), close(), isOpen() }
+ * Keys pressed in the card stay in it (the board does not move under it);
+ * Esc closes it.
+ */
+/* While a card is open over a board, Esc closes it wherever the focus is
+   (it may not have reached the card yet); nothing else sees that Esc. */
+export function escCloser(host, close) {
+  const onEsc = e => {
+    if (e.key !== 'Escape' || !host.isConnected) return;
+    const win = host.closest('.win');
+    if (win && !win.classList.contains('is-active')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  };
+  window.addEventListener('keydown', onEsc, true);
+  return () => window.removeEventListener('keydown', onEsc, true);
+}
+
+export function boardOptions(host, o) {
+  let ov = null, offEsc = null;
+  const close = () => { if (!ov) return; offEsc?.(); offEsc = null; ov.remove(); ov = null; btn.setAttribute('aria-expanded', 'false'); o.refocus?.(); };
+  function open() {
+    if (ov) { close(); return; }
+    const cur = o.get();
+    const themeBtns = BOARD_THEMES.map(t => {
+      const [a, b] = o.samples?.[t.id] || ['#444', '#222'];
+      return h('button.arx-bg__theme', { type: 'button', dataset: { theme: t.id }, 'aria-pressed': String(cur.theme === t.id), onclick: () => {
+        o.set('theme', t.id);
+        themeBtns.forEach(x => x.setAttribute('aria-pressed', String(x.dataset.theme === t.id)));
+      } }, h('span.arx-bg__sample', { 'aria-hidden': 'true', style: { background: `linear-gradient(135deg, ${a} 0 50%, ${b} 50% 100%)` } }), h('span', { text: t.label }));
+    });
+    const chk = (id, label, note) => h('label.arx-bg__chk', h('input', { type: 'checkbox', dataset: { opt: id }, checked: !!cur[id], onchange: e => o.set(id, e.target.checked) }),
+      h('span', h('span', { text: label }), note ? h('small', { text: note }) : null));
+    const done = h('button.arc-ov__btn.is-primary', { type: 'button', onclick: close }, h('span', { text: 'Done' }));
+    ov = h('div.arx-bg__dlg', {
+      role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Board options',
+      onpointerdown: e => { if (e.target === ov) close(); },
+      onkeydown: e => {
+        e.stopPropagation();
+        if (e.key === 'Escape') { e.preventDefault(); close(); }
+      },
+    }, h('div.arc-ov__card',
+      h('h3', { text: 'Board' }),
+      h('div.arx-bg__themes', { role: 'group', 'aria-label': 'Theme' }, themeBtns),
+      o.coords ? chk('coords', 'Coordinates', 'Letters and numbers along the edge') : null,
+      (o.toggles || []).map(t => chk(t.id, t.label, t.note)),
+      o.rules ? h('p.arx-bg__rules', { text: o.rules }) : null,
+      h('div.arc-ov__row', done)));
+    host.appendChild(ov);
+    offEsc = escCloser(host, close);
+    btn.setAttribute('aria-expanded', 'true');
+    setTimeout(() => { if (ov) (ov.querySelector('[aria-pressed="true"]') || done).focus({ preventScroll: true }); }, 30);
+  }
+  const btn = button('Board', 'palette', open, { title: 'Theme, coordinates and what the board shows', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' });
+  return { button: btn, open, close, isOpen: () => !!ov };
+}
+
+/* A game's look, kept in its own store key next to its other choices:
+   lookOf(prefs, extra) -> { theme, coords, …extra defaults } */
+export function lookOf(p, defaults = {}) {
+  const out = { theme: themeId(p?.theme), coords: typeof p?.coords === 'boolean' ? p.coords : !!defaults.coords };
+  for (const [k, v] of Object.entries(defaults)) if (k !== 'coords') out[k] = typeof p?.[k] === 'boolean' ? p[k] : v;
+  return out;
 }
 
 /* a labelled segmented control: options [{ id, label, title }] */

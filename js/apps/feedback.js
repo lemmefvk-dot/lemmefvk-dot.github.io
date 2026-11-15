@@ -23,9 +23,23 @@
 
    Store: portal.feedback = { last, day, count, sent: [...10], anon }
    (merged with what other tabs saved — see readLog)
+          portal.feedbackDraft = { type, app, title, details }
+   (a half-written report, kept on this device until it is sent, so a
+   reload does not lose it)
+
+   Which app: a picker, so a bug says where it happened. "Report a
+   problem" in any window's menu (js/shell/a11y.js) opens this with that
+   app picked; About This Static opens it with diagnostics ticked. Either
+   way the person reads it and presses Send — nothing is ever sent for them.
+
+   Diagnostics are opt-in: the box is off until ticked, shows the exact
+   text that would go in the message (js/core/sysinfo.js: version, browser,
+   screen, open app ids, error count — no name, files or settings), and is
+   sent only with the note, by the same Send button.
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import * as profiles from '../core/profiles.js';
+import * as SI from '../core/sysinfo.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-feedback-css')) {
   const l = document.createElement('link');
@@ -117,8 +131,21 @@ const fieldText = s => clip(defuse(oneLine(s)), D.fieldValue);
 const embedSize = e => e.title.length + e.description.length + e.footer.text.length
   + e.fields.reduce((n, f) => n + f.name.length + f.value.length, 0);
 
+/* The diagnostics box rides in one embed field (1024 characters, fences
+   included). This is the one place that makes the text safe and fits it, so
+   the preview and the message hold exactly the same characters. */
+export const DIAG_MAX = 900;
+export function fitDiag(text) {
+  const t = defuse(block(text)).replace(/```/g, "'''");
+  if (!t) return '';
+  if (t.length <= DIAG_MAX) return t;
+  const cut = t.slice(0, DIAG_MAX - 1);
+  const nl = cut.lastIndexOf('\n');
+  return `${(nl > DIAG_MAX / 2 ? cut.slice(0, nl) : cut)}…`;
+}
+
 /** The exact webhook body. Pure, so it can be checked on its own. */
-export function buildPayload({ type, title, details, name, drive, build, now = new Date() }) {
+export function buildPayload({ type, title, details, name, drive, build, app, diag, now = new Date() }) {
   const t = typeOf(type);
   const fields = [
     { name: 'Type', value: t.label, inline: true },
@@ -127,6 +154,11 @@ export function buildPayload({ type, title, details, name, drive, build, now = n
   ];
   const b = fieldText(build);
   if (b) fields.push({ name: 'Build', value: b, inline: true });
+  const a = fieldText(app);
+  if (a) fields.push({ name: 'App', value: a, inline: true });
+  /* diagnostics: the very text the preview showed, in a code block */
+  const dg = fitDiag(diag);
+  if (dg) fields.push({ name: 'Diagnostics', value: `\`\`\`\n${dg}\n\`\`\``, inline: false });
   const embed = {
     title: clip(`${t.emoji} ${defuse(oneLine(title))}`, D.title),
     description: clip(defuse(block(details)), D.description),
@@ -208,7 +240,8 @@ function buildInfo() {
 
 /* survives closing the window (not a reload), so a closed window never
    costs anyone their text */
-const draft = { type: 'idea', title: '', details: '', name: '', nameTyped: false };
+const draft = { type: 'idea', app: '', diag: false, title: '', details: '', name: '', nameTyped: false, loaded: false };
+const DRAFT_KEY = 'portal.feedbackDraft';
 /* A send outlives its window. These keep a reopened window honest: it
    cannot start a second send, it hears how the first one ended, and it
    still respects a retry-after that Discord asked for. */
@@ -265,14 +298,14 @@ defineApp({
   win: { w: 460, h: 600, minW: 360, minH: 440 },
 
   mount(ctx) {
-    const { root, api } = ctx;
+    const { root, api, win, opts } = ctx;
     const { h, icon, clear, store, fmt } = api;
     const uid = fmt?.uid || (p => `${p}-${Math.random().toString(36).slice(2, 8)}`);
     const modLabel = fmt?.modLabel || 'Ctrl';
     const ago = fmt?.fmtAgo || (iso => new Date(iso).toLocaleString());
 
     const S = { busy: false, dead: false, gate: { ok: true }, painted: false };
-    const id = { title: uid('fbt'), details: uid('fbd'), name: uid('fbn'), type: uid('fbk'),
+    const id = { app: uid('fba'), diag: uid('fbg'), title: uid('fbt'), details: uid('fbd'), name: uid('fbn'), type: uid('fbk'),
       form: uid('fbf'), tc: uid('fbtc'), dc: uid('fbdc'), te: uid('fbte'), de: uid('fbde'), note: uid('fbno') };
 
     const who = () => {
@@ -284,6 +317,39 @@ defineApp({
     if (!draft.nameTyped) draft.name = readLog(store).anon ? '' : who();
 
     buildInfo();
+
+    /* a half-written report from before a reload comes back (once per page
+       load: after that the module's own draft is the newer copy) */
+    if (!draft.loaded) {
+      draft.loaded = true;
+      const kept = store.get(DRAFT_KEY, null);
+      if (kept && typeof kept === 'object' && !draft.title && !draft.details) {
+        draft.type = typeOf(kept.type).id;
+        draft.app = typeof kept.app === 'string' ? kept.app : '';
+        draft.title = String(kept.title || '').slice(0, L.title);
+        draft.details = String(kept.details || '').slice(0, L.details);
+      }
+    }
+    /* opened from "Report a problem": that app, a bug, and — from About —
+       diagnostics ticked and shown. The person still presses Send. */
+    draft.diag = false;
+    function applyOpts(o) {
+      if (!o) return;
+      if (o.type) draft.type = typeOf(o.type).id;
+      if (typeof o.app === 'string') draft.app = o.app;
+      if (o.diag) draft.diag = true;
+    }
+    applyOpts(opts);
+
+    /* ------------------------------ the draft ------------------------------ */
+    let saveT = 0;
+    const writeDraft = () => {
+      saveT = 0;
+      if (!draft.title.trim() && !draft.details.trim()) { if (store.get(DRAFT_KEY, null)) store.set(DRAFT_KEY, null); }
+      else store.set(DRAFT_KEY, { type: draft.type, app: draft.app, title: draft.title, details: draft.details });
+      if (!S.dead) paintSaved();
+    };
+    const saveDraft = () => { clearTimeout(saveT); saveT = setTimeout(writeDraft, 300); };
 
     /* ------------------------------ fields ------------------------------ */
     const typeBtns = TYPES.map(t => h('button.fb__type', {
@@ -302,7 +368,7 @@ defineApp({
     const titleIn = h('input.fb__in', {
       id: id.title, type: 'text', maxlength: String(L.title), autocomplete: 'off', spellcheck: 'true',
       'aria-required': 'true', 'aria-describedby': `${id.tc} ${id.te}`,
-      oninput: () => { draft.title = titleIn.value; count(); fieldErr(titleIn, titleErr, ''); },
+      oninput: () => { draft.title = titleIn.value; count(); fieldErr(titleIn, titleErr, ''); saveDraft(); },
       onkeydown: e => {
         /* plain Enter moves on; a title alone is not a note */
         if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); detailsIn.focus(); }
@@ -311,7 +377,7 @@ defineApp({
     const detailsIn = h('textarea.fb__in.fb__area', {
       id: id.details, rows: '6', maxlength: String(L.details), spellcheck: 'true',
       'aria-required': 'true', 'aria-describedby': `${id.dc} ${id.de}`,
-      oninput: () => { draft.details = detailsIn.value; count(); fieldErr(detailsIn, detailsErr, ''); },
+      oninput: () => { draft.details = detailsIn.value; count(); fieldErr(detailsIn, detailsErr, ''); saveDraft(); },
     });
     const nameIn = h('input.fb__in', {
       id: id.name, type: 'text', maxlength: String(L.name), autocomplete: 'nickname', spellcheck: 'false',
@@ -331,6 +397,49 @@ defineApp({
     titleIn.value = draft.title;
     detailsIn.value = draft.details;
     nameIn.value = draft.name || '';
+
+    /* which app: every app people can open, plus a hidden one this was opened
+       for (the window menu names whatever window it was pressed in) */
+    const appSel = h('select.fb__in.fb__select', {
+      id: id.app,
+      onchange: () => { draft.app = appSel.value; saveDraft(); },
+    });
+    function fillApps() {
+      const list = api.listApps().slice();
+      const want = api.getApp(draft.app);
+      if (want && !list.some(a => a.id === want.id)) list.push(want);
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      clear(appSel);
+      appSel.append(h('option', { value: '', text: 'Not about one app' }),
+        ...list.map(a => h('option', { value: a.id, text: a.name })));
+      appSel.value = want ? want.id : '';
+      draft.app = appSel.value;
+    }
+
+    /* diagnostics: off until ticked; the preview is the exact text that goes */
+    const diagBox = h('input', { type: 'checkbox', id: id.diag, 'aria-describedby': `${id.diag}-p`,
+      onchange: () => { draft.diag = diagBox.checked; paintDiag(); } });
+    const diagPre = h('pre.fb__diag', { id: `${id.diag}-p`, tabindex: '0', 'aria-label': 'The diagnostics that would be sent', hidden: true });
+    let diagShown = '';
+    let diagSeq = 0;
+    async function paintDiag() {
+      diagBox.checked = !!draft.diag;
+      diagPre.hidden = !draft.diag;
+      if (!draft.diag) { diagShown = ''; return; }
+      const seq = ++diagSeq;
+      if (!diagShown) diagPre.textContent = 'Reading…';
+      let text = '';
+      try { text = await SI.diagnosticsText(); } catch (err) { text = ''; }
+      if (S.dead || seq !== diagSeq || !draft.diag) return;
+      /* the very string buildPayload will put in the message */
+      diagShown = fitDiag(text);
+      diagPre.textContent = diagShown || 'Nothing could be read.';
+    }
+
+    const savedNote = h('span.fb__saved', { role: 'status' });
+    function paintSaved() {
+      savedNote.textContent = draft.title.trim() || draft.details.trim() ? 'Draft kept on this device until you send it.' : '';
+    }
 
     const titleCount = h('span.fb__count', { id: id.tc, 'aria-hidden': 'true' });
     const detailsCount = h('span.fb__count', { id: id.dc, 'aria-hidden': 'true' });
@@ -359,6 +468,9 @@ defineApp({
         h('div.fb__label', { id: id.type, text: 'What is it?' }),
         typeGroup),
       h('div.fb__group',
+        label(id.app, 'Which app?', h('span.fb__opt', { text: 'optional' })),
+        appSel),
+      h('div.fb__group',
         label(id.title, 'Title', titleCount),
         titleIn, titleErr),
       h('div.fb__group',
@@ -367,6 +479,11 @@ defineApp({
       h('div.fb__group',
         label(id.name, 'Name', h('span.fb__opt', { text: 'optional' })),
         nameIn),
+      h('div.fb__group.fb__diag-group',
+        h('label.fb__check', { for: id.diag }, diagBox,
+          h('span', h('b', { text: 'Include diagnostics' }), h('small', { text: ' optional · off unless you tick it' }))),
+        h('div.fb__hint', { text: 'Tick it to see exactly what would be added to your note. It goes only with your note, when you press Send.' }),
+        diagPre),
       h('div.fb__note', { id: id.note },
         icon('info'),
         h('span', { text: 'This goes to the StaticOS developer\'s Discord channel with the name above (clear it to stay anonymous — that is remembered), your StaticOS version and which drive you booted. Your browser sends it straight to Discord, which sees your IP address like any website. Don\'t include personal info like passwords, phone numbers or addresses.' })));
@@ -376,7 +493,10 @@ defineApp({
       errEl,
       h('div.fb__actions',
         sendBtn,
+        h('button.btn.fb__copy', { type: 'button', title: 'Copy this note as plain text, to send another way', onclick: copyAsText },
+          icon('copy'), h('span', { text: 'Copy as text' })),
         h('span.fb__kbd', { text: `${modLabel} + Enter` })),
+      savedNote,
       limitEl);
     sendBtn.setAttribute('form', id.form);
     sendBtn.setAttribute('aria-describedby', id.note);
@@ -405,6 +525,7 @@ defineApp({
     function setType(tid, focus) {
       const t = typeOf(tid);
       draft.type = t.id;
+      if (focus) saveDraft();
       shell.dataset.type = t.id;
       typeBtns.forEach(b => {
         const on = b.dataset.type === t.id;
@@ -515,6 +636,7 @@ defineApp({
       form.hidden = foot.hidden = false;
       titleIn.value = detailsIn.value = '';
       count();
+      paintSaved();
       paintSend();
       titleIn.focus();
     }
@@ -533,6 +655,33 @@ defineApp({
       if (tBad) { titleIn.focus(); return false; }
       if (dBad) { detailsIn.focus(); return false; }
       return true;
+    }
+
+    /* ------------------------------ copy as text ------------------------------ */
+    /* the same note as plain text, for sending by another route (a message to
+       the developer, an email). It holds only what is in the form and, if
+       ticked, the diagnostics shown above. */
+    async function copyAsText() {
+      const t = typeOf(draft.type);
+      const title = oneLine(titleIn.value), details = block(detailsIn.value);
+      if (!title && !details) {
+        showError({ kind: 'http', title: 'Nothing to copy yet', message: 'Write a title or some details first.' });
+        return;
+      }
+      showError(null);
+      const app = api.getApp(draft.app)?.name;
+      const name = oneLine(nameIn.value);
+      const build = await Promise.race([buildInfo(), sleep(800).then(() => '')]);
+      const lines = [`[${t.label}] ${title || '(no title)'}`];
+      if (app) lines.push(`App: ${app}`);
+      if (name) lines.push(`From: ${name}`);
+      if (build) lines.push(`StaticOS: ${build}`);
+      lines.push('', details || '(no details)');
+      if (draft.diag && diagShown) lines.push('', 'Diagnostics:', diagShown);
+      const ok = await SI.copyText(lines.join('\n'));
+      statusEl.textContent = ok ? 'Copied as text.' : 'Could not copy.';
+      if (!ok) showError({ kind: 'http', title: 'Could not copy', message: 'The browser refused clipboard access. Select the text and copy it yourself.' });
+      else api.notify({ app: 'Feedback', icon: 'copy', title: 'Copied as text', message: 'Paste it wherever you want to send it.', timeout: 2500 });
     }
 
     /* ------------------------------ send ------------------------------ */
@@ -554,7 +703,10 @@ defineApp({
 
       const typed = { type: draft.type, title: titleIn.value, details: detailsIn.value, name: nameIn.value };
       const build = await Promise.race([buildInfo(), sleep(1200).then(() => '')]);
-      const payload = buildPayload({ ...typed, drive: document.body.dataset.os || 'plain', build });
+      /* diagnostics only when ticked, and only the text the preview shows */
+      if (draft.diag && !diagShown) { try { diagShown = fitDiag(await SI.diagnosticsText()); } catch (err) { diagShown = ''; } }
+      const payload = buildPayload({ ...typed, drive: document.body.dataset.os || 'plain', build,
+        app: api.getApp(draft.app)?.name || '', diag: draft.diag ? diagShown : '' });
 
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), L.timeoutMs);
@@ -585,6 +737,9 @@ defineApp({
         saveNow(next);
         store.set(KEY, next);
         draft.title = draft.details = '';
+        draft.diag = false;
+        clearTimeout(saveT); saveT = 0;
+        store.set(DRAFT_KEY, null);
         S.busy = sending = false;
         const to = S.dead ? live : view;
         if (to) to.sent(entry);
@@ -609,6 +764,8 @@ defineApp({
       sent(entry) {
         titleIn.value = detailsIn.value = '';
         statusEl.textContent = 'Sent. Discord confirmed it arrived.';
+        paintDiag();
+        paintSaved();
         count();
         paintSend();
         paintHistory();
@@ -623,10 +780,23 @@ defineApp({
     live = view;
 
     /* ------------------------------ lifecycle ------------------------------ */
+    fillApps();
+    titleIn.value = draft.title;
+    detailsIn.value = draft.details;
     setType(draft.type, false);
     count();
     paintSend();
     paintHistory();
+    paintDiag();
+    paintSaved();
+    /* "Report a problem" while this window is already open picks the new app */
+    win?.onReopen?.(o => {
+      applyOpts(o);
+      fillApps();
+      setType(draft.type, false);
+      paintDiag();
+      if (doneEl && !doneEl.hidden) another();
+    });
 
     let ticks = 0;
     const tick = setInterval(() => {
@@ -666,6 +836,7 @@ defineApp({
       S.dead = true;
       if (live === view) live = null;
       clearInterval(tick);
+      if (saveT) { clearTimeout(saveT); writeDraft(); }      /* closed within the debounce: keep what was typed */
       window.removeEventListener('online', onNet);
       window.removeEventListener('offline', onNet);
       window.removeEventListener('storage', onStorage);

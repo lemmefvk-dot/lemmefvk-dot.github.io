@@ -151,3 +151,38 @@ button.pf__feedt:focus-visible { outline: 2px solid var(--accent); outline-offse
 .pfs__foot{display:flex;align-items:center;gap:var(--sp-3)}
 .pfs__foot .btn[disabled]{opacity:.45;pointer-events:none}
 @media (prefers-reduced-motion:reduce){.pfs{animation:none}}
+
+/* ---- pins, status, birthday, art strip, the card ---- */
+.pf__pin{width:24px;height:24px;min-width:24px;padding:0;margin-left:2px;color:var(--ink-3)}
+.pf__pin .icon{width:12px;height:12px}
+.pf__pin.is-on{color:var(--accent-soft)}
+.pf__gpin{position:absolute;top:12px;right:44px}
+.pf__gpin .pf__pin{background:rgba(10,6,12,.62);color:#fff;border-radius:var(--r-sm)}
+.pf__gpin .pf__pin.is-on{color:#fcd34d}
+.pf__pinmsg{padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.1);font-size:var(--fs-11);color:var(--ink-1)}
+.pf__about{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-5)}
+@media (max-width:620px){.pf__about{grid-template-columns:1fr}}
+.pf__caprow{display:flex;align-items:baseline;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:var(--sp-2)}
+.pf__statrow{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
+.pf__statusin{flex:1 1 180px;min-width:120px;height:30px;padding:0 10px;border-radius:var(--r-sm);font:inherit;font-size:var(--fs-12);color:var(--ink-1);background:var(--fill-0);border:1px solid var(--line-1)}
+.pf__statusin:focus{border-color:rgba(var(--accent-rgb)/.55);outline:none}
+.pf__statusexp{height:30px;max-width:190px}
+.pf__stat .pf__capnote,.pf__bd .pf__capnote{display:block;margin-top:var(--sp-2)}
+.pf__artstrip{display:flex;gap:var(--sp-3);overflow-x:auto;padding-bottom:var(--sp-2)}
+.pf__arttile{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px;width:92px;padding:6px;border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0);color:var(--ink-3);font:inherit;font-size:var(--fs-10);cursor:pointer}
+.pf__arttile:hover{border-color:rgba(var(--accent-rgb)/.45)}
+.pf__arttile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pf__arttile img{width:78px;height:78px;object-fit:contain;border-radius:var(--r-sm);background:repeating-conic-gradient(var(--fill-1) 0 25%,transparent 0 50%) 0 0/10px 10px}
+.pf__arttile img.is-pixel{image-rendering:pixelated}
+.pf__picks{display:flex;flex-wrap:wrap;gap:var(--sp-2) var(--sp-5);margin:var(--sp-3) 0}
+.pf__pickrow{display:inline-flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-12);color:var(--ink-1);cursor:pointer}
+.pf__cardprev{display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--sp-4);border-radius:var(--r-md);border:1px dashed var(--line-2);background:var(--fill-0);margin-bottom:var(--sp-3)}
+.pf__cardprev__h{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-13,13px);color:var(--ink-0)}
+.pf__cardline{display:flex;gap:var(--sp-3);font-size:var(--fs-12);color:var(--ink-1);line-height:1.45}
+.pf__cardk{flex:0 0 92px;font-size:var(--fs-10);text-transform:uppercase;letter-spacing:.6px;color:var(--ink-3);padding-top:2px}
+.pf__cardbtns{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-2)}
+.pf__cardmsg{margin-top:var(--sp-2);font-size:var(--fs-11);color:var(--ink-1)}
+.pf__fr{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--sp-3)}
+.pf__frcard{display:flex;gap:var(--sp-3);padding:var(--sp-4);border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0)}
+.pf__frbody{min-width:0;display:flex;flex-direction:column;gap:3px}
+.pf__frbody b{color:var(--ink-0);font-size:var(--fs-12)}

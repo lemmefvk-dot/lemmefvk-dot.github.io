@@ -31,6 +31,14 @@
      { t:'go', game }               the host pressed PLAY TOGETHER
      { t:'chat', text }             party chat, at most 500 characters
      { t:'bye' }                    leaving
+     { t:'cd', n }                  the host starts a countdown of n seconds
+     { t:'cdx' }                    the host cancels it
+     { t:'room', g, c }             the host opened an Arcade room (game id,
+                                    six-character code); a member's Join is a click
+     { t:'kick', to }               the host removes a member
+     { t:'sc', g, s }               my score in Arcade game g, from 'arcade:score'
+     the host's beat also carries q (up to 3 Arcade ids: the game-night queue)
+     and rm (its open room), so a newcomer or a new host has them.
    A member silent for 30 s drops. The host is the member with the
    earliest `since` still present, so hosting passes on by itself.
    A joiner takes a `since` later than everyone it heard, so a skewed
@@ -48,7 +56,13 @@
        themselves ready — and that uses the ready mark up, so the next
        game needs a fresh "ready". Everyone else gets a notification
        with a Play button. Nothing else is ever opened;
-     · muted people's chat is hidden and their 'go' opens nothing;
+     · muted people's chat, sounds and room codes are hidden and their 'go' opens nothing;
+     · 'cd', 'room', 'kick' and the queue are accepted only from the current host; a
+       room code is checked against the six-character alphabet and its game against
+       THIS device's Arcade; nothing ever joins a room by itself;
+     · a score is taken only from a current member, only for a game this Arcade has,
+       as a finite number, at most one per 1.5 s per member. It is what that device
+       reported — nobody can check it, and the scoreboard says so;
      · own sending is rate-limited: chat 1 per second and 10 per 30 s,
        state beats coalesced to 1 per second, Play Together once per
        5 s; incoming chat is capped per sender.
@@ -65,7 +79,11 @@
      inviteText() -> string
    and extras for the app: status(), joining(), lastError(), lastCode(),
    forgetLast(), chatWait(), playNow(), mute/unmute/isMuted/muted(),
-   normalizeCode(), isCode(), resolveGame().
+   normalizeCode(), isCode(), resolveGame(), inviteLink(); and the host's
+   startCountdown(n)/cancelCountdown(), openRoom(gameId)/joinRoom(),
+   queueAdd/queueRemove/queueMove/queueNext, removeMember(id); sounds()/
+   setSounds(), shareScores()/setShareScores(). current() also carries
+   queue, room, countdown, played, scores, sounds and shareScores.
    ============================================================ */
 import * as live from './live.js';
 import { me, clean, tidy } from '../core/identity.js';
@@ -76,12 +94,14 @@ import * as catalogue from './games.data.js';
 import { arcadeById } from '../arcade/index.js';
 import { cleanText } from '../core/quickplay.js';
 import * as wm from '../core/wm.js';
+import * as sfx from '../core/sfx.js';
+import { openRoomCode } from '../core/roominvite.js';
 
 /* 32 symbols, no 0/O/1/I: a code read aloud or off a screen can't be misread */
 export const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const CODE_LEN = 6;
 const CODE_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;
-const KEY = 'portal.party';                 /* { last:{code,at}, muted:[id] } */
+const KEY = 'portal.party';                 /* { last:{code,at}, muted:[id], sounds:bool, scores:bool } */
 
 const BEAT_MS = 10_000;
 const DROP_MS = 30_000;
@@ -96,6 +116,12 @@ const CHAT_KEEP = 150;
 const EVENTS_KEEP = 80;
 const MAX_MEMBERS = 24;
 const GO_GAP_MS = 5_000;
+const KICK_MS = 5 * 60_000;                 /* a removed member's beats are ignored this long */
+const ROOM_MS = 20 * 60_000;                /* an Arcade room code is offered this long */
+const QUEUE_MAX = 3;
+const PLAYED_KEEP = 30;
+const SCORE_GAMES = 12;
+const SCORE_GAP_MS = 1_500;
 const FAR = 9e15;                           /* rank for a member with no usable `since` */
 
 /* ---------------- module state ---------------- */
@@ -212,6 +238,15 @@ export function mute(id, on = true) {
 export const unmute = id => mute(id, false);
 export function unmuteAll() { store.set(KEY, { ...cfg(), muted: [] }); emit(); }
 
+/* ---------------- two switches, this device only ---------------- */
+export const sounds = () => cfg().sounds !== false;
+export function setSounds(on) { store.set(KEY, { ...cfg(), sounds: !!on }); emit(); }
+/** Send my Arcade scores to the party (what the scoreboard shows). On by default; off sends nothing. */
+export const shareScores = () => cfg().scores !== false;
+export function setShareScores(on) { store.set(KEY, { ...cfg(), scores: !!on }); emit(); }
+/* the party's little sounds go through the OS sound engine, so Mute and Settings > Sound still rule */
+function sound(name) { if (sounds()) { try { sfx.play(name); } catch (e) { /* no audio here */ } } }
+
 /* ---------------- the last code, for "Rejoin" ---------------- */
 function remember(code) { store.set(KEY, { ...cfg(), last: { code, at: Date.now() } }); }
 export function lastCode() {
@@ -254,6 +289,7 @@ function hostCheck() {
     }
   }
   P.host = h;
+  if (P.cd && P.cd.byId !== h) clearCd(P);
 }
 
 /* ---------------- the party record ---------------- */
@@ -268,6 +304,8 @@ function makeParty(code, since, unsub) {
     liveAt: live.status() === 'live' ? Date.now() : 0, wasLive: live.status() === 'live',
     unsub, offStatus: null, offId: [], beatT: 0, pruneT: 0, soonT: 0, replyT: 0, gameT: 0,
     flood: new Map(),
+    queue: [], room: null, cd: null, cdT: 0, cdAt: 0, roomAt: 0,
+    played: [], scores: new Map(), scoreAt: new Map(), kicked: new Map(), kickedAt: new Map(),
   };
 }
 
@@ -292,7 +330,11 @@ function beat() {
   const host = iAmHost();
   const msg = { t: 'hb', name: safeName(m.name) || m.name, color: m.color, status: statusOut(m.status),
     ready: !host && P.ready, playing: myPlaying(), since: P.since };
-  if (host) msg.game = wireGame(P.game);
+  if (host) {
+    msg.game = wireGame(P.game);
+    msg.q = P.queue.slice();
+    if (P.room && Date.now() - P.room.at < ROOM_MS) msg.rm = { g: P.room.game, c: P.room.code };
+  }
   P.lastBeat = Date.now();
   return send(msg);
 }
@@ -336,13 +378,14 @@ function arm() {
   /* name, account and what I'm playing go out on the next (coalesced) beat */
   const touched = () => { if (P === p) { beatSoon(); emit(); } };
   p.offId = [store.sub('portal.identity', touched), store.sub('session.user', touched),
-    bus.on('game:launch', touched), bus.on('win:close', touched)];
+    bus.on('game:launch', touched), bus.on('win:close', touched),
+    bus.on('arcade:score', e => { if (P === p) reportScore(e); })];
   window.addEventListener('pagehide', onPageHide);
 }
 
 function disarm(p) {
   clearInterval(p.beatT); clearInterval(p.pruneT);
-  clearTimeout(p.soonT); clearTimeout(p.replyT); clearTimeout(p.gameT);
+  clearTimeout(p.soonT); clearTimeout(p.replyT); clearTimeout(p.gameT); clearInterval(p.cdT);
   p.offStatus?.(); p.offStatus = null;
   p.offId.forEach(f => f?.()); p.offId = [];
   p.unsub?.(); p.unsub = null;
@@ -399,6 +442,11 @@ function onWire(text) {
     case 'game': if (peer.id === hostId()) syncGame(peer.id, raw.game, true); return;
     case 'go': onGo(peer.id, raw.game); return;
     case 'chat': onChat(peer.id, raw.text); return;
+    case 'cd': onCountdown(peer.id, raw.n); return;
+    case 'cdx': if (peer.id === hostId() && P.cd) { event('cd', `${nameOf(peer.id)} cancelled the countdown`); clearCd(P); emit(); } return;
+    case 'room': onRoom(peer.id, raw.g, raw.c); return;
+    case 'kick': onKick(peer.id, raw.to); return;
+    case 'sc': onScore(peer.id, raw.g, raw.s); return;
     default:
   }
 }
@@ -407,9 +455,24 @@ function onBeat(peer, raw) {
   const had = P.members.get(peer.id);
   if (!had && P.members.size >= MAX_MEMBERS) return;
   const now = Date.now();
+  const gone = P.kicked.get(peer.id);
+  if (gone) {
+    if (gone > now) {
+      /* removed by the host: their beats count for nothing, and the host tells them again */
+      if (iAmHost() && now - (P.kickedAt.get(peer.id) || 0) > 10_000) { P.kickedAt.set(peer.id, now); send({ t: 'kick', to: peer.id }); }
+      return;
+    }
+    P.kicked.delete(peer.id);
+  }
   const m = addMember(peer, raw, now);
   if (!had && now > P.quietUntil) event('join', `${m.name} joined`);
   else if (had && had.name !== m.name) event('name', `${had.name} is now called ${m.name}`);
+  /* "I'm ready": a small sound, unless that person is muted here */
+  if (had && !had.ready && m.ready && now > P.quietUntil && hostId() !== peer.id) {
+    event('ready', `${m.name} is ready`);
+    if (!isMuted(peer.id)) sound('notify');
+  }
+  if (hostId() === peer.id) mirrorHost(peer.id, raw);
   /* a background tab's timers can be throttled to once a minute, but
      messages still arrive: answer the party so we don't drop out */
   if (now - P.lastBeat > BEAT_MS + 1500) beatSoon();
@@ -473,6 +536,7 @@ function onGo(fromId, rawGame) {
     const hush = isMuted(fromId);
     const auto = party.ready && !hush;
     party.lastGo = { game: g, at: Date.now(), byId: fromId, by: who, opened: auto };
+    played(party, g, who);
     if (auto) {
       /* the one thing a message may open by itself: a validated catalogue
          or Arcade game, for someone who said they were ready. The ready
@@ -513,6 +577,267 @@ function onChat(fromId, rawText) {
   emit();
 }
 
+/* ---------------- the host's extras: queue, room, countdown, removal ---------------- */
+function mirrorHost(fromId, raw) {
+  /* the queue and the open room ride the host's beat, so a newcomer, or whoever hosts next, has them */
+  if (Array.isArray(raw.q)) {
+    const q = [];
+    for (const id of raw.q) if (typeof id === 'string' && arcadeById(id) && !q.includes(id) && q.length < QUEUE_MAX) q.push(id);
+    if (q.join() !== P.queue.join()) P.queue = q;
+  }
+  const rm = raw.rm && typeof raw.rm === 'object' ? raw.rm : null;
+  if (rm && typeof rm.c === 'string' && isCode(rm.c) && typeof rm.g === 'string' && arcadeById(rm.g)?.online) {
+    if (!P.room || P.room.code !== rm.c) P.room = { game: rm.g, code: rm.c, byId: fromId, at: Date.now() };
+  } else if (P.room && P.room.byId === fromId) {
+    P.room = null;
+  }
+}
+
+function played(p, g, by) {
+  p.played.push({ game: { kind: g.kind, id: g.id, title: g.title }, by, at: Date.now() });
+  if (p.played.length > PLAYED_KEEP) p.played.splice(0, p.played.length - PLAYED_KEEP);
+}
+
+const roomNow = () => (P && P.room && Date.now() - P.room.at < ROOM_MS
+  ? { game: P.room.game, title: arcadeById(P.room.game)?.title || P.room.game, code: P.room.code,
+    by: P.room.byId === myId() ? 'You' : nameOf(P.room.byId), mine: P.room.byId === myId(), at: P.room.at }
+  : null);
+
+function clearCd(p) { clearInterval(p.cdT); p.cdT = 0; p.cd = null; }
+
+function cdTick(p) {
+  if (P !== p || !p.cd) return;
+  const left = Math.ceil((p.cd.endsAt - Date.now()) / 1000);
+  if (left <= 0) {
+    const mine = p.cd.byId === myId();
+    clearCd(p);
+    sound('notify');
+    if (mine && iAmHost() && !playTogether()) event('cd', 'The countdown ended, but Play Together could not go out. Press it again.');
+    emit();
+    return;
+  }
+  if (left !== p.cd.shown) { p.cd.shown = left; if (!isMuted(p.cd.byId)) sound('tap'); }
+  emit();
+}
+function beginCd(byId, n) {
+  const p = P;
+  clearCd(p);
+  p.cdAt = Date.now();
+  p.cd = { endsAt: Date.now() + n * 1000, n, byId, by: nameOf(byId), shown: 0 };
+  p.cdT = setInterval(() => cdTick(p), 250);
+  event('cd', byId === myId() ? `You started a ${n}-second countdown` : `${nameOf(byId)} started a ${n}-second countdown`);
+  cdTick(p);
+}
+function onCountdown(fromId, rawN) {
+  if (fromId !== hostId()) return;
+  const n = Math.round(Number(rawN));
+  if (!(n >= 3 && n <= 10)) return;
+  if (Date.now() - P.cdAt < 2000) return;
+  beginCd(fromId, n);
+}
+/** Host: count everyone down, then press Play Together for them. n = 3-10 seconds. */
+export function startCountdown(n = 5) {
+  if (!P || !iAmHost() || !P.game || P.cd) return false;
+  n = Math.round(Number(n));
+  if (!(n >= 3 && n <= 10) || live.status() !== 'live') return false;
+  if (!send({ t: 'cd', n })) return false;
+  beginCd(myId(), n);
+  emit();
+  return true;
+}
+export function cancelCountdown() {
+  if (!P || !P.cd || P.cd.byId !== myId()) return false;
+  send({ t: 'cdx' });
+  clearCd(P);
+  event('cd', 'You cancelled the countdown');
+  emit();
+  return true;
+}
+
+function onRoom(fromId, rawG, rawC) {
+  if (fromId !== hostId()) return;
+  const a = typeof rawG === 'string' ? arcadeById(rawG) : null;
+  if (!a || !a.online || typeof rawC !== 'string' || !isCode(rawC)) return;
+  const now = Date.now();
+  if (now - P.roomAt < 3000) return;
+  P.roomAt = now;
+  const who = nameOf(fromId);
+  P.room = { game: a.id, code: rawC, byId: fromId, at: now };
+  event('room', `${who} opened a ${a.title} room`);
+  if (!isMuted(fromId)) {
+    sound('notify');
+    /* Join is a click: nothing enters a room by itself */
+    bus.emit('noti:push', {
+      app: 'Static Party', icon: 'users', timeout: 20000,
+      title: `${who} opened a ${a.title} room`,
+      message: 'A room has two seats, so the first of you to join gets the second one. Nothing joins until you press Join.',
+      actions: [{ label: 'Join', onClick: () => joinRoom() }],
+      onClick: () => { try { wm.open('party'); } catch (e) { /* the app isn't registered */ } },
+    });
+  }
+  emit();
+}
+/** Join the party's open Arcade room. Only ever called from a click. */
+export function joinRoom() {
+  const r = roomNow();
+  if (!r || r.mine) return false;
+  try { wm.open('arcade', { join: r.code }); return true; } catch (e) { return false; }
+}
+/**
+ * Host: open an Arcade room for an online game and send its code to every member
+ * of the party. A room has two seats, so the first member to join takes the second;
+ * the others are told the code anyway.
+ * -> { ok, code?, sent?, error?: 'host' | 'game' | 'offline' | 'room' }
+ */
+export async function openRoom(gameId) {
+  if (!P || !iAmHost()) return { ok: false, error: 'host' };
+  const a = typeof gameId === 'string' ? arcadeById(gameId) : null;
+  if (!a || !a.online) return { ok: false, error: 'game' };
+  if (live.status() !== 'live') return { ok: false, error: 'offline' };
+  const party = P;
+  const code = await openRoomCode(a.id);
+  if (!code) return { ok: false, error: 'room' };
+  if (P !== party || !iAmHost()) return { ok: false, error: 'host' };
+  const others = P.members.size;
+  P.room = { game: a.id, code, byId: myId(), at: Date.now() };
+  P.game = { kind: 'arcade', id: a.id, title: a.title, art: null };
+  P.gameSeq++;
+  const sent = send({ t: 'room', g: a.id, c: code });
+  send({ t: 'game', game: wireGame(P.game) });
+  event('room', others
+    ? `You opened a ${a.title} room and sent its code to ${others === 1 ? '1 member' : `${others} members`}`
+    : `You opened a ${a.title} room. Nobody else is in the party yet, so the code is only in your room window.`);
+  beatSoon();
+  emit();
+  return { ok: true, code, sent: others, live: sent };
+}
+
+/** Host: up to three Arcade games for the night, in order. */
+export function queueAdd(id) {
+  if (!P || !iAmHost() || typeof id !== 'string' || !arcadeById(id)) return false;
+  if (P.queue.length >= QUEUE_MAX || P.queue.includes(id)) return false;
+  P.queue.push(id);
+  beatSoon();
+  emit();
+  return true;
+}
+export function queueRemove(id) {
+  if (!P || !iAmHost() || !P.queue.includes(id)) return false;
+  P.queue = P.queue.filter(x => x !== id);
+  beatSoon();
+  emit();
+  return true;
+}
+export function queueMove(id, dir) {
+  if (!P || !iAmHost()) return false;
+  const i = P.queue.indexOf(id), j = i + (dir < 0 ? -1 : 1);
+  if (i < 0 || j < 0 || j >= P.queue.length) return false;
+  [P.queue[i], P.queue[j]] = [P.queue[j], P.queue[i]];
+  beatSoon();
+  emit();
+  return true;
+}
+/** Host: take the first game off the queue, choose it and press Play Together. */
+export async function queueNext() {
+  if (!P || !iAmHost() || !P.queue.length) return false;
+  if (live.status() !== 'live' || goWait() > 0) return false;
+  const party = P;
+  const id = P.queue[0];
+  const ok = await chooseGame({ kind: 'arcade', id });
+  if (!ok || P !== party) return false;
+  if (!playTogether()) return false;
+  P.queue = P.queue.filter(x => x !== id);
+  beatSoon();
+  emit();
+  return true;
+}
+
+/** Host: take someone out. They are told, and their beats are ignored for five minutes. */
+export function removeMember(id) {
+  if (!P || !iAmHost() || id === myId()) return false;
+  const m = P.members.get(id);
+  if (!m) return false;
+  send({ t: 'kick', to: id });
+  dropKicked(id, m.name);
+  hostCheck();
+  emit();
+  return true;
+}
+function dropKicked(id, name) {
+  P.members.delete(id);
+  P.flood.delete(id);
+  P.kicked.set(id, Date.now() + KICK_MS);
+  event('leave', `${name} was removed from the party`);
+}
+function onKick(fromId, to) {
+  if (fromId !== hostId() || typeof to !== 'string') return;
+  if (to === myId()) {
+    const code = P.code;
+    quit();
+    forgetLast();
+    bus.emit('noti:push', { app: 'Static Party', icon: 'users', timeout: 12000, title: 'The host removed you from the party',
+      message: `Party ${code} is public, so you can try to join again, but the host can remove you again.` });
+    emit();
+    return;
+  }
+  const m = P.members.get(to);
+  if (m) { dropKicked(to, m.name); hostCheck(); emit(); }
+}
+
+/* ---------------- scores reported from the Arcade ---------------- */
+const scoreOk = s => typeof s === 'number' && Number.isFinite(s) && Math.abs(s) <= 1e9;
+function recordScore(id, name, color, game, score) {
+  const a = arcadeById(game);
+  if (!a || !scoreOk(score)) return;
+  let byGame = P.scores.get(id);
+  if (!byGame) P.scores.set(id, byGame = new Map());
+  const low = a.better === 'low';
+  const prev = byGame.get(game);
+  const best = prev && (low ? prev.best <= score : prev.best >= score) ? prev.best : score;
+  byGame.set(game, { best, last: score, n: (prev ? prev.n : 0) + 1, at: Date.now(), name, color });
+  if (byGame.size > SCORE_GAMES) byGame.delete(byGame.keys().next().value);
+}
+/* my own device reports, from the same 'arcade:score' event the achievements read */
+function reportScore(e) {
+  if (!P || !e || typeof e !== 'object' || e.assisted || !shareScores()) return;
+  const a = typeof e.game === 'string' ? arcadeById(e.game) : null;
+  if (!a || !scoreOk(e.score)) return;
+  const now = Date.now();
+  if (now - (P.scoreAt.get(myId()) || 0) < SCORE_GAP_MS) return;
+  P.scoreAt.set(myId(), now);
+  const m = me();
+  recordScore(myId(), safeName(m.name) || m.name, m.color, a.id, e.score);
+  send({ t: 'sc', g: a.id, s: e.score });
+  emit();
+}
+function onScore(fromId, g, s) {
+  const m = P.members.get(fromId);
+  if (!m || typeof g !== 'string' || !arcadeById(g) || !scoreOk(s)) return;
+  const now = Date.now();
+  if (now - (P.scoreAt.get(fromId) || 0) < SCORE_GAP_MS) return;
+  P.scoreAt.set(fromId, now);
+  recordScore(fromId, m.name, m.color, g, s);
+  emit();
+}
+/** One board per game, newest activity first; the best score each member reported. */
+function scoreBoards(hushed) {
+  if (!P) return [];
+  const games = new Map();
+  for (const [id, byGame] of P.scores) {
+    if (hushed.has(id)) continue;
+    for (const [g, r] of byGame) {
+      if (!games.has(g)) games.set(g, []);
+      games.get(g).push({ id, name: r.name, color: r.color, you: id === myId(), score: r.best, last: r.last, n: r.n, at: r.at });
+    }
+  }
+  return [...games].map(([g, rows]) => {
+    const a = arcadeById(g);
+    const low = a?.better === 'low';
+    rows.sort((x, y) => (low ? x.score - y.score : y.score - x.score) || x.at - y.at);
+    return { game: g, title: a ? a.title : g, better: low ? 'low' : 'high', at: Math.max(...rows.map(r => r.at)), rows };
+  }).sort((x, y) => y.at - x.at);
+}
+
 /* ---------------- public API ---------------- */
 export function current() {
   if (!P) return null;
@@ -544,6 +869,13 @@ export function current() {
     lastGo: P.lastGo ? { ...P.lastGo, game: { ...P.lastGo.game } } : null,
     joinedAt: P.joinedAt,
     status: live.status(),
+    queue: P.queue.map(id => ({ id, title: arcadeById(id)?.title || id })),
+    room: roomNow(),
+    countdown: P.cd ? { left: Math.max(0, Math.ceil((P.cd.endsAt - Date.now()) / 1000)), n: P.cd.n, by: P.cd.by, byId: P.cd.byId } : null,
+    played: P.played.map(x => ({ ...x })),
+    scores: scoreBoards(hushed),
+    sounds: sounds(),
+    shareScores: shareScores(),
   };
 }
 
@@ -663,6 +995,7 @@ export function setReady(on) {
   const v = !!on;
   if (P.ready !== v) {
     P.ready = v;
+    if (v) sound('toggle');
     beatSoon();
     emit();
   }
@@ -704,6 +1037,7 @@ export function playTogether() {
   if (!send({ t: 'go', game: wireGame(g) })) return false;
   goSentAt = now;
   P.lastGo = { game: g, at: now, byId: myId(), by: 'You', opened: true };
+  played(P, g, 'You');
   event('go', `You started ${g.title} for the party`);
   openGame(g);
   emit();
@@ -742,6 +1076,12 @@ export function say(input) {
   return true;
 }
 
+/** A link that opens Static Party with this code filled in; the person presses Join. */
+export function inviteLink() {
+  if (!P) return '';
+  try { return `${location.origin}${location.pathname}#party=${P.code}`; } catch (e) { return ''; }
+}
+
 export function inviteText() {
   return P ? `Join my StaticOS party: code ${P.code} (open Static Party, then Join).` : '';
 }
@@ -754,5 +1094,6 @@ export const clearError = () => { if (lastErr) { lastErr = null; emit(); } };
 export default {
   current, create, join, leave, setReady, chooseGame, playTogether, say, onChange, inviteText,
   status, joining, lastError, clearError, lastCode, forgetLast, chatWait, goWait, playNow,
-  mute, unmute, unmuteAll, isMuted, muted, normalizeCode, isCode, resolveGame, ALPHABET, CODE_LEN, TEXT_MAX, QUIET_MS,
+  mute, unmute, unmuteAll, isMuted, muted, inviteLink, startCountdown, cancelCountdown, openRoom, joinRoom,
+  queueAdd, queueRemove, queueMove, queueNext, removeMember, sounds, setSounds, shareScores, setShareScores, normalizeCode, isCode, resolveGame, ALPHABET, CODE_LEN, TEXT_MAX, QUIET_MS,
 };

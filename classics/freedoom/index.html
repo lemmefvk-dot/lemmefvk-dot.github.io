@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Freedoom: Phase 1: licence and source</title><style>:root{color-scheme:dark}body{margin:0 auto;max-width:720px;padding:32px 20px 64px;background:#0c0913;color:#e1d6e6;font:16px/1.6 system-ui,sans-serif}
+h1{font-size:28px;line-height:1.2;color:#fff;margin:0 0 4px}h2{font-size:20px;color:#fff;margin:32px 0 8px}a{color:#9fd8ff}code{font-size:.88em;overflow-wrap:anywhere;color:#d4f0c8}
+.sub{color:#b5a9bd;margin:0 0 24px}li{margin:8px 0}</style></head>
+<body>
+<h1>StaticOS Free Classics: Freedoom: Phase 1</h1>
+<p class="sub">The Freedoom project · engine from id Software’s Doom, 2024. Licence and source for the copy on StaticOS’s Free Classics shelf.</p>
+<p><b>Freedoom</b> is free game data for the Doom engine, made by the contributors to the
+    <a href="https://freedoom.github.io/">Freedoom project</a>. It contains no id Software art. <b>Freedoom: Phase 1</b> is its four-episode
+    game. The engine is <a href="https://github.com/ozkl/doomgeneric">doomgeneric</a>, a small port of
+    <a href="https://www.chocolate-doom.org/">Chocolate Doom</a>, which is built on the Doom source code id Software released under the GNU GPL.
+    You can also play your own DOOM.WAD or DOOM2.WAD with it: it is read in your browser and never uploaded. StaticOS did not make any of
+    this, and none of these projects has anything to do with StaticOS.</p>
+<h2 id="licence">Licences</h2>
+<ul>
+      <li><b>Freedoom’s data:</b> BSD 3-clause licence, in <a href="freedoom-COPYING.txt">freedoom-COPYING.txt</a>, with its makers in
+      <a href="freedoom-CREDITS.txt">freedoom-CREDITS.txt</a> and <a href="freedoom-CREDITS-MUSIC.txt">freedoom-CREDITS-MUSIC.txt</a>. Copyright © 2001–2024
+      Contributors to the Freedoom project. It says: “Redistributions in binary form must reproduce the above copyright notice, this list of
+      conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.”</li>
+      <li><b>The engine:</b> GNU General Public License, version 2: <a href="COPYING.txt">COPYING.txt</a>. Copyright © 1993–1996 id Software, Inc.,
+      © 2005–2014 Simon Howard and the Chocolate Doom contributors, and the doomgeneric contributors.</li>
+      <li><b>Libraries built into the engine:</b> <a href="../THIRD-PARTY-NOTICES.txt">SDL 2, SDL_mixer and Emscripten’s runtime</a>.</li>
+    </ul>
+<h2 id="data">The game’s files</h2>
+    <p><code>freedoom1.wad.gz</code> is <code>freedoom1.wad</code> from the official <code>freedoom-0.13.0.zip</code>
+    (<a href="https://github.com/freedoom/freedoom/releases/tag/v0.13.0">release page</a>), gzipped and otherwise unchanged. The zip’s SHA-256,
+    <code>3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59</code>, matches the checksum file the Freedoom project signs and publishes
+    beside it, and the WAD’s own is <code>7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d</code>. The music is silent here: it needs
+    a MIDI synthesiser this build leaves out.</p>
+<h2 id="source">Source code</h2>
+<p>This engine is doomgeneric at commit <code>e257a09527062bfb986b6e5e0780839b6cbd5b71</code>, <b>unmodified</b>, built with Emscripten 4.0.10 (emsdk commit d7b4130688bfa348392b921ab04015aa15c4f154)
+    and the flags of upstream’s own <code>Makefile.emscripten</code>, less its preloaded WAD and its MIDI player.</p>
+    <ul>
+      <li><a href="source/doomgeneric-e257a09.tar.gz">The complete source at that commit (2.9 MB), hosted here</a>.</li>
+      <li><a href="source/build.sh">The exact build script</a>, which also fetches and checks Freedoom.</li>
+      <li>Upstream: <a href="https://github.com/ozkl/doomgeneric/tree/e257a09527062bfb986b6e5e0780839b6cbd5b71">github.com/ozkl/doomgeneric</a>.</li>
+    </ul>
+</body></html>

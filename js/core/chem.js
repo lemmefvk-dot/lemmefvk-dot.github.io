@@ -5,6 +5,8 @@
      parseFormula(text, table)   a formula -> atom counts (+ charge)
      molarMass(text, table)      the mass of one mole, per element
      balance(text, table)        an equation -> whole-number coefficients
+     checkEquation(text, table)  an equation as typed, its own numbers
+                                 kept -> the atom count on each side
 
    `table` is makeTable(elements), built from data/elements.json (the
    PubChem atomic masses the Periodic Table already shows). A symbol or
@@ -237,12 +239,14 @@ export function parseEquation(text) {
   const sides = [t.slice(0, at), t.slice(at + arrow.length)];
   if (ARROWS.some(a => sides[1].includes(a))) return { ok: false, error: 'There is more than one arrow. Balance one reaction at a time.' };
   const ignored = [];
+  const coefs = [];
   const lists = sides.map((s, si) => {
     if (!s.trim()) return null;
     return splitSpecies(s).map(x => {
       let sp = x.trim();
       const m = /^(\d+)\s*(?=[A-Z(\[{])/.exec(sp);
       if (m) { ignored.push(`${m[1]} ${sp.slice(m[0].length)}`); sp = sp.slice(m[0].length); }
+      coefs.push(m ? Number(m[1]) : 1);
       return sp;
     });
   });
@@ -250,7 +254,7 @@ export function parseEquation(text) {
   if (!lists[1]) return { ok: false, error: 'There is nothing after the arrow. Put the products there.' };
   for (const l of lists) if (l.some(x => !x)) return { ok: false, error: 'There is a “+” with no formula next to it.' };
   if (lists[0].length + lists[1].length > MAX_SPECIES) return { ok: false, error: `That’s more than ${MAX_SPECIES} species; split it up.` };
-  return { ok: true, left: lists[0], right: lists[1], ignored, arrow };
+  return { ok: true, left: lists[0], right: lists[1], ignored, arrow, coefs };
 }
 
 const termText = (coef, f) => (coef === 1 ? '' : String(coef)) + f;
@@ -348,6 +352,33 @@ export function balance(text, table) {
   }
 }
 
+/**
+ * Count the atoms of an equation exactly as typed, its own numbers in front kept
+ * (none means 1): is it balanced?
+ *  { ok: false, error }
+ *  { ok: true, balanced, checks: [{ sym, left, right }], text, coefs, differ: [sym] }
+ * A charge row is added when ions are used, as in balance().
+ */
+export function checkEquation(text, table) {
+  const eq = parseEquation(text);
+  if (!eq.ok) return eq;
+  if (eq.coefs.some(c => c < 1 || c > MAX_COUNT)) return { ok: false, error: `A number in front must be from 1 to ${MAX_COUNT}.` };
+  const parsed = [];
+  for (const sp of [...eq.left, ...eq.right]) {
+    const f = parseFormula(sp, table);
+    if (!f.ok) return { ok: false, error: `“${sp}”: ${f.error}` };
+    parsed.push(f);
+  }
+  const nl = eq.left.length;
+  const syms = [];
+  for (const f of parsed) for (const s of f.order) if (!syms.includes(s)) syms.push(s);
+  const count = (from, to, pick) => parsed.slice(from, to).reduce((t, f, i) => t + eq.coefs[from + i] * pick(f), 0);
+  const checks = syms.map(s => ({ sym: s, left: count(0, nl, f => f.atoms[s] || 0), right: count(nl, parsed.length, f => f.atoms[s] || 0) }));
+  if (parsed.some(f => f.charge !== 0)) checks.push({ sym: 'charge', left: count(0, nl, f => f.charge), right: count(nl, parsed.length, f => f.charge) });
+  const differ = checks.filter(c => c.left !== c.right).map(c => c.sym);
+  return { ok: true, balanced: !differ.length, checks, differ, coefs: eq.coefs, text: equationText(eq.left, eq.right, eq.coefs) };
+}
+
 /** The smallest all-positive combination of the basis found by a bounded search (one of infinitely many), or null. */
 function positiveCombination(basis, n) {
   const d = basis.length;
@@ -371,4 +402,4 @@ function positiveCombination(basis, n) {
   return best;
 }
 
-export default { makeTable, normalize, parseFormula, molarMass, nullSpace, parseEquation, equationText, balance };
+export default { makeTable, normalize, parseFormula, molarMass, nullSpace, parseEquation, equationText, balance, checkEquation };

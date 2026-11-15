@@ -12,6 +12,7 @@
    ============================================================ */
 
 import { BRAND } from './brand.js';
+import { COUNTS } from './counts.js';
 import * as PX from './proxies.js';
 import * as RD from './proxy.reader.js';
 
@@ -21,9 +22,9 @@ import * as RD from './proxy.reader.js';
  * a chrome-less window instead of a tab; clearing `opener` by hand gives the
  * same protection without that side effect.
  */
-/* Row count of data/anime.json — 7,963 titles. The file is a 7.9 MB
-   fetch, so the hub can state the number without pulling it. */
-const ANIME_ROWS = 7963;
+/* Row count of data/anime.json, from js/portal/counts.js. The file is a
+   7.9 MB fetch, so the hub can state the number without pulling it. */
+const ANIME_ROWS = COUNTS.anime;
 
 /* The old site's footer, kept verbatim. */
 const FOOTER_LINE = 'v3.2.2 · Page: 606 ms · 14 Socket-24';

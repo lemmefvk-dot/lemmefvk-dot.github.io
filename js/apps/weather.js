@@ -41,6 +41,28 @@
    Layout keeps the old app's structure — places in a sidebar, a
    hero, an hourly strip, a week of ranges and a grid of details —
    and tints the page by the sky it is describing.
+
+   Also on the page, all from Open-Meteo's own APIs (which allow use
+   from a browser), each labelled with where it came from:
+   · "Take a coat?" and "Rain from 3 PM": plain rules over the hourly
+     numbers below them (feels-like under 10 °C / 50 °F in the next
+     12 hours is a coat, under 15 °C / 59 °F a light jacket; an hour
+     with a 50% chance or more is rain), and each line shows the
+     numbers it was decided from, and the rule itself.
+   · An hourly chart (24 h, 48 h or the whole week) beside the strip.
+   · Air quality from Open-Meteo's air-quality API (CAMS forecasts):
+     US AQI on a °F page, European AQI on a °C page, PM2.5 and PM10.
+     Saved per place (kv 'misc', 'weather-aq:<place>') with its age.
+   · The past 7 days, from the forecast API's past_days, shown only
+     when asked for and labelled as past, never as a forecast.
+   · Compare with another saved place: now, today and each day of the
+     week side by side, the other place's forecast fetched (or read
+     from its saved copy, with its age) like any other.
+   · Copy summary: the page as a few lines of text, only what is on it.
+   The view choices (strip or chart and its range, the past week) are
+   kept with the places in portal.weather. Calendar shows the saved
+   forecast for a day in its day panel through js/core/calweather.js,
+   which reads this app's saved copy and never fetches.
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import { kv } from '../core/db.js';
@@ -60,7 +82,7 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-weather-cs
 const CURRENT = 'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,'
   + 'cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,dew_point_2m';
 /* the hourly twins of the current values let a saved forecast describe "now" hours later */
-const HOURLY = 'temperature_2m,precipitation_probability,weather_code,is_day,uv_index,visibility,pressure_msl,'
+const HOURLY = 'temperature_2m,precipitation_probability,precipitation,weather_code,is_day,uv_index,visibility,pressure_msl,'
   + 'relative_humidity_2m,apparent_temperature,dew_point_2m,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m';
 const DAILY = 'weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,'
   + 'precipitation_probability_max,precipitation_sum,wind_speed_10m_max';
@@ -77,6 +99,18 @@ const HOURS = 24;
 const COL_W = 56;                          /* one column of the hourly strip, px */
 
 const store$ = kv('misc');
+
+/* Open-Meteo's air-quality API (CAMS), and the past week from the forecast API */
+const AQ_URL = 'https://air-quality-api.open-meteo.com/v1/air-quality';
+const AQ_CURRENT = 'us_aqi,european_aqi,pm2_5,pm10';
+const AQ_PREFIX = 'weather-aq:';
+const PAST_DAILY = 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum';
+/* the plain rules behind "Take a coat?" and "Rain from 3 PM" (°C; the °F page says 50° and 59°) */
+const COAT_C = 10, JACKET_C = 15, PLAN_HOURS = 12, RAIN_POP = 50;
+const CHART_RANGES = [[24, '24 h'], [48, '48 h'], [168, '7 days']];
+const US_AQI = [[50, 'Good'], [100, 'Moderate'], [150, 'Unhealthy for sensitive groups'], [200, 'Unhealthy'], [300, 'Very unhealthy'], [Infinity, 'Hazardous']];
+const EU_AQI = [[20, 'Good'], [40, 'Fair'], [60, 'Moderate'], [80, 'Poor'], [100, 'Very poor'], [Infinity, 'Extremely poor']];
+const aqWord = (v, table) => table.find(([max]) => v <= max)[1];
 
 const unitQS = u => (u === 'C'
   ? '&temperature_unit=celsius&wind_speed_unit=kmh&precipitation_unit=mm'
@@ -234,6 +268,7 @@ const isoMs = iso => {
   return Date.UTC(y, m - 1, dd, hh, mm);
 };
 const isoDay = iso => { const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d, 12); };
+const isoOf = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const kmBetween = (a, b, c, d) => {
   const r = Math.PI / 180, x = Math.sin((c - a) * r / 2) ** 2
     + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2;
@@ -280,8 +315,9 @@ defineApp({
   icon: 'cloud-sun',
   g1: '#93d4ff', g2: '#2374cc',
   category: 'Utilities',
-  keywords: ['forecast', 'temperature', 'rain', 'hourly', 'cities', 'open-meteo', 'location', 'uv', 'wind'],
-  desc: 'Live forecasts from Open-Meteo for the places you save',
+  keywords: ['forecast', 'temperature', 'rain', 'hourly', 'cities', 'open-meteo', 'location', 'uv', 'wind',
+    'air quality', 'aqi', 'pollution', 'chart', 'compare', 'past week', 'sunrise', 'sunset', 'coat', 'umbrella'],
+  desc: 'Live forecasts from Open-Meteo for the places you save, with an hourly chart, air quality, the past week and two places side by side',
   pinned: true,
   singleton: true,
   win: { w: 820, h: 600, minW: 380, minH: 360 },
@@ -294,7 +330,16 @@ defineApp({
     const offs = [];
     const uid = `wx${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
+    /* view choices kept with the places (portal.weather) */
+    const prefOf = (k, dflt) => { const raw = store.get(MINE); return raw && typeof raw === 'object' && raw[k] !== undefined ? raw[k] : dflt; };
     const S = {
+      hourView: prefOf('hourView', 'strip') === 'chart' ? 'chart' : 'strip',
+      chartHours: CHART_RANGES.some(([n]) => n === prefOf('chartHours', 48)) ? prefOf('chartHours', 48) : 48,
+      chartAt: 0,         /* the hour the chart's readout is on, counted from now */
+      pastOn: prefOf('past', false) === true,
+      past: null, pastBusy: false, pastErr: null,     /* { key, unit, at, fc } — the past week, when asked for */
+      aq: null, aqErr: null,                          /* { key, at, cur, units } — air quality now */
+      cmp: null, cmpData: null, cmpBusy: false, cmpErr: null,   /* the place compared with, and its forecast */
       places: [],
       cur: null,          /* key of the place on screen */
       data: null,         /* { at, key, unit, place, fc } — a real reply, maybe from the cache */
@@ -364,6 +409,10 @@ defineApp({
       const raw = store.get(MINE);
       store.set(MINE, { ...(raw && typeof raw === 'object' ? raw : {}), v: 2, places: S.places.map(tidy) });
     }
+    function savePref(patch) {
+      const raw = store.get(MINE);
+      store.set(MINE, { ...(raw && typeof raw === 'object' ? raw : {}), v: 2, places: S.places.map(tidy), ...patch });
+    }
     /** The widget's place is always in the list. (It is usually the place this app gave it,
         so finding it there says nothing about whether the person saved it.) */
     function keep(v) {
@@ -372,6 +421,7 @@ defineApp({
     /** Drop what the app kept for a place that is gone for good. */
     function forget(key) {
       store$.del(CACHE_PREFIX + key).catch(() => {});
+      store$.del(AQ_PREFIX + key).catch(() => {});
       S.minis.delete(key);
     }
 
@@ -404,8 +454,10 @@ defineApp({
       S.cur = key;
       if (!same) {
         /* the person has moved on: an old location warning no longer applies */
-        S.openDay = -1; S.error = null; S.geoErr = null; S.geoInfo = null;
+        S.openDay = -1; S.error = null; S.geoErr = null; S.geoInfo = null; S.chartAt = 0;
         if (S.data?.key !== key) { S.data = null; S.fromCache = false; }
+        if (S.cmp === key) { S.cmp = null; S.cmpData = null; }
+        S.aqErr = null; S.pastErr = null;
         scroll.scrollTop = 0;
         pushToWidget(p);
       }
@@ -462,6 +514,7 @@ defineApp({
       const gone = S.places[i];
       const list = S.places.filter((_, j) => j !== i);
       savePlaces(list);
+      if (S.cmp === key) { S.cmp = null; S.cmpData = null; cmpAc?.abort(); }
       /* the saved forecast stays in IndexedDB until the chance to undo has passed */
       undo = { place: gone, index: i, key, wasCur: S.cur === key, mini: S.minis.get(key), timer: setTimeout(commitUndo, UNDO_MS) };
       S.minis.delete(key);
@@ -483,7 +536,7 @@ defineApp({
       const u = undo;
       undo = null;
       clearTimeout(u.timer);
-      if (!S.places.some(p => keyOf(p) === u.key)) store$.del(CACHE_PREFIX + u.key).catch(() => {});
+      if (!S.places.some(p => keyOf(p) === u.key)) { store$.del(CACHE_PREFIX + u.key).catch(() => {}); store$.del(AQ_PREFIX + u.key).catch(() => {}); }
       if (!dead) paintUndo();
     }
     function undoRemove() {
@@ -523,6 +576,12 @@ defineApp({
     async function load() {
       const key = S.cur;
       if (!key) return;
+      if (!S.aq || S.aq.key !== key) {
+        store$.get(AQ_PREFIX + key).then(a => {
+          if (dead || S.cur !== key || !a?.cur || (S.aq && S.aq.key === key)) return;
+          S.aq = a; paintMain();
+        }).catch(() => {});
+      }
       if (!S.data || S.data.key !== key) {
         const c = await store$.get(CACHE_PREFIX + key).catch(() => null);
         if (dead || S.cur !== key) return;
@@ -542,6 +601,8 @@ defineApp({
         /* nothing to fetch — and a request still out for the other unit must not land on top of this */
         if (ac) { ac.abort(); ac = null; ++seq; S.busy = false; paintBusy(); paintMain(); }
         if (S.fromCache) { S.fromCache = false; pushToWidget(p); paintMain(); }
+        refreshAq(p, false);
+        if (S.pastOn) refreshPast(p, false);
         return;
       }
       ac?.abort();
@@ -563,6 +624,8 @@ defineApp({
         const w = store.get(WX_PLACE);
         if (validPlace(w) && keyOf(w) === key) store.set(WX_CACHE, widgetCache(rec));
         if (force) say(`Forecast for ${short(p)} updated`);
+        refreshAq(p, force);
+        if (S.pastOn) refreshPast(p, force);
       } catch (e) {
         if (dead || my !== seq) return;
         S.error = describe(e);
@@ -576,6 +639,93 @@ defineApp({
           nextAuto = Date.now() + wait * 60000;
           paintAll();
         }
+      }
+    }
+
+    /* air quality now (Open-Meteo's air-quality API), saved per place with its time */
+    let aqAc = null;
+    async function refreshAq(p, force) {
+      const key = keyOf(p);
+      if (!force && S.aq && S.aq.key === key && Date.now() - S.aq.at < FRESH) return;
+      aqAc?.abort();
+      const mine = aqAc = new AbortController();
+      try {
+        const j = await getJSON(`${AQ_URL}?latitude=${(+p.lat).toFixed(4)}&longitude=${(+p.lon).toFixed(4)}&current=${AQ_CURRENT}&timezone=auto`, mine.signal);
+        if (dead || mine !== aqAc) return;
+        if (!j?.current) throw Object.assign(new Error('incomplete'), { kind: 'parse' });
+        const rec = { key, at: Date.now(), cur: j.current, units: j.current_units || {} };
+        store$.set(AQ_PREFIX + key, rec).catch(() => {});
+        if (S.cur === key) { S.aq = rec; S.aqErr = null; }
+      } catch (e) {
+        if (dead || mine !== aqAc || e?.name === 'AbortError') return;
+        if (S.cur === key) S.aqErr = describe(e);
+      } finally {
+        if (mine === aqAc) { aqAc = null; if (!dead && S.cur === key) paintMain(); }
+      }
+    }
+
+    /* the past week: the forecast API's past_days, fetched only once it is asked for */
+    let pastAc = null;
+    async function refreshPast(p, force) {
+      const key = keyOf(p), want = unit();
+      if (!force && S.past && S.past.key === key && S.past.unit === want && Date.now() - S.past.at < 3 * 3600e3) return;
+      pastAc?.abort();
+      const mine = pastAc = new AbortController();
+      S.pastBusy = true; S.pastErr = null;
+      paintMain();
+      try {
+        const j = await getJSON(`${FC_URL}?latitude=${(+p.lat).toFixed(4)}&longitude=${(+p.lon).toFixed(4)}&daily=${PAST_DAILY}&past_days=7&forecast_days=1&timezone=auto${unitQS(want)}`, mine.signal);
+        if (dead || mine !== pastAc) return;
+        if (!Array.isArray(j?.daily?.time)) throw Object.assign(new Error('incomplete'), { kind: 'parse' });
+        S.past = { key, unit: want, at: Date.now(), fc: j };
+      } catch (e) {
+        if (dead || mine !== pastAc || e?.name === 'AbortError') return;
+        S.pastErr = describe(e);
+      } finally {
+        if (mine === pastAc) { pastAc = null; S.pastBusy = false; if (!dead) paintMain(); }
+      }
+    }
+    function setPast(on) {
+      S.pastOn = on;
+      savePref({ past: on });
+      const p = curPlace();
+      if (on && p) refreshPast(p, false);
+      else { pastAc?.abort(); pastAc = null; S.pastBusy = false; paintMain(); }
+      say(on ? 'Showing the past 7 days' : 'The past 7 days are hidden');
+    }
+
+    /* another saved place's forecast, to compare: its saved copy first, fetched when that is old */
+    let cmpAc = null;
+    async function compareWith(key) {
+      cmpAc?.abort(); cmpAc = null;
+      S.cmp = key || null; S.cmpErr = null; S.cmpBusy = false;
+      const p = S.places.find(x => keyOf(x) === key);
+      if (!p) { S.cmp = null; S.cmpData = null; paintMain(); return; }
+      const want = unit();
+      if (S.cmpData && S.cmpData.key === key && S.cmpData.unit === want && Date.now() - S.cmpData.at < FRESH) { paintMain(); return; }
+      if (!S.cmpData || S.cmpData.key !== key) S.cmpData = null;
+      const saved = await store$.get(CACHE_PREFIX + key).catch(() => null);
+      if (dead || S.cmp !== key) return;
+      if (saved?.fc?.current && saved.fc.hourly?.time && saved.fc.daily?.time && saved.unit === want) {
+        S.cmpData = saved;
+        if (Date.now() - saved.at < FRESH) { paintMain(); return; }
+      }
+      const mine = cmpAc = new AbortController();
+      S.cmpBusy = true;
+      paintMain();
+      try {
+        const fc = await getJSON(fcURL(p, want), mine.signal);
+        if (dead || mine !== cmpAc) return;
+        if (!fc?.current || !Array.isArray(fc.hourly?.time) || !Array.isArray(fc.daily?.time)) throw Object.assign(new Error('incomplete'), { kind: 'parse' });
+        const rec = { at: Date.now(), key, unit: want, place: { name: p.name, lat: p.lat, lon: p.lon }, fc };
+        store$.set(CACHE_PREFIX + key, rec).catch(() => {});
+        S.cmpData = rec;
+        S.minis.set(key, { temp: fc.current.temperature_2m, code: fc.current.weather_code, day: fc.current.is_day, unit: want, at: rec.at });
+      } catch (e) {
+        if (dead || mine !== cmpAc || e?.name === 'AbortError') return;
+        S.cmpErr = describe(e);
+      } finally {
+        if (mine === cmpAc) { cmpAc = null; S.cmpBusy = false; if (!dead) { paintMain(); paintPlaces(); } }
       }
     }
 
@@ -1027,7 +1177,8 @@ defineApp({
       const v = derive(d);
       S.hourKey = `${v.now.hourIso}|${v.live}`;
       if (!v.m) return [ranOut(p, d)];
-      return [banner(d, v), hero(p, d, v), hoursCard(d, v), h('div.wx-split', weekCard(d, v), details(d, v)), footer(d)];
+      return [banner(d, v), hero(p, d, v), planCard(v), S.hourView === 'chart' ? chartCard(d, v) : hoursCard(d, v),
+        h('div.wx-split', weekCard(d, v), details(d, v)), pastCard(p), compareCard(p, d, v), footer(d)];
     }
 
     /** What the page describes as "now": the latest reading while it is live,
@@ -1153,7 +1304,9 @@ defineApp({
           h('span.wx-chip', icon('refresh'), h('span', { text: `Updated ${stamp(d.at)} · ` }), h('span', { dataset: { ageAt: String(d.at) }, text: ago(d.at) })),
           otherZone ? h('span.wx-chip', icon('clock'),
             h('span', { dataset: { tzOff: String(fc.utc_offset_seconds) }, text: `Local time ${hm(v.now.hh, v.now.mm)}` }),
-            fc.timezone_abbreviation ? h('span.wx-chip__dim', { text: ` · ${fc.timezone_abbreviation}` }) : null) : null));
+            fc.timezone_abbreviation ? h('span.wx-chip__dim', { text: ` · ${fc.timezone_abbreviation}` }) : null) : null,
+          h('button.wx-chip.wx-chip--btn', { type: 'button', dataset: { fk: 'wx-copy' }, title: 'Copy what this page says, as text', onclick: () => copySummary() },
+            icon('copy'), h('span', { text: 'Copy summary' }))));
     }
 
     function hoursCard(d, v) {
@@ -1248,6 +1401,7 @@ defineApp({
         h('div.wx-sec__head', icon('clock'), h('h3', { text: nHours === 1 ? 'Next hour' : `Next ${nHours} hours` }),
           popNote ? h('span.wx-sec__note', { text: popNote }) : null,
           h('div.grow'),
+          hourViewTabs(),
           h('button.ibtn', { type: 'button', 'aria-label': 'Earlier hours', onclick: () => nudge(-1) }, icon('chevron-left')),
           h('button.ibtn', { type: 'button', 'aria-label': 'Later hours', onclick: () => nudge(1) }, icon('chevron-right'))),
         stripEl);
@@ -1342,7 +1496,7 @@ defineApp({
         up ? svgEl('circle', { cx: X(f).toFixed(2), cy: Y(f).toFixed(2), r: '4.2', class: 'wx-arc__sun' }) : null);
       const len = (set - rise) / 60000;
       let label, value, sub;
-      if (up) { label = 'Sunset'; value = isoHM(D.sunset[di]); sub = `${span((dn0 - t) / 60000)} of daylight left`; }
+      if (up) { label = 'Sunset'; value = isoHM(D.sunset[di]); sub = `${span((dn0 - t) / 60000)} of daylight left · ${span((dn0 - up0) / 60000)} in all`; }
       else if (!after) { label = 'Sunrise'; value = isoHM(D.sunrise[di]); sub = `${span(len)} of daylight today`; }
       else if (j !== di) { label = 'Sunrise'; value = isoHM(D.sunrise[j]); sub = `Tomorrow · ${span(len)} of daylight`; }
       else { label = 'Sunrise'; value = '—'; sub = `Today’s sunset was ${isoHM(D.sunset[di])}`; }
@@ -1431,6 +1585,15 @@ defineApp({
           cc < 10 ? 'Clear sky' : cc < 35 ? 'A few clouds' : cc < 65 ? 'Partly covered' : cc < 90 ? 'Mostly covered' : 'Fully covered',
           h('span.wx-meter.wx-meter--cloud', h('i', { style: { width: `${Math.max(0, Math.min(100, cc))}%` } }))));
       }
+      /* air quality, from its own API, with its own time */
+      const aq = aqNow(u);
+      if (aq) {
+        const el = card('air', 'Air quality', 'wind', [h('span', { text: String(Math.round(aq.v)) }), h('small', { text: ` ${aq.word}` })],
+          [aq.scale, ...aq.bits].join(' · '),
+          h('span.wx-meter.wx-meter--aq', h('i', { style: { width: `${Math.max(3, Math.min(100, (aq.v / aq.max) * 100))}%` } })));
+        el.appendChild(h('div.wx-card__src', { text: `Open-Meteo air quality (CAMS) · ${stamp(aq.at)}` }));
+        cards.push(el);
+      }
       if (!cards.length) return null;
       return h('section.wx-details', { 'aria-label': m.live ? 'Current details' : `Forecast details for ${hourName(m.iso)}` },
         h('div.wx-sec__head.wx-sec__head--bare', icon('activity'), h('h3', { text: 'Details' }),
@@ -1438,10 +1601,313 @@ defineApp({
         h('div.wx-cards', cards));
     }
 
+    /* ---------------- "Take a coat?" and "Rain from 3 PM" ----------------
+       Plain rules over the hourly forecast, and the numbers they were decided from. */
+    function planRules(v) {
+      const { fc, u, hi, now } = v;
+      const H = fc.hourly;
+      if (hi < 0) return null;
+      const when = iso => `${hourName(iso)}${String(iso).slice(0, 10) !== now.dateIso ? ' tomorrow' : ''}`;
+      const out = { coat: null, rain: null };
+      /* the coat: the coldest it feels in the next 12 hours */
+      const end12 = Math.min(H.time.length, hi + PLAN_HOURS);
+      const feel = i => (fin(H.apparent_temperature?.[i]) ? H.apparent_temperature[i] : NaN);
+      let lo = -1, top = -1;
+      for (let i = hi; i < end12; i++) {
+        if (!fin(feel(i))) continue;
+        if (lo < 0 || feel(i) < feel(lo)) lo = i;
+        if (top < 0 || feel(i) > feel(top)) top = i;
+      }
+      if (lo >= 0) {
+        const c = toC(feel(lo), u);
+        const verdict = c < COAT_C ? 'Take a coat' : c < JACKET_C ? 'A light jacket' : 'No coat needed';
+        const last = H.time[end12 - 1];
+        out.coat = { kind: c < COAT_C ? 'coat' : c < JACKET_C ? 'jacket' : 'none', head: verdict,
+          detail: lo === top ? `It feels like ${deg(feel(lo))} until ${when(last)}`
+            : `It feels as cold as ${deg(feel(lo))} at ${when(H.time[lo])}, and up to ${deg(feel(top))} at ${when(H.time[top])}` };
+      }
+      /* the rain: the first hour of the next 24 with a 50% chance or more */
+      const end24 = Math.min(H.time.length, hi + HOURS);
+      const pop = i => (fin(H.precipitation_probability?.[i]) ? H.precipitation_probability[i] : NaN);
+      const known = [];
+      for (let i = hi; i < end24; i++) if (fin(pop(i))) known.push(i);
+      if (known.length) {
+        const first = known.find(i => pop(i) >= RAIN_POP);
+        if (first !== undefined) {
+          let last = first;
+          while (last + 1 < end24 && pop(last + 1) >= RAIN_POP) last++;
+          let peak = first;
+          for (let i = first; i <= last; i++) if (pop(i) > pop(peak)) peak = i;
+          const fam = cond(H.weather_code?.[peak], 1).fam;
+          const word = fam === 'snow' ? 'Snow' : fam === 'sleet' ? 'Sleet' : fam === 'storm' ? 'Storms' : 'Rain';
+          let total = 0, any = false;
+          for (let i = first; i <= last; i++) if (fin(H.precipitation?.[i])) { total += H.precipitation[i]; any = true; }
+          const bits = [`${pop(first)}% chance ${first === hi ? 'this hour' : `at ${when(H.time[first])}`}`];
+          if (peak !== first && pop(peak) > pop(first)) bits.push(`up to ${pop(peak)}% at ${when(H.time[peak])}`);
+          bits.push(last + 1 < end24 ? `under ${RAIN_POP}% again from ${when(H.time[last + 1])}` : 'still likely 24 hours from now');
+          if (any && total > 0) bits.push(`about ${amount(total, u)} in all`);
+          out.rain = { kind: 'rain', head: first === hi ? `${word} now` : `${word} from ${when(H.time[first])}`, detail: bits.join(', ') };
+        } else {
+          let max = known[0];
+          for (const i of known) if (pop(i) > pop(max)) max = i;
+          out.rain = { kind: 'dry', head: 'No rain expected',
+            detail: pop(max) === 0 ? 'A 0% chance every hour for the next 24 hours' : `The highest chance in the next 24 hours is ${pop(max)}%, at ${when(H.time[max])}` };
+        }
+      }
+      if (!out.coat && !out.rain) return null;
+      const t = n => `${Math.round(u.t === 'F' ? n * 9 / 5 + 32 : n)}°`;
+      out.rule = `Plain rules over the hourly forecast: a coat when it will feel colder than ${t(COAT_C)} in the next ${PLAN_HOURS} hours, a light jacket below ${t(JACKET_C)}; rain when an hour’s chance is ${RAIN_POP}% or more.`;
+      return out;
+    }
+    function planCard(v) {
+      const r = planRules(v);
+      if (!r) return null;
+      const line = (x, fk, ic) => (x ? h(`div.wx-plan__row.is-${x.kind}`, { dataset: { fk } },
+        icon(ic), h('div', h('b', { text: x.head }), h('span', { text: ` — ${x.detail}.` }))) : null);
+      return h('section.wx-sec.wx-plan', { 'aria-label': 'Today at a glance' },
+        line(r.coat, 'wx-coat', 'thermometer'),
+        line(r.rain, 'wx-rain', r.rain && r.rain.kind === 'dry' ? 'sun' : 'cloud-rain'),
+        h('small.wx-plan__rule', { text: r.rule }));
+    }
+
+    /* ---------------- the hourly chart ---------------- */
+    function hourViewTabs() {
+      const b = (id, label) => h('button', { type: 'button', dataset: { hview: id }, class: S.hourView === id ? 'is-on' : null, 'aria-pressed': S.hourView === id ? 'true' : 'false',
+        onclick: () => { if (S.hourView === id) return; S.hourView = id; savePref({ hourView: id }); paintMain(); scroll.querySelector(`[data-hview="${id}"]`)?.focus({ preventScroll: true }); } }, label);
+      return h('div.tabs.wx-hview', { role: 'group', 'aria-label': 'Show the hours as' }, b('strip', 'Strip'), b('chart', 'Chart'));
+    }
+    function chartCard(d, v) {
+      const { fc, u, hi, m, now } = v;
+      const H = fc.hourly;
+      if (hi < 0) return hoursCard(d, v);
+      const n = Math.min(H.time.length - hi, S.chartHours);
+      const I = Array.from({ length: n }, (_, k) => hi + k);
+      const tOf = i => (i === hi && m.live && fin(m.t) ? m.t : H.temperature_2m?.[i]);
+      const temps = I.map(tOf).filter(fin);
+      if (temps.length < 2) return hoursCard(d, v);
+      const W = 720, HT = 230, L = 38, R = 40, T = 14, B = 40, PW = W - L - R, PH = HT - T - B;
+      const step = (u.t === 'F' ? 5 : 2) * Math.max(1, Math.ceil((Math.max(...temps) - Math.min(...temps)) / ((u.t === 'F' ? 5 : 2) * 5)));
+      const lo = Math.floor(Math.min(...temps) / step) * step, top = Math.ceil(Math.max(...temps) / step) * step || lo + step;
+      const span2 = Math.max(step, top - lo);
+      const x = k => L + (n === 1 ? PW / 2 : (k / (n - 1)) * PW);
+      const y = t => T + (1 - (t - lo) / span2) * PH * 0.6;
+      const popY = p => T + PH - (p / 100) * PH * 0.34;
+      const g = svgEl('svg', { class: 'wx-chart__svg', viewBox: `0 0 ${W} ${HT}`, role: 'img', 'aria-hidden': 'true', focusable: 'false' });
+      /* grid and the temperature axis */
+      for (let t = lo; t <= lo + span2 + 1e-9; t += step) {
+        g.appendChild(svgEl('path', { d: `M${L} ${y(t).toFixed(1)}H${W - R}`, class: 'wx-chart__grid' }));
+        const lab = svgEl('text', { x: String(L - 6), y: String(y(t).toFixed(1)), class: 'wx-chart__ax', 'text-anchor': 'end', 'dominant-baseline': 'middle' });
+        lab.textContent = deg(t);
+        g.appendChild(lab);
+      }
+      for (const p of [0, 50, 100]) {
+        const lab = svgEl('text', { x: String(W - R + 6), y: String(popY(p).toFixed(1)), class: 'wx-chart__ax wx-chart__ax--pop', 'dominant-baseline': 'middle' });
+        lab.textContent = `${p}%`;
+        g.appendChild(lab);
+      }
+      /* days and hours along the bottom */
+      const every = n <= 24 ? 3 : n <= 48 ? 6 : 24;
+      I.forEach((i, k) => {
+        const iso = H.time[i], hh = +String(iso).slice(11, 13);
+        if (k > 0 && hh === 0) g.appendChild(svgEl('path', { d: `M${x(k).toFixed(1)} ${T}V${T + PH}`, class: 'wx-chart__day' }));
+        if (hh % every === 0 && (every < 24 || hh === 0)) {
+          const lab = svgEl('text', { x: x(k).toFixed(1), y: String(T + PH + 16), class: 'wx-chart__ax', 'text-anchor': 'middle' });
+          lab.textContent = every === 24 || hh === 0 ? fmt.dayName(isoDay(iso), true) : isoHour(iso);
+          g.appendChild(lab);
+        }
+      });
+      /* the chance of precipitation as bars, the temperature as a line */
+      const bw = Math.max(1.2, (PW / n) * 0.62);
+      I.forEach((i, k) => {
+        const p = H.precipitation_probability?.[i];
+        if (fin(p) && p > 0) g.appendChild(svgEl('rect', { x: (x(k) - bw / 2).toFixed(1), y: popY(p).toFixed(1), width: bw.toFixed(1), height: (T + PH - popY(p)).toFixed(1), rx: '1', class: 'wx-chart__pop' }));
+      });
+      const pts = [];
+      I.forEach((i, k) => { const t = tOf(i); if (fin(t)) pts.push([x(k), y(t)]); });
+      g.appendChild(svgEl('path', { d: smooth(pts), class: 'wx-chart__line' }));
+      g.appendChild(svgEl('circle', { cx: pts[0][0].toFixed(1), cy: pts[0][1].toFixed(1), r: '3.5', class: 'wx-chart__now' }));
+      /* the readout: a line and a dot on one hour, its numbers written out under the chart */
+      const cursor = svgEl('path', { class: 'wx-chart__cur' });
+      const dot = svgEl('circle', { r: '4', class: 'wx-chart__dot' });
+      g.append(cursor, dot);
+      const read = h('div.wx-chart__read', { 'aria-live': 'polite', dataset: { fk: 'wx-chart-read' } });
+      const setAt = k => {
+        S.chartAt = Math.max(0, Math.min(n - 1, k));
+        const i = hi + S.chartAt, t = tOf(i), p = H.precipitation_probability?.[i], fl = H.apparent_temperature?.[i];
+        cursor.setAttribute('d', `M${x(S.chartAt).toFixed(1)} ${T}V${T + PH}`);
+        if (fin(t)) { dot.setAttribute('cx', x(S.chartAt).toFixed(1)); dot.setAttribute('cy', y(t).toFixed(1)); dot.style.display = ''; } else dot.style.display = 'none';
+        const k0 = cond(H.weather_code?.[i], H.is_day?.[i]);
+        const iso = H.time[i];
+        const day = String(iso).slice(0, 10) === now.dateIso ? '' : `${fmt.dayName(isoDay(iso), true)} `;
+        read.textContent = `${S.chartAt === 0 ? (m.live ? 'Now' : `Forecast for ${hourName(iso)}`) : `${day}${hourName(iso)}`}: ${deg(t)}, ${k0.label}${fin(fl) ? `, feels like ${deg(fl)}` : ''}${fin(p) ? `, ${p}% chance of precipitation` : ''}`;
+      };
+      const box = h('div.wx-chart', {
+        tabindex: '0', role: 'group', dataset: { fk: 'wx-chart' },
+        'aria-label': `Hourly chart of the next ${n} hours: temperature as a line, chance of precipitation as bars. Left and right arrows move through the hours.`,
+        onpointermove: e => { const r = g.getBoundingClientRect(); if (!r.width) return; const vx = ((e.clientX - r.left) / r.width) * W; setAt(Math.round(((vx - L) / PW) * (n - 1))); },
+        onkeydown: e => {
+          const k = { ArrowLeft: -1, ArrowRight: 1, PageUp: -6, PageDown: 6 }[e.key];
+          if (k !== undefined) { e.preventDefault(); setAt(S.chartAt + k); }
+          else if (e.key === 'Home') { e.preventDefault(); setAt(0); }
+          else if (e.key === 'End') { e.preventDefault(); setAt(n - 1); }
+        },
+      }, g);
+      setAt(Math.min(S.chartAt, n - 1));
+      const ranges = h('div.tabs.wx-hview', { role: 'group', 'aria-label': 'How far ahead' }, CHART_RANGES.map(([hrs, label]) => h('button', {
+        type: 'button', dataset: { range: String(hrs) }, class: S.chartHours === hrs ? 'is-on' : null, 'aria-pressed': S.chartHours === hrs ? 'true' : 'false',
+        onclick: () => { S.chartHours = hrs; S.chartAt = 0; savePref({ chartHours: hrs }); paintMain(); scroll.querySelector(`[data-range="${hrs}"]`)?.focus({ preventScroll: true }); },
+      }, label)));
+      return h('section.wx-sec.wx-hours.wx-chartsec', { 'aria-label': 'Hourly chart' },
+        h('div.wx-sec__head', icon('activity'), h('h3', { text: `Next ${n} hours` }), h('div.grow'), ranges, hourViewTabs()),
+        box, read,
+        h('div.wx-chart__key', h('span.wx-chart__k1', { text: `Temperature (°${u.t})` }), h('span.wx-chart__k2', { text: 'Chance of precipitation (%)' })));
+    }
+
+    /* ---------------- air quality now, when it was fetched ---------------- */
+    function aqNow(u) {
+      const a = S.aq;
+      if (!a || a.key !== S.cur) return null;
+      const c = a.cur || {}, un = a.units || {};
+      const us = fin(c.us_aqi) ? c.us_aqi : null, eu = fin(c.european_aqi) ? c.european_aqi : null;
+      const useUS = us !== null && (u.t === 'F' || eu === null);
+      const val = useUS ? us : eu;
+      if (val === null) return null;
+      const bits = [];
+      if (fin(c.pm2_5)) bits.push(`PM2.5 ${Math.round(c.pm2_5)} ${un.pm2_5 || 'µg/m³'}`);
+      if (fin(c.pm10)) bits.push(`PM10 ${Math.round(c.pm10)} ${un.pm10 || 'µg/m³'}`);
+      return { v: val, scale: useUS ? 'US AQI' : 'European AQI', word: aqWord(val, useUS ? US_AQI : EU_AQI), max: useUS ? 300 : 100, bits, at: a.at };
+    }
+
+    /* ---------------- the past 7 days, labelled as past ---------------- */
+    function pastCard(p) {
+      const head = (...kids) => h('div.wx-sec__head', icon('clock'), h('h3', { text: 'Past 7 days' }), h('span.wx-past__tag', { text: 'Past, not a forecast' }), h('div.grow'), ...kids);
+      if (!S.pastOn) {
+        return h('section.wx-sec.wx-past.is-closed', { 'aria-label': 'Past 7 days' },
+          head(h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'wx-past-show' }, onclick: () => setPast(true) }, h('span', { text: 'Show the past 7 days' }))));
+      }
+      const hide = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'wx-past-hide' }, onclick: () => setPast(false) }, h('span', { text: 'Hide' }));
+      const P = S.past && S.past.key === keyOf(p) ? S.past : null;
+      if (!P) {
+        return h('section.wx-sec.wx-past', { 'aria-label': 'Past 7 days' }, head(hide),
+          S.pastErr ? h('p.wx-past__msg', { text: `${S.pastErr.title}. ${S.pastErr.detail}` }, ' ',
+            h('button.btn.btn--sm', { type: 'button', onclick: () => refreshPast(p, true) }, h('span', { text: 'Try again' })))
+            : h('p.wx-past__msg', { text: 'Getting the past week from Open-Meteo…' }));
+      }
+      const D = P.fc.daily, du = P.fc.daily_units || {};
+      const pu = { t: /F/.test(String(du.temperature_2m_max || '')) ? 'F' : du.temperature_2m_max ? 'C' : P.unit, rain: /inch/.test(String(du.precipitation_sum || '')) ? 'in' : du.precipitation_sum ? 'mm' : P.unit === 'F' ? 'in' : 'mm' };
+      const today = placeNow(P.fc.utc_offset_seconds).dateIso;
+      const idx = D.time.map((t, i) => i).filter(i => D.time[i] < today && fin(D.temperature_2m_max?.[i]) && fin(D.temperature_2m_min?.[i])).slice(-7).reverse();
+      const rows = idx.map((i, n) => {
+        const date = isoDay(D.time[i]);
+        const k = cond(D.weather_code?.[i], 1);
+        const name = n === 0 && D.time[i] === isoOf(new Date(isoDay(today).getTime() - 86400000)) ? 'Yesterday' : `${fmt.dayName(date, true)}, ${fmt.monthName(date, true)} ${date.getDate()}`;
+        return h('div.wx-past__row', { role: 'listitem', 'aria-label': `${name}, past: ${k.label}, low ${deg(D.temperature_2m_min[i])}, high ${deg(D.temperature_2m_max[i])}, ${amount(D.precipitation_sum?.[i], pu)} of precipitation` },
+          h('span.wx-past__n', { text: name }), glyph(k.fam, true), h('span.wx-past__c', { text: k.label }),
+          h('span.wx-past__t', { text: `${deg(D.temperature_2m_min[i])} – ${deg(D.temperature_2m_max[i])}` }),
+          h('span.wx-past__r', { text: amount(D.precipitation_sum?.[i], pu) }));
+      });
+      return h('section.wx-sec.wx-past', { 'aria-label': 'Past 7 days' }, head(hide),
+        rows.length ? h('div.wx-past__list', { role: 'list', dataset: { fk: 'wx-past-list' } }, rows) : h('p.wx-past__msg', { text: 'Open-Meteo sent no past days for this place.' }),
+        h('small.wx-past__src', { text: `What Open-Meteo’s weather models give for those days (not a weather station’s readings) · fetched ${stamp(P.at)} · °${pu.t}` }));
+    }
+
+    /* ---------------- two places side by side ---------------- */
+    function compareCard(p, d, v) {
+      const others = S.places.filter(x => keyOf(x) !== keyOf(p));
+      const head = (...kids) => h('div.wx-sec__head', icon('layers'), h('h3', { text: 'Compare' }), h('div.grow'), ...kids);
+      if (!others.length) return h('section.wx-sec.wx-cmp', { 'aria-label': 'Compare' }, head(), h('p.wx-past__msg', { text: 'Save another place to compare it with this one.' }));
+      const sel = h('select.select.wx-cmp__sel', { 'aria-label': `Compare ${short(p)} with`, dataset: { fk: 'wx-cmp-sel' }, onchange: e => compareWith(e.target.value) },
+        h('option', { value: '', text: 'Compare with…' }), others.map(x => h('option', { value: keyOf(x), text: short(x), selected: keyOf(x) === S.cmp ? '' : null })));
+      if (!S.cmp || !others.some(x => keyOf(x) === S.cmp)) return h('section.wx-sec.wx-cmp', { 'aria-label': 'Compare' }, head(sel));
+      const q = S.places.find(x => keyOf(x) === S.cmp);
+      const B = S.cmpData && S.cmpData.key === S.cmp ? S.cmpData : null;
+      if (!B) {
+        return h('section.wx-sec.wx-cmp', { 'aria-label': 'Compare' }, head(sel),
+          h('p.wx-past__msg', { text: S.cmpErr ? `${S.cmpErr.title}. ${S.cmpErr.detail} No forecast for ${short(q)} is saved on this computer yet.` : `Getting the forecast for ${short(q)} from Open-Meteo…` }));
+      }
+      const w = derive(B);
+      if (!w.m) return h('section.wx-sec.wx-cmp', { 'aria-label': 'Compare' }, head(sel), h('p.wx-past__msg', { text: `The saved forecast for ${short(q)} has run out.` }));
+      const same = v.u.t === w.u.t;
+      const nowCell = (x, uu) => `${fin(x.m.t) ? `${deg(x.m.t)}` : '—'} ${cond(x.m.code, x.m.day).label}`;
+      const dayHL = x => (x.di >= 0 ? `${deg(x.fc.daily.temperature_2m_max[x.di])} / ${deg(x.fc.daily.temperature_2m_min[x.di])}` : '—');
+      const popDay = x => (x.di >= 0 && fin(x.fc.daily.precipitation_probability_max?.[x.di]) ? `${x.fc.daily.precipitation_probability_max[x.di]}%` : '—');
+      const sunOf = x => (x.di >= 0 && x.fc.daily.sunrise?.[x.di] ? `${isoHM(x.fc.daily.sunrise[x.di])} – ${isoHM(x.fc.daily.sunset[x.di])}` : '—');
+      const diff = (a, b) => (same && fin(a) && fin(b) ? (Math.round(b) - Math.round(a) === 0 ? 'same' : `${Math.round(b) - Math.round(a) > 0 ? '+' : '−'}${Math.abs(Math.round(b) - Math.round(a))}°`) : '');
+      const row = (label, a, b, dd, fk) => h('tr', fk ? { dataset: { fk } } : null, h('th', { scope: 'row', text: label }), h('td', { text: a }), h('td', { text: b }), h('td.wx-cmp__d', { text: dd || '' }));
+      const rows = [
+        row(v.m.live && w.m.live ? 'Now' : 'Now (forecast where noted)', `${nowCell(v)}${v.m.live ? '' : ' (forecast)'}`, `${nowCell(w)}${w.m.live ? '' : ' (forecast)'}`, diff(v.m.t, w.m.t), 'wx-cmp-now'),
+        row('Feels like', deg(v.m.feels), deg(w.m.feels), diff(v.m.feels, w.m.feels)),
+        row('Today, high / low', dayHL(v), dayHL(w), v.di >= 0 && w.di >= 0 ? diff(v.fc.daily.temperature_2m_max[v.di], w.fc.daily.temperature_2m_max[w.di]) : '', 'wx-cmp-today'),
+        row('Chance of rain today', popDay(v), popDay(w), ''),
+        row('Wind now', speed(v.m.wind, v.u), speed(w.m.wind, w.u), ''),
+        row('Daylight', sunOf(v), sunOf(w), ''),
+      ];
+      /* the days both forecasts cover, matched by date */
+      const days = [];
+      if (v.di >= 0) {
+        for (let i = v.di + 1; i < v.fc.daily.time.length; i++) {
+          const t = v.fc.daily.time[i], j = w.fc.daily.time.indexOf(t);
+          if (j < 0) continue;
+          const A = v.fc.daily, Bd = w.fc.daily;
+          days.push(row(`${fmt.dayName(isoDay(t), true)} ${isoDay(t).getDate()}`, `${deg(A.temperature_2m_max[i])} / ${deg(A.temperature_2m_min[i])} ${cond(A.weather_code?.[i], 1).label}`,
+            `${deg(Bd.temperature_2m_max[j])} / ${deg(Bd.temperature_2m_min[j])} ${cond(Bd.weather_code?.[j], 1).label}`, diff(A.temperature_2m_max[i], Bd.temperature_2m_max[j]), `wx-cmp-${t}`));
+        }
+      }
+      return h('section.wx-sec.wx-cmp', { 'aria-label': `Compare ${short(p)} and ${short(q)}` }, head(sel),
+        h('div.wx-cmp__wrap', h('table.wx-cmp__t', { dataset: { fk: 'wx-cmp-table' } },
+          h('thead', h('tr', h('th', { scope: 'col', text: '' }), h('th', { scope: 'col', text: short(p) }), h('th', { scope: 'col', text: short(q) }), h('th', { scope: 'col', text: same ? 'Difference' : '' }))),
+          h('tbody', rows, days.length ? h('tr.wx-cmp__sep', h('th', { colspan: '4', scope: 'colgroup', text: 'The coming days, high / low' })) : null, days))),
+        h('small.wx-past__src', { text: `${short(q)}: Open-Meteo forecast fetched ${stamp(B.at)}${B.at < Date.now() - LIVE ? ` (${ago(B.at)})` : ''}${same ? '' : ` · its numbers are in °${w.u.t}, this page’s in °${v.u.t}`}` }),
+        S.cmpBusy ? h('small.wx-past__src', { text: `Getting a newer forecast for ${short(q)}…` }) : null);
+    }
+
+    /* ---------------- copy a summary: only what is on the page ---------------- */
+    function summaryText(p, d, v) {
+      const { fc, u, di, m } = v;
+      const D = fc.daily;
+      const [name, region] = splitName(p);
+      const k = cond(m.code, m.day);
+      const L = [`Weather for ${[name, region].filter(Boolean).join(', ')}`];
+      L.push(`${m.live ? `Now (${stamp(d.at)})` : `Forecast for ${hourName(m.iso)}`}: ${fin(m.t) ? `${deg(m.t)}${u.t}` : 'no temperature reading'}, ${k.label}${fin(m.feels) ? `, feels like ${deg(m.feels)}` : ''}`);
+      if (di >= 0) {
+        const pop = D.precipitation_probability_max?.[di];
+        L.push(`Today: high ${deg(D.temperature_2m_max[di])}, low ${deg(D.temperature_2m_min[di])}${fin(pop) ? `, ${pop}% chance of precipitation` : ''}`);
+      }
+      const r = planRules(v);
+      if (r?.coat) L.push(`${r.coat.head}: ${r.coat.detail.charAt(0).toLowerCase()}${r.coat.detail.slice(1)}.`);
+      if (r?.rain) L.push(`${r.rain.head}: ${r.rain.detail.charAt(0).toLowerCase()}${r.rain.detail.slice(1)}.`);
+      const aq = aqNow(u);
+      if (aq) L.push(`Air quality: ${Math.round(aq.v)} ${aq.scale} (${aq.word})`);
+      const next = [];
+      if (di >= 0) for (let i = di + 1; i < D.time.length && next.length < 6; i++) {
+        if (fin(D.temperature_2m_max?.[i]) && fin(D.temperature_2m_min?.[i])) next.push(`${fmt.dayName(isoDay(D.time[i]), true)} ${deg(D.temperature_2m_max[i])}/${deg(D.temperature_2m_min[i])} ${cond(D.weather_code?.[i], 1).label}`);
+      }
+      if (next.length) L.push(`Next days: ${next.join(' · ')}`);
+      L.push(`From Open-Meteo.com, fetched ${stamp(d.at)}.`);
+      return L.join('\n');
+    }
+    async function copySummary() {
+      const p = curPlace(), d = shown();
+      if (!p || !d) return;
+      const v = derive(d);
+      if (!v.m) return;
+      const text = summaryText(p, d, v);
+      try {
+        await navigator.clipboard.writeText(text);
+        say('Summary copied');
+        api.notify({ app: 'Weather', icon: 'copy', title: 'Summary copied', message: text.split('\n').slice(0, 2).join(' · ').slice(0, 140), timeout: 3200 });
+      } catch (e) {
+        api.notify({ app: 'Weather', icon: 'alert', title: 'Couldn’t copy', message: 'The clipboard isn’t available here.', timeout: 4000 });
+      }
+    }
+
     function footer(d) {
       const fc = d?.fc;
+      const aqFail = d && S.aqErr && !(S.aq && S.aq.key === S.cur);
       return h('footer.wx-foot',
-        h('span', 'Weather data by ', h('a', { href: 'https://open-meteo.com/', target: '_blank', rel: 'noopener noreferrer', text: 'Open-Meteo.com' })),
+        h('span', 'Weather data by ', h('a', { href: 'https://open-meteo.com/', target: '_blank', rel: 'noopener noreferrer', text: 'Open-Meteo.com' }),
+          d && S.aq && S.aq.key === S.cur ? ' · air quality from Copernicus Atmosphere Monitoring Service forecasts, through Open-Meteo' : ''),
+        aqFail ? h('span.wx-foot__dim', { text: `Air quality couldn’t be fetched: ${S.aqErr.short}` }) : null,
         fc && fin(fc.latitude) ? h('span.wx-foot__dim', {
           text: `Model grid point ${coords({ lat: fc.latitude, lon: fc.longitude })}${fin(fc.elevation) ? ` · ${Math.round(fc.elevation)} m above sea level` : ''}`,
         }) : null);
@@ -1498,7 +1964,14 @@ defineApp({
       load();
     }));
     /* refresh first: it marks the app busy, so the page doesn't flash a "wrong unit" note meanwhile */
-    offs.push(store.sub(UNIT, () => { if (dead) return; paintTabs(); refresh(false); refreshMinis(false); paintMain(); }));
+    offs.push(store.sub(UNIT, () => {
+      if (dead) return;
+      paintTabs(); refresh(false); refreshMinis(false);
+      if (S.cmp) compareWith(S.cmp);
+      const p = curPlace();
+      if (S.pastOn && p) refreshPast(p, false);
+      paintMain();
+    }));
     offs.push(store.sub('prefs.h24', () => { if (!dead) { paintMain(); paintSubtitle(); } }));
     offs.push(store.sub('prefs.reduceMotion', () => { if (!dead) paintChrome(); }));
 
@@ -1556,7 +2029,7 @@ defineApp({
       mq?.removeEventListener?.('change', onMq);
       clearTimeout(sTimer); clearTimeout(geoGuard); clearTimeout(infoTimer);
       commitUndo();
-      ac?.abort(); sAc?.abort(); miniAc?.abort(); geoAc?.abort();
+      ac?.abort(); sAc?.abort(); miniAc?.abort(); geoAc?.abort(); aqAc?.abort(); pastAc?.abort(); cmpAc?.abort();
     };
   },
 });

@@ -7,6 +7,9 @@
    tile made from its title; nothing is looked up online and nothing
    is shown that wasn't typed in or counted from what was typed (the
    tab headings count the list, a percentage is position ÷ total).
+   Each day you move your position is logged, and once a book has
+   entries on three different days it shows your pages (or chapters) a
+   day and, with a known total, about when you will finish at that pace.
 
    Why Static Study: a reading list is school work (set books, wider
    reading), and the tab already holds the other things a student
@@ -37,13 +40,15 @@ export function mountBooks(host, ctx) {
     const probs = BK.issues(f, S.books);
     if (probs.length) { f.issues = probs; render(); return; }
     const old = byId(f.id);
-    const draft = { ...f, added: old ? old.added : Date.now() };
+    const draft = { ...f, added: old ? old.added : Date.now(), log: old ? old.log : [] };
     let said = '';
     /* a finished book has a finish date (today unless you picked one) and has been read to the end */
     if (draft.status === 'finished') {
       if (!draft.finished) draft.finished = BK.today();
       if (BK.norm(draft).total && !(old && old.status === 'finished')) { draft.pos = String(BK.norm(draft).total); said = ' Position set to the end.'; }
     }
+    const pos = BK.norm(draft).pos;
+    if (pos && (!old || old.pos !== pos)) draft.log = BK.logged({ log: draft.log, total: BK.norm(draft).total }, pos);
     const rec = BK.norm({ ...draft, id: f.id || BK.uid() });
     save(f.id ? S.books.map(b => (b.id === f.id ? rec : b)) : [rec, ...S.books]);
     S.note = `${f.id ? 'Saved' : 'Added'} “${rec.title}”.${said}`;
@@ -57,7 +62,7 @@ export function mountBooks(host, ctx) {
     const probs = BK.issues({ ...b, pos: v, total: b.total || '' }, S.books);
     const bad = probs.find(p => p.at === 'pos' || p.at === 'total');
     if (bad || v === '') { S.note = bad ? bad.text : `Type the ${b.unit === 'chapters' ? 'chapter' : 'page'} you are on.`; S.noteBad = true; render(); return; }
-    save(S.books.map(x => (x.id === b.id ? BK.norm({ ...x, pos: v, status: x.status === 'want' ? 'reading' : x.status }) : x)));
+    save(S.books.map(x => (x.id === b.id ? BK.norm({ ...x, pos: v, status: x.status === 'want' ? 'reading' : x.status, log: BK.logged(x, Number(v)) }) : x)));
     S.note = `“${b.title}”: ${BK.progressText(byId(b.id)).toLowerCase()}.`;
     render();
   }
@@ -65,7 +70,7 @@ export function mountBooks(host, ctx) {
     save(S.books.map(x => {
       if (x.id !== b.id) return x;
       const y = { ...x, status };
-      if (status === 'finished') { y.finished = BK.today(); if (x.total) y.pos = x.total; } else y.finished = '';
+      if (status === 'finished') { y.finished = BK.today(); if (x.total) { y.pos = x.total; if (x.pos !== x.total) y.log = BK.logged(x, x.total); } } else y.finished = '';
       return BK.norm(y);
     }));
     S.note = status === 'finished' ? `Finished “${b.title}”, ${BK.today()}.` : `“${b.title}” is now “${BK.STATUS.find(s => s[0] === status)[1].toLowerCase()}”.`;
@@ -79,6 +84,20 @@ export function mountBooks(host, ctx) {
     if (S.form && S.form.id === b.id) S.form = null;
     S.note = `Removed “${b.title}”.`;
     render();
+  }
+
+  /* pages a day and the finish estimate, only from the real log */
+  function paceLine(b) {
+    if (b.status !== 'reading') return null;
+    const u = b.unit === 'chapters' ? 'chapters' : 'pages';
+    const p = BK.pace(b);
+    if (!p) return h('small.st-bk__pace', { dataset: { fk: 'bk-pace-wait' }, text: `Update where you are on ${BK.PACE_ENTRIES} different days to see your pace (${b.log.length} so far).` });
+    const rate = p.perDay >= 10 ? String(Math.round(p.perDay)) : String(Math.round(p.perDay * 10) / 10);
+    const when = p.finishOn ? new Date(+p.finishOn.slice(0, 4), +p.finishOn.slice(5, 7) - 1, +p.finishOn.slice(8)).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+    const est = !p.read ? ' No progress since the first update, so there is no finish estimate yet.'
+      : p.daysLeft === null ? ' Add the total to see when you might finish.'
+        : p.daysLeft === 0 ? '' : ` At that pace, about ${plural(p.daysLeft, 'day')} to go: around ${when}.`;
+    return h('small.st-bk__pace', { dataset: { fk: 'bk-pace' }, text: `${rate} ${u} a day (${p.read} ${u} in ${plural(p.days, 'day')}, from ${p.entries} updates).${est}` });
   }
 
   function card(b) {
@@ -98,6 +117,7 @@ export function mountBooks(host, ctx) {
           h('span', { dataset: { fk: 'bk-progress' }, text: BK.progressText(b) }),
           b.status === 'finished' && b.finished ? h('span', { dataset: { fk: 'bk-finished' }, text: `on ${new Date(+b.finished.slice(0, 4), +b.finished.slice(5, 7) - 1, +b.finished.slice(8)).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}` }) : null),
         p !== null ? h('div.st-pbar', { role: 'progressbar', 'aria-label': `${b.title} progress`, 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(p) }, h('i', { style: { width: `${p}%` } })) : null,
+        paceLine(b),
         b.notes ? h('div.st-as__n', { dataset: { fk: 'bk-notes' }, text: b.notes }) : null,
         b.status !== 'finished' ? h('div.st-row',
           h('label.st-row', h('span.st-f__l', { text: b.unit === 'chapters' ? 'Chapter now' : 'Page now' }), pos),

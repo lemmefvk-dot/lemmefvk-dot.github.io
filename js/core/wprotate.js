@@ -10,10 +10,11 @@
 
    Preferences (prefs.*):
      wpRotate       false        the switch
-     wpRotateFrom   'folder'     'folder' | 'set'
+     wpRotateFrom   'folder'     'folder' | 'set' | 'favs' (the hearts in the picker)
      wpRotateFolder ~/Pictures   a folder in Files
      wpRotateSet    []           wallpaper ids, for 'set'
-     wpRotateEvery  '1h'         '15m' | '1h' | '1d' | 'login'
+     wpRotateEvery  '1h'         '5m' | '15m' | '30m' | '1h' | '1d' | 'mins' | 'login'
+     wpRotateMins   10           the N of 'mins', 1–1440
      wpRotateOrder  'shuffle'    'shuffle' | 'order' (by name)
 
    State (portal.wpRotate, kept across reloads): { src, cur, at,
@@ -40,8 +41,11 @@ import * as SEASON from './season.js';
 import * as WP from '../portal/wallpapers.js';
 
 export const STATE = 'portal.wpRotate';
-export const EVERY = { '15m': 15 * 60 * 1000, '1h': 60 * 60 * 1000, '1d': 24 * 60 * 60 * 1000, login: 0 };
-export const EVERY_LABEL = { '15m': 'Every 15 minutes', '1h': 'Every hour', '1d': 'Every day', login: 'Every time StaticOS starts' };
+export const EVERY = { '5m': 5 * 60 * 1000, '15m': 15 * 60 * 1000, '30m': 30 * 60 * 1000, '1h': 60 * 60 * 1000, '1d': 24 * 60 * 60 * 1000, mins: 0, login: 0 };
+export const EVERY_LABEL = { '5m': 'Every 5 minutes', '15m': 'Every 15 minutes', '30m': 'Every 30 minutes', '1h': 'Every hour', '1d': 'Every day', mins: 'Every … minutes (you choose)', login: 'Every time StaticOS starts' };
+export const MINS = { min: 1, max: 1440, def: 10 };
+/** The gap between pictures, in ms (0 = on start-up only). */
+export const everyMs = c => (c.every === 'mins' ? c.mins * 60 * 1000 : EVERY[c.every]);
 const SKIP_MAX = 30;
 
 export const defaultFolder = () => `${vfs.HOME}/Pictures`;
@@ -50,14 +54,15 @@ export function config() {
   const p = store.get('prefs', {}) || {};
   return {
     on: p.wpRotate === true,
-    from: p.wpRotateFrom === 'set' ? 'set' : 'folder',
+    from: p.wpRotateFrom === 'set' ? 'set' : p.wpRotateFrom === 'favs' ? 'favs' : 'folder',
     folder: typeof p.wpRotateFolder === 'string' && p.wpRotateFolder.trim() ? vfs.norm(p.wpRotateFolder) : defaultFolder(),
     set: Array.isArray(p.wpRotateSet) ? p.wpRotateSet.filter(id => typeof id === 'string') : [],
     every: Object.prototype.hasOwnProperty.call(EVERY, p.wpRotateEvery) ? p.wpRotateEvery : '1h',
+    mins: Math.max(MINS.min, Math.min(MINS.max, Math.round(Number(p.wpRotateMins)) || MINS.def)),
     order: p.wpRotateOrder === 'order' ? 'order' : 'shuffle',
   };
 }
-const srcKey = c => (c.from === 'set' ? `set:${c.set.join(',')}` : `folder:${c.folder}`);
+const srcKey = c => (c.from === 'set' ? `set:${c.set.join(',')}` : c.from === 'favs' ? `favs:${WP.favs(store).join(',')}` : `folder:${c.folder}`);
 const short = p => String(p || '').replace(vfs.HOME, '~');
 export const folderLabel = short;
 
@@ -84,8 +89,8 @@ export function pictures(folder) {
 
 /** What rotation would choose from: [{ ref, name, node? , wp? }] */
 export function candidates(c = config()) {
-  if (c.from === 'set') {
-    return c.set.map(id => WP.byId(store, id)).filter(w => w && WP.isUnlocked(store, w))
+  if (c.from === 'set' || c.from === 'favs') {
+    return (c.from === 'favs' ? WP.favs(store) : c.set).map(id => WP.byId(store, id)).filter(w => w && WP.isUnlocked(store, w))
       .map(w => ({ ref: `wp:${w.id}`, name: w.name, wp: w }));
   }
   return pictures(c.folder);
@@ -238,7 +243,7 @@ function tick() {
   /* the picture up now was deleted or changed: move on now */
   if (st.cur && !st.cur.startsWith('wp:') && !vfs.node(st.cur)) { next(); return; }
   if (c.every === 'login') return;
-  if (Date.now() - st.at >= EVERY[c.every]) next();
+  if (Date.now() - st.at >= everyMs(c)) next();
 }
 
 /** For Settings: everything worth saying about rotation right now. */
@@ -252,7 +257,7 @@ export function status() {
     count: list.length,
     cur: st.cur,
     name: current?.name || (st.cur ? stem(st.cur.startsWith('wp:') ? WP.byId(store, st.cur.slice(3))?.name : vfs.baseName(st.cur)) : null),
-    due: c.on && c.every !== 'login' && st.at ? new Date(st.at + EVERY[c.every]) : null,
+    due: c.on && c.every !== 'login' && st.at ? new Date(st.at + everyMs(c)) : null,
     skipped: st.src === srcKey(c) ? st.skipped.filter(s => refs.has(s.ref)) : [],
     none: st.src === srcKey(c) && st.none,
     busy: !!busy,
@@ -264,6 +269,24 @@ let inited = false;
 /* switching on, or another folder or set, puts a picture up now; the order
    and the interval only change what happens next */
 const sigCfg = c => `${c.on}|${srcKey(c)}`;
+
+/** "Next wallpaper" (Spotlight, Settings): rotation's next picture when rotation
+    is on; otherwise the next one among your favourites (all of them, if you
+    have fewer than two). A hand pick like any other, so it ends no rotation —
+    there is none. -> the wallpaper now up, or null */
+export async function nextWallpaper() {
+  if (config().on) { const w = await next(); return w; }
+  const all = WP.list(store);
+  const fav = WP.favs(store).map(id => WP.byId(store, id)).filter(Boolean);
+  const pool = fav.length >= 2 ? fav : all;
+  const cur = WP.active(store).id;
+  const i = pool.findIndex(w => w.id === cur);
+  const pick = pool[(i + 1) % pool.length];
+  if (!pick || pick.id === cur) return null;
+  const w = WP.setActive(store, pick.id);
+  bus.emit('wallpaper:changed');
+  return w;
+}
 
 export function init() {
   if (inited) return;
@@ -300,9 +323,11 @@ export function init() {
     if (turnedOn && SEASON.spookyOn() && store.get('prefs.spookyWallpaper') !== false) store.set('prefs.spookyWallpaper', false);
     next();
   });
+  /* hearting or un-hearting a wallpaper changes what "My favourites" rotates through */
+  store.sub(WP.FAV_KEY, () => { const c = config(); if (c.on && c.from === 'favs') { last = c; next(); } });
   /* a wallpaper picked by hand (or by a pack) is what the person wants to see */
   store.sub(WP.ACTIVE_KEY, () => { if (config().on) store.set('prefs.wpRotate', false); });
   bus.on('tick:5s', tick);
 }
 
-export default { STATE, EVERY, EVERY_LABEL, config, state, candidates, pictures, pictureFolders, shown, next, status, init, defaultFolder, folderLabel };
+export default { STATE, EVERY, EVERY_LABEL, MINS, everyMs, nextWallpaper, config, state, candidates, pictures, pictureFolders, shown, next, status, init, defaultFolder, folderLabel };

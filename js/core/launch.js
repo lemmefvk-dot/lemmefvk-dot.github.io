@@ -14,6 +14,7 @@ import { open } from './wm.js';
 export function launchItem(item) {
   if (!item || !item.id) return null;
   const kind = item.kind || 'web';
+  if (kind === 'collection') return open('aether-library', { url: item.url || `static://library/collections/${encodeURIComponent(item.id)}` });
   if (kind === 'arcade') return open('arcade', { game: item.id });
   if (kind === 'creation') return open('forge', { project: item.id });
   return open('aether-games', { url: item.url || `static://games/${item.id}` });

@@ -16,6 +16,10 @@
      (core/projects.js), so it opens in Forge and Studio like any
      other game. Saving the same game twice is noticed and skipped.
 
+   When the link carries them, the window also shows the version's
+   note and how to play it (the controls). Open in Studio saves the
+   game (if it is not saved yet) and opens that copy in Static Studio.
+
    opts: { link }  the #creation= value (or a whole link)
    Hidden from the launcher: it only makes sense with a link.
    ============================================================ */
@@ -114,6 +118,8 @@ defineApp({
       const facts = [
         ['Made by', c.creator ? `${c.creator} — as written in the link; names aren’t checked` : 'The link doesn’t say'],
         c.at ? ['Shared', new Date(c.at).toLocaleString()] : null,
+        c.note ? ['Version note', c.note] : null,
+        c.controls ? ['Controls', c.controls] : null,
         ['Size', `${lines.toLocaleString()} line${lines === 1 ? '' : 's'} · ${kb(c.bytes)} (the link was ${kb(c.chars)})`],
         ['Internet', S.hosts.length ? `Its code mentions ${S.hosts.join(', ')} — it may load things from there when it runs.` : 'Its code mentions no web addresses.'],
       ].filter(Boolean);
@@ -160,6 +166,7 @@ defineApp({
       actsEl.append(S.savedId
         ? b('check', 'In your creations · Open in Forge', 'open-saved', () => api.openApp('forge', { project: S.savedId }))
         : b('download', 'Save to my creations', 'save', save));
+      if (api.getApp('studio')) actsEl.append(b('code', S.savedId ? 'Open in Studio' : 'Save and open in Studio', 'studio', openStudio));
       const code = b('code', S.code ? 'Hide code' : 'View code', 'code', () => { S.code = !S.code; paintActs(); paintCode(); }, '.btn--ghost');
       code.setAttribute('aria-pressed', S.code ? 'true' : 'false');
       actsEl.append(code);
@@ -187,6 +194,11 @@ defineApp({
       say(`Playing ${c.name}.`);
     }
 
+    async function openStudio() {
+      if (!S.savedId) await save();
+      if (S.savedId && !S.dead) api.openApp('studio', { project: S.savedId });
+    }
+
     async function save() {
       const c = S.creation;
       if (!c || S.savedId) return;
@@ -203,6 +215,10 @@ defineApp({
         });
         if (S.dead) return;
         S.savedId = p.id;
+        if (c.controls) {
+          const info = api.store.get('portal.forge.info', null);
+          api.store.set('portal.forge.info', { ...(info && typeof info === 'object' ? info : {}), [p.id]: { controls: c.controls } });
+        }
         paintActs();
         notify({
           app: 'Shared Game', icon: 'download', timeout: 6000, title: `Saved “${c.name}”`,

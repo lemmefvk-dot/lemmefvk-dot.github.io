@@ -253,6 +253,129 @@ action('show_system_status', '', 'Real performance readings.', async () => {
   return result(true, 'read the real numbers', lines.join(' · '), { metrics: f });
 });
 
+/* ---------- reminders, tasks, focus, Do Not Disturb, sound ----------
+   Each one calls the app's own core module (automations, tasks, focus,
+   dndsched, the prefs) and then reads the result back from it. */
+
+action('set_reminder', '<text> and <at ms> | <seconds>', 'Make a reminder in Automations.', async ({ text, at, seconds, timer }) => {
+  const AM = await import('../core/automations.js');
+  const words = String(text || '').trim();
+  if (!words) return result(false, '', 'What should the reminder say?');
+  let r;
+  if (seconds) r = AM.addTimer({ seconds, text: words, timer: !!timer });
+  else {
+    const d = new Date(Number(at));
+    if (Number.isNaN(d.getTime())) return result(false, '', 'I could not tell when that is.');
+    r = AM.addReminder({
+      text: words, repeat: 'once', date: AM.ymd(d),
+      time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+    });
+  }
+  if (!r.ok) return result(false, '', (r.issues && r.issues[0] && r.issues[0].text) || 'That reminder could not be saved.');
+  /* look it up again rather than trusting the call */
+  const saved = AM.reminders().find(x => x.id === r.reminder.id);
+  if (!saved) return result(false, '', 'The reminder was not saved.');
+  const when = seconds ? r.at : AM.nextDue(saved);
+  return result(true, `set a reminder: ${words}`, when ? AM.whenPhrase(when) : '', { id: saved.id, at: when });
+});
+
+action('add_task', '<text> [due YYYY-MM-DD] [priority]', 'Add a task to Tasks.', async ({ text, due, priority }) => {
+  const T = await import('../core/tasks.js');
+  const words = String(text || '').trim().slice(0, T.TEXT_MAX);
+  if (!words) return result(false, '', 'What is the task?');
+  const data = T.read();
+  let list = data.lists.find(l => l.id === data.activeId) || data.lists[0];
+  if (!list) { list = T.normList({ name: 'Tasks' }); data.lists.push(list); data.activeId = list.id; }
+  const task = T.normTask({ id: T.uid('t'), text: words, due: due || null, priority: T.PRIOS.includes(priority) ? priority : 'none' });
+  list.tasks.push(task);
+  T.write(data);
+  const back = T.locate(T.read(), task.id);
+  return back
+    ? result(true, `added the task: ${words}`, `In ${back.list.name}${task.due ? `, due ${task.due}` : ''}.`, { id: task.id, list: back.list.name, due: task.due })
+    : result(false, '', 'The task was not saved.');
+});
+
+action('focus', '<start|pause|reset|skip>', 'Run the focus timer.', async ({ do: what }) => {
+  const F = await import('../core/focus.js');
+  const op = String(what || 'start');
+  if (op === 'start') F.start();
+  else if (op === 'pause') F.pause();
+  else if (op === 'reset') F.reset();
+  else if (op === 'skip') F.skip();
+  else return result(false, '', `I do not know how to "${op}" the focus timer.`);
+  const s = F.state();
+  const mins = Math.max(1, Math.round(s.left / 60000));
+  if (op === 'start') return s.status === 'running'
+    ? result(true, `started ${s.label.toLowerCase()}`, `${mins} min, ${s.dnd ? 'Do Not Disturb is on' : 'Do Not Disturb is off'}.`, { state: s })
+    : result(false, '', 'The focus timer did not start.');
+  if (op === 'pause') return s.status === 'paused' ? result(true, 'paused the focus timer', `${mins} min left.`, { state: s })
+    : s.status === 'ready' ? result(false, '', 'The focus timer is not running.') : result(false, '', 'The focus timer did not pause.');
+  if (op === 'reset') return s.status === 'ready' ? result(true, 'reset the focus timer', '', { state: s }) : result(false, '', 'The timer did not reset.');
+  return result(true, `moved on to ${s.label.toLowerCase()}`, '', { state: s });
+});
+
+action('set_dnd', '<on|off> [minutes]', 'Turn Do Not Disturb on or off.', async ({ on, minutes }, ctx) => {
+  const want = on !== false;
+  const sched = await import('../core/dndsched.js');
+  const mins = Math.round(Number(minutes) || 0);
+  if (want && mins > 0) sched.quickFor(mins * 60000);
+  else ctx.api.store.set('prefs.dnd', want);
+  const now = ctx.api.store.get('prefs.dnd') === true;
+  if (now !== want) return result(false, '', `Do Not Disturb is still ${now ? 'on' : 'off'}.`);
+  const rules = await import('../core/dndrules.js');
+  /* off, but a schedule or a focus session holds it: the prefs may flip back on the next tick */
+  const held = !want && rules.holds() ? 'A Do Not Disturb schedule is running, so it stays off only until that schedule ends.' : '';
+  return result(true, want ? (mins > 0 ? `turned Do Not Disturb on for ${mins} min` : 'turned Do Not Disturb on') : 'turned Do Not Disturb off', held);
+});
+
+action('set_volume', '<0-100 | up | down | mute | unmute>', 'Change the system volume.', async ({ level, mute }, ctx) => {
+  const st = ctx.api.store;
+  if (mute !== undefined) {
+    st.set('prefs.muted', !!mute);
+    return st.get('prefs.muted') === !!mute
+      ? result(true, mute ? 'muted the sound' : 'unmuted the sound', `The level is ${st.get('prefs.volume', 62)}%.`)
+      : result(false, '', 'The mute setting did not change.');
+  }
+  const n = Math.max(0, Math.min(100, Math.round(Number(level))));
+  if (!Number.isFinite(n)) return result(false, '', 'Say a level from 0 to 100.');
+  st.set('prefs.volume', n);
+  if (n > 0 && st.get('prefs.muted')) st.set('prefs.muted', false);
+  return st.get('prefs.volume') === n
+    ? result(true, `set the volume to ${n}%`, '', { level: n })
+    : result(false, '', 'The volume did not change.');
+});
+
+action('open_settings_pane', '<pane id>', 'Open Settings on one pane.', async ({ pane }, ctx) => {
+  const { SECTIONS } = await import('../apps/settings.js');
+  const sec = SECTIONS.find(s => s.id === pane);
+  if (!sec) return result(false, '', `Settings has no pane called "${pane}".`);
+  const wm = await import('../core/wm.js');
+  const before = wm.byApp('settings').length;
+  ctx.api.openApp('settings', { section: sec.id });
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  if (!wm.byApp('settings').length) return result(false, '', 'Settings did not open.');
+  /* the window names the pane it is showing */
+  await new Promise(r => setTimeout(r, 120));
+  const w = wm.byApp('settings')[0];
+  const shown = w && w.el && w.el.querySelector('.win__sub');
+  const label = shown ? shown.textContent.trim() : '';
+  if (label && label !== sec.name) return result(false, '', `Settings opened, but on ${label} instead of ${sec.name}. That pane may not be available right now.`);
+  return result(true, `opened Settings on ${sec.name}`, before ? 'Settings was already open.' : '', { pane: sec.id, subtitle: label });
+});
+
+action('start_quiz', '<deck id> [cram]', 'Start a flashcard session in Study.', async ({ deck, cram }, ctx) => {
+  const FC = await import('../core/flashcards.js');
+  const d = FC.read().decks.find(x => x.id === deck);
+  if (!d) return result(false, '', 'That deck is gone.');
+  if (!d.cards.length) return result(false, '', `${d.name} has no cards yet.`);
+  const wm = await import('../core/wm.js');
+  ctx.api.openApp('study', { tab: 'cards', deck: d.id, start: cram ? 'cram' : 'study' });
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return wm.byApp('study').length
+    ? result(true, `started ${cram ? 'a cram session' : 'a session'} on ${d.name}`, '', { deck: d.id })
+    : result(false, '', 'Study did not open.');
+});
+
 /* ---------- running one ------------------------------------ */
 
 export const names = () => Object.keys(ACTIONS);

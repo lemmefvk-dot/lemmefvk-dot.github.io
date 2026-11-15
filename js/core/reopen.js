@@ -25,6 +25,7 @@ import * as DESK from './desktops.js';
 import { getApp } from './registry.js';
 import { covered } from './cover.js';
 import * as KM from './keymap.js';
+import { t } from './i18n.js';
 
 export const MAX = 10;
 const stack = [];
@@ -50,10 +51,12 @@ function restorable(opts, over) {
 
 const rectOf = r => (r && [r.x, r.y, r.w, r.h].every(Number.isFinite) ? { x: r.x, y: r.y, w: r.w, h: r.h } : null);
 
-function remember(w) {
-  if (!w || !w.appId || !w.app) return;
+/** What it takes to open window `w` again where it is: null for a window with no app. Also used by
+    core/resume.js to bring back the windows that were open when StaticOS closed. */
+export function entryOf(w) {
+  if (!w || !w.appId || !w.app) return null;
   const title = (w.el && w.el.getAttribute('aria-label')) || w.app.name;
-  stack.push({
+  return {
     app: w.appId, name: w.app.name, icon: w.app.icon, title,
     opts: restorable(w.opts, w.state && w.state.reopen),
     rect: rectOf(w),
@@ -61,7 +64,13 @@ function remember(w) {
     free: rectOf(w.free) || (w.max ? rectOf(w.prev) : null),
     max: !!w.max, snapped: w.max ? null : (w.snapped || null),
     desk: w.desk, pin: !!w.pinned, at: Date.now(),
-  });
+  };
+}
+
+function remember(w) {
+  const e = entryOf(w);
+  if (!e) return;
+  stack.push(e);
   while (stack.length > MAX) stack.shift();
   bus.emit('reopen:change', list());
 }
@@ -78,6 +87,14 @@ function fit(r) {
   };
 }
 
+/** Open a window from an entry (see entryOf), where it was. null when its app is gone. */
+export function openEntry(e) {
+  if (!e || !getApp(e.app)) return null;
+  const desk = DESK.has(e.desk) ? e.desk : DESK.current();
+  const seat = e.max ? { max: true } : e.snapped ? { snapped: e.snapped } : null;
+  return wm.open(e.app, { ...e.opts, ...fit(seat ? (e.free || e.rect) : e.rect), desk, seat, pin: e.pin === true }) || null;
+}
+
 /** Open the newest closed window again (or the i-th newest: 0 = newest).
     Returns the window, or null when there is nothing to bring back. */
 export function reopen(i = 0) {
@@ -86,11 +103,11 @@ export function reopen(i = 0) {
     const [e] = stack.splice(at, 1);
     if (!getApp(e.app)) continue;                     /* uninstalled since */
     const desk = DESK.has(e.desk) ? e.desk : DESK.current();
-    const seat = e.max ? { max: true } : e.snapped ? { snapped: e.snapped } : null;
-    const w = wm.open(e.app, { ...e.opts, ...fit(seat ? (e.free || e.rect) : e.rect), desk, seat, pin: e.pin === true });
+    const w = openEntry(e);
     /* back on the desktop it was on: go there with it */
     if (w && w.el && w.desk !== DESK.current()) wm.focus(w);
     bus.emit('reopen:change', list());
+    if (w) bus.emit('reopen:done', { app: e.app });
     return w || null;
   }
   return null;
@@ -116,7 +133,7 @@ function onKey(e) {
   if (!keys || (KM.typesChar(keys) && typing())) return;
   e.preventDefault();
   if (!reopen()) {
-    bus.emit('noti:push', { app: 'StaticOS', icon: 'window', title: 'No closed windows to bring back', timeout: 2500 });
+    bus.emit('noti:push', { app: 'StaticOS', icon: 'window', title: t('No closed windows to bring back'), timeout: 2500 });
   }
 }
 

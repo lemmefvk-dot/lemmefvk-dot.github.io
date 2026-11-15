@@ -4,11 +4,13 @@
 
    in:  { id, game: 'chess', fen, history: [keys], level }
         { id, game: 'c4', cells: [42], h: [7], turn, moves: [], level }
-        { id, game: 'reversi', b: [64], turn, level }  ->  { sq }
-        { id, game: 'checkers', b: [64], turn, quiet, level }  ->  { path }
+        { id, game: 'c4', cols, rows, pop, moves: [move], level }  ->  { col, pop, move }
+          (another size or Pop Out: the game is replayed from its moves)
+        { id, game: 'reversi', b: [64] | [36], turn, level }  ->  { sq }      (8 × 8 or 6 × 6)
+        { id, game: 'checkers', b: [64], turn, quiet, level, rules? 'am'|'fly' }  ->  { path }
         { id, game: 'ttt', ult, moves: [cell], level }  ->  { move }
         { id, game: 'dnb', n, first, moves: [edge], level }  ->  { edge }
-        { id, game: 'mancala', b: [14], turn, level, seed }  ->  { k }
+        { id, game: 'mancala', b: [14], turn, level, seed, rules? 'kalah'|'oware' }  ->  { k }
    out: { id, ok: true, move|col, score, depth, nodes, ms }
         { id, ok: false, error }
 
@@ -16,7 +18,7 @@
    search early; nothing here outlives the game that asked.
    ============================================================ */
 import { Position, think as chessThink, LEVELS as CHESS } from './chess-rules.js';
-import { think as c4Think, LEVELS as C4 } from './c4-rules.js';
+import { think as c4Think, newGame as c4New, move as c4Move, LEVELS as C4 } from './c4-rules.js';
 import { think as revThink, LEVELS as REV } from './reversi-rules.js';
 import { think as chkThink, LEVELS as CHK } from './checkers-rules.js';
 import { think as manThink, LEVELS as MAN } from './mancala-rules.js';
@@ -38,18 +40,26 @@ export function answer(q) {
     return { move: r.uci, score: r.score, depth: r.depth, nodes: r.nodes, ms: r.ms };
   }
   if (q.game === 'c4') {
-    const g = { cells: Int8Array.from(q.cells), h: Int8Array.from(q.h), turn: q.turn === -1 ? -1 : 1, moves: Array.from(q.moves || []) };
+    let g;
+    if (Number.isInteger(q.cols) || q.pop) {
+      /* another size or Pop Out: replay the moves, so the position counts for repetition come too */
+      g = c4New(1, { cols: q.cols, rows: q.rows, pop: !!q.pop });
+      for (const m of Array.isArray(q.moves) ? q.moves : []) if (!c4Move(g, m)) throw new Error('Bad move list');
+    } else g = { cells: Int8Array.from(q.cells), h: Int8Array.from(q.h), turn: q.turn === -1 ? -1 : 1, moves: Array.from(q.moves || []) };
     const lv = C4[q.level] || C4[2];
     const r = c4Think(g, { ...lv, ...(q.timeMs ? { timeMs: q.timeMs } : {}) });
-    return { col: r.col, score: r.score, depth: r.depth, nodes: r.nodes, ms: r.ms };
+    return { col: r.col, pop: r.pop, move: r.move, score: r.score, depth: r.depth, nodes: r.nodes, ms: r.ms };
   }
   if (q.game === 'reversi') {
+    /* b is 64 squares (8 × 8) or 36 (6 × 6) */
+    if (!Array.isArray(q.b) || (q.b.length !== 64 && q.b.length !== 36)) throw new Error('Bad board');
     const g = { b: Int8Array.from(q.b), turn: q.turn === -1 ? -1 : 1, moves: [], hist: [] };
     const r = revThink(g, { ...(REV[q.level] || REV[2]), ...(q.timeMs ? { timeMs: q.timeMs } : {}) });
     return { sq: r.move, score: r.score, depth: r.depth, nodes: r.nodes, ms: r.ms };
   }
   if (q.game === 'checkers') {
-    const g = { b: Int8Array.from(q.b), turn: q.turn === -1 ? -1 : 1, moves: [], quiet: q.quiet | 0, hist: [] };
+    /* rules: 'am' (American, the default) or 'fly' (flying kings) */
+    const g = { b: Int8Array.from(q.b), turn: q.turn === -1 ? -1 : 1, moves: [], quiet: q.quiet | 0, hist: [], rules: q.rules === 'fly' ? 'fly' : 'am' };
     const r = chkThink(g, { ...(CHK[q.level] || CHK[2]), ...(q.timeMs ? { timeMs: q.timeMs } : {}) });
     return { path: r.move ? r.move.path : null, score: r.score, depth: r.depth, nodes: r.nodes, ms: r.ms };
   }
@@ -66,7 +76,7 @@ export function answer(q) {
     return { edge: r.edge, score: r.score };
   }
   if (q.game === 'mancala') {
-    const g = { b: Int8Array.from(q.b), turn: q.turn === 1 ? 1 : 0, moves: [], over: false };
+    const g = { b: Int8Array.from(q.b), turn: q.turn === 1 ? 1 : 0, moves: [], over: false, rules: q.rules === 'oware' ? 'oware' : 'kalah' };
     const r = manThink(g, { ...(MAN[q.level] || MAN[2]), ...(q.timeMs ? { timeMs: q.timeMs } : {}), rnd: rng32(q.seed >>> 0) });
     return { k: r.k, score: r.score, depth: r.depth, nodes: r.nodes, ms: r.ms };
   }

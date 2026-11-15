@@ -7,21 +7,25 @@
    a box, and the cells inside each outlined cage hold different
    digits that add up to the number printed in the cage's corner.
 
-   Sizes: 4×4 (boxes 2×2) and 6×6 (boxes 2 rows × 3 columns).
+   Sizes: 3×3 (no boxes: each row and column holds 1, 2 and 3 once),
+   4×4 (boxes 2×2) and 6×6 (boxes 2 rows × 3 columns).
 
    Every puzzle is dealt by generate(), which keeps one only after
    countSolutions() — an exhaustive search — has found exactly one
    solution. When a first draft has two, a cage is split where the two
    solutions differ and the search runs again. The levels differ in the
    board and in the cages:
+     kids    3×3, digits 1–3, cages of one or two squares, up to 2 given
      easy    4×4, small cages, a few single-cell cages (a given digit)
      medium  6×6, cages of 1–4 cells, up to 3 given digits
      hard    6×6, cages of 2–5 cells, no given digits at all
    ============================================================ */
 import { rng } from './kit.js';
 
-export const LEVELS = ['easy', 'medium', 'hard'];
+export const LEVELS = ['kids', 'easy', 'medium', 'hard'];
 export const LEVEL = {
+  /* boxR 1 × boxC 3: a "box" is a row, so the box rule adds nothing and none are drawn */
+  kids:   { n: 3, boxR: 1, boxC: 3, weights: [0, 2, 6], singles: 2, minCage: 1, boxes: false },
   easy:   { n: 4, boxR: 2, boxC: 2, weights: [0, 2, 5, 3], singles: 3, minCage: 1 },
   medium: { n: 6, boxR: 2, boxC: 3, weights: [0, 2, 5, 3, 1], singles: 3, minCage: 1 },
   hard:   { n: 6, boxR: 2, boxC: 3, weights: [0, 0, 3, 4, 3, 1], singles: 0, minCage: 2 },
@@ -178,7 +182,7 @@ export function generate(level, seed) {
   if (!L) throw new Error(`no level ${level}`);
   const r = rng(seed);
   for (let attempt = 0; attempt < 400; attempt++) {
-    const p = { level, seed, n: L.n, boxR: L.boxR, boxC: L.boxC };
+    const p = { level, seed, n: L.n, boxR: L.boxR, boxC: L.boxC, boxes: L.boxes !== false };
     const sol = randomSolution(p, r);
     p.cages = drawCages(p, sol, r, level);
     p.sol = sol;

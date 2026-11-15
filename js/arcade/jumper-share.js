@@ -6,10 +6,15 @@
 
        #jumper=1.<base64url of deflate(JSON)>
 
-   JSON = { v:1, t:title, c:creator, rows:[14 strings], run:[[mask,count],…] }
+   JSON = { v:1, t:title, c:creator, rows:[14 strings], run:[[mask,count],…], r? }
    `run` is a winning run of the level, recorded when its author finished
    it. Opening a link replays it on the real physics, so a level that can't
    be finished never reaches a preview (and an author can't share one).
+   `r` = { n: name, run } is a friend's result, when someone who played a
+   shared level sends it back: their winning run, so the time it shows is
+   the one the replay reaches — never a number typed into the link. A
+   link without `r` shows no result; an `r` whose run doesn't reach the
+   goal is dropped (and the preview says one was dropped).
 
    A level in a link is somebody else's data, so reading it is strict:
      · the link is at most MAX_LINK characters, and what it unpacks to at
@@ -23,8 +28,10 @@
      · nothing in a level can run code: it is a grid of characters
    The creator's name is whatever the link says. It is not verified.
 
-     encodeLevel({ name, rows, run, creator }) -> { ok, link, chars, fragment } | { ok:false, reason, error }
-     decodeLevel(text) -> { ok, level:{ name, creator, rows, run, frames, w, spark count… } } | { ok:false, reason, error }
+     encodeLevel({ name, rows, run, creator, reply? }) -> { ok, link, chars, fragment } | { ok:false, reason, error }
+       reply: { by, run } — the level sent back with your winning run
+     decodeLevel(text) -> { ok, level:{ name, creator, rows, run, frames, w, spark count…, result? } } | { ok:false, reason, error }
+       result: { by, run, frames, deaths, sparks }, checked by replaying it
      offer(level) / take()   the shell hands a decoded level to the game's next start
    ============================================================ */
 import { toB64url, fromB64url, deflate, inflate } from '../core/sharelink.js';
@@ -51,7 +58,7 @@ export function linkFor(fragment) {
   return `${base}#${PARAM}=${fragment}`;
 }
 
-export async function encodeLevel({ name, rows, run, creator } = {}) {
+export async function encodeLevel({ name, rows, run, creator, reply = null } = {}) {
   if (!supported()) return fail('unsupported', 'This browser can’t pack a level into a link.');
   const built = buildLevel(rows);
   if (!built.ok) return fail('invalid', built.error);
@@ -61,7 +68,14 @@ export async function encodeLevel({ name, rows, run, creator } = {}) {
   if (!clean) return fail('unfinished', 'Finish the level once in test play before you share it.');
   const proof = runReplay(built.level, clean);
   if (!proof.won) return fail('unfinished', 'This level has changed since you last finished it. Finish it once more in test play, then share it.');
-  const json = JSON.stringify({ v: 1, t: textLine(name) || 'Untitled level', c: textLine(creator) || null, rows: built.level.rows, run: clean });
+  /* a result sent back: it must be a winning run of this level too */
+  let r = null;
+  if (reply) {
+    const rr = cleanReplay(reply.run);
+    if (!rr || !runReplay(built.level, rr).won) return fail('unfinished', 'Your run doesn’t reach the goal of this level, so it can’t go in the link.');
+    r = { n: textLine(reply.by) || null, run: rr };
+  }
+  const json = JSON.stringify({ v: 1, t: textLine(name) || 'Untitled level', c: textLine(creator) || null, rows: built.level.rows, run: clean, ...(r ? { r } : {}) });
   if (json.length > MAX_JSON) return fail('too-big', `This level is too big for a link (${kb(json.length)} before packing; the most is ${kb(MAX_JSON)}).`);
   let packed;
   try { packed = await deflate(new TextEncoder().encode(json), 0); } catch (e) { return fail('error', 'The level couldn’t be packed.'); }
@@ -101,6 +115,14 @@ export async function decodeLevel(text) {
   if (!run) return fail('unfinished', 'This level came without a valid proof that it can be finished, so it wasn’t opened.');
   const proof = runReplay(built.level, run);
   if (!proof.won) return fail('unfinished', 'This level can’t be finished — its recorded run doesn’t reach the goal — so it wasn’t opened.');
+  /* a friend's result, only if its run really reaches the goal */
+  let result = null, resultDropped = false;
+  if (json.r != null) {
+    const rr = json.r && typeof json.r === 'object' && !Array.isArray(json.r) && (json.r.n == null || typeof json.r.n === 'string') ? cleanReplay(json.r.run) : null;
+    const pr = rr ? runReplay(built.level, rr) : null;
+    if (pr && pr.won) result = { by: textLine(json.r.n) || null, run: rr, frames: pr.frames, deaths: pr.deaths, sparks: pr.sparks };
+    else resultDropped = true;
+  }
   return {
     ok: true,
     level: {
@@ -108,6 +130,7 @@ export async function decodeLevel(text) {
       creator: textLine(json.c) || null,
       rows: built.level.rows, run, w: built.level.w,
       sparks: built.level.sparks.length, checkpoints: built.level.cps.length, frames: proof.frames,
+      ...(result ? { result } : {}), ...(resultDropped ? { resultDropped } : {}),
     },
   };
 }

@@ -54,6 +54,7 @@ import { save as mediaSave } from '../core/media.js';
 import { kv } from '../core/db.js';
 import * as WP from '../portal/wallpapers.js';
 import * as profiles from '../core/profiles.js';
+import * as SEASON from '../core/season.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-pumpkin-css')) {
   const l = document.createElement('link');
@@ -72,6 +73,53 @@ const WP_MAX = 1.4 * 1024 * 1024;     /* a wallpaper data URL is saved in localS
 const OUT_W = 1920, OUT_H = 1080;
 const MAX_STEPS = 240;
 const DEPTH = 9;                       /* how much cut wall shows, in pumpkin units */
+
+/* ---------------------------------------------------------------
+   looks: the body style, the colour of the candle light, the scene.
+   Ice lantern and the Snowy night scene are winter's (season.js
+   winterOn()); outside winter they are not offered, and a carving
+   that has them draws as a pumpkin / the moonlit night until
+   winter comes back.
+   --------------------------------------------------------------- */
+const hsl2rgb = (h, s, l) => {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)].join(',');
+};
+const hueGlow = (label, hue) => ({
+  label, core: hsl2rgb(hue, 100, 58), mid: hsl2rgb(hue, 100, 50),
+  wallLit: [`hsl(${hue},95%,80%)`, `hsl(${hue},80%,56%)`],
+  inner: [`hsl(${hue},100%,86%)`, `hsl(${hue},100%,66%)`, `hsl(${hue},96%,50%)`, `hsl(${hue},100%,27%)`],
+  halo1: `rgba(${hsl2rgb(hue, 100, 60)},1)`, halo2: `rgba(${hsl2rgb(hue, 100, 76)},1)`,
+});
+export const GLOWS = {
+  amber: { label: 'Amber', core: '255,140,40', mid: '255,110,20', wallLit: ['#ffdf8f', '#ee9a3c'],
+    inner: ['#fff0b0', '#ffd04a', '#ff9418', '#b84300'], halo1: 'rgba(255,150,40,1)', halo2: 'rgba(255,210,110,1)' },
+  green: hueGlow('Green', 120),
+  purple: hueGlow('Purple', 275),
+  blue: hueGlow('Blue', 205),
+  red: hueGlow('Red', 355),
+};
+export const SCENES = {
+  moon: { label: 'Moonlit night' },
+  graveyard: { label: 'Graveyard' },
+  porch: { label: 'Porch' },
+  dusk: { label: 'Plain dusk' },
+  snow: { label: 'Snowy night', winter: true },
+};
+export const STYLES = { pumpkin: { label: 'Pumpkin' }, ice: { label: 'Ice lantern', winter: true } };
+const winterNow = () => { try { return !!SEASON.winterOn(); } catch (err) { return false; } };
+/* what is drawn: the saved choice, minus whatever is out of season */
+function themeOf(want) {
+  const w = winterNow();
+  return {
+    style: want.style === 'ice' && w ? 'ice' : 'pumpkin',
+    scene: SCENES[want.scene] && (!SCENES[want.scene].winter || w) ? want.scene : 'moon',
+    glow: GLOWS[want.glow] ? want.glow : 'amber',
+  };
+}
+const glowOf = th => GLOWS[th.glow] || GLOWS.amber;
 
 const SHAPES = {
   round: { label: 'Round', rx: 300, ry: 236, lobes: 5 },
@@ -205,91 +253,178 @@ function bodyPath(g, sh, s = 1) {
    painting — shared by the screen and the 1920×1080 export.
    T = { k, cx, cy }: pumpkin units → pixels.
    --------------------------------------------------------------- */
-function paintScene(g, W, H, T, sh) {
+const SCENE_LOOK = {
+  moon: { sky: ['#05030c', '#150b26', '#2c1430'], ground: ['#1c0f17', '#08040a'], hills: ['#120a20', '#0c0716'], stars: 1, moon: 1, trees: 1, bats: 1, leaves: 1 },
+  graveyard: { sky: ['#04070a', '#0d1a1a', '#1d2a24'], ground: ['#14201a', '#050906'], hills: ['#0b1512', '#070d0b'], stars: 1, moon: 1, trees: 1, bats: 1, stones: 1, leaves: 1 },
+  porch: { ground: ['#3a2415', '#140b06'] },
+  dusk: { sky: ['#1b1038', '#6b2b5c', '#e0733a'], ground: ['#2a1420', '#0c0610'], hills: ['#2a1236', '#170a22'], leaves: 1 },
+  snow: { sky: ['#0a1530', '#1a2f55', '#3a5a85'], ground: ['#e3edf7', '#9fb8d2'], hills: ['#8ea6c4', '#c3d5e8'], stars: 1, moon: 1, pines: 1, snowfall: 1, mounds: 1 },
+};
+
+function paintScene(g, W, H, T, sh, th = { scene: 'moon' }) {
+  const L = SCENE_LOOK[th.scene] || SCENE_LOOK.moon;
   const groundY = T.cy + sh.ry * T.k * 0.9;
-  const sky = g.createLinearGradient(0, 0, 0, groundY);
-  sky.addColorStop(0, '#05030c');
-  sky.addColorStop(0.6, '#150b26');
-  sky.addColorStop(1, '#2c1430');
-  g.fillStyle = sky;
-  g.fillRect(0, 0, W, H);
-  const n = Math.round((W * H) / 9000);
-  for (let i = 0; i < n; i++) {
-    g.fillStyle = `rgba(240,230,255,${0.18 + hash(i + 3) * 0.55})`;
-    const s = hash(i + 8) < 0.1 ? 2 : 1.2;
-    g.fillRect(hash(i) * W, hash(i + 41) * groundY * 0.8, s, s);
+  if (th.scene === 'porch') {
+    /* a dark wooden wall with a lit window, and the porch boards */
+    const wall = g.createLinearGradient(0, 0, 0, groundY);
+    wall.addColorStop(0, '#120a07');
+    wall.addColorStop(1, '#2b1a10');
+    g.fillStyle = wall;
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = 'rgba(0,0,0,.35)';
+    const pw = Math.max(24, W / 26);
+    for (let x = 0; x < W; x += pw) g.fillRect(x, 0, 2, groundY);
+    const wx = W * 0.1, wy = H * 0.1, ww = W * 0.17, wh = H * 0.3;
+    const lamp = g.createRadialGradient(wx + ww / 2, wy + wh / 2, 0, wx + ww / 2, wy + wh / 2, ww * 1.7);
+    lamp.addColorStop(0, 'rgba(255,200,120,.30)');
+    lamp.addColorStop(1, 'rgba(255,200,120,0)');
+    g.fillStyle = lamp;
+    g.fillRect(0, 0, W * 0.5, H * 0.7);
+    g.fillStyle = '#e9b866';
+    g.fillRect(wx, wy, ww, wh);
+    g.strokeStyle = '#1a0e08';
+    g.lineWidth = Math.max(4, W * 0.004);
+    g.strokeRect(wx, wy, ww, wh);
+    g.beginPath(); g.moveTo(wx + ww / 2, wy); g.lineTo(wx + ww / 2, wy + wh); g.moveTo(wx, wy + wh / 2); g.lineTo(wx + ww, wy + wh / 2); g.stroke();
+  } else {
+    const sky = g.createLinearGradient(0, 0, 0, groundY);
+    sky.addColorStop(0, L.sky[0]);
+    sky.addColorStop(0.6, L.sky[1]);
+    sky.addColorStop(1, L.sky[2]);
+    g.fillStyle = sky;
+    g.fillRect(0, 0, W, H);
   }
-  /* the moon, up and to the left */
-  const mr = Math.min(W, H) * 0.065, mx = W * 0.16, my = H * 0.2;
-  const halo = g.createRadialGradient(mx, my, mr * 0.6, mx, my, mr * 5);
-  halo.addColorStop(0, 'rgba(255,238,200,.26)');
-  halo.addColorStop(0.4, 'rgba(150,110,220,.08)');
-  halo.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = halo;
-  g.fillRect(0, 0, W, H);
-  const moon = g.createRadialGradient(mx - mr * 0.3, my - mr * 0.3, mr * 0.1, mx, my, mr);
-  moon.addColorStop(0, '#fffbea');
-  moon.addColorStop(1, '#e6d6a8');
-  g.fillStyle = moon;
-  g.beginPath(); g.arc(mx, my, mr, 0, Math.PI * 2); g.fill();
-  g.fillStyle = 'rgba(150,130,90,.2)';
-  for (const [a, b, s] of [[-0.3, -0.2, 0.2], [0.28, 0.18, 0.15], [0.02, 0.45, 0.1]]) {
-    g.beginPath(); g.arc(mx + a * mr, my + b * mr, s * mr, 0, Math.PI * 2); g.fill();
+  if (L.stars) {
+    const n = Math.round((W * H) / 9000);
+    for (let i = 0; i < n; i++) {
+      g.fillStyle = `rgba(240,230,255,${0.18 + hash(i + 3) * 0.55})`;
+      const s = hash(i + 8) < 0.1 ? 2 : 1.2;
+      g.fillRect(hash(i) * W, hash(i + 41) * groundY * 0.8, s, s);
+    }
   }
-  /* hills and two bare trees */
-  const hill = (base, amp, col, seed) => {
-    g.fillStyle = col;
-    g.beginPath();
-    g.moveTo(0, groundY + 2);
-    for (let x = 0; x <= W + 24; x += 24) g.lineTo(x, base + Math.sin(x * 0.004 + seed) * amp + Math.sin(x * 0.011 + seed * 3) * amp * 0.4);
-    g.lineTo(W, groundY + 2);
-    g.closePath();
-    g.fill();
-  };
-  hill(groundY - H * 0.12, H * 0.03, '#120a20', 1.7);
-  hill(groundY - H * 0.05, H * 0.02, '#0c0716', 5.2);
-  g.strokeStyle = '#07040d';
-  g.lineCap = 'round';
-  const branch = (x, y, len, ang, w, depth, seed) => {
-    const x2 = x + Math.cos(ang) * len, y2 = y + Math.sin(ang) * len;
-    g.lineWidth = w;
-    g.beginPath(); g.moveTo(x, y); g.lineTo(x2, y2); g.stroke();
-    if (depth <= 0) return;
-    const k = hash(depth * 7 + seed);
-    branch(x2, y2, len * 0.7, ang - 0.4 - k * 0.25, w * 0.65, depth - 1, seed + 1);
-    branch(x2, y2, len * 0.64, ang + 0.34 + k * 0.3, w * 0.6, depth - 1, seed + 2);
-  };
-  const tl = Math.min(H * 0.2, W * 0.12);
-  /* the trees stand on the side away from the pumpkin */
+  if (L.moon) {
+    /* the moon, up and to the left */
+    const mr = Math.min(W, H) * 0.065, mx = W * 0.16, my = H * 0.2;
+    const halo = g.createRadialGradient(mx, my, mr * 0.6, mx, my, mr * 5);
+    halo.addColorStop(0, 'rgba(255,238,200,.26)');
+    halo.addColorStop(0.4, 'rgba(150,110,220,.08)');
+    halo.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = halo;
+    g.fillRect(0, 0, W, H);
+    const moon = g.createRadialGradient(mx - mr * 0.3, my - mr * 0.3, mr * 0.1, mx, my, mr);
+    moon.addColorStop(0, '#fffbea');
+    moon.addColorStop(1, '#e6d6a8');
+    g.fillStyle = moon;
+    g.beginPath(); g.arc(mx, my, mr, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(150,130,90,.2)';
+    for (const [a, b, s] of [[-0.3, -0.2, 0.2], [0.28, 0.18, 0.15], [0.02, 0.45, 0.1]]) {
+      g.beginPath(); g.arc(mx + a * mr, my + b * mr, s * mr, 0, Math.PI * 2); g.fill();
+    }
+  }
+  if (L.hills) {
+    const hill = (base, amp, col, seed) => {
+      g.fillStyle = col;
+      g.beginPath();
+      g.moveTo(0, groundY + 2);
+      for (let x = 0; x <= W + 24; x += 24) g.lineTo(x, base + Math.sin(x * 0.004 + seed) * amp + Math.sin(x * 0.011 + seed * 3) * amp * 0.4);
+      g.lineTo(W, groundY + 2);
+      g.closePath();
+      g.fill();
+    };
+    hill(groundY - H * 0.12, H * 0.03, L.hills[0], 1.7);
+    hill(groundY - H * 0.05, H * 0.02, L.hills[1], 5.2);
+  }
+  /* the trees (and stones) stand on the side away from the pumpkin */
   const tx = T.cx > W * 0.6 ? [0.07, 0.24] : [0.86, 0.95];
-  branch(W * tx[0], groundY - H * 0.03, tl, -Math.PI / 2 + 0.08, Math.max(3, tl * 0.08), 6, 3);
-  branch(W * tx[1], groundY - H * 0.04, tl * 0.7, -Math.PI / 2 - 0.1, Math.max(2, tl * 0.06), 5, 9);
-  /* bats */
-  g.fillStyle = '#07040d';
-  for (const [bx, by, s] of [[0.68, 0.14, 1], [0.74, 0.2, 0.7], [0.3, 0.1, 0.6]]) {
-    const x = W * bx, y = H * by, r = Math.min(W, H) * 0.014 * s;
-    g.beginPath();
-    g.moveTo(x, y);
-    g.quadraticCurveTo(x - r * 0.6, y - r * 0.9, x - r * 1.6, y - r * 0.3);
-    g.quadraticCurveTo(x - r, y, x - r * 0.4, y + r * 0.25);
-    g.quadraticCurveTo(x, y, x + r * 0.4, y + r * 0.25);
-    g.quadraticCurveTo(x + r, y, x + r * 1.6, y - r * 0.3);
-    g.quadraticCurveTo(x + r * 0.6, y - r * 0.9, x, y);
-    g.fill();
+  const tl = Math.min(H * 0.2, W * 0.12);
+  if (L.trees) {
+    g.strokeStyle = '#07040d';
+    g.lineCap = 'round';
+    const branch = (x, y, len, ang, w, depth, seed) => {
+      const x2 = x + Math.cos(ang) * len, y2 = y + Math.sin(ang) * len;
+      g.lineWidth = w;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x2, y2); g.stroke();
+      if (depth <= 0) return;
+      const k = hash(depth * 7 + seed);
+      branch(x2, y2, len * 0.7, ang - 0.4 - k * 0.25, w * 0.65, depth - 1, seed + 1);
+      branch(x2, y2, len * 0.64, ang + 0.34 + k * 0.3, w * 0.6, depth - 1, seed + 2);
+    };
+    branch(W * tx[0], groundY - H * 0.03, tl, -Math.PI / 2 + 0.08, Math.max(3, tl * 0.08), 6, 3);
+    branch(W * tx[1], groundY - H * 0.04, tl * 0.7, -Math.PI / 2 - 0.1, Math.max(2, tl * 0.06), 5, 9);
+  }
+  if (L.pines) {
+    for (const [px, s] of [[tx[0], 1], [tx[1], 0.7]]) {
+      const x = W * px, base = groundY - H * 0.03, ph = tl * 1.7 * s, pw = ph * 0.34;
+      g.fillStyle = '#0a1a2c';
+      for (let i = 0; i < 4; i++) {
+        const y0 = base - ph * (0.28 + i * 0.22), w2 = pw * (1 - i * 0.2);
+        g.beginPath(); g.moveTo(x, y0 - ph * 0.3); g.lineTo(x + w2, y0 + ph * 0.1); g.lineTo(x - w2, y0 + ph * 0.1); g.closePath(); g.fill();
+        g.fillStyle = 'rgba(235,245,255,.8)';
+        g.beginPath(); g.moveTo(x, y0 - ph * 0.3); g.lineTo(x + w2 * 0.45, y0 - ph * 0.12); g.lineTo(x - w2 * 0.45, y0 - ph * 0.12); g.closePath(); g.fill();
+        g.fillStyle = '#0a1a2c';
+      }
+    }
+  }
+  if (L.stones) {
+    for (const [px, s] of [[tx[0] - 0.01, 1], [tx[1] + 0.005, 0.8], [(tx[0] + tx[1]) / 2, 0.65]]) {
+      const w = tl * 0.42 * s, hh = tl * 0.6 * s, x = W * px - w / 2, y = groundY - H * 0.02 - hh;
+      g.fillStyle = '#0b100e';
+      g.beginPath(); g.moveTo(x, y + hh); g.lineTo(x, y + w / 2); g.arc(x + w / 2, y + w / 2, w / 2, Math.PI, 0); g.lineTo(x + w, y + hh); g.closePath(); g.fill();
+      g.fillStyle = 'rgba(190,210,200,.18)';
+      g.fillRect(x + w * 0.2, y + w * 0.6, w * 0.6, Math.max(2, w * 0.06));
+      g.fillRect(x + w * 0.3, y + w * 0.85, w * 0.4, Math.max(2, w * 0.06));
+    }
+  }
+  if (L.bats) {
+    g.fillStyle = '#07040d';
+    for (const [bx, by, s] of [[0.68, 0.14, 1], [0.74, 0.2, 0.7], [0.3, 0.1, 0.6]]) {
+      const x = W * bx, y = H * by, r = Math.min(W, H) * 0.014 * s;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.quadraticCurveTo(x - r * 0.6, y - r * 0.9, x - r * 1.6, y - r * 0.3);
+      g.quadraticCurveTo(x - r, y, x - r * 0.4, y + r * 0.25);
+      g.quadraticCurveTo(x, y, x + r * 0.4, y + r * 0.25);
+      g.quadraticCurveTo(x + r, y, x + r * 1.6, y - r * 0.3);
+      g.quadraticCurveTo(x + r * 0.6, y - r * 0.9, x, y);
+      g.fill();
+    }
   }
   /* ground */
   const ground = g.createLinearGradient(0, groundY, 0, H);
-  ground.addColorStop(0, '#1c0f17');
-  ground.addColorStop(1, '#08040a');
+  ground.addColorStop(0, L.ground[0]);
+  ground.addColorStop(1, L.ground[1]);
   g.fillStyle = ground;
   g.fillRect(0, groundY, W, H - groundY);
-  g.fillStyle = 'rgba(255,190,140,.07)';
+  g.fillStyle = th.scene === 'snow' ? 'rgba(255,255,255,.35)' : 'rgba(255,190,140,.07)';
   g.fillRect(0, groundY, W, 1.5);
-  for (let i = 0; i < Math.round(W / 40); i++) {
-    g.fillStyle = `hsla(${12 + hash(i + 70) * 30},70%,${22 + hash(i + 71) * 14}%,.75)`;
-    g.beginPath();
-    g.ellipse(hash(i + 72) * W, groundY + 8 + hash(i + 73) * (H - groundY - 12), 5 + hash(i) * 5, 2.5 + hash(i + 1) * 2, hash(i) * 3, 0, Math.PI * 2);
-    g.fill();
+  if (L.leaves) {
+    for (let i = 0; i < Math.round(W / 40); i++) {
+      g.fillStyle = `hsla(${12 + hash(i + 70) * 30},70%,${22 + hash(i + 71) * 14}%,.75)`;
+      g.beginPath();
+      g.ellipse(hash(i + 72) * W, groundY + 8 + hash(i + 73) * (H - groundY - 12), 5 + hash(i) * 5, 2.5 + hash(i + 1) * 2, hash(i) * 3, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+  if (L.mounds) {
+    for (let i = 0; i < Math.round(W / 70); i++) {
+      g.fillStyle = `rgba(255,255,255,${0.35 + hash(i + 74) * 0.4})`;
+      g.beginPath();
+      g.ellipse(hash(i + 75) * W, groundY + 10 + hash(i + 76) * (H - groundY - 14), 14 + hash(i) * 22, 3 + hash(i + 1) * 4, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+  if (th.scene === 'porch') {
+    g.strokeStyle = 'rgba(0,0,0,.45)';
+    g.lineWidth = 2;
+    const bh = Math.max(18, (H - groundY) / 5);
+    for (let y = groundY + bh; y < H; y += bh) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+  }
+  if (L.snowfall) {
+    const n = Math.round((W * H) / 16000);
+    for (let i = 0; i < n; i++) {
+      g.fillStyle = `rgba(255,255,255,${0.35 + hash(i + 90) * 0.5})`;
+      g.beginPath(); g.arc(hash(i + 91) * W, hash(i + 92) * H, 1 + hash(i + 93) * 2, 0, Math.PI * 2); g.fill();
+    }
   }
   /* the pumpkin's shadow */
   const sh2 = g.createRadialGradient(T.cx, groundY, 0, T.cx, groundY, sh.rx * T.k * 1.25);
@@ -304,7 +439,8 @@ function paintScene(g, W, H, T, sh) {
   g.restore();
 }
 
-function paintBody(g, T, sh) {
+function paintBody(g, T, sh, th = { style: 'pumpkin' }) {
+  const ice = th.style === 'ice';
   g.save();
   g.translate(T.cx, T.cy);
   g.scale(T.k, T.k);
@@ -312,9 +448,9 @@ function paintBody(g, T, sh) {
   g.save();
   const sy = -sh.ry * 0.92;
   const stem = g.createLinearGradient(-20, sy - 80, 22, sy);
-  stem.addColorStop(0, '#7d8a3a');
-  stem.addColorStop(0.5, '#56632a');
-  stem.addColorStop(1, '#2f3816');
+  stem.addColorStop(0, ice ? '#e8f6ff' : '#7d8a3a');
+  stem.addColorStop(0.5, ice ? '#a9d2ec' : '#56632a');
+  stem.addColorStop(1, ice ? '#5f8fb4' : '#2f3816');
   g.fillStyle = stem;
   g.beginPath();
   g.moveTo(-24, sy + 14);
@@ -324,13 +460,13 @@ function paintBody(g, T, sh) {
   g.bezierCurveTo(4, sy - 40, 12, sy - 14, 22, sy + 14);
   g.closePath();
   g.fill();
-  g.strokeStyle = 'rgba(30,36,10,.55)';
+  g.strokeStyle = ice ? 'rgba(30,70,110,.4)' : 'rgba(30,36,10,.55)';
   g.lineWidth = 2;
   for (const o of [-10, 0, 9]) {
     g.beginPath(); g.moveTo(o, sy + 10); g.bezierCurveTo(o - 2, sy - 20, o * 0.6 - 4, sy - 50, o * 0.3 + 2, sy - 80); g.stroke();
   }
   /* a curly vine */
-  g.strokeStyle = '#4b5a22';
+  g.strokeStyle = ice ? '#cfe8f8' : '#4b5a22';
   g.lineWidth = 4;
   g.lineCap = 'round';
   g.beginPath();
@@ -340,13 +476,13 @@ function paintBody(g, T, sh) {
   g.bezierCurveTo(76, sy - 6, 92, sy - 2, 90, sy + 8);
   g.stroke();
   /* a leaf */
-  g.fillStyle = '#3f5a1f';
+  g.fillStyle = ice ? '#bfe0f4' : '#3f5a1f';
   g.beginPath();
   g.moveTo(-18, sy - 2);
   g.bezierCurveTo(-60, sy - 34, -96, sy - 10, -104, sy + 8);
   g.bezierCurveTo(-80, sy + 2, -50, sy + 16, -18, sy - 2);
   g.fill();
-  g.strokeStyle = 'rgba(160,200,90,.35)';
+  g.strokeStyle = ice ? 'rgba(255,255,255,.6)' : 'rgba(160,200,90,.35)';
   g.lineWidth = 1.5;
   g.beginPath(); g.moveTo(-20, sy - 2); g.quadraticCurveTo(-60, sy - 8, -100, sy + 6); g.stroke();
   g.restore();
@@ -355,14 +491,20 @@ function paintBody(g, T, sh) {
   for (const l of lobes(sh)) {
     const edge = Math.abs(l.t);
     const grd = g.createRadialGradient(l.cx - l.rx * 0.25, -l.ry * 0.3, l.rx * 0.1, l.cx, 0, Math.max(l.rx, l.ry) * 1.05);
-    grd.addColorStop(0, `hsl(${30 - edge * 2},96%,${60 - edge * 6}%)`);
-    grd.addColorStop(0.55, `hsl(${24 - edge * 2},92%,${48 - edge * 6}%)`);
-    grd.addColorStop(1, `hsl(${16},88%,${26 - edge * 4}%)`);
+    if (ice) {
+      grd.addColorStop(0, `hsl(${200 + edge * 3},70%,${94 - edge * 5}%)`);
+      grd.addColorStop(0.55, `hsl(${203 + edge * 3},62%,${78 - edge * 6}%)`);
+      grd.addColorStop(1, `hsl(212,52%,${44 - edge * 4}%)`);
+    } else {
+      grd.addColorStop(0, `hsl(${30 - edge * 2},96%,${60 - edge * 6}%)`);
+      grd.addColorStop(0.55, `hsl(${24 - edge * 2},92%,${48 - edge * 6}%)`);
+      grd.addColorStop(1, `hsl(${16},88%,${26 - edge * 4}%)`);
+    }
     g.fillStyle = grd;
     g.beginPath();
     g.ellipse(l.cx, 0, l.rx, l.ry, 0, 0, Math.PI * 2);
     g.fill();
-    g.strokeStyle = 'rgba(90,30,0,.38)';
+    g.strokeStyle = ice ? 'rgba(30,70,120,.42)' : 'rgba(90,30,0,.38)';
     g.lineWidth = 3;
     g.stroke();
   }
@@ -373,7 +515,7 @@ function paintBody(g, T, sh) {
   const shade = g.createLinearGradient(0, -sh.ry, 0, sh.ry);
   shade.addColorStop(0, 'rgba(255,240,220,.10)');
   shade.addColorStop(0.55, 'rgba(0,0,0,0)');
-  shade.addColorStop(1, 'rgba(40,8,0,.42)');
+  shade.addColorStop(1, ice ? 'rgba(10,30,70,.40)' : 'rgba(40,8,0,.42)');
   g.fillStyle = shade;
   g.fillRect(-sh.rx * 1.2, -sh.ry * 1.2, sh.rx * 2.4, sh.ry * 2.4);
   for (const l of lobes(sh)) {
@@ -399,7 +541,8 @@ function layer(W, H, dpr) {
 }
 
 /* The carved holes, unlit and lit, plus the glow they throw. */
-function buildCarve(W, H, dpr, T, sh, cuts) {
+function buildCarve(W, H, dpr, T, sh, cuts, th = { style: 'pumpkin', glow: 'amber' }) {
+  const gl = glowOf(th), ice = th.style === 'ice';
   const mask = layer(W, H, dpr);
   const mg = mask.g;
   mg.save();
@@ -428,25 +571,25 @@ function buildCarve(W, H, dpr, T, sh, cuts) {
     /* the cut wall: pale flesh */
     if (lit) {
       const f = g.createRadialGradient(candle.x, candle.y, 0, candle.x, candle.y, sh.ry * T.k * 1.6);
-      f.addColorStop(0, '#ffdf8f');
-      f.addColorStop(1, '#ee9a3c');
+      f.addColorStop(0, gl.wallLit[0]);
+      f.addColorStop(1, gl.wallLit[1]);
       g.fillStyle = f;
-    } else g.fillStyle = '#b9773a';
+    } else g.fillStyle = ice ? '#9bbdd6' : '#b9773a';
     g.fillRect(0, 0, W, H);
     /* the inside, seen through the hole: the hole shifted up by the wall's depth */
     const I = layer(W, H, dpr);
     if (lit) {
       const r = sh.ry * T.k * 1.7;
       const gi = I.g.createRadialGradient(candle.x, candle.y, 0, candle.x, candle.y, r);
-      gi.addColorStop(0, '#fff0b0');
-      gi.addColorStop(0.2, '#ffd04a');
-      gi.addColorStop(0.55, '#ff9418');
-      gi.addColorStop(1, '#b84300');
+      gi.addColorStop(0, gl.inner[0]);
+      gi.addColorStop(0.2, gl.inner[1]);
+      gi.addColorStop(0.55, gl.inner[2]);
+      gi.addColorStop(1, gl.inner[3]);
       I.g.fillStyle = gi;
     } else {
       const gi = I.g.createLinearGradient(0, T.cy - sh.ry * T.k, 0, T.cy + sh.ry * T.k);
-      gi.addColorStop(0, '#1a0a03');
-      gi.addColorStop(1, '#2e1306');
+      gi.addColorStop(0, ice ? '#0a1a2a' : '#1a0a03');
+      gi.addColorStop(1, ice ? '#13293d' : '#2e1306');
       I.g.fillStyle = gi;
     }
     I.g.fillRect(0, 0, W, H);
@@ -462,28 +605,29 @@ function buildCarve(W, H, dpr, T, sh, cuts) {
   /* the glow: the holes, blurred and warm (the shadow of an image drawn off-canvas) */
   const glow = layer(W, H, dpr);
   const off = W * 2;
-  glow.g.shadowColor = 'rgba(255,150,40,1)';
+  glow.g.shadowColor = gl.halo1;
   glow.g.shadowBlur = Math.max(8, 26 * T.k * dpr);
   glow.g.shadowOffsetX = off * dpr;
   glow.g.drawImage(mask.c, -off, 0, W, H);
   glow.g.shadowBlur = Math.max(4, 8 * T.k * dpr);
-  glow.g.shadowColor = 'rgba(255,210,110,1)';
+  glow.g.shadowColor = gl.halo2;
   glow.g.drawImage(mask.c, -off, 0, W, H);
   return { dark, lit, glow: glow.c, candle };
 }
 
 /* Put it all together: scene, light on the ground, body, holes, glow. */
-function compose(g, W, H, T, sh, L, lit, flick) {
+function compose(g, W, H, T, sh, L, lit, flick, th = { glow: 'amber' }) {
   g.drawImage(L.scene, 0, 0, W, H);
   const a = clamp(lit * flick, 0, 1.2);
   if (a > 0.01) {
     const groundY = T.cy + sh.ry * T.k * 0.9;
+    const gc = glowOf(th);
     g.save();
     g.globalCompositeOperation = 'lighter';
     const r = sh.rx * T.k * 2.6;
     const gl = g.createRadialGradient(T.cx, groundY, 0, T.cx, groundY, r);
-    gl.addColorStop(0, `rgba(255,140,40,${0.3 * a})`);
-    gl.addColorStop(0.5, `rgba(255,110,20,${0.1 * a})`);
+    gl.addColorStop(0, `rgba(${gc.core},${0.3 * a})`);
+    gl.addColorStop(0.5, `rgba(${gc.mid},${0.1 * a})`);
     gl.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = gl;
     g.translate(T.cx, groundY);
@@ -515,12 +659,15 @@ defineApp({
   g1: '#ffa53a', g2: '#a3360a',
   category: 'Media',
   keywords: ['pumpkin', 'carve', 'carving', 'halloween', 'jack-o-lantern', 'jack o lantern', 'lantern', 'candle', 'spooky', 'wallpaper', 'draw'],
-  desc: 'Carve a jack-o’-lantern, light the candle, make it your wallpaper',
+  desc: 'Carve a pumpkin, light the candle, make it your wallpaper',
   singleton: true,
+  exts: ['pumpkin'],                   /* saved carvings (~/Documents/Carvings) open here */
   win: { w: 980, h: 700, minW: 400, minH: 460 },
 
   mount(ctx) {
     const { root, win, api } = ctx;
+    const offs = [];
+    let pendingPath = ctx.opts?.path || '';
     const { h, icon, store, vfs, bus } = api;
     const notify = n => api.notify({ app: 'Pumpkin Carver', icon: 'pumpkin', ...n });
     const reduced = () => !!store.get('prefs.reduceMotion')
@@ -530,7 +677,8 @@ defineApp({
     const pref = saved && typeof saved === 'object' ? saved : {};
     const S = {
       dead: false,
-      shape: 'round',
+      file: '',               /* the saved carving this one came from or went to */
+      shape: 'round', style: 'pumpkin', glow: 'amber', scene: 'moon',
       steps: [],              /* each step: an array of cuts; each cut: [[x,y], …] */
       undone: [],
       resetFrom: null,        /* what Reset cleared, until something else happens */
@@ -585,15 +733,35 @@ defineApp({
       h('div.pmk__spring'),
       h('div.pmk__group', undoBtn, redoBtn, resetBtn),
       h('div.pmk__group', lightBtn, picBtn, wpBtn));
+    /* second row: how it looks (style, candle colour, scene) and the saved carvings */
+    const lookSel = (label, kind) => {
+      const sel = h('select.pmk__sel', { 'aria-label': label, dataset: { look: kind }, onchange: e => setLook(kind, e.target.value) });
+      return { sel, group: h('label.pmk__group.pmk__look', h('span.pmk__lbl', { text: label }), sel) };
+    };
+    const styleP = lookSel('Style', 'style');
+    const glowP = lookSel('Glow', 'glow');
+    const sceneP = lookSel('Scene', 'scene');
+    const nameIn = h('input.pmk__name', { type: 'text', maxlength: '60', placeholder: 'Name this carving', 'aria-label': 'Name for the saved carving', spellcheck: 'false' });
+    const nameOk = h('button.pmk__btn.pmk__btn--ok', { type: 'submit' }, h('span', { text: 'Save' }));
+    const nameNo = h('button.pmk__btn', { type: 'button', onclick: () => closeName() }, h('span', { text: 'Cancel' }));
+    const nameErr = h('small.pmk__err', { role: 'alert' });
+    const nameForm = h('form.pmk__group.pmk__nameform', { hidden: true, onsubmit: e => { e.preventDefault(); saveCarving(nameIn.value); } }, nameIn, nameOk, nameNo, nameErr);
+    nameIn.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeName(); } });
+    const saveAsBtn = h('button.pmk__btn', { type: 'button', 'aria-label': 'Save this carving as a file', onclick: () => openName() }, icon('save'), h('span', { text: 'Save as…' }));
+    const openBtn = h('button.pmk__btn', { type: 'button', 'aria-haspopup': 'menu', 'aria-label': 'Open a saved carving', onclick: () => openMenu() }, icon('folder-open'), h('span', { text: 'Open…' }), icon('chevron-down'));
+    const dropBtn = h('button.pmk__btn', { type: 'button', 'aria-label': 'Send the saved carving with Drop', onclick: () => sendCarving() }, icon('send'), h('span', { text: 'Send with Drop' }));
+    const fileLbl = h('span.pmk__file');
+    const bar2 = h('div.pmk__bar.pmk__bar--looks', styleP.group, glowP.group, sceneP.group, h('div.pmk__spring'), fileLbl, nameForm, saveAsBtn, openBtn, dropBtn);
     const hint = h('span.pmk__hint', { 'aria-live': 'polite' });
     const count = h('span.pmk__count');
     const dock = h('div.pmk__dock', hint, count);
-    const pmk = h('div.pmk', bar, stage, dock);
+    const pmk = h('div.pmk', bar, bar2, stage, dock);
     root.appendChild(h('div.app.app--col', pmk));
 
     /* ---------------- layout + layers ---------------- */
     const V = { w: 0, h: 0, dpr: 1, T: null, L: null };
     const sh = () => SHAPES[S.shape] || SHAPES.round;
+    const TH = () => themeOf(S);
     function screenT(w, hgt) {
       const s = sh();
       const k = Math.max(0.05, Math.min((w - 36) / (s.rx * 2 + 70), (hgt - 30) / (s.ry * 2 + 150)));
@@ -621,13 +789,13 @@ defineApp({
       V.T = screenT(V.w, V.h);
       if (all || !V.L) {
         const sc = layer(V.w, V.h, V.dpr);
-        paintScene(sc.g, V.w, V.h, V.T, sh());
+        paintScene(sc.g, V.w, V.h, V.T, sh(), TH());
         const bd = layer(V.w, V.h, V.dpr);
-        paintBody(bd.g, V.T, sh());
+        paintBody(bd.g, V.T, sh(), TH());
         V.L = { scene: sc.c, body: bd.c, carve: null };
       }
       const list = cuts();
-      V.L.carve = list.length ? buildCarve(V.w, V.h, V.dpr, V.T, sh(), list) : null;
+      V.L.carve = list.length ? buildCarve(V.w, V.h, V.dpr, V.T, sh(), list, TH()) : null;
       draw();
     }
 
@@ -664,7 +832,7 @@ defineApp({
       if (!V.L || S.dead) return;
       const g = cv.getContext('2d');
       g.setTransform(V.dpr, 0, 0, V.dpr, 0, 0);
-      compose(g, V.w, V.h, V.T, sh(), V.L, S.litV, flick);
+      compose(g, V.w, V.h, V.T, sh(), V.L, S.litV, flick, TH());
       overlay(g);
     }
 
@@ -926,6 +1094,12 @@ defineApp({
       lightBtn.setAttribute('aria-label', S.lit ? 'Blow out the candle (L)' : 'Light the candle (L)');
       lightBtn.classList.toggle('is-on', S.lit);
       count.textContent = n ? plural(n, 'cut') : 'Not carved yet';
+      saveAsBtn.disabled = !n;
+      const fileOk = !!S.file && !!vfs.node(S.file);
+      const current = fileOk && vfs.read(S.file) === JSON.stringify(docOf());
+      dropBtn.disabled = !fileOk || !current;
+      dropBtn.title = !fileOk ? 'Save the carving first, then send it' : current ? 'Send the saved carving to a friend' : 'You changed it since saving. Save as… again to send what you see';
+      fileLbl.textContent = fileOk ? `${vfs.baseName(S.file)}${current ? '' : ' (changed)'}` : '';
       cv.dataset.tool = S.tool;
       cv.setAttribute('aria-label', `A ${sh().label.toLowerCase()} pumpkin, ${n ? plural(n, 'cut') : 'not carved yet'}, candle ${S.lit ? 'lit' : 'out'}. ${S.tool === 'knife' ? 'Drag to cut a shape out.' : 'Click to stamp, drag to size it; arrow keys and Enter work too.'}`);
     }
@@ -987,13 +1161,13 @@ defineApp({
     function renderOut() {
       const s = sh(), T = exportT();
       const sc = layer(OUT_W, OUT_H, 1);
-      paintScene(sc.g, OUT_W, OUT_H, T, s);
+      paintScene(sc.g, OUT_W, OUT_H, T, s, TH());
       const bd = layer(OUT_W, OUT_H, 1);
-      paintBody(bd.g, T, s);
+      paintBody(bd.g, T, s, TH());
       const list = cuts();
-      const L = { scene: sc.c, body: bd.c, carve: list.length ? buildCarve(OUT_W, OUT_H, 1, T, s, list) : null };
+      const L = { scene: sc.c, body: bd.c, carve: list.length ? buildCarve(OUT_W, OUT_H, 1, T, s, list, TH()) : null };
       const out = layer(OUT_W, OUT_H, 1);
-      compose(out.g, OUT_W, OUT_H, T, s, L, S.lit ? 1 : 0, 1);
+      compose(out.g, OUT_W, OUT_H, T, s, L, S.lit ? 1 : 0, 1, TH());
       return out.c;
     }
     function stamp() {
@@ -1072,12 +1246,138 @@ defineApp({
     function flush() {
       clearTimeout(saveT);
       saveT = 0;
-      misc.set(DOC_KEY, { v: 1, shape: S.shape, steps: S.steps, lit: S.lit }).catch(() => {});
+      misc.set(DOC_KEY, docOf()).catch(() => {});
     }
+    const docOf = () => ({ v: 2, shape: S.shape, steps: S.steps, lit: S.lit, style: S.style, glow: S.glow, scene: S.scene });
     function savePrefs() {
       store.set(PREF_KEY, { tool: S.tool, stamp: S.stamp, mirror: S.mirror });
     }
     const validCut = c => Array.isArray(c) && c.length >= 3 && c.length <= 2000 && c.every(p => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+
+    /* A carving from the browser's store or from a file: only what checks out is taken. */
+    function takeDoc(doc) {
+      if (!doc || typeof doc !== 'object') return false;
+      if (SHAPES[doc.shape]) S.shape = doc.shape;
+      if (Array.isArray(doc.steps)) S.steps = doc.steps.filter(Array.isArray).map(st => st.filter(validCut)).filter(st => st.length).slice(-MAX_STEPS);
+      if (typeof doc.lit === 'boolean') { S.lit = doc.lit; S.litV = doc.lit ? 1 : 0; }
+      S.style = STYLES[doc.style] ? doc.style : 'pumpkin';
+      S.glow = GLOWS[doc.glow] ? doc.glow : 'amber';
+      S.scene = SCENES[doc.scene] ? doc.scene : 'moon';
+      return true;
+    }
+    /* what is saved but not in season, said plainly */
+    function offSeasonNote() {
+      const bits = [];
+      if (S.style === 'ice' && !winterNow()) bits.push('an ice lantern');
+      if (S.scene === 'snow' && !winterNow()) bits.push('the snowy night');
+      return bits.length ? `This carving uses ${bits.join(' and ')}, which only come out in winter, so it shows as a normal pumpkin in the moonlit night for now.` : '';
+    }
+
+    /* ---------------- looks ---------------- */
+    function paintLooks() {
+      const w = winterNow();
+      const fill = (p, table, cur, keep) => {
+        p.sel.replaceChildren(...Object.entries(table).filter(([id, v]) => !v.winter || w).map(([id, v]) => h('option', { value: id, text: v.label })));
+        p.sel.value = keep(cur) ? cur : p.sel.options[0].value;
+      };
+      fill(styleP, STYLES, S.style, id => !STYLES[id].winter || w);
+      fill(glowP, GLOWS, S.glow, id => true);
+      fill(sceneP, SCENES, S.scene, id => !SCENES[id].winter || w);
+      styleP.group.hidden = !w;            /* with one style left there is nothing to choose */
+    }
+    function setLook(kind, v) {
+      if (kind === 'style' && !STYLES[v]) return;
+      if (kind === 'glow' && !GLOWS[v]) return;
+      if (kind === 'scene' && !SCENES[v]) return;
+      S[kind] = v;
+      let say = `${{ style: 'Style', glow: 'Glow', scene: 'Scene' }[kind]}: ${({ style: STYLES, glow: GLOWS, scene: SCENES })[kind][v].label}.`;
+      if (kind === 'style' && v === 'ice' && S.glow === 'amber') { S.glow = 'blue'; say = 'Ice lantern, with a cool blue candle.'; }
+      rebuild(true);
+      paintLooks();
+      paintBar();
+      persist();
+      setHint(say);
+    }
+    offs.push(bus.on('season:change', () => { if (S.dead) return; paintLooks(); rebuild(true); const n = offSeasonNote(); if (n) setHint(n); }));
+
+    /* ---------------- saved carvings: ~/Documents/Carvings/<name>.pumpkin ---------------- */
+    const carvingsDir = () => `${vfs.HOME}/Documents/Carvings`;
+    const carvingFiles = () => (vfs.node(carvingsDir()) ? vfs.ls(carvingsDir()).filter(n => n.type === 'file' && /\.pumpkin$/i.test(n.name)) : []);
+    function openName() {
+      if (!cuts().length) { setHint('Carve something first, then save it.'); return; }
+      nameErr.textContent = '';
+      nameForm.hidden = false;
+      saveAsBtn.hidden = true;
+      nameIn.value = S.file ? vfs.baseName(S.file).replace(/\.pumpkin$/i, '') : '';
+      nameIn.focus();
+    }
+    function closeName() { nameForm.hidden = true; saveAsBtn.hidden = false; saveAsBtn.focus?.(); }
+    async function saveCarving(raw) {
+      const name = String(raw || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/^\.+/, '').slice(0, 60);
+      if (!name) { nameErr.textContent = 'Give it a name.'; nameIn.focus(); return; }
+      if (!cuts().length) { nameErr.textContent = 'Carve something first.'; return; }
+      const docs = `${vfs.HOME}/Documents`;
+      if (!vfs.node(docs)) vfs.mkdir(docs);
+      if (!vfs.node(carvingsDir()) && !vfs.mkdir(carvingsDir())) { nameErr.textContent = 'The Carvings folder could not be made.'; return; }
+      const path = `${carvingsDir()}/${name}.pumpkin`;
+      if (vfs.node(path)) {
+        const okay = await api.confirm({ title: `Replace “${name}”?`, message: 'A saved carving with that name is overwritten with this one.', ok: 'Replace', danger: true });
+        if (!okay || S.dead) return;
+      }
+      if (!vfs.write(path, JSON.stringify(docOf()))) { nameErr.textContent = 'The file could not be written.'; return; }
+      S.file = path;
+      closeName();
+      paintBar();
+      notify({ title: 'Carving saved', message: `${name}.pumpkin in Documents › Carvings`,
+        actions: [{ label: 'Show in Files', onClick: () => api.openApp('files', { path }) }, { label: 'Send with Drop', onClick: () => api.openApp('drop', { send: [path] }) }] });
+      setHint(`Saved ${name}.pumpkin. Open… brings it back; Send with Drop shares it.`);
+    }
+    function openCarving(path) {
+      const n = vfs.node(path);
+      if (!n || n.type !== 'file') { notify({ icon: 'alert', title: 'Couldn’t open the carving', message: 'That file is no longer there.' }); return false; }
+      let doc = null;
+      try { doc = JSON.parse(vfs.read(path) || ''); } catch (err) { doc = null; }
+      if (!doc || typeof doc !== 'object' || !Array.isArray(doc.steps)) {
+        notify({ icon: 'alert', title: 'Couldn’t open the carving', message: `${n.name} isn’t a Pumpkin Carver file.` });
+        return false;
+      }
+      const before = S.steps;
+      if (!takeDoc(doc) || !S.steps.length) { S.steps = before; notify({ icon: 'alert', title: 'Couldn’t open the carving', message: `${n.name} has no cuts in it.` }); return false; }
+      S.resetFrom = before.length ? before : null;      /* Undo brings the old carving back */
+      S.undone = [];
+      S.file = vfs.norm(path);
+      rebuild(true);
+      paintLooks();
+      paintBar();
+      persist();
+      setHint(offSeasonNote() || `Opened ${n.name}.${before.length ? ' Undo brings back the carving you had.' : ''}`);
+      return true;
+    }
+    function openMenu() {
+      const files = carvingFiles();
+      const r = openBtn.getBoundingClientRect();
+      if (!files.length) { api.menu([{ label: 'No saved carvings yet', disabled: true }], r.left, r.bottom + 4); return; }
+      api.menu([
+        { header: true, label: 'Open a carving' },
+        ...files.map(n => ({ label: n.name.replace(/\.pumpkin$/i, ''), onClick: () => openCarving(`${carvingsDir()}/${n.name}`) })),
+        '-',
+        { label: 'Delete', icon: 'trash', danger: true, items: files.map(n => ({ label: n.name.replace(/\.pumpkin$/i, ''), onClick: () => deleteCarving(`${carvingsDir()}/${n.name}`) })) },
+      ], r.left, r.bottom + 4);
+    }
+    async function deleteCarving(path) {
+      const name = vfs.baseName(path).replace(/\.pumpkin$/i, '');
+      const okay = await api.confirm({ title: `Delete “${name}”?`, message: 'It goes to the Trash in Files.', ok: 'Delete', danger: true });
+      if (!okay || S.dead) return;
+      vfs.rm(path);
+      if (S.file === path) S.file = '';
+      paintBar();
+      setHint(`Deleted ${name}.`);
+    }
+    function sendCarving() {
+      if (!S.file || !vfs.node(S.file)) return;
+      api.openApp('drop', { send: [S.file] });
+    }
+    win.onReopen?.(o => { if (o?.path && !S.dead) { if (S.loaded) openCarving(o.path); else pendingPath = o.path; } });
 
     /* ---------------- start ---------------- */
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => fit()) : null;
@@ -1085,23 +1385,24 @@ defineApp({
     const onVis = () => { if (!document.hidden) schedule(); };
     document.addEventListener('visibilitychange', onVis);
     const offReduce = store.sub('prefs.reduceMotion', () => { if (!S.dead) { S.litV = S.lit ? 1 : 0; schedule(); draw(); } });
+    paintLooks();
     paintBar();
     setHint();
     fit();
     misc.get(DOC_KEY).then(doc => {
       if (S.dead) return;
       /* a carving begun in the moment before this arrived wins */
-      if (doc && typeof doc === 'object' && !S.steps.length && !S.undone.length) {
-        if (SHAPES[doc.shape]) S.shape = doc.shape;
-        if (Array.isArray(doc.steps)) S.steps = doc.steps.filter(Array.isArray).map(st => st.filter(validCut)).filter(st => st.length).slice(-MAX_STEPS);
-        if (typeof doc.lit === 'boolean') { S.lit = doc.lit; S.litV = doc.lit ? 1 : 0; }
-      }
+      if (doc && typeof doc === 'object' && !S.steps.length && !S.undone.length) takeDoc(doc);
       S.loaded = true;
       if (S.steps.length) persist();
+      paintLooks();
       rebuild(true);
       paintBar();
+      const n = offSeasonNote();
+      if (n) setHint(n);
+      if (pendingPath) { const p = pendingPath; pendingPath = ''; openCarving(p); }
       schedule();
-    }).catch(() => { S.loaded = true; schedule(); });
+    }).catch(() => { S.loaded = true; paintLooks(); if (pendingPath) { const p = pendingPath; pendingPath = ''; openCarving(p); } schedule(); });
     schedule();
 
     return () => {
@@ -1118,6 +1419,7 @@ defineApp({
       cv.removeEventListener('pointerup', onUp);
       cv.removeEventListener('pointercancel', onUp);
       offReduce?.();
+      offs.forEach(off => off());
       try { ac?.close()?.catch?.(() => {}); } catch (err) { /* already closed */ }
       ac = null;
     };

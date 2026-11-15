@@ -254,3 +254,56 @@
 .pal__pval{flex:1;min-width:0;font-size:var(--fs-11);color:var(--ink-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pal__ppicked{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3);border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-1)}
 .pal__pload{display:flex;align-items:center;gap:var(--sp-3);color:var(--ink-2)}
+
+/* ---- six tabs: they wrap rather than squeeze ---- */
+.pal__tabs{ flex-wrap:wrap; }
+.pal__tab{ min-width:max-content; padding:0 var(--sp-3); }
+
+/* ---- nearest named colour ---- */
+.pal__named{ display:inline-flex; align-items:center; gap:var(--sp-2); align-self:flex-start; max-width:100%;
+  font-size:var(--fs-11); color:var(--ink-2); text-align:left; border-radius:var(--r-sm); padding:2px 4px 2px 0; }
+.pal__named:hover{ color:var(--ink-0); }
+.pal__named.is-copied{ color:var(--accent-soft); }
+.pal__namedsw{ width:14px; height:14px; flex:0 0 auto; border-radius:4px; border:1px solid var(--line-2); }
+.pal__named:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+/* ---- saved swatches: import, CSS, JSON, .gpl ---- */
+.pal__savedhead{ flex-wrap:wrap; gap:var(--sp-2); }
+.pal__sacts{ display:flex; flex-wrap:wrap; gap:2px; }
+.pal__sacts .btn{ height:24px; padding:0 var(--sp-3); font-size:var(--fs-10); }
+.pal__import{ display:flex; flex-direction:column; gap:var(--sp-2); }
+.pal__import[hidden]{ display:none; }
+.pal__importin{ width:100%; resize:vertical; min-height:56px; padding:var(--sp-3); border-radius:var(--r-sm);
+  border:1px solid var(--line-1); background:var(--fill-0); color:var(--ink-0); font:var(--fs-11)/1.5 var(--font-mono, var(--mono)); }
+.pal__importin:focus{ outline:2px solid var(--accent); outline-offset:0; }
+.pal__importnote{ font-size:var(--fs-10); color:var(--ink-2); min-height:12px; }
+
+/* ---- shades and tints ---- */
+.pal__shrow{ display:flex; flex-direction:column; gap:var(--sp-2); }
+.pal__shades{ display:grid; grid-template-columns:repeat(10, minmax(0,1fr)); gap:3px; }
+.pal__shcard{ display:flex; flex-direction:column; align-items:stretch; gap:2px; min-width:0; text-align:center; }
+.pal__shchip{ height:40px; border-radius:4px; border:1px solid var(--line-1); }
+.pal__shcard:hover .pal__shchip{ outline:2px solid var(--line-2); }
+.pal__shcard.is-copied .pal__shchip{ outline:2px solid var(--accent); }
+.pal__shcard:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+.pal__shpct{ font-size:calc(9px * var(--fs-k,1)); color:var(--ink-3); }
+.pal__shhex{ font-size:calc(8.5px * var(--fs-k,1)); color:var(--ink-2); overflow:hidden; white-space:nowrap; }
+
+/* ---- colour-blind preview ---- */
+.pal__vrow{ display:grid; grid-template-columns:minmax(110px, 1.1fr) 2fr; gap:var(--sp-2) var(--sp-3); align-items:center;
+  padding:var(--sp-3); border-radius:var(--r-md); background:var(--fill-0); border:1px solid var(--line-0); }
+.pal__vname{ display:flex; flex-direction:column; gap:1px; grid-row:span 3; min-width:0; }
+.pal__vname b{ font-size:var(--fs-12); color:var(--ink-0); font-weight:600; }
+.pal__vname small{ font-size:var(--fs-10); color:var(--ink-3); }
+.pal__vstrip{ display:flex; gap:2px; min-width:0; }
+.pal__vsw{ flex:1 1 0; height:22px; min-width:8px; border-radius:3px; border:1px solid var(--line-1); }
+.pal__vtext{ display:flex; align-items:baseline; gap:var(--sp-3); padding:4px var(--sp-3); border-radius:var(--r-sm); border:1px solid var(--line-1); }
+.pal__vtext b{ font-size:var(--fs-15); font-weight:720; }
+.pal__vtext small{ font-size:var(--fs-10); opacity:.9; }
+
+/* ---- contrast: the nearest readable text colour ---- */
+.pal__fix{ display:flex; align-items:center; gap:var(--sp-3); padding:var(--sp-3) var(--sp-4); border-radius:var(--r-md);
+  background:rgba(78,203,113,.08); border:1px solid rgba(78,203,113,.3); }
+.pal__fixtx{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.pal__fixtx b{ font-size:var(--fs-12); color:var(--ink-0); font-weight:600; }
+.pal__fixtx small{ font-size:var(--fs-10); color:var(--ink-2); line-height:1.4; }

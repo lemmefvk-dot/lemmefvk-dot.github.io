@@ -160,3 +160,34 @@ body.is-mobile .tt__note{display:none}
   .tt__feed{scroll-behavior:auto}
   .tt__sbtn,.tt__card,.tt__cardplay,.tt__tab{transition:none}
 }
+
+/* ---- your own layer: labels, collections, watched, auto-advance, sheets ---- */
+.tt{position:relative}
+.tt__more{flex:0 0 auto}
+.tt__handle{font-size:var(--fs-11);color:rgba(255,255,255,.8);text-shadow:0 1px 6px rgba(0,0,0,.6)}
+.tt__badge--watched{background:rgba(var(--accent-rgb),.25)}
+.tt__sbtn.tt__watch.is-on{color:var(--accent-soft)}
+.tt__shelftools{display:flex;flex-direction:column;gap:var(--sp-2);margin:0 0 var(--sp-3)}
+.tt__find{height:28px;padding:0 10px;border-radius:var(--r-sm);background:var(--fill-1);border:1px solid var(--line-1);
+  color:var(--ink-0);font-size:var(--fs-12);width:100%}
+.tt__find:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+.tt__chips{display:flex;flex-wrap:wrap;gap:6px}
+.tt__chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:var(--r-pill);
+  background:var(--fill-1);border:1px solid var(--line-0);font-size:var(--fs-11);color:var(--ink-2)}
+.tt__chip small{color:var(--ink-3);font-variant-numeric:tabular-nums}
+.tt__chip.is-on{background:var(--fill-accent);color:var(--accent-soft)}
+.tt__col{color:var(--accent-soft)}
+.tt__tocol{position:absolute;top:6px;left:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;opacity:0}
+.tt__tocol .icon{width:13px;height:13px}
+.tt__card:hover .tt__tocol,.tt__card:focus-within .tt__tocol,.tt--touch .tt__tocol{opacity:1}
+.tt__foot{flex-wrap:wrap}
+.tt__opt{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-10);color:var(--ink-3)}
+.tt__sel{height:22px;border-radius:var(--r-sm);background:var(--fill-1);border:1px solid var(--line-1);color:var(--ink-1);font-size:var(--fs-10)}
+.tt__auto{font-size:var(--fs-10);color:var(--accent-soft);font-variant-numeric:tabular-nums}
+.tt__sheet{position:absolute;z-index:30;left:50%;top:70px;transform:translateX(-50%);width:min(340px,calc(100% - 24px));
+  display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4);border-radius:var(--r-md);
+  background:var(--bg-2);border:1px solid var(--line-1);box-shadow:var(--sh-3);max-height:calc(100% - 90px);overflow:auto}
+.tt__sheet-h{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3)}
+.tt__sheet-row{display:flex;gap:var(--sp-3);flex-wrap:wrap}
+.tt__sheet .field{height:30px}
+.tt__sheet .field input{width:100%}

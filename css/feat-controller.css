@@ -451,6 +451,24 @@
 .cc-game__acts .btn .icon{width:11px;height:11px}
 .cc-game.is-ok .cc-game__play{background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0)}
 .cc-game.is-ok .cc-game__play .icon{color:var(--cc-ink-accent)}
+/* a game with its own mapping (a profile), and the Free Classics' heading */
+.cc-game__own{flex:none;padding:1px 6px;border-radius:var(--r-pill);font-size:calc(9.5px * var(--fs-k,1));font-weight:700;color:var(--cc-ink-accent);background:var(--fill-accent)}
+.cc-games__sep{grid-column:1/-1;display:flex;align-items:baseline;gap:8px;margin-top:var(--sp-4);padding-top:var(--sp-3);border-top:1px solid var(--line-1);list-style:none}
+.cc-games__sep b{font-size:var(--fs-13);color:var(--ink-0)}
+.cc-games__sep small{font-size:var(--fs-11);color:var(--ink-3)}
+/* Button mapping: which mapping is being edited */
+.cc-prof{margin-bottom:var(--sp-4)}
+.cc-prof__sel{min-width:min(100%,260px);height:30px;padding:0 8px;border-radius:var(--r-sm);font:inherit;font-size:var(--fs-12);color:var(--ink-0);background:var(--fill-1);border:1px solid var(--line-1)}
+.cc-prof__sel:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cc-prof [hidden]{display:none}
+/* Controllers: stick centres, and the opt-in buzz at a round's end */
+.cc-cal [hidden]{display:none}
+.cc-cal__now{color:var(--ink-2)}
+.cc-toggle{display:flex;align-items:flex-start;gap:10px;margin-top:var(--sp-2);cursor:pointer}
+.cc-toggle .switch{flex:none;margin-top:1px}
+.cc-toggle span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cc-toggle b{font-size:var(--fs-12);color:var(--ink-0)}
+.cc-toggle small{font-size:var(--fs-10);line-height:1.45;color:var(--ink-3)}
 :root[data-theme="light"] .cc-dia__glyph{filter:brightness(.72) saturate(1.4)}
 :root[data-theme="light"] .cc-dia__btn.is-on .cc-dia__glyph{filter:none}
 /* the mapping glyphs are HTML: darken only the letter, not the light disc */

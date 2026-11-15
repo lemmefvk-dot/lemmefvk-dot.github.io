@@ -17,10 +17,11 @@ const fold = s => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g
 const squash = s => s.toLowerCase().replace(/[.,;:!?¿¡"“”'’()\[\]{}…]/g, ' ').replace(/\s+/g, ' ').trim();
 const plain = s => squash(String(s == null ? '' : s).normalize('NFC'));
 
-/** The answers a card accepts: its back text split at ; / , and with (bracketed bits) kept or left out. */
+/** The answers a card accepts: its back text split at ; / , and with (bracketed bits) kept or left out.
+    An "In a sentence: …" line (a Dictionary example, js/study/dict.js) is shown, not asked for. */
 export function alternatives(back) {
   const out = new Set();
-  const text = String(back == null ? '' : back);
+  const text = String(back == null ? '' : back).split('\n').filter(l => !/^\s*In a sentence:/i.test(l)).join('\n');
   const whole = [text];
   for (const part of text.split(/\s*[;/]\s*|\s*,\s*/)) if (part.trim()) whole.push(part);
   for (const w of whole) {

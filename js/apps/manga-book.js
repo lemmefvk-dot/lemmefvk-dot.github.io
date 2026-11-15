@@ -5,7 +5,10 @@
      src: { blob, name }          a CBZ (zip of pictures), an EPUB, or a PDF
           { files: [{name, blob|path}] }   a folder of pictures
    book: { kind: 'images'|'pdf', title, count, page(i) -> Promise<Blob>,
-           pdfBlob?, close() }
+           cover() -> Promise<Blob>, pdfBlob?, close() }
+     cover() is the book's own cover: an EPUB's declared cover image when
+     it has one, otherwise the first page. It reads the file on this
+     device; nothing is fetched.
 
    · CBZ: core/zip.js reads the table of contents; a page's bytes are
      unpacked only when asked for (entryBytes), so a 500-page volume
@@ -27,7 +30,7 @@ const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
 export const natural = (a, b) => collator.compare(a, b);
 const stem = n => String(n).replace(/\.[^.]+$/, '');
 
-export class BookError extends Error {}
+export class BookError extends Error { constructor(m, o) { super(m); if (o) Object.assign(this, o); } }
 
 function imagePages(entries) {
   return entries
@@ -46,6 +49,7 @@ async function openZipImages(blob, title) {
       const bytes = await entryBytes(blob, e);
       return new Blob([bytes], { type: MIME[extOf(e.name)] });
     },
+    cover() { return this.page(0); },
     close() {},
   };
 }
@@ -77,6 +81,7 @@ async function openEpub(blob, title) {
   const manifest = new Map([...opf.querySelectorAll('manifest > item')].map(i => [i.getAttribute('id'), i]));
   const order = [];
   const seen = new Set();
+  let words = 0, htmlPages = 0;       /* how much reading the spine holds: a picture book has next to none */
   const add = p => { if (p && byPath.has(p) && isImageName(p) && !seen.has(p)) { seen.add(p); order.push(p); } };
   for (const ref of opf.querySelectorAll('spine > itemref')) {
     const item = manifest.get(ref.getAttribute('idref'));
@@ -87,18 +92,28 @@ async function openEpub(blob, title) {
     const html = await text(page);
     if (!html) continue;
     const doc = new DOMParser().parseFromString(html, 'text/html');
+    htmlPages++;
+    words += (doc.body ? doc.body.textContent : '').replace(/\s+/g, ' ').trim().length;
     for (const el of doc.querySelectorAll('img[src], image')) {
       const src = el.getAttribute('src') || el.getAttribute('href') || el.getAttribute('xlink:href');
       if (src) add(resolvePath(page, src));
     }
   }
-  if (!order.length) throw new BookError('This EPUB has no pictures in it. Static Manga reads picture books (comics and manga), not text books.');
+  /* a book with real text on its pages (over 400 letters a page, where a comic's pages hold a caption at most) is a text book, whatever pictures it has */
+  if (htmlPages && words > 400 * htmlPages) throw new BookError('This EPUB is made of text. Static Manga reads picture books (comics and manga); text books open in Books.', { textBook: true });
+  if (!order.length) throw new BookError('This EPUB has no pictures in it. Static Manga reads picture books (comics and manga); text books open in Books.', { textBook: true });
+  /* the cover the publisher declared: EPUB 3 properties="cover-image", or EPUB 2 <meta name="cover" content="item id"> */
+  let coverPath = null;
+  const items = [...manifest.values()];
+  const byProp = items.find(i => /(^|\s)cover-image(\s|$)/.test(i.getAttribute('properties') || ''));
+  const metaId = opf.querySelector('metadata meta[name="cover"]')?.getAttribute('content');
+  const decl = byProp || (metaId && manifest.get(metaId));
+  if (decl) { const c = resolvePath(opfPath, decl.getAttribute('href') || ''); if (c && byPath.has(c) && isImageName(c)) coverPath = c; }
+  const read = async path => { const e = byPath.get(path); return new Blob([await entryBytes(blob, e)], { type: MIME[extOf(e.name)] }); };
   return {
     kind: 'images', title, count: order.length,
-    async page(i) {
-      const e = byPath.get(order[i]);
-      return new Blob([await entryBytes(blob, e)], { type: MIME[extOf(e.name)] });
-    },
+    page: i => read(order[i]),
+    cover: () => read(coverPath || order[0]),
     close() {},
   };
 }
@@ -114,6 +129,7 @@ function openFolder(files, title) {
       if (!blob) throw new BookError(`“${f.name}” has no data in this browser.`);
       return blob.type ? blob : new Blob([blob], { type: MIME[extOf(f.name)] });
     },
+    cover() { return this.page(0); },
     close() {},
   };
 }
@@ -128,7 +144,7 @@ export async function openBook(src) {
     if (head !== '%PDF-') throw new BookError('This file doesn’t start like a PDF, so it can’t be opened.');
     return { kind: 'pdf', title, count: 0, pdfBlob: blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' }), page: async () => { throw new BookError('PDF pages are drawn by the browser.'); }, close() {} };
   }
-  if (ext === 'cbr' || ext === 'rar') throw new BookError('CBR files are RAR archives, which StaticOS can’t unpack. Convert it to CBZ (a plain zip) and it will open.');
+  if (ext === 'cbr' || ext === 'rar') throw new BookError('CBR files are RAR archives, which StaticOS can’t unpack. Open the “Got a CBR file?” guide on the My books tab: turning it into a CBZ takes a minute.');
   try {
     if (ext === 'epub') return await openEpub(blob, title);
     return await openZipImages(blob, title);

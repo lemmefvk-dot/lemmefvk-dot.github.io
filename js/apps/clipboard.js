@@ -41,6 +41,18 @@
    can be copied without revealing, can't be pinned, are never
    saved, and a live countdown shows when they clear (2 minutes).
 
+   Also here: quick transforms (copy a clip as UPPERCASE, lowercase,
+   Title Case or trimmed), a Snippets tab of pinned items you have
+   named (or typed in), "Select" to combine several clips into one,
+   Send to Notes and Make a task, a character and word count on every
+   text clip, "Unpinned items expire" (never, an hour, a day, a week),
+   picture clips with thumbnails, and Export history. Picture clips
+   only come from StaticOS's own copy paths (QR's Copy image, Paint's
+   Copy picture) or a Paste you press: a web page can't read the system
+   clipboard in the background, so a picture copied in another program
+   never arrives on its own. Export, Send to Notes, Make a task,
+   transforms and combine never touch the hidden sensitive items.
+
    Everything on screen is measured from the engine's list; empty
    states say what is actually true. Keyboard: ↑/↓/Home/End move
    between items, Enter or ⌘C copies (Enter reveals a hidden
@@ -49,6 +61,8 @@
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import * as CB from '../core/clipboard.js';
+import * as NF from '../core/notesfmt.js';
+import * as TASKS from '../core/tasks.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-clipboard-css')) {
   const l = document.createElement('link');
@@ -83,6 +97,7 @@ function looksLikeCode(t) {
 /** what an item is, for its glyph and a few extras (never shown for a sensitive item) */
 function kindOf(it) {
   if (it.sensitive) return { key: 'secret', icon: 'lock', label: 'Sensitive', mono: true };
+  if (it.image) return { key: 'image', icon: 'image', label: 'Picture' };
   const t = it.text.trim();
   if (/^https?:\/\/[^\s]+$/i.test(t)) return { key: 'link', icon: 'link', label: 'Link', url: t };
   if (/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(t)) return { key: 'email', icon: 'send', label: 'Email address' };
@@ -121,7 +136,11 @@ defineApp({
 
     const S = {
       items: CB.list(),
-      view: 'all',              /* 'all' | 'pinned' | 'src:<source name>' */
+      view: 'all',              /* 'all' | 'pinned' | 'snippets' | 'src:<source name>' */
+      picking: false,           /* "Select" is on: rows get a checkbox, for Combine */
+      picked: new Set(),        /* item ids ticked, in the order they were ticked */
+      sep: '\n',                /* what Combine puts between clips */
+      snip: null,               /* the snippet form: { id|null, name, text } while it is open */
       q: '',
       revealed: new Set(),      /* sensitive items shown in the clear, this window only */
       open: new Set(),          /* rows showing their whole text */
@@ -170,22 +189,38 @@ defineApp({
     const moreBtn = h('button.ibtn.clip-more', {
       type: 'button', 'aria-label': 'More options', 'aria-haspopup': 'menu', title: 'More', onclick: () => openMore(),
     }, icon('more-horizontal'));
+    const selectBtn = h('button.btn.btn--sm.clip-select', {
+      type: 'button', 'aria-pressed': 'false', title: 'Tick several clips to join them into one', onclick: () => setPicking(!S.picking),
+    }, icon('check-circle'), h('span', { text: 'Select' }));
     const barEl = h('div.app__bar.clip-bar',
       h('div.clip-bar__head', titleEl, countEl),
       h('span.clip-spacer'),
-      searchField, pasteBtn, clearBtn, moreBtn);
+      searchField, pasteBtn, selectBtn, clearBtn, moreBtn);
+
+    /* the Combine tray: shown while "Select" is on */
+    const sepSel = h('select.select.clip-sep', {
+      'aria-label': 'Put between the clips', onchange: e => { S.sep = e.target.value === 'blank' ? '\n\n' : e.target.value === 'space' ? ' ' : e.target.value === 'comma' ? ', ' : '\n'; },
+    },
+    h('option', { value: 'line', text: 'New line between' }), h('option', { value: 'blank', text: 'Blank line between' }),
+    h('option', { value: 'space', text: 'Space between' }), h('option', { value: 'comma', text: 'Comma between' }));
+    const pickCount = h('span.clip-pick__n');
+    const combineBtn = h('button.btn.btn--sm.btn--primary.clip-combine', { type: 'button', onclick: () => combineClips() }, icon('layers'), h('span', { text: 'Combine' }));
+    const pickEl = h('div.clip-pick', { role: 'toolbar', 'aria-label': 'Combine clips', hidden: true },
+      pickCount, h('span.clip-spacer'), sepSel, combineBtn,
+      h('button.btn.btn--sm', { type: 'button', onclick: () => setPicking(false) }, h('span', { text: 'Done' })));
 
     const noteEl = h('div.clip-note', { role: 'note' },
       icon('info'),
       h('div.clip-note__t',
         h('p', h('b', { text: 'Copy or cut anything inside StaticOS — including an app’s own Copy button — and it lands here.' }),
           ` Web pages can’t read your clipboard in the background, so anything copied in another tab, another program or an embedded game only arrives when you press Paste (your browser may ask) or ${MOD}V in this window.`),
-        h('p.clip-note__s', { text: 'Passwords, keys, card numbers and one-time codes stay blurred, are never saved, and clear after 2 minutes.' })),
+        h('p.clip-note__s', { text: 'Passwords, keys, card numbers and one-time codes stay blurred, are never saved, never exported, and clear after 2 minutes.' }),
+        h('p.clip-note__s', { text: 'Pictures only arrive from StaticOS’s own copy buttons (QR, Paint) or when you paste one here — a page can’t watch the system clipboard for pictures either.' })),
       h('button.ibtn.clip-note__x', { type: 'button', 'aria-label': 'Hide this note', title: 'Hide', onclick: () => setNote(false) }, icon('x')));
 
     const bodyEl = h('div.app__content.app__content--flush.clip-body');
     const toastEl = h('div.clip-toast', { role: 'status', 'aria-live': 'polite' });
-    const mainEl = h('div.app__main.clip__main', barEl, noteEl, bodyEl, toastEl);
+    const mainEl = h('div.app__main.clip__main', barEl, noteEl, bodyEl, pickEl, toastEl);
     const appEl = h('div.app.clip', sideEl, mainEl);
     root.appendChild(appEl);
 
@@ -244,12 +279,14 @@ defineApp({
     }
     function inView(it) {
       if (S.view === 'pinned') return it.pinned;
+      if (S.view === 'snippets') return it.pinned && !!it.name;
       if (S.view.startsWith('src:')) return it.source === S.view.slice(4);
       return true;
     }
     const visible = () => { const terms = termsOf(S.q); return S.items.filter(it => inView(it) && CB.matchesItem(it, terms)); };
     function viewTitle() {
       if (S.view === 'pinned') return 'Pinned';
+      if (S.view === 'snippets') return 'Snippets';
       if (S.view.startsWith('src:')) return S.view.slice(4);
       return 'All items';
     }
@@ -298,6 +335,7 @@ defineApp({
     async function copyItem(id) {
       const it = find(id);
       if (!it) return;
+      if (it.image) { await copyPicture(it); return; }
       const ok = await writeClipboard(it.text);
       if (S.dead) return;
       if (!ok) {
@@ -314,6 +352,155 @@ defineApp({
       if (!CB.bump(id)) render();
       const cut = it.len > it.text.length;
       toast(cut ? `Copied the first ${nf.format(it.text.length)} characters — that is all that was kept` : 'Copied to the clipboard');
+    }
+
+    /** a picture clip goes back on the clipboard as a PNG (the only picture type browsers let a page write) */
+    async function copyPicture(it) {
+      try {
+        const img = new Image();
+        img.src = it.image.url;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+        if (!blob) throw new Error('encode');
+        await CB.writeImageUnrecorded(blob);
+      } catch (e) {
+        if (!S.dead) toast('Your browser blocked copying a picture from a click, or doesn’t allow pages to copy pictures.', 'bad');
+        return;
+      }
+      if (S.dead) return;
+      S.copiedId = it.id;
+      cancel(copiedT);
+      copiedT = later(() => { S.copiedId = null; render(); }, 1400);
+      if (!CB.bump(it.id)) render();
+      toast(`Copied the picture — it was kept at ${it.image.w} × ${it.image.h}, which is what you get back`);
+    }
+
+    /* ---------- quick transforms ---------- */
+    async function copyTransformed(id, kind) {
+      const it = find(id);
+      if (!it || it.sensitive || it.image) return;
+      const label = CB.TRANSFORMS.find(t => t.id === kind)?.label || kind;
+      const out = CB.transform(it.text, kind);
+      if (out === it.text) { toast(`Already ${label}`); return; }
+      if (!out.trim()) { toast('That would leave nothing.', 'bad'); return; }
+      const ok = await writeClipboard(out);
+      if (S.dead) return;
+      if (!ok) { toast('Your browser blocked copying from a click.', 'bad'); return; }
+      /* a fallback copy is invisible to the engine's writeText wrapper: add it ourselves */
+      if (!S.items.some(i => i.text === out)) CB.add(out, it.source, { via: 'app' });
+      toast(`Copied as ${label} — added to your history${it.len > it.text.length ? ` (only the first ${nf.format(it.text.length)} characters were kept)` : ''}`);
+    }
+
+    /* ---------- Send to Notes / Make a task: the clip's text only, never a hidden one ---------- */
+    function sendToNotes(id) {
+      const it = find(id);
+      if (!it || it.sensitive || it.image) return;
+      const first = it.text.split('\n').find(l => l.trim()) || 'Clip';
+      const title = oneLine(first, 40);
+      const cur = store.get('notes');
+      const list = Array.isArray(cur) ? [...cur] : [];
+      const noteId = `note-${Date.now().toString(36)}-clip`;
+      list.push({ id: noteId, title, body: NF.fromPlain(it.text), fmt: NF.FMT, mtime: new Date().toISOString() });
+      store.set('notes', list);
+      toast(`Made the note “${title}” in Notes`);
+      if (api.getApp('notes')) api.notify({ app: 'Static Clipboard', icon: 'sticky-note', title: 'Saved to Notes', message: title, actions: [{ label: 'Open', onClick: () => api.openApp('notes', { noteId }) }] });
+    }
+    function makeTask(id) {
+      const it = find(id);
+      if (!it || it.sensitive || it.image) return;
+      const text = it.text.replace(/\s+/g, ' ').trim().slice(0, TASKS.TEXT_MAX);
+      if (!text) return;
+      const data = TASKS.read();
+      let list = data.lists.find(l => l.id === data.activeId) || data.lists[0];
+      if (!list) { list = TASKS.normList({ name: 'Tasks' }); data.lists.push(list); data.activeId = list.id; }
+      list.tasks = [...list.tasks, TASKS.normTask({ text })];
+      TASKS.write(data);
+      toast(`Added a task to “${list.name}”`);
+      if (api.getApp('tasks')) api.notify({ app: 'Static Clipboard', icon: 'check-circle', title: 'Task added', message: oneLine(text, 60), actions: [{ label: 'Open', onClick: () => api.openApp('tasks') }] });
+    }
+
+    /* ---------- snippets ---------- */
+    function openSnippetForm(id) {
+      const it = id ? find(id) : null;
+      if (id && (!it || it.sensitive || it.image)) return;
+      S.snip = { id: it ? it.id : null, name: it ? it.name : '', text: it ? it.text : '' };
+      S.view = 'snippets';
+      S.focusAfter = 'snip-name';
+      render();
+    }
+    function saveSnippetForm() {
+      const f = S.snip;
+      if (!f) return;
+      const nm = f.name.trim();
+      if (!nm) { toast('Give the snippet a name.', 'bad'); return; }
+      let r;
+      if (f.id) r = CB.name(f.id, nm);
+      else r = CB.addSnippet(nm, f.text);
+      if (!r.ok) {
+        toast(r.reason === 'sensitive' ? 'That looks like a password, key or code — Static Clipboard doesn’t keep those.'
+          : r.reason === 'full' ? `You can pin up to ${LIM.pinned} items. Unpin one first.`
+            : r.reason === 'empty' ? 'Type the text to keep.' : 'That item is no longer here.', 'bad');
+        return;
+      }
+      S.snip = null;
+      S.focusAfter = 'search';
+      render();
+      toast(`Saved the snippet “${CB.list().find(i => i.name === nm)?.name || nm}”`);
+    }
+
+    /* ---------- combine ---------- */
+    function setPicking(on) {
+      S.picking = !!on;
+      if (!on) S.picked.clear();
+      render();
+    }
+    function togglePicked(id) {
+      const it = find(id);
+      if (!it || it.sensitive || it.image) return;
+      if (S.picked.has(id)) S.picked.delete(id); else S.picked.add(id);
+      S.focusAfter = `row:${id}:main`;
+      render();
+    }
+    function combineClips() {
+      /* in the order they are listed on screen, which is the order a person sees them in */
+      const order = visible().map(i => i.id).filter(id => S.picked.has(id));
+      const r = CB.combine(order, S.sep);
+      if (!r.ok) { toast('Tick at least two text clips.', 'bad'); return; }
+      S.picked.clear();
+      S.picking = false;
+      if (r.item) { S.view = 'all'; if (S.q && !matches(r.item, S.q)) { S.q = ''; searchIn.value = ''; } flash(r.item.id); S.focusAfter = `row:${r.item.id}:main`; }
+      render();
+      toast(`Joined ${plural(r.used, 'clip')} into one${r.cut ? ` — the first ${nf.format(LIM.chars)} characters were kept` : ''}`);
+    }
+
+    /* ---------- export: never the hidden sensitive items ---------- */
+    function exportHistory(kind) {
+      const rows = CB.exportItems();
+      const hidden = S.items.filter(i => i.sensitive).length;
+      if (!rows.length) { toast('There is nothing to export yet.'); return; }
+      const json = kind === 'json';
+      const body = json ? CB.exportJSON() : CB.exportText();
+      const stamp = new Date().toISOString().slice(0, 10);
+      const url = URL.createObjectURL(new Blob([body], { type: json ? 'application/json' : 'text/plain' }));
+      const a = h('a', { href: url, download: `Static Clipboard ${stamp}.${json ? 'json' : 'txt'}` });
+      document.body.appendChild(a); a.click(); a.remove();
+      later(() => URL.revokeObjectURL(url), 8000);
+      const pics = rows.filter(r => r.image).length;
+      toast(`Exported ${plural(rows.length - (json ? 0 : pics), 'item')}${hidden ? ` — ${plural(hidden, 'hidden sensitive item')} left out` : ' — hidden sensitive items are never included'}${!json && pics ? `; ${plural(pics, 'picture')} only go in the JSON file` : ''}`);
+    }
+
+    async function addPicture(blob) {
+      const it = await CB.addImage(blob, 'System clipboard');
+      if (S.dead) return;
+      if (!it) { toast('That picture couldn’t be kept — it may be damaged or too detailed to store small.', 'bad'); return; }
+      if (S.view !== 'all' && !inView(it)) S.view = 'all';
+      flash(it.id);
+      S.focusAfter = `row:${it.id}:main`;
+      render();
+      toast(`Added the picture — kept at ${it.image.w} × ${it.image.h}`);
     }
 
     function addExternal(text) {
@@ -344,11 +531,21 @@ defineApp({
       }
       S.busyPaste = true;
       syncBar();
-      let text = null, err = null;
+      let text = null, err = null, pic = null;
       try { text = await cb.readText(); } catch (e) { err = e; }
+      /* nothing in it as text: it may be a picture */
+      if (!err && !(text && text.trim()) && typeof cb.read === 'function') {
+        try {
+          for (const ci of await cb.read()) {
+            const type = ci.types.find(t => /^image\//.test(t));
+            if (type) { pic = await ci.getType(type); break; }
+          }
+        } catch (e) { /* no picture, or not allowed: the empty-text message says what it can */ }
+      }
       S.busyPaste = false;
       if (S.dead) return;
       syncBar();
+      if (pic) { addPicture(pic); return; }
       if (err) {
         const blocked = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
         toast(blocked
@@ -370,6 +567,7 @@ defineApp({
       const it = find(id);
       if (!it) return;
       if (it.sensitive) { toast('Sensitive items can’t be pinned — they’re never saved.', 'bad'); return; }
+      if (it.image) { toast('Pictures can’t be pinned — only the 8 newest are kept.', 'bad'); return; }
       if (it.pinned) {
         if (CB.wouldDropOnUnpin(id)) {
           const ok = await confirm({
@@ -463,6 +661,12 @@ defineApp({
         { label: 'Paste from clipboard', icon: 'clipboard', hint: `${MOD}V`, onClick: pasteFromSystem },
         { label: S.noteHidden ? 'Show how capture works' : 'Hide the capture note', icon: 'info', onClick: () => setNote(S.noteHidden) },
         '-',
+        { label: 'New snippet…', icon: 'bookmark', onClick: () => openSnippetForm(null) },
+        { label: 'Export history (JSON)', icon: 'download', disabled: !n, onClick: () => exportHistory('json') },
+        { label: 'Export history (text)', icon: 'download', disabled: !n, onClick: () => exportHistory('text') },
+        '-',
+        { label: 'Unpinned items expire', icon: 'clock', items: CB.EXPIRIES.map(x => ({ label: x.label, icon: CB.expiry() === x.id ? 'check' : null, onClick: () => { CB.setExpiry(x.id); toast(x.id === 'never' ? 'Unpinned items stay until you clear them' : `Unpinned items now go ${x.label.toLowerCase()}`); } })) },
+        '-',
         { label: 'Clear unpinned…', icon: 'x-circle', disabled: !pinned || pinned === n, onClick: clearUnpinned },
         { label: 'Clear all…', icon: 'trash', danger: true, disabled: !n, onClick: clearAll },
       ], Math.round(r.right - 200), Math.round(r.bottom + 4));
@@ -478,7 +682,12 @@ defineApp({
         it.sensitive ? { label: hidden ? 'Reveal' : 'Hide', icon: 'eye', onClick: () => toggleReveal(id) } : null,
         k.url && api.getApp('browser') ? { label: 'Open in Browser', icon: 'external-link', onClick: () => api.openApp('browser', { url: k.url }) } : null,
         it.sensitive ? { label: 'Can’t pin sensitive items', icon: 'pin', disabled: true }
-          : { label: it.pinned ? 'Unpin' : 'Pin', icon: 'pin', hint: 'P', onClick: () => togglePin(id) },
+          : it.image ? { label: 'Pictures can’t be pinned', icon: 'pin', disabled: true }
+            : { label: it.pinned ? 'Unpin' : 'Pin', icon: 'pin', hint: 'P', onClick: () => togglePin(id) },
+        !it.sensitive && !it.image ? { label: it.name ? 'Rename snippet…' : 'Make a snippet…', icon: 'bookmark', onClick: () => openSnippetForm(id) } : null,
+        !it.sensitive && !it.image ? { label: 'Copy as…', icon: 'type', items: CB.TRANSFORMS.map(t => ({ label: t.label, onClick: () => copyTransformed(id, t.id) })) } : null,
+        !it.sensitive && !it.image ? { label: 'Send to Notes', icon: 'sticky-note', onClick: () => sendToNotes(id) } : null,
+        !it.sensitive && !it.image ? { label: 'Make a task', icon: 'check-circle', onClick: () => makeTask(id) } : null,
         '-',
         { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', onClick: () => removeItem(id) },
       ].filter(Boolean), x, y);
@@ -504,7 +713,8 @@ defineApp({
       const views = h('div.side__group',
         h('div.side__label', { text: 'Clipboard' }),
         sideItem('all', 'clipboard', 'All items', all.length),
-        sideItem('pinned', 'pin', 'Pinned', pinned));
+        sideItem('pinned', 'pin', 'Pinned', pinned),
+        sideItem('snippets', 'bookmark', 'Snippets', all.filter(i => i.pinned && i.name).length));
       const srcs = sourcesOf(all);
       const from = srcs.length
         ? h('div.side__group',
@@ -520,6 +730,12 @@ defineApp({
           h('div.side__meter',
             h('b', { text: all.length ? plural(all.length, 'item') : 'Empty' }),
             h('small', { text: all.length ? (bits.join(' · ') || 'None pinned') : 'Nothing copied yet' })),
+          h('label.clip-side__exp',
+            h('span', { text: 'Unpinned items expire' }),
+            h('select.select', {
+              'aria-label': 'Unpinned items expire', dataset: { fkey: 'expiry' },
+              onchange: e => { const was = S.items.length; CB.setExpiry(e.target.value); const gone = was - CB.list().length; if (gone > 0) toast(`${plural(gone, 'item')} older than that went`); },
+            }, CB.EXPIRIES.map(x => h('option', { value: x.id, text: x.label, selected: CB.expiry() === x.id ? true : null })))),
           h('div.clip-side__note', { text: `Saved on this device only: pinned items and the ${LIM.recent} latest. Sensitive items never are.` })));
     }
 
@@ -534,11 +750,15 @@ defineApp({
         parts.push(h('span.clip-exp', icon('clock'), h('span', { dataset: { exp: String(it.expires) }, text: leftLabel(it.expires) })));
         return parts;
       }
-      if (it.pinned) parts.push(h('span.clip-pinned', icon('pin'), h('span', { text: 'Pinned' })), dot());
+      if (it.pinned) parts.push(h('span.clip-pinned', icon('pin'), h('span', { text: it.name ? 'Snippet' : 'Pinned' })), dot());
       parts.push(h('span.clip-src', marked(it.source, termsOf(S.q))));
       if (it.at) parts.push(dot(), h('time.clip-ago', { dataset: { at: String(it.at) }, datetime: new Date(it.at).toISOString(), title: fullDate(it.at), text: ago(it.at) }));
+      if (it.image) { parts.push(dot(), h('span.clip-count-line', { text: `${it.image.w} × ${it.image.h}` })); return parts; }
       if (it.len > it.text.length) parts.push(dot(), h('span.clip-cut', { text: `first ${nf.format(it.text.length)} of ${nf.format(it.len)} characters kept` }));
-      else if (it.text.length >= 400) parts.push(dot(), h('span', { text: plural(it.text.length, 'character') }));
+      else {
+        const c = CB.countOf(it.text);
+        parts.push(dot(), h('span.clip-count-line', { text: `${plural(c.words, 'word')} · ${plural(c.chars, 'character')}` }));
+      }
       return parts;
     }
 
@@ -555,18 +775,27 @@ defineApp({
       const textEl = hidden
         ? h('span.clip-text.clip-text--mask', { 'aria-hidden': 'true', text: MASK })
         : h('span.clip-text', { class: [k.mono ? 'is-mono' : '', open ? 'is-open' : ''].filter(Boolean).join(' ') || null }, marked(shown, terms));
-      const kindEl = k.color
-        ? h('span.clip-kind.clip-kind--swatch', { 'aria-hidden': 'true', style: { background: k.color } })
-        : h('span.clip-kind', { 'aria-hidden': 'true', dataset: { kind: k.key } }, icon(k.icon));
+      const pickable = S.picking && !secret && !it.image;
+      const picked = pickable && S.picked.has(it.id);
+      const kindEl = picked
+        ? h('span.clip-kind.clip-kind--picked', { 'aria-hidden': 'true' }, icon('check'))
+        : k.color
+          ? h('span.clip-kind.clip-kind--swatch', { 'aria-hidden': 'true', style: { background: k.color } })
+          : h('span.clip-kind', { 'aria-hidden': 'true', dataset: { kind: k.key } }, icon(k.icon));
 
       const label = hidden
         ? `Hidden sensitive item from ${it.source}: ${it.sensitive.label.charAt(0).toLowerCase()}${it.sensitive.label.slice(1)}. Press to reveal.`
         : `${secret ? 'Sensitive item: ' : ''}${oneLine(clean)}. From ${it.source}${it.at && !secret ? `, ${ago(it.at)}` : ''}${it.pinned ? ', pinned' : ''}. Press to copy.`;
 
       const main = h('button.clip-row__main', {
-        type: 'button', 'aria-label': label, dataset: { fkey: `row:${it.id}:main` },
-        onclick: () => (hidden ? toggleReveal(it.id) : copyItem(it.id)),
-      }, kindEl, h('span.clip-row__body', textEl, h('span.clip-meta', metaFor(it, k))));
+        type: 'button', 'aria-label': pickable ? `${picked ? 'Selected' : 'Not selected'}: ${label.replace(/ Press to copy\.$/, '')} Press to ${picked ? 'unselect' : 'select'}.` : label,
+        'aria-pressed': pickable ? (picked ? 'true' : 'false') : null, dataset: { fkey: `row:${it.id}:main` },
+        onclick: () => (pickable ? togglePicked(it.id) : hidden ? toggleReveal(it.id) : copyItem(it.id)),
+      }, kindEl, h('span.clip-row__body',
+        it.name ? h('span.clip-name', { text: it.name }) : null,
+        it.image ? h('span.clip-text', { text: `Picture ${it.image.w} × ${it.image.h}` }) : textEl,
+        it.image ? h('img.clip-thumb', { src: it.image.url, alt: `Picture copied in ${it.source}`, width: it.image.w, height: it.image.h }) : null,
+        h('span.clip-meta', metaFor(it, k))));
 
       const act = (ic, text, key, onclick, extra = {}) => h('button.ibtn.clip-act', {
         type: 'button', 'aria-label': text, title: text, dataset: { fkey: `row:${it.id}:${key}` }, onclick, ...extra,
@@ -576,16 +805,16 @@ defineApp({
         k.url && api.getApp('browser') ? act('external-link', 'Open in Browser', 'open', () => api.openApp('browser', { url: k.url })) : null,
         secret ? act('eye', hidden ? 'Reveal' : 'Hide', 'eye', () => toggleReveal(it.id), { 'aria-pressed': hidden ? 'false' : 'true', class: hidden ? null : 'is-on' }) : null,
         act(copied ? 'check' : 'copy', copied ? 'Copied' : 'Copy', 'copy', () => copyItem(it.id), { class: copied ? 'is-ok' : null }),
-        secret ? null : act('pin', it.pinned ? 'Unpin' : 'Pin', 'pin', () => togglePin(it.id), { 'aria-pressed': it.pinned ? 'true' : 'false', class: it.pinned ? 'is-on' : null }),
+        secret || it.image ? null : act('pin', it.pinned ? 'Unpin' : 'Pin', 'pin', () => togglePin(it.id), { 'aria-pressed': it.pinned ? 'true' : 'false', class: it.pinned ? 'is-on' : null }),
         act('trash', 'Delete', 'del', () => removeItem(it.id), { class: 'clip-act--del' }));
 
-      const more = hidden ? null : h('button.clip-row__more', {
+      const more = hidden || it.image ? null : h('button.clip-row__more', {
         type: 'button', 'aria-expanded': open ? 'true' : 'false', dataset: { fkey: `row:${it.id}:more` },
         onclick: () => { if (S.open.has(it.id)) S.open.delete(it.id); else S.open.add(it.id); render(); },
       }, icon(open ? 'chevron-up' : 'chevron-down'), h('span', { text: open ? 'Show less' : `Show all · ${plural(clean.length, 'character')}` }));
 
       const cls = [
-        it.pinned && 'is-pinned', secret && 'is-secret', hidden && 'is-hidden', open && 'is-open',
+        it.pinned && 'is-pinned', secret && 'is-secret', hidden && 'is-hidden', open && 'is-open', picked && 'is-picked', it.image && 'is-pic',
         (open || longByChars) && 'is-long', S.flashId === it.id && 'is-flash',
       ].filter(Boolean).join(' ');
       return h('div.clip-row', {
@@ -598,10 +827,38 @@ defineApp({
       return h('div.empty.clip-empty', icon(ic), h('b', { text: title }), h('small', { text }), btn || null);
     }
 
+    /** the Snippets tab's form: a new snippet, or a name for an item that is already there */
+    function snippetForm() {
+      const f = S.snip;
+      if (!f) {
+        return h('div.clip-snipbar',
+          h('small', { text: 'A snippet is a pinned clip with a name — text you paste again and again. Pinned snippets never expire.' }),
+          h('button.btn.btn--sm', { type: 'button', dataset: { fkey: 'snip-new' }, onclick: () => openSnippetForm(null) }, icon('plus'), h('span', { text: 'New snippet' })));
+      }
+      const nameIn = h('input', {
+        type: 'text', value: f.name, maxlength: String(LIM.name), placeholder: 'Name, like “My email”', 'aria-label': 'Snippet name', dataset: { fkey: 'snip-name' },
+        oninput: e => { f.name = e.target.value; },
+        onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); saveSnippetForm(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); S.snip = null; render(); } },
+      });
+      const textIn = f.id ? null : h('textarea', {
+        rows: '3', placeholder: 'The text to keep', 'aria-label': 'Snippet text', spellcheck: 'false', maxlength: String(LIM.chars), dataset: { fkey: 'snip-text' },
+        oninput: e => { f.text = e.target.value; },
+      });
+      if (textIn) textIn.value = f.text;
+      return h('form.clip-snipform', { onsubmit: e => { e.preventDefault(); saveSnippetForm(); } },
+        h('b', { text: f.id ? 'Name this snippet' : 'New snippet' }),
+        h('div.field', nameIn),
+        textIn ? h('div.field.clip-snipform__t', textIn) : h('small.dim', { text: oneLine(f.text, 120) }),
+        h('div.clip-snipform__b',
+          h('button.btn.btn--sm.btn--primary', { type: 'submit', dataset: { fkey: 'snip-save' } }, icon('check'), h('span', { text: 'Save snippet' })),
+          h('button.btn.btn--sm', { type: 'button', onclick: () => { S.snip = null; render(); } }, h('span', { text: 'Cancel' }))));
+    }
+
     function renderBody() {
       clear(bodyEl);
       const all = S.items;
-      if (!all.length) {
+      if (S.view === 'snippets') bodyEl.append(snippetForm());
+      if (!all.length && S.view !== 'snippets') {
         bodyEl.append(emptyState('clipboard', 'Nothing copied yet',
           `Select text anywhere in StaticOS and copy or cut it, and it appears here. For a Copy button, another tab, or anything outside StaticOS, press Paste or ${MOD}V.`,
           h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fkey: 'empty:paste' }, onclick: () => pasteFromSystem() }, icon('clipboard'), h('span', { text: 'Paste from clipboard' }))));
@@ -613,6 +870,9 @@ defineApp({
           bodyEl.append(emptyState('search', `No matches for “${oneLine(S.q, 40)}”`,
             'Every word has to match the text or where it came from. Hidden sensitive items aren’t searched.',
             h('button.btn.btn--sm', { type: 'button', onclick: () => { S.q = ''; searchIn.value = ''; render(); searchIn.focus(); } }, h('span', { text: 'Clear search' }))));
+        } else if (S.view === 'snippets') {
+          bodyEl.append(emptyState('bookmark', 'No snippets yet',
+            'Name a clip from its ⋯ menu (right-click a row), or press New snippet and type one. Snippets are pinned, so they stay.'));
         } else if (S.view === 'pinned') {
           bodyEl.append(emptyState('pin', 'Nothing pinned',
             `Pin an item to keep it past the ${LIM.recent} most recent copies. Pinned items are saved on this device until you unpin them.`,
@@ -631,7 +891,7 @@ defineApp({
           h('div.clip-sec', { role: 'heading', 'aria-level': '3' }, h('span', { text: title }), h('small', { text: nf.format(rows.length) })),
           h('div.clip-list', { role: 'list', 'aria-label': title }, rows.map(rowFor)));
       };
-      const pinned = S.view !== 'pinned' ? vis.filter(i => i.pinned) : [];
+      const pinned = S.view !== 'pinned' && S.view !== 'snippets' ? vis.filter(i => i.pinned) : [];
       if (pinned.length) {
         const rest = vis.filter(i => !i.pinned);
         section('Pinned', pinned);
@@ -657,6 +917,13 @@ defineApp({
       pasteBtn.disabled = S.busyPaste;
       pasteBtn.setAttribute('aria-busy', S.busyPaste ? 'true' : 'false');
       noteEl.hidden = S.noteHidden;
+      selectBtn.setAttribute('aria-pressed', S.picking ? 'true' : 'false');
+      selectBtn.classList.toggle('is-on', S.picking);
+      selectBtn.disabled = !S.items.some(i => !i.sensitive && !i.image);
+      pickEl.hidden = !S.picking;
+      const n = S.picked.size;
+      pickCount.textContent = n ? `${plural(n, 'clip')} selected` : 'Tick the clips to join';
+      combineBtn.disabled = n < 2;
     }
 
     /** reveal "Show all" only on rows whose text is really cut off at this width */
@@ -678,7 +945,10 @@ defineApp({
       if (S.dead) return;
       /* a source filter whose items are all gone falls back to everything */
       if (S.view.startsWith('src:') && !S.items.some(inView)) S.view = 'all';
-      if (S.view !== 'all' && S.view !== 'pinned' && !S.view.startsWith('src:')) S.view = 'all';
+      if (S.view !== 'all' && S.view !== 'pinned' && S.view !== 'snippets' && !S.view.startsWith('src:')) S.view = 'all';
+      if (S.view !== 'snippets') S.snip = null;
+      for (const id of [...S.picked]) { const p = find(id); if (!p || p.sensitive || p.image) S.picked.delete(id); }
+      if (S.picking && !S.items.some(i => !i.sensitive && !i.image)) { S.picking = false; S.picked.clear(); }
       for (const id of [...S.revealed]) if (!find(id)) S.revealed.delete(id);
       for (const id of [...S.open]) if (!find(id)) S.open.delete(id);
 
@@ -704,6 +974,7 @@ defineApp({
     /*  input                                                           */
     /* ================================================================ */
     bodyEl.addEventListener('keydown', e => {
+      if (e.target.closest && e.target.closest('.clip-snipform')) return;    /* typing in the snippet form */
       const rowEl = e.target.closest ? e.target.closest('.clip-row') : null;
       const mod = e.metaKey || e.ctrlKey || e.altKey;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
@@ -774,6 +1045,11 @@ defineApp({
       e.preventDefault();
       let text = '';
       try { text = e.clipboardData ? e.clipboardData.getData('text/plain') : ''; } catch (err) { text = ''; }
+      if (!text.trim()) {
+        /* no text: a picture the person copied somewhere else, handed over by this very paste */
+        const file = [...(e.clipboardData?.files || [])].find(f => /^image\//.test(f.type));
+        if (file) { addPicture(file); return; }
+      }
       addExternal(text);
     };
     appEl.addEventListener('paste', onPaste);

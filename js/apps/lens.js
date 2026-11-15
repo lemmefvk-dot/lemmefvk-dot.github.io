@@ -24,6 +24,9 @@ import * as LLM from '../portal/llm.js';
 import * as OCR from '../portal/ocr.js';
 import { render as md } from '../portal/mdlite.js';
 import { store } from '../core/store.js';
+import * as speech from '../core/speech.js';
+import * as NF from '../core/notesfmt.js';
+import * as FC from '../core/flashcards.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-lens-css')) {
   const l = document.createElement('link');
@@ -59,10 +62,33 @@ const HISTORY_TURNS = 4;
 const QUICK = [
   { id: 'explain', label: 'Explain', q: 'Explain this clearly, as if to a student seeing it for the first time.' },
   { id: 'summarise', label: 'Summarise', q: 'Summarise this in a few short bullet points.' },
-  { id: 'translate', label: 'Translate', q: 'Translate this into English. If it is already English, translate it into Spanish. Say which language it was written in.' },
+  { id: 'translate', label: 'Translate', q: () => translatePrompt(lensLang()) },
   { id: 'solve', label: 'Solve step by step', q: 'Solve this step by step. Number each step, then state the final answer.' },
   { id: 'define', label: 'Define', q: 'Define the key terms in this, one short definition each.' },
 ];
+/* Translate: the language is picked next to the button and remembered (this device only) */
+const LANGS = ['English', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Dutch', 'Russian',
+  'Chinese (Simplified)', 'Japanese', 'Korean', 'Arabic', 'Hindi', 'Turkish', 'Polish', 'Vietnamese'];
+const LKEY = 'lens.lang';
+const lensLang = () => { const v = store.get(LKEY); return LANGS.includes(v) ? v : 'English'; };
+const translatePrompt = lang =>
+  `Translate this into ${lang}. Say which language it was written in. If it is already ${lang}, say so and translate it into ${lang === 'English' ? 'Spanish' : 'English'} instead.`;
+
+/* a reading below this is worth a second look before it is asked about */
+const LOW_CONF = 80;
+const CHECK_LINE = 'Check this against your textbook.';
+
+/* the answer is Markdown; copying "as text" and reading aloud want the words only */
+const plainAnswer = md => String(md || '')
+  .replace(/```[a-z]*\n?/gi, '')
+  .replace(/\*\*(.+?)\*\*/g, '$1')
+  .replace(/(^|[\s(])\*(\S[^*\n]*?)\*(?=[\s).,;:!?]|$)/g, '$1$2')
+  .replace(/`([^`\n]+)`/g, '$1')
+  .replace(/^#{1,6}\s+/gm, '')
+  .replace(/^\s*[-*]\s+/gm, '• ')
+  .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+  .trim();
+
 /* what to try when the free service fails, by error code */
 const HINTS = {
   offline: 'Check your connection, then Retry. Copy text above still works without the AI.',
@@ -281,6 +307,8 @@ defineApp({
       ac: null,
       countdown: 0,
       shareNote: '',
+      hq: '', histOpen: false,   /* history search words, and whether the list is unfolded */
+      reading: null,             /* the answer being read aloud */
       dead: false,
     };
 
@@ -528,12 +556,24 @@ defineApp({
         const words = c.text.split(/\s+/).filter(Boolean).length;
         const edit = h('textarea.lens__ocr', { rows: '4', 'aria-label': 'Text Lens read (you can fix it)', oninput: e => { c.text = e.target.value; } });
         edit.value = c.text;
+        const unsure = c.confidence > 0 && c.confidence < LOW_CONF;
+        const lang = h('select.lens__lang', {
+          'aria-label': 'Translate into', title: 'Translate into',
+          onchange: e => { store.set(LKEY, e.target.value); },
+        }, LANGS.map(l => h('option', { value: l, text: l, selected: l === lensLang() })));
+        lang.value = lensLang();
         status = h('div',
+          unsure ? h('div.lens__warn', { role: 'status', 'data-warn': 'ocr' },
+            icon('alert'),
+            h('span', { text: `The text reading is only ${c.confidence}% sure about this. ${c.confidence < 60 ? 'Parts of it are probably wrong. ' : ''}Check the words below and fix any mistakes before you ask.` })) : null,
           h('details.lens__read', { open: '' },
             h('summary', { text: c.confidence ? `Read ${words} word${words === 1 ? '' : 's'} · ${c.confidence}% sure — check or fix before asking` : 'Text from your history — you can edit it' }),
             edit),
           h('div.lens__quick', { role: 'group', 'aria-label': 'Quick actions' },
-            QUICK.map(a => h('button.lens__chip.lens__chip--act', { type: 'button', 'data-quick': a.id, text: a.label, onclick: () => ask(a.q) })),
+            QUICK.map(a => [
+              h('button.lens__chip.lens__chip--act', { type: 'button', 'data-quick': a.id, text: a.label, onclick: () => ask(typeof a.q === 'function' ? a.q() : a.q) }),
+              a.id === 'translate' ? lang : null,
+            ]),
             h('button.lens__chip.lens__chip--ghost', { type: 'button', 'data-act': 'copytext', text: 'Copy text', onclick: e => copy(c.text, e.currentTarget, 'Copied') })));
       }
       ctxEl.append(h('div.lens__card',
@@ -583,7 +623,9 @@ defineApp({
       /* attach the selection unless the conversation already carries it */
       const lastCtx = [...S.turns].reverse().find(t => t.ctxText)?.ctxText || '';
       const ctxText = keep !== undefined ? keep : (S.ctx?.text && S.ctx.text !== lastCtx ? S.ctx.text : '');
-      const turn = { q, a: '', ctxText, pending: true, thinking: false, err: '', el: null };
+      /* how sure the text reading was, when this answer is about it (a follow-up keeps its earlier reading's) */
+      const conf = ctxText && S.ctx && S.ctx.text === ctxText ? S.ctx.confidence : (S.turns.length ? S.turns[S.turns.length - 1].conf : 0);
+      const turn = { q, a: '', ctxText, conf: conf || 0, pending: true, thinking: false, err: '', el: null };
       const messages = [{ role: 'system', content: SYSTEM }, ...history(), { role: 'user', content: userContent(turn) }];
       S.turns.push(turn);
       paintFeed();
@@ -622,6 +664,8 @@ defineApp({
       else if (t.a) body.append(md(t.a));
       else body.append(h('div.lens-a__wait', h('i'), h('i'), h('i'), h('span', { text: t.thinking ? 'Thinking' : 'Asking' })));
       if (t.pending && t.a) body.append(h('span.lens-a__caret'));
+      /* every finished answer ends the same way */
+      if (!t.pending && !t.err && t.a) body.append(h('p.lens-a__check', { 'data-check': '', text: CHECK_LINE }));
       if (S.pipRefs?.turn === t) fillPipAnswer();
       if (t === S.turns[S.turns.length - 1]) feedEl.lastElementChild?.scrollIntoView?.({ block: 'end' });
     }
@@ -644,9 +688,15 @@ defineApp({
             h('span.lens__spacer'),
             t.pending
               ? h('button.lens__icbtn', { type: 'button', title: 'Stop', 'aria-label': 'Stop', onclick: () => S.ac?.abort() }, icon('square'))
-              : h('button.lens__icbtn', { type: 'button', title: 'Copy answer', 'aria-label': 'Copy answer', onclick: e => copy(t.a, e.currentTarget) }, icon('copy'))),
+              : null),
           h('div.lens-a__body'),
           !t.pending && !t.err && t.a ? h('div.lens__hnote', { text: 'Text reading and the AI can both be wrong — check anything that matters.' }) : null,
+          !t.pending && !t.err && t.a && t.conf > 0 && t.conf < LOW_CONF
+            ? h('div.lens__warn', { role: 'status', 'data-warn': 'answer' }, icon('alert'),
+              h('span', { text: `The text reading was only ${t.conf}% sure, so this answer may be about the wrong words.` }))
+            : null,
+          !t.pending && !t.err && t.a ? answerActions(t) : null,
+          !t.pending && !t.err && t.a ? (t.fcEl = h('div.lens__fc', { 'aria-live': 'polite' })) : null,
           !t.pending && last && !t.err
             ? h('div.lens__chips.lens__chips--follow', FOLLOW_UPS.map(s => h('button.lens__chip', { type: 'button', text: s, onclick: () => submit(s) })),
               h('button.lens__chip.lens__chip--ghost', { type: 'button', text: 'Retry', 'data-act': 'retry', onclick: () => retry(t) }))
@@ -658,6 +708,7 @@ defineApp({
           h('div.lens-q', t.ctxText ? h('span.lens-q__tag', icon('crop')) : null, h('span', { text: t.q === DEFAULT_Q ? 'What is this?' : t.q })),
           t.el);
         fillTurn(t);
+        fillFc(t);
       });
       paintPip();
     }
@@ -667,6 +718,180 @@ defineApp({
       if (i < 0) return;
       S.turns.splice(i, 1);
       ask(t.q, t.ctxText);
+    }
+
+    /* ---- what to do with an answer: copy, read aloud, keep ---- */
+    function answerActions(t) {
+      const reads = speech.supported();
+      const readBtn = h('button.lens__chip', {
+        type: 'button', 'data-act': 'read', disabled: !reads,
+        title: reads ? 'Read this answer aloud' : speech.MISSING,
+        onclick: () => toggleRead(t),
+      });
+      t.readBtn = readBtn;
+      readBtn.textContent = S.reading === t ? 'Stop reading' : 'Read aloud';
+      const noteBtn = h('button.lens__chip', {
+        type: 'button', 'data-act': 'save-note', text: t.noteId ? 'Open in Notes' : 'Save to Notes',
+        onclick: () => (t.noteId ? api.openApp('notes', { noteId: t.noteId }) : saveToNotes(t, noteBtn)),
+      });
+      return h('div.lens__chips.lens__acts', { role: 'group', 'aria-label': 'Answer actions' },
+        h('button.lens__chip', { type: 'button', 'data-act': 'copy-answer', text: 'Copy answer', onclick: e => copy(plainAnswer(t.a), e.currentTarget, 'Copied') }),
+        h('button.lens__chip', { type: 'button', 'data-act': 'copy-md', text: 'Copy as Markdown', onclick: e => copy(t.a, e.currentTarget, 'Copied') }),
+        readBtn,
+        noteBtn,
+        h('button.lens__chip', { type: 'button', 'data-act': 'flashcards', text: 'Make flashcards', onclick: () => makeCards(t) }));
+    }
+
+    function toggleRead(t) {
+      const st = speech.state();
+      if (S.reading === t && (st.status === 'speaking' || st.status === 'paused')) { speech.stop(); S.reading = null; syncRead(); return; }
+      speech.stop();
+      S.reading = t;
+      speech.speak(plainAnswer(t.a));
+      const after = speech.state();
+      if (after.status === 'error') {
+        S.reading = null;
+        api.notify({ app: 'Lens', icon: 'volume', title: 'Cannot read aloud', message: after.error || speech.MISSING });
+      }
+      syncRead();
+    }
+    function syncRead() {
+      for (const t of S.turns) if (t.readBtn) t.readBtn.textContent = S.reading === t ? 'Stop reading' : 'Read aloud';
+    }
+    const offSpeech = api.bus.on('speech:change', st => {
+      if (S.dead) return;
+      if (S.reading && st && (st.status === 'idle' || st.status === 'done' || st.status === 'error')) S.reading = null;
+      syncRead();
+    });
+
+    /** The answer, as a note in Notes (its own store, so Notes shows it at once). */
+    function saveToNotes(t, btn) {
+      const q = t.q === DEFAULT_Q ? '' : t.q;
+      const first = plainAnswer(t.a).split('\n').find(Boolean) || '';
+      const title = cut((q || first || 'Lens answer').replace(/\s+/g, ' ').trim(), 60) || 'Lens answer';
+      const body = [
+        q ? NF.fromPlain(`Question: ${q}`) : '',
+        NF.serialize(NF.parse(t.a)),
+        NF.fromPlain(`Saved from Lens. ${CHECK_LINE}`),
+      ].filter(Boolean).join('\n\n');
+      const note = { id: `note-${Date.now().toString(36)}-lens${Math.random().toString(36).slice(2, 5)}`, title, body, fmt: NF.FMT, mtime: new Date().toISOString() };
+      const cur = store.get('notes');
+      store.set('notes', [...(Array.isArray(cur) ? cur : []), note]);
+      const saved = (store.get('notes') || []).some(n => n && n.id === note.id);
+      if (!saved) { api.notify({ app: 'Lens', icon: 'alert', title: 'Could not save the note', message: 'Notes did not take it.' }); return; }
+      t.noteId = note.id;
+      btn.textContent = 'Open in Notes';
+      api.notify({ app: 'Lens', icon: 'sticky-note', title: 'Saved to Notes', message: title });
+    }
+
+    /* ---- flashcards from an answer: asked for, shown, and added only on a click ---- */
+    const CARDS_SYSTEM = 'You turn a study answer into flashcards. Reply with JSON only, no other words: an array of 3 to 10 objects {"front": a short question, "back": a short answer}. Use the language of the answer. Keep each side under 200 characters. Do not invent facts that are not in the answer.';
+    function parseCards(text) {
+      const s = String(text || '').replace(/```[a-z]*/gi, '');
+      const a = s.indexOf('['), b = s.lastIndexOf(']');
+      if (a < 0 || b <= a) return [];
+      let arr;
+      try { arr = JSON.parse(s.slice(a, b + 1)); } catch (err) { return []; }
+      if (!Array.isArray(arr)) return [];
+      const out = [];
+      for (const c of arr) {
+        const front = cut(c && c.front, 300).trim(), back = cut(c && c.back, 600).trim();
+        if (front && back && typeof c.front === 'string' && typeof c.back === 'string') out.push({ front, back, on: true });
+        if (out.length >= 12) break;
+      }
+      return out;
+    }
+
+    async function makeCards(t) {
+      t.fc?.ac?.abort();
+      const fc = t.fc = { status: 'loading', cards: [], deck: 'new', name: `Lens: ${cut((t.q === DEFAULT_Q ? plainAnswer(t.a).split('\n')[0] : t.q).replace(/\s+/g, ' ').trim(), 40) || 'cards'}`, msg: '', ac: new AbortController() };
+      fillFc(t);
+      try {
+        const out = await LLM.stream([
+          { role: 'system', content: CARDS_SYSTEM },
+          { role: 'user', content: `Question: ${t.q === DEFAULT_Q ? '(what is this?)' : t.q}\n\nAnswer:\n${cut(plainAnswer(t.a), 5000)}` },
+        ], { signal: fc.ac.signal });
+        fc.cards = parseCards(out);
+        if (fc.cards.length) fc.status = 'ready';
+        else { fc.status = 'error'; fc.msg = 'The model did not send back usable cards. Try again.'; }
+      } catch (err) {
+        fc.status = 'error';
+        fc.msg = err.name === 'AbortError' ? 'Stopped.' : err.message;
+      }
+      fc.ac = null;
+      if (!S.dead) fillFc(t);
+    }
+
+    function addCards(t) {
+      const fc = t.fc;
+      const picked = fc.cards.filter(c => c.on);
+      const data = FC.read();
+      let deck;
+      if (fc.deck === 'new') {
+        if (data.decks.length >= FC.MAX_DECKS) { fc.msg = `You already have ${FC.MAX_DECKS} decks, the most Study keeps.`; fillFc(t); return; }
+        deck = FC.normDeck({ name: fc.name || 'Lens cards' });
+        data.decks.push(deck);
+      } else {
+        deck = data.decks.find(d => d.id === fc.deck);
+        if (!deck) { fc.msg = 'That deck is gone. Pick another.'; fc.deck = 'new'; fillFc(t); return; }
+      }
+      const have = new Set(deck.cards.map(c => c.front.toLowerCase()));
+      const before = deck.cards.length;
+      let skipped = 0;
+      for (const c of picked) {
+        if (have.has(c.front.toLowerCase()) || deck.cards.length >= FC.MAX_CARDS) { skipped++; continue; }
+        deck.cards.push(FC.normCard({ front: c.front, back: c.back }));
+        have.add(c.front.toLowerCase());
+      }
+      const written = FC.write(data);
+      const now = written.decks.find(d => d.id === deck.id);
+      const added = now ? now.cards.length - before : 0;
+      if (!added) { fc.msg = skipped ? 'Those cards are already in that deck.' : 'Nothing was added.'; fillFc(t); return; }
+      fc.status = 'done';
+      fc.msg = `Added ${added} card${added === 1 ? '' : 's'} to “${now.name}”${skipped ? ` (${skipped} already there)` : ''}.`;
+      fc.doneDeck = now.id;
+      fillFc(t);
+    }
+
+    function fillFc(t) {
+      const host = t.fcEl;
+      if (!host) return;
+      clear(host);
+      const fc = t.fc;
+      if (!fc) return;
+      if (fc.status === 'loading') {
+        host.append(h('div.lens__fcbox', h('div.lens-a__wait', h('i'), h('i'), h('i'), h('span', { text: 'Making flashcards' })),
+          h('button.lens__chip', { type: 'button', text: 'Cancel', onclick: () => fc.ac?.abort() })));
+        return;
+      }
+      if (fc.status === 'error') {
+        host.append(h('div.lens__fcbox', h('div.lens__err', { text: fc.msg }),
+          h('button.lens__chip', { type: 'button', 'data-act': 'fc-retry', text: 'Try again', onclick: () => makeCards(t) })));
+        return;
+      }
+      if (fc.status === 'done') {
+        host.append(h('div.lens__fcbox', h('div', { 'data-fc': 'done', text: fc.msg }),
+          h('button.lens__chip', { type: 'button', text: 'Open in Study', onclick: () => api.openApp('study', { tab: 'cards', deck: fc.doneDeck }) })));
+        return;
+      }
+      const decks = FC.read().decks;
+      const n = fc.cards.filter(c => c.on).length;
+      const count = h('button.btn.btn--primary', { type: 'button', 'data-act': 'fc-add', disabled: !n, text: `Add ${n} card${n === 1 ? '' : 's'}`, onclick: () => addCards(t) });
+      const nameIn = h('input.lens__fcname', { type: 'text', value: fc.name, maxlength: '60', 'aria-label': 'New deck name', oninput: e => { fc.name = e.target.value; } });
+      nameIn.hidden = fc.deck !== 'new';
+      const sel = h('select.lens__lang', {
+        'aria-label': 'Add to deck',
+        onchange: e => { fc.deck = e.target.value; nameIn.hidden = fc.deck !== 'new'; },
+      }, h('option', { value: 'new', text: 'A new deck' }), decks.map(d => h('option', { value: d.id, text: `${d.name} (${d.cards.length})` })));
+      sel.value = fc.deck;
+      host.append(h('div.lens__fcbox', { 'data-fc': 'review' },
+        h('div.lens__cap', { text: 'Flashcards from this answer — untick any you do not want' }),
+        fc.cards.map(c => h('label.lens__fccard',
+          h('input', { type: 'checkbox', checked: c.on, onchange: e => { c.on = e.target.checked; const k = fc.cards.filter(x => x.on).length; count.disabled = !k; count.textContent = `Add ${k} card${k === 1 ? '' : 's'}`; } }),
+          h('span', h('b', { text: c.front }), h('small', { text: c.back })))),
+        h('div.lens__row', sel, nameIn),
+        fc.msg ? h('div.lens__err', { text: fc.msg }) : null,
+        h('div.lens__row', count, h('button.btn.btn--ghost', { type: 'button', text: 'Discard', onclick: () => { t.fc = null; fillFc(t); } }))));
     }
 
     /* ---- history: saved through the store, capped, deletable ---- */
@@ -685,15 +910,36 @@ defineApp({
         paintCtx(); paintFeed();
       };
       const when = ts => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-      return h('details.lens__hist', { 'data-hist': '' },
+      const rows = h('div.lens__hrows', { 'data-hist-rows': '' });
+      const hit = (e, words) => {
+        const hay = `${e.q} ${e.a} ${e.ctx}`.toLowerCase();
+        return words.every(w => hay.includes(w));
+      };
+      const fillRows = () => {
+        clear(rows);
+        const words = S.hq.toLowerCase().split(/\s+/).filter(Boolean);
+        const shown = list.filter(e => hit(e, words));
+        if (!shown.length) { rows.append(h('div.lens__hnote', { role: 'status', text: 'Nothing in your history matches that.' })); return; }
+        for (const e of shown) {
+          rows.append(h('div.lens__hrow',
+            h('button.lens__hopen', { type: 'button', onclick: () => reopen(e) },
+              h('b', { text: e.q === DEFAULT_Q ? 'What is this?' : e.q }), h('small', { text: `${when(e.ts)} · ${e.ctx ? cut(e.ctx, 60) : 'no selection'}` })),
+            h('button.lens__icbtn', { type: 'button', title: 'Delete this one', 'aria-label': 'Delete this history item', onclick: () => { S.histOpen = true; store.set(HKEY, histList().filter(x => x.id !== e.id)); paintFeed(); } }, icon('trash'))));
+        }
+      };
+      fillRows();
+      const search = h('input.lens__hsearch', {
+        type: 'search', placeholder: 'Search your history', 'aria-label': 'Search history', value: S.hq, autocomplete: 'off', spellcheck: 'false',
+        oninput: e => { S.hq = e.target.value; fillRows(); },
+      });
+      const det = h('details.lens__hist', { 'data-hist': '', open: S.histOpen || !!S.hq, ontoggle: () => { S.histOpen = det.open; } },
         h('summary', { text: `Recent on this device (${list.length})` }),
-        list.map(e => h('div.lens__hrow',
-          h('button.lens__hopen', { type: 'button', onclick: () => reopen(e) },
-            h('b', { text: e.q === DEFAULT_Q ? 'What is this?' : e.q }), h('small', { text: `${when(e.ts)} · ${e.ctx ? cut(e.ctx, 60) : 'no selection'}` })),
-          h('button.lens__icbtn', { type: 'button', title: 'Delete this one', 'aria-label': 'Delete this history item', onclick: () => { store.set(HKEY, histList().filter(x => x.id !== e.id)); paintFeed(); } }, icon('trash')))),
+        h('div.lens__hrow', search),
+        rows,
         h('div.lens__hrow',
-          h('button.lens__chip', { type: 'button', text: 'Clear all history', onclick: () => { store.set(HKEY, []); paintFeed(); } })),
+          h('button.lens__chip', { type: 'button', text: 'Clear all history', onclick: () => { S.hq = ''; store.set(HKEY, []); paintFeed(); } })),
         h('div.lens__hnote', { text: 'Only the text read from your selection, your question and the answer are kept here, on this device. Pictures are never saved.' }));
+      return det;
     }
 
     async function copy(text, btn, done) {
@@ -750,7 +996,7 @@ defineApp({
       r.answer.replaceChildren();
       if (!t) { r.answer.append(h('div.lens-pip__empty', { text: 'Snip anything on screen — the answer shows up here.' })); return; }
       if (t.err) r.answer.append(h('div.lens__err', { text: t.err }));
-      else if (t.a) r.answer.append(md(t.a));
+      else if (t.a) r.answer.append(md(t.a), t.pending ? null : h('p.lens-a__check', { text: CHECK_LINE }));
       else r.answer.append(h('div.lens-a__wait', h('i'), h('i'), h('i'), h('span', { text: t.thinking ? 'Thinking' : 'Asking' })));
       if (S.ctx?.reading) r.answer.replaceChildren(h('div.lens-a__wait', h('i'), h('i'), h('i'), h('span', { text: 'Reading your selection' })));
     }
@@ -791,6 +1037,9 @@ defineApp({
       if (S.dead) return;
       S.dead = true;
       S.ac?.abort();
+      for (const t of S.turns) t.fc?.ac?.abort();
+      if (S.reading) { speech.stop(); S.reading = null; }
+      offSpeech();
       pickRegion.cancel?.();
       document.removeEventListener('paste', onPaste);
       S.stream?.getTracks().forEach(t => t.stop());

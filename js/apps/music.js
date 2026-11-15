@@ -50,6 +50,23 @@
    with a song and keep going when this window closes; this view is
    only their controls.
 
+   Reading the song itself: the title, artist, album and cover art are
+   read from the file's own bytes (js/core/tags.js — ID3, MP4 atoms,
+   FLAC/Vorbis comments); a file with no tags keeps the name-based title.
+   Lyrics are a .lrc (synced) or .txt that sits beside the song; they are
+   never looked up anywhere. Sound: an equalizer, speed and crossfade
+   (js/core/playerfx.js), a sleep timer shared with Static Radio
+   (js/core/mediasleep.js), A–B repeat, and Most / Recently played, counted
+   only from songs that were really listened to.
+   One station list for the OS: js/core/stations.js (Static Radio reads it too).
+
+   Audiobooks — LibriVox's public-domain recordings, played from archive.org
+   (core/librivox.js, the Audiobooks page in music-books.js). A book is a third
+   kind of thing the one player can hold, beside a file and a station:
+   { kind: 'book', book, ci }. It uses the same element, queue controls
+   (Next / Previous step chapters), speed, sleep timer, media keys and widget
+   rail; where you stopped is kept for each book through the store.
+
    An older Music listed real artists' songs that had no audio, with
    made-up playlists and a timer pretending to play them. All gone.
    ============================================================ */
@@ -59,12 +76,23 @@ import { store } from '../core/store.js';
 import vfs from '../core/vfs.js';
 import * as media from '../core/media.js';
 import * as tap from '../core/audiotap.js';
+import { appLevel } from '../core/appearance.js';
 import * as AMB from '../core/ambient.js';
 import { createTuner } from './music-tuner.js';
 import { normalizeCode, isCode } from '../core/roomcode.js';
 import { createShares, keyOf as fileKey } from '../core/sharedlist.js';
 import { sharePanel, joinBox, inviteLink } from './musicshare.js';
-import { open as openWin } from '../core/wm.js';
+import { open as openWin, setRect, setPinned } from '../core/wm.js';
+import { STATIONS, SOMA, SOMA_API, streamUrl as stationUrl, triesFor, quality as streamQuality, setQuality, QUALITIES, qualityInfo, trouble } from '../core/stations.js';
+import { readTags } from '../core/tags.js';
+import { parseLyrics, activeLine, siblingNames } from '../core/lrc.js';
+import * as fx from '../core/playerfx.js';
+import * as sleepT from '../core/mediasleep.js';
+import * as finds from '../core/radiofinds.js';
+import { paintMediaPanel } from '../portal/sendfriend.js';
+import { createAudiobooks } from './music-books.js';
+import * as LV from '../core/librivox.js';
+import { t as tx } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-music-css')) {
   const l = document.createElement('link');
@@ -76,34 +104,11 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-music-css'
 
 const DIR = `${vfs.HOME}/Music`;
 const TRASH = `${vfs.HOME}/Trash`;
-const SOMA = 'https://somafm.com';
-const SOMA_API = 'https://api.somafm.com';
-const ACCEPT = 'audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac,.weba';
+const ACCEPT = 'audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac,.weba,.lrc,.txt';
 
-/* SomaFM's own names, genres and descriptions (from its channels.json),
-   so the list reads the same offline. Every stream here played from a
-   Playwright test page before it was kept. */
-const STATIONS = [
-  ['groovesalad', 'Groove Salad', 'Ambient · electronic', 'A nicely chilled plate of ambient/downtempo beats and grooves.'],
-  ['dronezone', 'Drone Zone', 'Ambient', 'Served best chilled, safe with most medications. Atmospheric textures with minimal beats.'],
-  ['lush', 'Lush', 'Electronic', 'Sensuous and mellow female vocals, many with an electronic influence.'],
-  ['secretagent', 'Secret Agent', 'Lounge', 'The soundtrack for your stylish, mysterious, dangerous life. For Spies and PIs too!'],
-  ['defcon', 'DEF CON Radio', 'Electronic', 'Music for Hacking. The DEF CON Year-Round Channel.'],
-  ['deepspaceone', 'Deep Space One', 'Ambient', 'Deep ambient electronic, experimental and space music. For inner and outer space exploration.'],
-  ['spacestation', 'Space Station Soma', 'Electronic', 'Tune in, turn on, space out. Spaced-out ambient and mid-tempo electronica.'],
-  ['indiepop', 'Indie Pop Rocks!', 'Alternative · rock', 'New and classic favorite indie pop tracks.'],
-  ['u80s', 'Underground 80s', 'Alternative · electronic', 'Early 80s UK Synthpop and a bit of New Wave.'],
-  ['vaporwaves', 'Vaporwaves', 'Electronic', 'All Vaporwave. All the time.'],
-].map(([id, name, genre, blurb]) => ({
-  id, name, genre, blurb,
-  page: `${SOMA}/${id}/`,
-  logo: `${SOMA_API}/logos/256/${id}256.png`,
-}));
-/* where a stream is fetched from, in order: two of SomaFM's servers with
-   CORS (which the spectrum needs), then plain — a proxy that strips CORS
-   headers still gets music, just without the spectrum */
-const RADIO_TRIES = [['ice1', true], ['ice2', true], ['ice1', false]];
-const streamUrl = (st, host) => `https://${host}.somafm.com/${st.id}-128-mp3`;
+/* The stations are js/core/stations.js — one list for Music and Static Radio. Where a stream is
+   fetched from, in order: two of SomaFM's servers with CORS (which the spectrum and the equalizer
+   need), then plain — a proxy that strips CORS headers still gets music, just without those. */
 const onLocalhost = () => typeof location !== 'undefined' && /^(localhost|127\.|\[::1\])/.test(location.hostname);
 
 /* ---------------- small helpers ---------------- */
@@ -155,15 +160,77 @@ async function getJSON(url, ms = 8000) {
   } finally { clearTimeout(t); }
 }
 
+/* ---------------- tags: what the file itself says ----------------
+   Read lazily and one file at a time (js/core/tags.js), keyed by the media
+   reference so a rename or a move keeps it. A song with no tags keeps the
+   title and artist taken from its file name. */
+const TAGS = new Map();                 /* ref -> { title, artist, album, cover… } | null (nothing in the file) */
+const tagQ = [];
+let tagging = false;
+function describe(n) {
+  const p = parseName(n.name);
+  const t = media.isMedia(n) ? TAGS.get(n.content) : null;
+  return { title: t?.title || p.title, artist: t?.artist || p.artist, album: t?.album || '' };
+}
+function wantTags(n) {
+  if (!n || !media.isMedia(n) || TAGS.has(n.content) || tagQ.includes(n)) return;
+  tagQ.push(n);
+  runTags();
+}
+async function runTags() {
+  if (tagging) return;
+  tagging = true;
+  let fresh = 0;
+  while (tagQ.length) {
+    const n = tagQ.shift();
+    if (TAGS.has(n.content)) continue;
+    let t = null;
+    try { const b = await media.blobOf(n); t = b ? await readTags(b) : null; } catch (e) { t = null; }
+    TAGS.set(n.content, t);
+    if (t) {
+      fresh++;
+      for (const e of libCache || []) if (e.node.content === n.content) Object.assign(e, describe(n));
+      if (P.cur?.kind === 'file' && P.cur.node.content === n.content) { msKey = null; changed('track'); }
+      if (fresh % 8 === 0) changed('list');
+    }
+  }
+  tagging = false;
+  if (fresh) changed('list');
+}
+/* cover art: a blob URL made only when a song is shown, and kept for a while */
+const COVERS = new Map();               /* ref -> { url, type } | null */
+function coverOf(n) {
+  if (!n || !media.isMedia(n)) return null;
+  const hit = COVERS.get(n.content);
+  if (hit !== undefined) return hit;
+  const t = TAGS.get(n.content);
+  if (t === undefined) { wantTags(n); return null; }
+  if (!t || !t.cover) { COVERS.set(n.content, null); return null; }
+  COVERS.set(n.content, null);          /* in flight: asking again must not start a second read */
+  t.cover.blob().then(b => {
+    if (!b || !b.size) return;
+    COVERS.set(n.content, { url: URL.createObjectURL(b), type: b.type || t.cover.mime });
+    while (COVERS.size > 40) {
+      const k = COVERS.keys().next().value;
+      const v = COVERS.get(k);
+      COVERS.delete(k);
+      if (v?.url) { try { URL.revokeObjectURL(v.url); } catch (e) { /* gone */ } }
+    }
+    if (P.cur?.kind === 'file' && P.cur.node.content === n.content) { msKey = null; changed('track'); }
+  }).catch(() => {});
+  return null;
+}
+
 /* ---------------- the library (~/Music) ---------------- */
 let libCache = null;
 function library() {
   if (libCache) return libCache;
   const out = [];
   vfs.walk(DIR, (n, path) => {
-    if (n.type === 'file' && media.kindOf(n.name) === 'audio') out.push({ node: n, path, ...parseName(n.name) });
+    if (n.type === 'file' && media.kindOf(n.name) === 'audio') out.push({ node: n, path, ...describe(n) });
   });
   libCache = out;
+  for (const e of out) wantTags(e.node);
   return out;
 }
 
@@ -264,7 +331,7 @@ function homeAudio() {
   const byRef = new Map(), byKey = new Map();
   const take = (n, path) => {
     if (n.type !== 'file' || media.kindOf(n.name) !== 'audio' || !media.isMedia(n) || byRef.has(n.content)) return;
-    const e = { node: n, path, ...parseName(n.name) };
+    const e = { node: n, path, ...describe(n) };
     byRef.set(n.content, e);
     if (!byKey.has(fileKey(n.name, n.size))) byKey.set(fileKey(n.name, n.size), e);
   };
@@ -383,6 +450,8 @@ const P = {
   started: false,       // the current source has made sound at least once
   view: 'songs',
   from: null,           // { pl: id } while a playlist is what's playing
+  ab: { a: null, b: null },   // A–B repeat points (seconds) in the current song
+  heard: 0, lastT: 0, counted: false,   // listening toward a "real play" of the current song
 };
 let everPlayed = false;
 const subs = new Set();                 /* open windows repaint through these */
@@ -391,11 +460,16 @@ const subs = new Set();                 /* open windows repaint through these */
    player through core/audiotap.js. A song is always readable; a station
    only when it came through one of SomaFM's CORS servers — the plain
    fallback plays, but the browser won't let a page look at it. */
+/* the equalizer wires this element into Web Audio only when the sound can be read (see core/playerfx.js) */
+if (audio) fx.attach(audio, () => !(P.cur && P.cur.kind !== 'file' && !P.cors));
+
 if (audio) tap.register('music', audio, {
-  label: 'Music',
+  label: tx('Music'),
   blocked: () => (P.cur?.kind === 'radio' && !P.cors
     ? `${P.cur.st.name} is coming through SomaFM’s plain server (its CORS servers didn’t answer here), so the browser won’t let StaticOS read the sound. The music still plays.`
-    : null),
+    : P.cur?.kind === 'book' && !P.cors
+      ? 'This chapter is coming from archive.org without the permission the browser needs to let StaticOS read the sound. The book still plays.'
+      : null),
 });
 
 function changed(kind = 'state') {
@@ -416,10 +490,17 @@ function trackInfo() {
       duration: 0, elapsed: 0, live: true, source: 'radio',
     };
   }
-  const { title, artist } = parseName(c.node.name);
+  if (c.kind === 'book') {
+    const d = Number.isFinite(audio.duration) ? audio.duration : (c.book.chapters[c.ci].len || 0);
+    return {
+      title: c.book.chapters[c.ci].title, artist: c.book.author || 'LibriVox', album: `${c.book.title} · LibriVox`,
+      duration: d, elapsed: Math.floor(audio.currentTime || 0), live: false, source: 'book',
+    };
+  }
+  const { title, artist, album } = describe(c.node);
   const d = Number.isFinite(audio.duration) ? audio.duration : (typeof durOf(c.node) === 'number' ? durOf(c.node) : 0);
   return {
-    title, artist: artist || 'Unknown artist', album: folderLabel(c.path),
+    title, artist: artist || 'Unknown artist', album: album || folderLabel(c.path),
     duration: d, elapsed: Math.floor(audio.currentTime || 0), live: false, source: 'file',
   };
 }
@@ -431,7 +512,7 @@ function emitTrack() {
   bus.emit('media:track', t
     ? { title: t.title, artist: t.artist, album: t.album, duration: t.duration, elapsed: t.elapsed,
         playing: soundOn(), live: t.live, source: t.source }
-    : { title: 'Nothing playing', artist: '', album: '', duration: 0, elapsed: 0, playing: false, live: false, source: null });
+    : { title: tx('Nothing playing'), artist: '', album: '', duration: 0, elapsed: 0, playing: false, live: false, source: null });
   msSync(t);
 }
 
@@ -452,13 +533,14 @@ function claimSession() {
 function msSync(t) {
   if (!MS) return;
   try {
-    const art = P.cur?.kind === 'radio' ? P.cur.st.logo : '';
+    const cv = P.cur?.kind === 'file' ? coverOf(P.cur.node) : null;
+    const art = P.cur?.kind === 'radio' ? P.cur.st.logo : P.cur?.kind === 'book' ? P.cur.book.cover : cv ? cv.url : '';
     const key = t ? `${t.title}|${t.artist}|${t.album}|${art}` : '';
     if (key !== msKey) {
       msKey = key;
       MS.metadata = t && typeof MediaMetadata === 'function'
         ? new MediaMetadata({ title: t.title, artist: t.artist, album: t.album,
-            artwork: art ? [{ src: art, sizes: '256x256', type: 'image/png' }] : [] })
+            artwork: art ? [{ src: art, sizes: cv ? '512x512' : '256x256', type: cv ? cv.type : P.cur?.st?.logoType || 'image/png' }] : [] })
         : null;
     }
     MS.playbackState = !t ? 'none' : soundOn() ? 'playing' : 'paused';
@@ -478,31 +560,47 @@ function msSync(t) {
   } catch (e) { /* a browser with a partial Media Session */ }
 }
 
-/* ---------------- loudness: the OS's own prefs ---------------- */
+/* ---------------- loudness: the OS's own prefs ----------------
+   The element's volume is the OS volume × the mixer's level for Music (Settings > Sound) × the
+   sleep timer's fade × the crossfade's fade-in. A crossfade's outgoing song plays on a second,
+   short-lived element that follows the same volume and mute. */
+const XF = { ghost: null, iv: 0, t0: 0, ms: 0, inMult: 1, pending: false };
+function baseVolume() {
+  const v = Number(store.get('prefs.volume', 62));
+  return clamp(Number.isFinite(v) ? v : 62, 0, 100) / 100 * appLevel('music') * sleepT.fade();
+}
 function applyVolume() {
   if (!audio) return;
-  const v = Number(store.get('prefs.volume', 62));
-  audio.volume = clamp(Number.isFinite(v) ? v : 62, 0, 100) / 100;
+  audio.volume = clamp(baseVolume() * XF.inMult, 0, 1);
   audio.muted = store.get('prefs.muted', false) === true;
+  if (XF.ghost) {
+    XF.ghost.muted = audio.muted;
+    XF.ghost.volume = clamp(baseVolume() * (1 - XF.inMult), 0, 1);
+  }
 }
 applyVolume();
 store.sub('prefs', applyVolume);
+bus.on('mediasleep:fade', applyVolume);
 
 /* ---------------- errors, in plain words ---------------- */
 const ERR = {
-  nodata: n => ({ title: `“${n.name}” has no audio in it`, actions: ['trash'],
+  nodata: n => ({ title: tx('“{name}” has no audio in it', { name: n.name }), actions: ['trash'],
     detail: 'It is an empty file — most likely a placeholder from an older StaticOS, which listed songs it could not play. Move it to the Trash, or import the real song.' }),
-  missing: n => ({ title: `The audio for “${n.name}” is missing`, actions: ['import'],
+  missing: n => ({ title: tx('The audio for “{name}” is missing', { name: n.name }), actions: ['import'],
     detail: 'Its bytes are no longer in this browser’s storage (site data may have been cleared). Import the song again.' }),
-  format: n => ({ title: `This browser can’t play “${n.name}”`, actions: ['next', 'trash'],
+  format: n => ({ title: tx('This browser can’t play “{name}”', { name: n.name }), actions: ['next', 'trash'],
     detail: canPlayExt(n.name)
       ? `This browser does play ${fmtTag(n.name)} files, so this one is probably damaged, cut short, or not really audio.`
       : `This browser doesn’t play ${fmtTag(n.name)} files. Converting it to MP3 or M4A usually fixes this.` }),
-  decode: n => ({ title: `“${n.name}” stopped: the file looks damaged`, actions: ['next'],
+  decode: n => ({ title: tx('“{name}” stopped: the file looks damaged', { name: n.name }), actions: ['next'],
     detail: 'The browser could not decode the rest of it.' }),
-  offline: st => ({ title: 'You’re offline', actions: ['retry'],
+  offline: st => ({ title: tx('You’re offline'), actions: ['retry'],
     detail: `${st.name} streams from SomaFM over the internet. Reconnect, then press Play.` }),
-  radio: st => ({ title: `${st.name} didn’t play`, actions: ['retry', 'page'],
+  book: (b, c) => ({ title: tx('“{title}” didn’t play', { title: c.title }), actions: ['retry'],
+    detail: typeof navigator !== 'undefined' && navigator.onLine === false
+      ? `${b.title} plays from archive.org over the internet. Reconnect, then press Play.`
+      : 'archive.org may be down, or this network blocks it (school and work Wi-Fi often do). Try again in a minute.' }),
+  radio: st => ({ title: tx('{name} didn’t play', { name: st.name }), actions: ['retry', 'page'],
     detail: onLocalhost()
       ? 'SomaFM refuses streams to pages served from localhost. It plays on the published StaticOS.'
       : 'SomaFM may be down, or this network blocks streaming radio (school and work Wi-Fi often do).' }),
@@ -534,6 +632,8 @@ function fail(tok, err) {
   P.slow = false;
   clearSlow();
   stopAir();
+  killGhost();
+  if (P.cur?.kind === 'radio') trouble.mark(P.cur.st.id, 'failed');
   changed('state');
 }
 
@@ -566,7 +666,11 @@ async function startFile(node, play = true) {
   stopAir();
   clearSlow();
   everPlayed = true;
+  /* a crossfade started this song: it fades in over the one on the second element; anything else cuts that short */
+  if (XF.pending) { XF.pending = false; } else endCrossfade();
   P.cur = { kind: 'file', node, path: alive(node) };
+  P.ab = { a: null, b: null }; P.heard = 0; P.lastT = 0; P.counted = false;
+  armAB();
   P.onAir = null; P.error = null; P.note = null; P.slow = false; P.started = false;
   P.want = play;
   P.phase = play ? 'loading' : 'paused';
@@ -578,6 +682,9 @@ async function startFile(node, play = true) {
   if (!url) return fail(tok, ERR.missing(node));
   audio.removeAttribute('crossorigin');
   audio.src = url;
+  applySpeed();
+  wantTags(node);
+  fx.tryRoute();
   if (play) doPlay();
   else { try { audio.load(); } catch (e) {} }
 }
@@ -588,6 +695,9 @@ function startStation(st, play = true) {
   unload();
   clearSlow();
   everPlayed = true;
+  endCrossfade();
+  P.ab = { a: null, b: null };
+  armAB();
   P.cur = { kind: 'radio', st };
   P.onAir = AIR.get(st.id) || null;
   P.error = null; P.note = null; P.slow = false; P.started = false;
@@ -600,17 +710,63 @@ function startStation(st, play = true) {
   pollAir();
 }
 
+/* an audiobook chapter: archive.org's CORS answer lets the equalizer and the visualizer read it; if a browser refuses the
+   request that way it is tried once more plainly (the book still plays, just without those) */
+function startBook(book, ci, at = 0, play = true) {
+  const ch = book && book.chapters[ci];
+  if (!audio || !ch) return;
+  const tok = ++P.token;
+  unload();
+  stopAir();
+  clearSlow();
+  everPlayed = true;
+  endCrossfade();
+  P.cur = { kind: 'book', book, ci };
+  P.ab = { a: null, b: null }; P.heard = 0; P.lastT = 0; P.counted = false;
+  armAB();
+  P.onAir = null; P.error = null; P.note = null; P.slow = false; P.started = false;
+  P.cors = true; P.tryIx = 0; P.startAt = at > 1 ? at : 0;
+  P.want = play;
+  P.phase = play ? 'loading' : 'paused';
+  P.from = null;
+  changed('track');
+  LV.remember(book, ci, P.startAt);
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return fail(tok, ERR.book(book, ch));
+  audio.crossOrigin = 'anonymous';
+  audio.src = ch.url;
+  applySpeed();
+  fx.tryRoute();
+  if (play) { armSlow(tok); doPlay(); } else { try { audio.load(); } catch (e) {} }
+}
+const bookNow = () => (P.cur?.kind === 'book' ? P.cur : null);
+let bookSaved = 0;
+function saveBook(force) {
+  const c = bookNow();
+  if (!c || !audio.getAttribute('src')) return;
+  const now = Date.now();
+  if (!force && now - bookSaved < 5000) return;
+  bookSaved = now;
+  LV.remember(c.book, c.ci, audio.currentTime || 0);
+}
+
 function connect(tok) {
   const st = P.cur?.st;
   if (!st || tok !== P.token) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return fail(tok, ERR.offline(st));
-  const [host, cors] = RADIO_TRIES[P.tryIx] || RADIO_TRIES[0];
+  const tries = radioTries();
+  const [host, cors, q] = tries[P.tryIx] || tries[0];
   P.cors = cors;
+  P.quality = q;
   if (cors) audio.crossOrigin = 'anonymous'; else audio.removeAttribute('crossorigin');
-  audio.src = streamUrl(st, host);
+  audio.src = stationUrl(st, host, q);
+  applySpeed();
   armSlow(tok);
   doPlay();
 }
+
+/* where a station is fetched from, in order. The plain fallback is left out while the equalizer is wired
+   in: the browser would hand it silence, so a clear "didn't play" is better than a mute button. */
+const radioTries = () => triesFor(streamQuality(), { plain: !fx.routed() });
 
 /* a stream that hasn't started after 15 s gets a word of explanation */
 let slowTimer = 0;
@@ -626,6 +782,7 @@ function clearSlow() { if (slowTimer) { clearTimeout(slowTimer); slowTimer = 0; 
 function pause() {
   if (!P.cur) return;
   P.want = false;
+  endCrossfade();
   if (P.cur.kind === 'radio') {
     /* live radio can't be held: stop the download and reconnect on Play */
     unload();
@@ -638,6 +795,7 @@ function pause() {
   }
   audio.pause();
   if (P.phase === 'loading') P.phase = 'paused';
+  saveBook(true);
   changed('state');
 }
 
@@ -653,6 +811,11 @@ function resume() {
     startStation(c.st, true);
     return;
   }
+  if (c.kind === 'book') {
+    if (P.phase === 'error' || !audio.getAttribute('src')) startBook(c.book, c.ci, P.phase === 'error' ? (audio.currentTime || P.startAt || 0) : (LV.placeOf(c.book.id)?.t || 0), true);
+    else doPlay();
+    return;
+  }
   if (P.phase === 'error' || !audio.getAttribute('src')) { startFile(c.node, true); return; }
   doPlay();
 }
@@ -660,8 +823,8 @@ const toggle = () => (P.want ? pause() : resume());
 
 function seek(s) {
   const c = P.cur;
-  if (!c || c.kind !== 'file' || !Number.isFinite(Number(s))) return;
-  const d = Number.isFinite(audio.duration) ? audio.duration : (typeof durOf(c.node) === 'number' ? durOf(c.node) : 0);
+  if (!c || (c.kind !== 'file' && c.kind !== 'book') || !Number.isFinite(Number(s))) return;
+  const d = Number.isFinite(audio.duration) ? audio.duration : c.kind === 'book' ? 0 : (typeof durOf(c.node) === 'number' ? durOf(c.node) : 0);
   if (!d || !audio.getAttribute('src')) return;
   try { audio.currentTime = clamp(Number(s), 0, Math.max(0, d - 0.05)); } catch (e) { return; }
   changed('time');
@@ -676,7 +839,32 @@ function next(auto = false, force = false) {
   const c = P.cur;
   if (!c) { resume(); return; }
   if (c.kind === 'radio') { if (!auto) startStation(stationStep(1), P.want || force); return; }
-  if (auto && P.repeat === 'one') { try { audio.currentTime = 0; } catch (e) {} doPlay(); return; }
+  if (c.kind === 'book') {
+    if (auto && sleepT.takeAfterSong()) {       /* "stop after this chapter" */
+      P.want = false; P.phase = 'ended'; P.note = 'Sleep timer: stopped after the chapter.';
+      LV.remember(c.book, Math.min(c.ci + 1, c.book.chapters.length - 1), 0);
+      changed('state');
+      return;
+    }
+    if (c.ci + 1 >= c.book.chapters.length) {
+      if (!auto) { seek(0); return; }
+      P.want = false; P.phase = 'ended'; P.note = 'You have reached the end of the book.';
+      LV.remember(c.book, c.ci, 0, true);
+      changed('state');
+      return;
+    }
+    startBook(c.book, c.ci + 1, 0, auto || force || P.want);
+    return;
+  }
+  if (auto && sleepT.takeAfterSong()) {       /* "stop after this song" */
+    endCrossfade();
+    P.want = false;
+    P.phase = 'ended';
+    P.note = 'Sleep timer: stopped after the song.';
+    changed('state');
+    return;
+  }
+  if (auto && P.repeat === 'one') { P.heard = 0; P.lastT = 0; P.counted = false; try { audio.currentTime = 0; } catch (e) {} doPlay(); return; }
   const keepPlaying = auto || force || P.want;
   let i = P.qi + 1;
   if (i >= P.queue.length) {
@@ -704,6 +892,11 @@ function prev() {
   const c = P.cur;
   if (!c) { resume(); return; }
   if (c.kind === 'radio') { startStation(stationStep(-1), P.want); return; }
+  if (c.kind === 'book') {
+    if ((audio.currentTime || 0) > 3 || c.ci === 0) { seek(0); return; }
+    startBook(c.book, c.ci - 1, 0, P.want);
+    return;
+  }
   if ((audio.currentTime || 0) > 3 || P.queue.length < 2) { seek(0); return; }
   let i = P.qi - 1;
   if (i < 0) {
@@ -712,6 +905,136 @@ function prev() {
   }
   P.qi = i;
   startFile(P.queue[i], P.want);
+}
+
+/* ---------------- speed ---------------- */
+function applySpeed() {
+  if (!audio) return;
+  const r = P.cur?.kind === 'file' || P.cur?.kind === 'book' ? fx.speed() : 1;
+  audio.defaultPlaybackRate = r;
+  audio.playbackRate = r;
+  audio.preservesPitch = true;
+  if ('webkitPreservesPitch' in audio) audio.webkitPreservesPitch = true;
+}
+bus.on('playerfx:change', k => { if (k === 'speed') { applySpeed(); changed('state'); } });
+
+/* ---------------- A–B repeat ---------------- */
+let abTimer = 0;
+/** Press once to mark A, again for B (the part between then loops), a third time to clear. */
+function abStep() {
+  if (P.cur?.kind !== 'file' || !audio.getAttribute('src')) return;
+  const t = audio.currentTime || 0;
+  if (P.ab.a === null) P.ab = { a: t, b: null };
+  else if (P.ab.b === null) {
+    if (t < P.ab.a + 0.5) P.ab = { a: t, b: null };       /* too close to A: start again from here */
+    else { P.ab = { a: P.ab.a, b: t }; try { audio.currentTime = P.ab.a; } catch (e) { /* not seekable yet */ } }
+  } else P.ab = { a: null, b: null };
+  armAB();
+  changed('state');
+}
+function abClear() { if (P.ab.a !== null) { P.ab = { a: null, b: null }; armAB(); changed('state'); } }
+function armAB() {
+  const on = P.ab.b !== null && P.cur?.kind === 'file';
+  if (on && !abTimer) abTimer = setInterval(abCheck, 40);
+  else if (!on && abTimer) { clearInterval(abTimer); abTimer = 0; }
+}
+function abCheck() {
+  if (P.ab.b === null || P.cur?.kind !== 'file' || audio.paused) return;
+  if (audio.currentTime >= P.ab.b) { try { audio.currentTime = P.ab.a; } catch (e) { /* not seekable */ } P.lastT = P.ab.a; }
+}
+
+/* ---------------- real plays ----------------
+   A song counts once it has been LISTENED to for half its length or 30 seconds, whichever is
+   sooner: time actually played, so a seek or a skip adds nothing and a song you tapped past does
+   not count. Kept with the playlists, under 'portal.music' › plays. */
+const PLAY_MAX = 600;
+function playsAll() {
+  const raw = store.get(PL_KEY);
+  const o = raw && typeof raw === 'object' && raw.plays && typeof raw.plays === 'object' ? raw.plays : {};
+  const out = {};
+  for (const [ref, v] of Object.entries(o)) {
+    if (isRef(ref) && v && Number(v.n) > 0) out[ref] = { n: Math.floor(Number(v.n)), last: Number(v.last) || 0, name: String(v.name || '') };
+  }
+  return out;
+}
+function playsWrite(plays) {
+  const raw = store.get(PL_KEY);
+  store.set(PL_KEY, { ...(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}), v: 1, plays });
+}
+function addPlay(node) {
+  if (!node || !media.isMedia(node)) return;
+  const all = playsAll();
+  const had = all[node.content];
+  all[node.content] = { n: (had?.n || 0) + 1, last: Date.now(), name: node.name };
+  const keys = Object.keys(all);
+  if (keys.length > PLAY_MAX) for (const k of keys.sort((a, b) => all[a].last - all[b].last).slice(0, keys.length - PLAY_MAX)) delete all[k];
+  playsWrite(all);
+  changed('list');
+}
+function clearPlays() { playsWrite({}); changed('list'); }
+/** the listening so far, from the element's clock: only small forward steps are time that was played */
+function countListening() {
+  const c = P.cur;
+  if (c?.kind !== 'file' || audio.paused) return;
+  const t = audio.currentTime || 0, d = t - P.lastT;
+  P.lastT = t;
+  if (d > 0 && d < 1.5 * Math.max(1, audio.playbackRate)) P.heard += d;
+  if (P.counted) return;
+  const len = Number.isFinite(audio.duration) ? audio.duration : 0;
+  if (len > 0 && P.heard >= Math.min(30, Math.max(1, len * 0.5))) { P.counted = true; addPlay(c.node); }
+}
+
+/* ---------------- crossfade ----------------
+   Near the end of a song the player puts that song on a second, short-lived element, starts the
+   next one on the main element, and swaps their volumes over the time that is left. Only for song
+   to song (never when the queue is about to end, repeat-one is on, or "stop after this song" is
+   waiting); the radio never crossfades. */
+function hasNextTrack() { return P.qi + 1 < P.queue.length || (P.repeat === 'all' && P.queue.length > 1); }
+function maybeCrossfade() {
+  const s = fx.crossfade();
+  if (!s || XF.ghost || P.cur?.kind !== 'file' || !P.want || P.phase !== 'playing' || P.repeat === 'one') return;
+  const d = audio.duration;
+  if (!Number.isFinite(d) || d < s * 2.5 || P.ab.b !== null || sleepT.state()?.afterSong || !hasNextTrack()) return;
+  const left = d - audio.currentTime;
+  if (left > s || left < 0.4) return;
+  beginCrossfade(left);
+}
+function beginCrossfade(left) {
+  let g;
+  try {
+    g = new Audio();
+    g.src = audio.currentSrc || audio.src;
+    const at = audio.currentTime;
+    g.addEventListener('loadedmetadata', () => { try { g.currentTime = at; } catch (e) { /* ignore */ } }, { once: true });
+    g.playbackRate = audio.playbackRate;
+    g.volume = clamp(baseVolume(), 0, 1);
+    g.muted = audio.muted;
+    const pr = g.play();
+    pr?.catch?.(() => endCrossfade());
+  } catch (e) { return; }
+  XF.ghost = g;
+  XF.t0 = performance.now();
+  XF.ms = Math.max(300, left * 1000 / (audio.playbackRate || 1));
+  XF.inMult = 0;
+  XF.pending = true;
+  clearInterval(XF.iv);
+  XF.iv = setInterval(() => {
+    const f = Math.min(1, (performance.now() - XF.t0) / XF.ms);
+    XF.inMult = f;
+    applyVolume();
+    if (f >= 1) endCrossfade();
+  }, 50);
+  next(true);
+}
+function killGhost() {
+  if (XF.ghost) { try { XF.ghost.pause(); XF.ghost.removeAttribute('src'); XF.ghost.load(); } catch (e) { /* gone */ } XF.ghost = null; }
+}
+function endCrossfade() {
+  clearInterval(XF.iv);
+  XF.iv = 0;
+  killGhost();
+  XF.pending = false;
+  if (XF.inMult !== 1) { XF.inMult = 1; applyVolume(); }
 }
 
 /* ---------------- the queue ---------------- */
@@ -792,6 +1115,14 @@ function dropAt(i) {
   if (!P.queue.includes(n)) P.base = P.base.filter(x => x !== n);
   changed('queue');
 }
+/** Move a song in Up next (both places are queue positions after the one playing). */
+function queueMove(from, to) {
+  if (from <= P.qi || to <= P.qi || from >= P.queue.length || to >= P.queue.length || from === to) return;
+  const [n] = P.queue.splice(from, 1);
+  P.queue.splice(to, 0, n);
+  if (!P.shuffle) P.base = P.queue.slice();           /* in order, the queue IS the list order; shuffled, only the play order moves */
+  changed('queue');
+}
 function clearUpNext() {
   const cur = P.cur?.kind === 'file' ? P.cur.node : null;
   P.queue = cur ? [cur] : [];
@@ -861,6 +1192,7 @@ if (audio) {
     P.slow = false;
     P.error = null;
     clearSlow();
+    if (P.cur?.kind === 'radio') trouble.ok(P.cur.st.id);
     claimSession();
     changed('state');
   });
@@ -895,11 +1227,20 @@ if (audio) {
       emitTrack();
     }
   };
-  audio.addEventListener('loadedmetadata', noteDur);
+  audio.addEventListener('loadedmetadata', () => {
+    noteDur();
+    if (P.cur?.kind === 'book' && P.startAt) {          /* a book comes back to where it was left */
+      try { audio.currentTime = Math.min(P.startAt, Math.max(0, (audio.duration || P.startAt) - 1)); } catch (e) { /* not seekable yet */ }
+      P.startAt = 0;
+    }
+  });
   audio.addEventListener('durationchange', noteDur);
   audio.addEventListener('timeupdate', () => {
     /* time moving is proof of sound, even if a 'playing' after a stall is late */
     if (P.phase === 'loading' && P.want && !audio.paused && audio.readyState >= 3) { P.phase = 'playing'; changed('state'); }
+    countListening();
+    maybeCrossfade();
+    saveBook(false);
     const s = Math.floor(audio.currentTime || 0);
     if (s !== lastSec) { lastSec = s; emitTrack(); }
     subs.forEach(fn => { try { fn('time'); } catch (e) { console.error('[music]', e); } });
@@ -913,8 +1254,22 @@ function onErr() {
   if (code === 1) return;                                 /* aborted: we changed the source */
   const tok = P.token;
   if (c.kind === 'radio') {
-    if (P.tryIx < RADIO_TRIES.length - 1 && navigator.onLine !== false) { P.tryIx++; connect(tok); return; }
+    if (P.tryIx < radioTries().length - 1 && navigator.onLine !== false) { P.tryIx++; connect(tok); return; }
     fail(tok, navigator.onLine === false ? ERR.offline(c.st) : ERR.radio(c.st));
+    return;
+  }
+  if (c.kind === 'book') {
+    if (P.cors && P.tryIx === 0 && navigator.onLine !== false) {       /* once more without asking for CORS */
+      P.tryIx = 1; P.cors = false;
+      const at = audio.currentTime || P.startAt || 0;
+      audio.removeAttribute('crossorigin');
+      audio.src = c.book.chapters[c.ci].url;
+      P.startAt = at;
+      applySpeed();
+      if (P.want) doPlay();
+      return;
+    }
+    fail(tok, ERR.book(c.book, c.book.chapters[c.ci]));
     return;
   }
   if (media.isMedia(c.node) && (code === 4 || code === 3)) { DUR.set(c.node.content, 'bad'); changed('list'); }
@@ -974,6 +1329,17 @@ bus.on('media:seek', s => seek(Number(s)));
    A play/next/prev sent before then — the desktop widget, Staticum, an
    automation — loads it and is handed over here, since the listeners
    above did not exist yet when it was sent. */
+/** What the player is doing, for tests and for anything that wants to look (no side effects). */
+export function debugState() {
+  return {
+    cur: P.cur ? (P.cur.kind === 'file' ? P.cur.node.name : P.cur.kind === 'book' ? `${P.cur.book.id}#${P.cur.ci}` : P.cur.st.id) : null, kind: P.cur?.kind || null, phase: P.phase, want: P.want,
+    qi: P.qi, queue: P.queue.map(n => n.name), ghost: !!XF.ghost, fadeIn: XF.inMult, ab: { ...P.ab }, heard: P.heard, counted: P.counted,
+    rate: audio ? audio.playbackRate : 1, volume: audio ? audio.volume : 1, quality: P.quality || null, src: audio ? audio.getAttribute('src') : null,
+    time: audio ? audio.currentTime : 0, sleep: sleepT.state(),
+  };
+}
+/** Start an audiobook chapter (the Audiobooks page calls this; so can a test). */
+export function playBook(book, ci = 0, at = 0) { startBook(book, ci, at, true); }
 export function wake(evt) {
   if (evt === 'media:play') resume();
   else if (evt === 'media:next') next();
@@ -983,9 +1349,9 @@ export function wake(evt) {
 /* ---------------- sorting ---------------- */
 const SORTS = {
   title: { label: 'Title', cmp: (a, b) => coll.compare(a.title, b.title) || coll.compare(a.artist, b.artist) },
-  artist: { label: 'Artist', cmp: (a, b) => coll.compare(a.artist || '￿', b.artist || '￿') || coll.compare(a.title, b.title) },
-  added: { label: 'Recently added', cmp: (a, b) => new Date(b.node.mtime) - new Date(a.node.mtime) },
-  length: { label: 'Length', cmp: (a, b) => {
+  artist: { label: tx('Artist'), cmp: (a, b) => coll.compare(a.artist || '￿', b.artist || '￿') || coll.compare(a.title, b.title) },
+  added: { label: tx('Recently added'), cmp: (a, b) => new Date(b.node.mtime) - new Date(a.node.mtime) },
+  length: { label: tx('Length'), cmp: (a, b) => {
     const x = durOf(a.node), y = durOf(b.node);
     return (typeof x === 'number' ? x : 1e9) - (typeof y === 'number' ? y : 1e9) || coll.compare(a.title, b.title);
   } },
@@ -999,6 +1365,33 @@ function playableFormats() {
     ['OGG', 'audio/ogg; codecs="vorbis"'], ['Opus', 'audio/ogg; codecs="opus"'], ['FLAC', 'audio/flac']];
   return t.filter(([, m]) => audio.canPlayType(m) !== '').map(([n]) => n);
 }
+
+/** The lyrics file that sits beside a song: Song.lrc (synced) first, then Song.txt. Only the person's own file. */
+function findLyrics(node, path) {
+  if (!node || !path) return null;
+  const dir = vfs.parentPath(path);
+  for (const name of siblingNames(node.name)) {
+    const n = vfs.node(`${dir}/${name}`);
+    if (n && n.type === 'file' && typeof n.content === 'string' && !media.isMedia(n)) {
+      return { name, path: `${dir}/${name}`, text: n.content, lrc: /\.lrc$/i.test(name) };
+    }
+  }
+  return null;
+}
+
+/** Anything the browser can't play, named by what it is (for the list of what an import skipped). */
+const CANT_PLAY = new Set(['aif', 'aiff', 'aifc', 'wma', 'ape', 'wv', 'mid', 'midi', 'amr', 'm4p', 'ra', 'ac3', 'dts', 'mka', 'alac', 'dsf', 'dff']);
+function whyNotSong(name, type) {
+  const ext = extOf(name).slice(1).toLowerCase();
+  if (/^(\.ds_store|thumbs\.db|desktop\.ini)$/i.test(name) || name.startsWith('._')) return 'a system file';
+  if (CANT_PLAY.has(ext)) return `${ext.toUpperCase()} isn’t a format this browser can play`;
+  const k = media.kindOf(type) || media.kindOf(name);
+  if (k === 'image') return 'a picture, not a song';
+  if (k === 'video') return 'a video, not a song';
+  return 'not an audio file';
+}
+/** Path segments that are safe to make folders from. */
+const cleanSeg = seg => String(seg).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim();
 
 defineApp({
   id: 'music',
@@ -1019,51 +1412,73 @@ defineApp({
     ['Left / Right', 'Back / forward 5 seconds (your own songs)'],
     ['M', 'Mute'],
     ['/', 'Search songs'],
+    ['L', 'A–B loop: mark A, then B, then clear'],
+    [', / .', 'Slower / faster'],
+    ['C', 'Copy the song name'],
+    ['H', 'Keep the song on the radio'],
+    ['Z', 'Mini player'],
+    ['I / ?', 'This list of keys'],
   ],
 
   mount(ctx) {
     const { root, win, opts, api } = ctx;
     const { h, icon } = api;
-    const clearEl = el => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+    const clearEl = el => { el.replaceChildren(); return el; };      /* replaceChildren never throws when a blur handler repaints mid-removal */
 
     const S = {
       view: 'songs',
       filter: '', renaming: null, renameErr: '', scrub: null, drag: 0, busy: '', flash: null,
+      mini: false, keep: null, keys: false,    /* mini player: the window as it was, and the shortcut sheet */
+      report: null,            /* { title, lines:[{ name, why }] } what an import or an .m3u skipped, and why */
       plRenaming: null,        /* the playlist whose name is being edited */
       plDrag: null,            /* a track being dragged to a new place */
     };
     const disposers = [];
     const pendingUrls = new Set();
     let dead = false;
+    const defKeys = [
+      ['Space / K', 'Play or pause'], ['N / P', 'Next / previous song'], ['← / →', 'Back / forward 5 seconds'], ['M', 'Mute'],
+      ['/', 'Search songs, albums and lyrics'], ['L', 'A–B loop: mark A, then B, then clear'], [', / .', 'Slower / faster'],
+      ['C', 'Copy the song name'], ['H', 'Keep the song on the radio'], ['Z', 'Mini player'], ['I or ?', 'This list'],
+    ];
 
     /* ---------------- title bar ---------------- */
     const fileIn = h('input.mu-file', { type: 'file', accept: ACCEPT, multiple: true, tabindex: '-1', 'aria-hidden': 'true',
       onchange: e => { const f = e.target.files; importAudio(f).finally(() => { e.target.value = ''; }); } });
     const pickFiles = () => fileIn.click();
+    /* a whole folder: every file under it comes with its path, so its sub-folders are kept */
+    const folderIn = h('input.mu-file', { type: 'file', multiple: true, tabindex: '-1', 'aria-hidden': 'true', dataset: { role: 'folder-in' },
+      onchange: e => { const f = [...e.target.files].map(file => ({ file, rel: file.webkitRelativePath || file.name })); importItems(f).finally(() => { e.target.value = ''; }); } });
+    folderIn.setAttribute('webkitdirectory', '');
+    const pickFolder = () => folderIn.click();
+    const lyricIn = h('input.mu-file', { type: 'file', accept: '.lrc,.txt', tabindex: '-1', 'aria-hidden': 'true', dataset: { role: 'lyric-in' },
+      onchange: e => { const f = e.target.files[0]; addLyricsFile(f).finally(() => { e.target.value = ''; }); } });
+    const m3uIn = h('input.mu-file', { type: 'file', accept: '.m3u,.m3u8,audio/x-mpegurl,audio/mpegurl', tabindex: '-1', 'aria-hidden': 'true', dataset: { role: 'm3u-in' },
+      onchange: e => { const f = e.target.files[0]; importM3u(f).finally(() => { e.target.value = ''; }); } });
     win.setTools(
-      h('button.ibtn.tip.tip--below', { 'data-tip': 'Import songs', 'aria-label': 'Import songs from your computer', onclick: pickFiles },
+      h('button.ibtn.tip.tip--below', { 'data-tip': tx('Import songs'), 'aria-label': tx('Import songs from your computer'), onclick: pickFiles },
         icon('upload')),
-      h('button.ibtn.tip.tip--below', { 'data-tip': 'More', 'aria-label': 'More options', 'aria-haspopup': 'menu', onclick: moreMenu },
+      h('button.ibtn.tip.tip--below', { 'data-tip': tx('More'), 'aria-label': tx('More options'), 'aria-haspopup': 'menu', onclick: moreMenu },
         icon('more-horizontal')),
     );
 
     /* ---------------- layout ---------------- */
-    const side = h('nav.app__side.mu-side', { 'aria-label': 'Music' });
-    const tabs = h('nav.mu-tabs', { 'aria-label': 'Music sections' });
-    const hero = h('section.mu-hero', { 'aria-label': 'Now playing' });
+    const side = h('nav.app__side.mu-side', { 'aria-label': tx('Music') });
+    const tabs = h('nav.mu-tabs', { 'aria-label': tx('Music sections') });
+    const hero = h('section.mu-hero', { 'aria-label': tx('Now playing') });
     const content = h('div.app__content.app__content--flush.mu-content');
     const listBox = h('div.mu-listbox');
-    const searchIn = h('input', { type: 'search', placeholder: 'Search your music', 'aria-label': 'Search your music', spellcheck: 'false',
+    const searchIn = h('input', { type: 'search', placeholder: tx('Search songs, albums, lyrics'), 'aria-label': tx('Search your music by title, artist, album or lyrics'), spellcheck: 'false',
       oninput: ev => { S.filter = ev.target.value; paintList(); paintFoot(); } });
     const sortBtn = h('button.btn.btn--sm.mu-sort', { 'aria-haspopup': 'menu', onclick: e => sortMenu(e) });
-    const shufBtn = h('button.btn.btn--sm', { onclick: () => shuffleAll(filtered()) }, icon('shuffle'), h('span', { text: 'Shuffle' }));
+    const shufBtn = h('button.btn.btn--sm', { onclick: () => shuffleAll(filtered()) }, icon('shuffle'), h('span', { text: tx('Shuffle') }));
     const toolsBox = h('div.mu-tools', h('label.field.mu-search', icon('search'), searchIn), sortBtn, shufBtn);
     content.append(toolsBox, listBox);
     const foot = h('div.app__bar.app__bar--foot.mu-foot', { role: 'status', 'aria-live': 'polite' });
     const drop = h('div.mu-drop', { 'aria-hidden': 'true' },
-      h('div.mu-drop__card', icon('upload'), h('b', { text: 'Drop to add to Your music' }),
-        h('small', { text: 'Audio files are copied into ~/Music and stay in this browser.' })));
-    const shell = h('div.app.mu', side, h('div.app__main.mu-main', tabs, hero, content, foot), drop, fileIn);
+      h('div.mu-drop__card', icon('upload'), h('b', { text: tx('Drop to add to Your music') }),
+        h('small', { text: tx('Audio files are copied into ~/Music and stay in this browser.') })));
+    const shell = h('div.app.mu', side, h('div.app__main.mu-main', tabs, hero, content, foot), drop, fileIn, folderIn, lyricIn, m3uIn);
     root.appendChild(shell);
 
     /* ---------------- the hero: now playing ---------------- */
@@ -1074,9 +1489,10 @@ defineApp({
     const tSub = h('div.mu-sub');
     const seekFill = h('i.mu-seek__fill');
     const seekKnob = h('b.mu-seek__knob');
-    const seekEl = h('div.mu-seek', { role: 'slider', tabindex: '0', 'aria-label': 'Position in song',
+    const seekAB = h('i.mu-seek__ab', { 'aria-hidden': 'true' });
+    const seekEl = h('div.mu-seek', { role: 'slider', tabindex: '0', 'aria-label': tx('Position in song'),
       'aria-valuemin': '0', 'aria-valuemax': '0', 'aria-valuenow': '0' },
-      h('div.mu-seek__rail', seekFill, seekKnob));
+      h('div.mu-seek__rail', seekAB, seekFill, seekKnob));
     const tCur = h('span.mu-time');
     const tTot = h('span.mu-time.mu-time--r');
     const seekRow = h('div.mu-seekrow', tCur, seekEl, tTot);
@@ -1084,13 +1500,13 @@ defineApp({
     const liveLink = h('a.mu-live__link', { target: '_blank', rel: 'noopener noreferrer' });
     const liveRow = h('div.mu-liverow', h('span.mu-live', h('i'), 'LIVE'), liveTime, liveLink);
 
-    const btnShuf = h('button.ibtn.mu-ctl.tip', { 'aria-label': 'Shuffle', onclick: () => setShuffle(!P.shuffle) }, icon('shuffle'));
-    const btnPrev = h('button.ibtn.mu-ctl.tip', { 'data-tip': 'Previous (P)', 'aria-label': 'Previous', onclick: () => prev() }, icon('skip-back'));
+    const btnShuf = h('button.ibtn.mu-ctl.tip', { 'aria-label': tx('Shuffle'), onclick: () => setShuffle(!P.shuffle) }, icon('shuffle'));
+    const btnPrev = h('button.ibtn.mu-ctl.tip', { 'data-tip': tx('Previous (P)'), 'aria-label': tx('Previous'), onclick: () => prev() }, icon('skip-back'));
     const btnPlay = h('button.mu-play.tip', { onclick: () => toggle() });
-    const btnNext = h('button.ibtn.mu-ctl.tip', { 'data-tip': 'Next (N)', 'aria-label': 'Next', onclick: () => next() }, icon('skip-forward'));
+    const btnNext = h('button.ibtn.mu-ctl.tip', { 'data-tip': tx('Next (N)'), 'aria-label': tx('Next'), onclick: () => next() }, icon('skip-forward'));
     const btnRep = h('button.ibtn.mu-ctl.tip', { onclick: cycleRepeat }, icon('repeat'), h('span.mu-rep1', { text: '1' }));
     const btnMute = h('button.ibtn.tip', { onclick: () => store.set('prefs.muted', store.get('prefs.muted') !== true) });
-    const volEl = h('input.slider.mu-vol', { type: 'range', min: '0', max: '100', step: '1', 'aria-label': 'Volume (all of StaticOS)',
+    const volEl = h('input.slider.mu-vol', { type: 'range', min: '0', max: '100', step: '1', 'aria-label': tx('Volume (all of StaticOS)'),
       oninput: e => {
         store.set('prefs.volume', Number(e.target.value));
         if (Number(e.target.value) > 0 && store.get('prefs.muted') === true) store.set('prefs.muted', false);
@@ -1098,12 +1514,20 @@ defineApp({
       } });
     const status = h('div.mu-status');
     const alertBox = h('div.mu-alert', { role: 'alert' });
+    /* what you can do to the sound of what is playing: loop a part, speed, sleep timer, copy the name, mini player */
+    const abBtn = h('button.btn.btn--sm.mu-fx', { type: 'button', dataset: { role: 'ab' }, onclick: abStep }, icon('repeat'), h('span'));
+    const speedBtn = h('button.btn.btn--sm.mu-fx', { type: 'button', dataset: { role: 'speed' }, 'aria-haspopup': 'menu', onclick: e => speedMenu(e) }, icon('gauge'), h('span'));
+    const sleepBtn = h('button.btn.btn--sm.mu-fx', { type: 'button', dataset: { role: 'sleep' }, 'aria-haspopup': 'menu', onclick: e => sleepMenu(e) }, icon('moon'), h('span'));
+    const copyBtn = h('button.btn.btn--sm.mu-fx', { type: 'button', dataset: { role: 'copysong' }, onclick: () => copySong() }, icon('copy'), h('span', { text: tx('Copy song name') }));
+    const heartBtn = h('button.btn.btn--sm.mu-fx', { type: 'button', dataset: { role: 'heartsong' }, onclick: () => heartSong() }, icon('heart'), h('span'));
+    const miniBtn = h('button.ibtn.tip', { type: 'button', dataset: { role: 'mini' }, onclick: () => setMini(!S.mini) }, icon('minimize-2'));
+    const fxRow = h('div.mu-fxrow', abBtn, speedBtn, sleepBtn, copyBtn, heartBtn, h('div.grow'), miniBtn);
 
     hero.append(
       vis,
       h('div.mu-hero__top', art,
         h('div.mu-hero__meta', eyebrow, tTitle, tSub, status)),
-      h('div.mu-hero__bar', seekRow, liveRow),
+      h('div.mu-hero__bar', seekRow, liveRow, fxRow),
       h('div.mu-hero__ctl',
         h('div.mu-ctls', btnShuf, btnPrev, btnPlay, btnNext, btnRep),
         h('div.mu-volrow', btnMute, volEl)),
@@ -1112,6 +1536,7 @@ defineApp({
     /* seek: pointer drag + keys (arrows 5 s, PageUp/Down 30 s, Home/End) */
     const curDur = () => {
       const c = P.cur;
+      if (c?.kind === 'book') return Number.isFinite(audio.duration) ? audio.duration : (c.book.chapters[c.ci].len || 0);
       if (c?.kind !== 'file') return 0;
       if (Number.isFinite(audio.duration)) return audio.duration;
       const d = durOf(c.node);
@@ -1223,14 +1648,22 @@ defineApp({
 
     /* ---------------- paint: hero ---------------- */
     function setArt(c) {
-      const want = c?.kind === 'radio' ? `r:${c.st.id}` : c ? 'file' : 'none';
+      const cv = c?.kind === 'file' ? coverOf(c.node) : null;
+      const want = c?.kind === 'radio' ? `r:${c.st.id}` : c?.kind === 'book' ? `b:${c.book.id}` : c ? `file:${cv ? cv.url : ''}` : 'none';
       if (art.dataset.k === want) return;
       art.dataset.k = want;
       clearEl(art);
-      if (c?.kind === 'radio') {
-        const img = h('img', { src: c.st.logo, alt: `${c.st.name} logo`, decoding: 'async',
+      if (c?.kind === 'book') {
+        art.appendChild(h('img', { src: c.book.cover, alt: tx('Cover of {title}', { title: c.book.title }), decoding: 'async', dataset: { role: 'cover' },
+          onerror: () => { clearEl(art); art.appendChild(icon('mic')); } }));
+      } else if (c?.kind === 'radio') {
+        const img = h('img', { src: c.st.logo, alt: tx('{name} logo', { name: c.st.name }), decoding: 'async',
           onerror: () => { clearEl(art); art.appendChild(icon('cast')); } });
         art.appendChild(img);
+      } else if (cv) {
+        /* the cover is in the song's own file */
+        art.appendChild(h('img', { src: cv.url, alt: `Cover art for ${describe(c.node).title}`, decoding: 'async', dataset: { role: 'cover' },
+          onerror: () => { clearEl(art); art.appendChild(icon('music')); } }));
       } else art.appendChild(icon(c ? 'music' : 'list-music'));
     }
 
@@ -1256,6 +1689,10 @@ defineApp({
         tSub.textContent = P.onAir
           ? [P.onAir.artist, P.onAir.album].filter(Boolean).join(' · ') + ' · on air, per SomaFM'
           : c.st.blurb;
+      } else if (c.kind === 'book') {
+        eyebrow.textContent = `Audiobook · chapter ${c.ci + 1} of ${c.book.chapters.length}`;
+        tTitle.textContent = t.title;
+        tSub.textContent = [c.book.title, c.book.author, 'LibriVox'].filter(Boolean).join(' · ');
       } else {
         const pl = P.from?.pl ? plGet(P.from.pl) : null;
         eyebrow.textContent = pl ? `Playlist · ${pl.name}`
@@ -1270,7 +1707,7 @@ defineApp({
         st = P.started ? (radio ? 'Buffering — the connection to SomaFM is slow right now.' : 'Buffering…')
           : radio ? (P.slow ? 'Still connecting — SomaFM is slow to answer, or this network is blocking streams.' : 'Connecting to SomaFM…')
             : 'Loading…';
-      } else if (P.phase === 'ended') st = 'Reached the end of the queue.';
+      } else if (P.phase === 'ended') st = c?.kind === 'book' ? 'The book is finished.' : 'Reached the end of the queue.';
       else if (P.note) st = P.note;
       status.textContent = st;
       status.classList.toggle('is-on', !!st);
@@ -1298,16 +1735,17 @@ defineApp({
       btnPlay.disabled = !c && !playableLibrary().length;
       btnPrev.disabled = !c && !library().length;
       btnNext.disabled = !c && !library().length;
-      btnPrev.dataset.tip = radio ? 'Previous station (P)' : 'Previous (P)';
-      btnNext.dataset.tip = radio ? 'Next station (N)' : 'Next (N)';
-      btnPrev.setAttribute('aria-label', radio ? 'Previous station' : 'Previous song');
-      btnNext.setAttribute('aria-label', radio ? 'Next station' : 'Next song');
-      btnShuf.disabled = radio;
-      btnRep.disabled = radio;
-      btnShuf.classList.toggle('is-on', P.shuffle && !radio);
+      const book = c?.kind === 'book';
+      btnPrev.dataset.tip = radio ? 'Previous station (P)' : book ? 'Previous chapter (P)' : 'Previous (P)';
+      btnNext.dataset.tip = radio ? 'Next station (N)' : book ? 'Next chapter (N)' : 'Next (N)';
+      btnPrev.setAttribute('aria-label', radio ? 'Previous station' : book ? 'Previous chapter' : 'Previous song');
+      btnNext.setAttribute('aria-label', radio ? 'Next station' : book ? 'Next chapter' : 'Next song');
+      btnShuf.disabled = radio || book;
+      btnRep.disabled = radio || book;
+      btnShuf.classList.toggle('is-on', P.shuffle && !radio && !book);
       btnShuf.setAttribute('aria-pressed', String(P.shuffle));
       btnShuf.dataset.tip = radio ? 'Shuffle (not for live radio)' : P.shuffle ? 'Shuffle: on' : 'Shuffle: off';
-      btnRep.classList.toggle('is-on', P.repeat !== 'off' && !radio);
+      btnRep.classList.toggle('is-on', P.repeat !== 'off' && !radio && !book);
       btnRep.classList.toggle('is-one', P.repeat === 'one');
       const repTxt = { off: 'Repeat: off', all: 'Repeat: all', one: 'Repeat: this song' }[P.repeat];
       btnRep.dataset.tip = radio ? 'Repeat (not for live radio)' : repTxt;
@@ -1319,16 +1757,17 @@ defineApp({
       if (P.error) {
         const e = P.error;
         const acts = [];
-        if (e.actions.includes('retry')) acts.push(h('button.btn.btn--sm', { onclick: () => resume() }, icon('refresh'), 'Try again'));
-        if (e.actions.includes('page') && radio) acts.push(h('a.btn.btn--sm', { href: c.st.page, target: '_blank', rel: 'noopener noreferrer' }, 'Station page', icon('external-link')));
-        if (e.actions.includes('next') && P.queue.length > 1) acts.push(h('button.btn.btn--sm', { onclick: () => next(false, true) }, icon('skip-forward'), 'Play the next song'));
-        if (e.actions.includes('trash') && c?.kind === 'file' && alive(c.node)) acts.push(h('button.btn.btn--sm', { onclick: () => trash(c.node) }, icon('trash'), 'Move to Trash'));
-        if (e.actions.includes('import')) acts.push(h('button.btn.btn--sm', { onclick: pickFiles }, icon('upload'), 'Import songs'));
+        if (e.actions.includes('retry')) acts.push(h('button.btn.btn--sm', { onclick: () => resume() }, icon('refresh'), tx('Try again')));
+        if (e.actions.includes('page') && radio) acts.push(h('a.btn.btn--sm', { href: c.st.page, target: '_blank', rel: 'noopener noreferrer' }, tx('Station page'), icon('external-link')));
+        if (e.actions.includes('next') && P.queue.length > 1) acts.push(h('button.btn.btn--sm', { onclick: () => next(false, true) }, icon('skip-forward'), tx('Play the next song')));
+        if (e.actions.includes('trash') && c?.kind === 'file' && alive(c.node)) acts.push(h('button.btn.btn--sm', { onclick: () => trash(c.node) }, icon('trash'), tx('Move to Trash')));
+        if (e.actions.includes('import')) acts.push(h('button.btn.btn--sm', { onclick: pickFiles }, icon('upload'), tx('Import songs')));
         alertBox.append(icon('alert'), h('div.grow', h('b', { text: e.title }), h('p', { text: e.detail })),
           acts.length ? h('div.mu-alert__acts', acts) : null);
       }
 
       win.setSubtitle(c && on ? `${t.title}${t.artist && !radio ? ` — ${t.artist}` : ''}` : c ? (radio ? 'Stopped' : 'Paused') : '');
+      paintFx();
       paintTime();
       if (on) kick(); else visClear();
     }
@@ -1336,9 +1775,12 @@ defineApp({
     function paintTime() {
       const c = P.cur;
       if (c?.kind === 'radio') {
+        const Q = qualityInfo(P.quality || streamQuality());
+        const fell = P.started && streamQuality() !== (P.quality || streamQuality());
+        const q = fell ? `${Q.detail} (the ${qualityInfo(streamQuality()).detail} stream wouldn’t play here)` : Q.detail;
         liveTime.textContent = soundOn() && P.phase === 'playing'
-          ? `Listening ${dur(audio.currentTime || 0)} · 128 kbps MP3`
-          : '128 kbps MP3 stream';
+          ? `Listening ${dur(audio.currentTime || 0)} · ${q}`
+          : `${q} stream`;
         return;
       }
       const d = curDur();
@@ -1347,8 +1789,14 @@ defineApp({
       const pct = `${(f * 100).toFixed(2)}%`;
       seekFill.style.width = pct;
       seekKnob.style.left = pct;
+      if (d && P.ab.a !== null) {
+        const a = clamp(P.ab.a / d, 0, 1), b = P.ab.b === null ? a : clamp(P.ab.b / d, 0, 1);
+        seekAB.style.left = `${(a * 100).toFixed(2)}%`;
+        seekAB.style.width = P.ab.b === null ? '2px' : `${((b - a) * 100).toFixed(2)}%`;
+        seekAB.classList.add('is-on');
+      } else seekAB.classList.remove('is-on');
       tCur.textContent = c ? dur(t) : '0:00';
-      tTot.textContent = c && d ? dur(d) : c && typeof durOf(c.node) !== 'number' && P.phase !== 'error' ? '…' : '—';
+      tTot.textContent = c && d ? dur(d) : c && c.kind !== 'book' && typeof durOf(c.node) !== 'number' && P.phase !== 'error' ? '…' : c?.kind === 'book' && P.phase !== 'error' ? '…' : '—';
       seekEl.setAttribute('aria-valuemax', String(Math.round(d)));
       seekEl.setAttribute('aria-valuenow', String(Math.round(t)));
       seekEl.setAttribute('aria-valuetext', d ? `${dur(t)} of ${dur(d)}` : 'No song loaded');
@@ -1369,16 +1817,53 @@ defineApp({
     /* ---------------- paint: sidebar + tabs ---------------- */
     const VIEWS = [
       ['songs', 'music', 'Your music'],
+      ['sonora', 'play', 'Sonora'],
       ['queue', 'list-music', 'Up next'],
       ['radio', 'cast', 'Radio'],
       ['lists', 'list', 'Playlists'],
       ['ambient', 'cloud-rain', 'Ambient sounds', 'Ambient'],
       ['tuner', 'gauge', 'Tuner'],
+      ['most', 'bar-chart', 'Most played', 'Top'],
+      ['recent', 'clock', 'Recently played', 'Recent'],
+      ['lyrics', 'align-left', 'Lyrics'],
+      ['sound', 'sliders', 'Sound'],
+      ['books', 'mic', 'Audiobooks', 'Books'],
     ];
-    const TABS = ['songs', 'lists', 'queue', 'radio', 'ambient', 'tuner'];
+    /* a page by its id, so the sidebar's groups don't depend on the order of VIEWS */
+    const viewOf = id => VIEWS.find(v => v[0] === id);
+    const TABS = ['songs', 'sonora', 'lists', 'queue', 'radio', 'books', 'lyrics', 'sound', 'ambient', 'tuner'];
+    /* the Audiobooks page (music-books.js) keeps its own search and book page while the window lives */
+    let AB = null;
+    const booksView = () => {
+      if (!AB) AB = createAudiobooks({ h, icon, host: {
+        state: () => (P.cur?.kind === 'book' ? { id: P.cur.book.id, ch: P.cur.ci, playing: soundOn() && P.phase === 'playing' } : null),
+        play: (book, ch, at) => startBook(book, ch, at, true),
+        toggle: () => toggle(),
+      } });
+      return [AB.el];
+    };
     /* the tuner (music-tuner.js) keeps its microphone only while its page is on screen */
     let TU = null;
     const tunerView = () => { if (!TU) TU = createTuner({ h, icon, store }); return [TU.el]; };
+    /* Sonora (sonora-app.surge.sh), a music app made by StaticOS's own maker, in a frame of its own
+       origin. It plays through YouTube's, Spotify's and Apple Music's own players, which must stay on
+       screen while they play, so the frame lives only while this page is open: going to another page
+       here stops what it was playing, and "Open in a new tab" keeps it going on its own. */
+    const SONORA = 'https://sonora-app.surge.sh/#/home';
+    let SO = null;
+    const sonoraView = () => {
+      if (!SO) SO = h('iframe.mu-sonora', {
+        src: SONORA, title: 'Sonora',
+        allow: 'autoplay; encrypted-media; fullscreen; picture-in-picture; clipboard-write',
+        sandbox: 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-presentation',
+        referrerpolicy: 'strict-origin-when-cross-origin',
+      });
+      return [h('div.mu-sonora__bar',
+        icon('play'), h('b', { text: 'Sonora' }),
+        h('span.dim', { text: tx('Songs and radio from Sonora, played through YouTube, Spotify or Apple Music') }),
+        h('div.grow'),
+        h('a.btn.btn--sm', { href: SONORA, target: '_blank', rel: 'noopener' }, icon('external-link'), tx('Open in a new tab'))), SO];
+    };
     const plOf = view => (typeof view === 'string' && view.startsWith('pl:') ? plGet(view.slice(3)) : null);
     const okView = view => VIEWS.some(v => v[0] === view) || !!plOf(view);
     const viewTitle = view => plOf(view)?.name || VIEWS.find(v => v[0] === view)?.[2] || 'Music';
@@ -1396,7 +1881,8 @@ defineApp({
 
     function paintSide() {
       clearEl(side);
-      const counts = { songs: library().length, queue: upNextCount(), radio: STATIONS.length, ambient: AMB.state().playing ? 'On' : '', tuner: '' };
+      const counts = { songs: library().length, sonora: '', queue: upNextCount(), radio: STATIONS.length, ambient: AMB.state().playing ? 'On' : '', tuner: '',
+        most: Object.keys(playsAll()).length || '', recent: '', lyrics: '', sound: fx.EQ().on ? 'EQ' : '', books: LV.shelf().length || '' };
       const item = ([v, ic, label]) => h('button.side__item', {
         class: S.view === v ? 'is-on' : null, 'aria-current': S.view === v ? 'page' : null, onclick: () => go(v),
       }, icon(ic), h('span', { text: label }), h('small', { text: String(counts[v]) }));
@@ -1411,21 +1897,22 @@ defineApp({
         }, icon('list'), h('span.trunc', { text: p.name }), h('small', { text: String(p.tracks.length) }));
       };
       side.append(
-        h('div.side__group', h('div.side__label', { text: 'Library' }), item(VIEWS[0]), item(VIEWS[1])),
-        h('div.side__group.mu-pls', { role: 'group', 'aria-label': 'Playlists' },
-          h('button.side__label.mu-pls__label', { type: 'button', onclick: () => go('lists'), title: 'All playlists' }, h('span', { text: 'Playlists' })),
+        h('div.side__group', h('div.side__label', { text: tx('Library') }), item(viewOf('songs')), item(viewOf('sonora')), item(viewOf('queue')), item(viewOf('most')), item(viewOf('recent'))),
+        h('div.side__group.mu-pls', { role: 'group', 'aria-label': tx('Playlists') },
+          h('button.side__label.mu-pls__label', { type: 'button', onclick: () => go('lists'), title: tx('All playlists') }, h('span', { text: tx('Playlists') })),
           lists.map(plItem),
-          h('button.side__item.mu-pls__new', { type: 'button', onclick: () => newPlaylist() }, icon('plus'), h('span', { text: 'New playlist' }))),
-        h('div.side__group', h('div.side__label', { text: 'Live' }), item(VIEWS[2]), item(VIEWS[4])),
-        h('div.side__group', h('div.side__label', { text: 'Tools' }), item(VIEWS[5])),
-        h('div.side__group', h('div.side__label', { text: 'Elsewhere' }),
-          h('button.side__item', { onclick: () => api.openApp('files', { path: DIR }) }, icon('folder'), h('span', { text: 'Music folder' })),
-          h('button.side__item', { onclick: () => api.openApp('spotify') }, icon('list-music'), h('span', { text: 'Spotify' }),
+          h('button.side__item.mu-pls__new', { type: 'button', onclick: () => newPlaylist() }, icon('plus'), h('span', { text: tx('New playlist') }))),
+        h('div.side__group', h('div.side__label', { text: tx('Live') }), item(viewOf('radio')), item(viewOf('ambient')), item(viewOf('books'))),
+        h('div.side__group', h('div.side__label', { text: tx('Tools') }), item(viewOf('lyrics')), item(viewOf('sound')), item(viewOf('tuner'))),
+        h('div.side__group', h('div.side__label', { text: tx('Elsewhere') }),
+          h('button.side__item', { onclick: () => api.openApp('files', { path: DIR }) }, icon('folder'), h('span', { text: tx('Music folder') })),
+          h('button.side__item', { onclick: () => api.openApp('spotify') }, icon('list-music'), h('span', { text: tx('Spotify') }),
             h('small', icon('external-link')))),
         h('div.grow'),
         h('div.mu-side__imp',
-          h('button.btn.btn--primary.btn--block', { onclick: pickFiles }, icon('upload'), 'Import songs'),
-          h('small', { text: 'Or drop audio files on this window.' })));
+          h('button.btn.btn--primary.btn--block', { onclick: pickFiles }, icon('upload'), tx('Import songs')),
+          h('button.btn.btn--block.btn--sm', { dataset: { role: 'import-folder' }, onclick: pickFolder }, icon('folder'), tx('Import a folder')),
+          h('small', { text: tx('Or drop audio files, or a folder, on this window.') })));
 
       clearEl(tabs);
       for (const id of TABS) {
@@ -1474,7 +1961,7 @@ defineApp({
     }
 
     const rowRefs = new Map();                      /* key -> { row, main, e, idx } for in-place updates */
-    function songRow(e, idx, list) {
+    function songRow(e, idx, list, extra = null) {
       const n = e.node;
       const has = media.isMedia(n);
       const d = durOf(n);
@@ -1485,11 +1972,13 @@ defineApp({
         : d === 'bad' ? 'This browser could not read this file.'
           : d === 'unknown' ? 'The browser did not report a length for this file.'
             : typeof d === 'number' ? 'Length, read from the file' : 'Reading the length…';
-      const who = e.artist || 'Unknown artist';
+      const q = S.filter.trim().toLowerCase();
+      const via = q && !`${e.title} ${e.artist} ${e.album} ${e.node.name}`.toLowerCase().includes(q) ? 'in the lyrics' : '';
+      const who = [e.artist || 'Unknown artist', e.album, via].filter(Boolean).join(' · ');
 
       let main;
       if (S.renaming === n) {
-        const input = h('input.mu-rename__in', { value: stemOf(n.name), 'aria-label': `New name for ${n.name}`, spellcheck: 'false',
+        const input = h('input.mu-rename__in', { value: stemOf(n.name), 'aria-label': tx('New name for {name}', { name: n.name }), spellcheck: 'false',
           onkeydown: ev => {
             ev.stopPropagation();
             if (ev.key === 'Escape') { ev.preventDefault(); S.renaming = null; S.renameErr = ''; paintList(); focusRow(n); }
@@ -1522,9 +2011,10 @@ defineApp({
       },
         main,
         h('span.mu-row__fmt', { text: fmtTag(n.name) }),
-        h('span.mu-row__size', { text: has ? bytes(n.size) : '0 B', title: 'File size' }),
+        extra?.badge ? h('span.mu-row__size.mu-row__plays', { text: extra.badge, title: tx('From what you have really listened to') })
+          : h('span.mu-row__size', { text: has ? bytes(n.size) : '0 B', title: tx('File size') }),
         h('span.mu-row__len', { text: lenTxt, title: lenTip, class: !has || d === 'bad' ? 'is-bad' : null }),
-        h('button.ibtn.mu-row__more', { dataset: { role: 'more' }, 'aria-label': `More for ${e.title}`, 'aria-haspopup': 'menu',
+        h('button.ibtn.mu-row__more', { dataset: { role: 'more' }, 'aria-label': tx('More for {title}', { title: e.title }), 'aria-haspopup': 'menu',
           onclick: ev => rowMenu(ev, e, list) }, icon('more-horizontal')));
       if (S.renaming !== n) rowRefs.set(keyOf(n), { row, main, e, idx });
       return row;
@@ -1553,7 +2043,8 @@ defineApp({
 
     function filtered() {
       const q = S.filter.trim().toLowerCase();
-      return sortedLibrary(currentSort()).filter(e => !q || `${e.title} ${e.artist} ${e.node.name}`.toLowerCase().includes(q));
+      return sortedLibrary(currentSort()).filter(e => !q || `${e.title} ${e.artist} ${e.album} ${e.node.name}`.toLowerCase().includes(q)
+        || (findLyrics(e.node, e.path)?.text || '').toLowerCase().includes(q));
     }
 
     function songsView() {
@@ -1563,14 +2054,14 @@ defineApp({
         const formats = playableFormats();
         frag.push(h('div.mu-empty',
           h('div.mu-empty__art', icon('music')),
-          h('h3', { text: 'Import songs from your computer' }),
-          h('p', { text: 'Pick audio files, or drop them on this window. They’re copied into ~/Music and kept in this browser on this device — nothing is uploaded anywhere.' }),
+          h('h3', { text: tx('Import songs from your computer') }),
+          h('p', { text: tx('Pick audio files, or drop them on this window. They’re copied into ~/Music and kept in this browser on this device — nothing is uploaded anywhere.') }),
           formats.length ? h('p.mu-empty__fine', { text: `This browser says it can play ${formats.join(', ')}.` }) : null,
           h('div.mu-empty__acts',
-            h('button.btn.btn--primary', { onclick: pickFiles }, icon('upload'), 'Import songs'),
-            h('button.btn', { onclick: () => go('radio') }, icon('cast'), 'Listen to live radio')),
+            h('button.btn.btn--primary', { onclick: pickFiles }, icon('upload'), tx('Import songs')),
+            h('button.btn', { onclick: () => go('radio') }, icon('cast'), tx('Listen to live radio'))),
           h('button.mu-linkbtn', { onclick: () => api.openApp('spotify') },
-            'Listening on Spotify? Open the Spotify app', icon('chevron-right'))));
+            tx('Listening on Spotify? Open the Spotify app'), icon('chevron-right'))));
         return frag;
       }
       const sort = currentSort();
@@ -1579,11 +2070,11 @@ defineApp({
       sortBtn.setAttribute('aria-label', `Sort: ${SORTS[sort].label}`);
       shufBtn.disabled = !list.some(e => playable(e.node));
       if (!list.length) {
-        frag.push(h('div.empty', icon('search'), h('b', { text: 'No matches' }),
-          h('small', { text: `Nothing in Your music matches “${S.filter}”.` })));
+        frag.push(h('div.empty', icon('search'), h('b', { text: tx('No matches') }),
+          h('small', { text: tx('Nothing in Your music matches “{filter}” — songs are matched on title, artist, album, file name and lyrics.', { filter: S.filter }) })));
         return frag;
       }
-      const ul = h('div.mu-list', { role: 'list', 'aria-label': 'Your music' });
+      const ul = h('div.mu-list', { role: 'list', 'aria-label': tx('Your music') });
       list.forEach((e, i) => ul.appendChild(songRow(e, i + 1, list)));
       frag.push(ul);
       return frag;
@@ -1594,52 +2085,81 @@ defineApp({
       const frag = [];
       if (c?.kind === 'radio') {
         frag.push(h('div.mu-empty.mu-empty--sm', h('div.mu-empty__art', icon('cast')),
-          h('h3', { text: 'Radio is live, so there’s no queue' }),
-          h('p', { text: `${c.st.name} plays whatever SomaFM is broadcasting. Next and Previous switch stations; pick a song in Your music to go back to your files.` }),
-          h('div.mu-empty__acts', h('button.btn', { onclick: () => go('songs') }, icon('music'), 'Your music'))));
+          h('h3', { text: tx('Radio is live, so there’s no queue') }),
+          h('p', { text: tx('{name} plays whatever SomaFM is broadcasting. Next and Previous switch stations; pick a song in Your music to go back to your files.', { name: c.st.name }) }),
+          h('div.mu-empty__acts', h('button.btn', { onclick: () => go('songs') }, icon('music'), tx('Your music')))));
+        return frag;
+      }
+      if (c?.kind === 'book') {
+        frag.push(h('div.mu-empty.mu-empty--sm', h('div.mu-empty__art', icon('mic')),
+          h('h3', { text: tx('An audiobook is playing') }),
+          h('p', { text: tx('{title} goes chapter by chapter: Next and Previous step through them, and the Audiobooks page lists them all.', { title: c.book.title }) }),
+          h('div.mu-empty__acts', h('button.btn', { onclick: () => go('books') }, icon('mic'), tx('Audiobooks')))));
         return frag;
       }
       if (!c) {
         frag.push(h('div.mu-empty.mu-empty--sm', h('div.mu-empty__art', icon('list-music')),
-          h('h3', { text: 'Nothing up next' }),
-          h('p', { text: 'Play a song from Your music and the rest line up here. “Play next” and “Add to queue” on any song put it here too.' }),
-          h('div.mu-empty__acts', h('button.btn', { onclick: () => go('songs') }, icon('music'), 'Your music'))));
+          h('h3', { text: tx('Nothing up next') }),
+          h('p', { text: tx('Play a song from Your music and the rest line up here. “Play next” and “Add to queue” on any song put it here too.') }),
+          h('div.mu-empty__acts', h('button.btn', { onclick: () => go('songs') }, icon('music'), tx('Your music')))));
         return frag;
       }
       const make = (n, i, label) => {
-        const e = { node: n, ...parseName(n.name) };
+        const e = { node: n, ...describe(n) };
         const d = durOf(n);
         const row = h('div.mu-row', { role: 'listitem', class: i === P.qi ? 'is-cur' : null, dataset: { key: `q${i}` } },
           h('button.mu-row__main', { dataset: { role: 'main' }, onkeydown: rowNav,
-            'aria-label': i === P.qi ? `${soundOn() ? 'Pause' : 'Play'} ${e.title}` : `Play ${e.title} now`,
+            'aria-label': i === P.qi ? `${soundOn() ? 'Pause' : 'Play'} ${e.title}` : tx('Play {title} now', { title: e.title }),
             onclick: () => { if (i === P.qi) toggle(); else { P.qi = i; startFile(n, true); } } },
             i === P.qi ? leadFor(n, 0) : h('span.mu-row__lead', { 'aria-hidden': 'true', text: String(label) }),
-            h('span.mu-row__txt', h('b', { text: e.title }), h('small', { text: e.artist || 'Unknown artist' }))),
+            h('span.mu-row__txt', h('b', { text: e.title }), h('small', { text: e.artist || tx('Unknown artist') }))),
           h('span.mu-row__fmt', { text: fmtTag(n.name) }),
           h('span.mu-row__size', { text: bytes(n.size) }),
           h('span.mu-row__len', { text: typeof d === 'number' ? dur(d) : '—' }),
           i > P.qi
-            ? h('button.ibtn.mu-row__more', { dataset: { role: 'drop' }, 'aria-label': `Remove ${e.title} from Up next`, onclick: () => dropAt(i) }, icon('x'))
+            ? h('button.ibtn.mu-row__more', { dataset: { role: 'drop' }, 'aria-label': tx('Remove {title} from Up next', { title: e.title }), onclick: () => dropAt(i) }, icon('x'))
             : h('span.mu-row__more'));
+        if (i > P.qi) {
+          /* a grip to drag the song to a new place in the queue (or focus it and press up or down) */
+          const k = i - P.qi - 1;
+          const grip = h('button.mu-grip', {
+            type: 'button', dataset: { role: 'grip' },
+            'aria-label': `Move ${e.title} (position ${k + 1} of ${P.queue.length - P.qi - 1} in Up next) — drag, or press up or down`,
+            onpointerdown: ev => startDrag(ev, '__queue', k),
+            onkeydown: ev => {
+              if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+              ev.preventDefault();
+              ev.stopPropagation();
+              const to = i + (ev.key === 'ArrowUp' ? -1 : 1);
+              if (to <= P.qi || to >= P.queue.length) return;
+              queueMove(i, to);
+              queueMicrotask(() => listBox.querySelector(`[data-key="q${to}"] [data-role="grip"]`)?.focus({ preventScroll: true }));
+            },
+          }, icon('grip-vertical'));
+          row.prepend(grip);
+          row.classList.add('mu-qrow');
+        }
         return row;
       };
-      frag.push(h('div.mu-qhead', h('span.label', { text: 'Now playing' })));
-      frag.push(h('div.mu-list', { role: 'list', 'aria-label': 'Now playing' }, make(P.queue[P.qi] || c.node, P.qi, 0)));
+      frag.push(h('div.mu-qhead', h('span.label', { text: tx('Now playing') })));
+      frag.push(h('div.mu-list', { role: 'list', 'aria-label': tx('Now playing') }, make(P.queue[P.qi] || c.node, P.qi, 0)));
       const rest = P.queue.slice(P.qi + 1);
       const notes = [P.shuffle ? 'Shuffle is on' : 'In order', { off: 'stops at the end', all: 'repeats the queue', one: 'repeats this song' }[P.repeat]];
       frag.push(h('div.mu-qhead',
-        h('span.label', { text: `Up next · ${rest.length}` }),
+        h('span.label', { text: tx('Up next · {length}', { length: rest.length }) }),
         h('span.dim', { text: notes.join(' · ') }),
         h('div.grow'),
-        rest.length ? h('button.btn.btn--sm.btn--ghost', { onclick: clearUpNext }, 'Clear') : null));
+        P.queue.length > 1 ? h('button.btn.btn--sm', { dataset: { role: 'queue-save' }, onclick: saveQueue }, icon('list-plus'), tx('Save as playlist')) : null,
+        rest.length ? h('button.btn.btn--sm.btn--ghost', { onclick: clearUpNext }, tx('Clear')) : null));
       if (!rest.length) {
         frag.push(h('p.mu-qnone', { text: P.repeat === 'all' && P.queue.length > 1
           ? 'That’s the last song — the queue starts over after it.'
           : 'That’s the last song. Add more with “Play next” or “Add to queue”.' }));
       } else {
-        const ul = h('div.mu-list', { role: 'list', 'aria-label': 'Up next' });
+        const ul = h('div.mu-list', { role: 'list', 'aria-label': tx('Up next') });
         rest.forEach((n, k) => ul.appendChild(make(n, P.qi + 1 + k, k + 1)));
         frag.push(ul);
+        frag.push(h('p.mu-plhint', { text: tx('Drag the grip to reorder what plays next — or focus it and press ↑ ↓.') }));
       }
       return frag;
     }
@@ -1663,23 +2183,101 @@ defineApp({
       go(`pl:${id}`);
       S.plRenaming = id;
       paintList();
-      if (nodes.length) flash(`Made a playlist with “${parseName(nodes[0].name).title}” in it — name it, then add more.`);
+      if (nodes.length) flash(`Made a playlist with “${describe(nodes[0]).title}” in it — name it, then add more.`);
     }
     function addTo(id, n) {
       const p = plGet(id);
       const r = plAdd(id, n);
-      const t = parseName(n.name).title;
+      const t = describe(n).title;
       if (r === 'added') flash(`Added “${t}” to ${p.name}.`);
       else if (r === 'dup') flash(`“${t}” is already in ${p.name}.`, true);
       else if (r === 'nodata') flash(`“${t}” has no audio in it, so it can’t go in a playlist.`, true);
     }
+    /** The whole queue (what is playing and what is next) as a new playlist. */
+    function saveQueue() {
+      const nodes = P.queue.filter(n => media.isMedia(n));
+      if (!nodes.length) { flash('There is nothing in the queue to save.', true); return; }
+      const id = plCreate(plFreeName('Queue'), nodes);
+      go(`pl:${id}`);
+      S.plRenaming = id;
+      paintList();
+      flash(`Saved ${songCount(nodes.length)} from the queue as a playlist — name it.`);
+    }
+    function m3uText(p) {
+      const out = ['#EXTM3U'];
+      for (const t of plTracks(p)) {
+        const name = t.e ? t.e.node.name : t.name;
+        const d = t.e ? durOf(t.e.node) : undefined;
+        const label = t.e ? (t.e.artist ? `${t.e.artist} - ${t.e.title}` : t.e.title) : stemOf(t.name || 'Song');
+        out.push(`#EXTINF:${typeof d === 'number' ? Math.round(d) : -1},${label.replace(/[\r\n]+/g, ' ')}`, name);
+      }
+      return `${out.join('\n')}\n`;
+    }
+    function exportM3u(id) {
+      const p = plGet(id);
+      if (!p) return;
+      const blob = new Blob([m3uText(p)], { type: 'audio/x-mpegurl' });
+      const url = URL.createObjectURL(blob);
+      const fileName = `${p.name.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'Playlist'}.m3u`;
+      const a = h('a', { href: url, download: fileName, style: { display: 'none' } });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      const rec = { url, t: setTimeout(() => { URL.revokeObjectURL(url); pendingUrls.delete(rec); }, 20000) };
+      pendingUrls.add(rec);
+      flash(`Exported “${p.name}” as ${fileName} — it lists song file names, so it works with the same songs anywhere.`);
+    }
+    /** Read an .m3u/.m3u8 and make a playlist from the songs in it that are in Your music. */
+    async function importM3u(file) {
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { flash(`“${file.name}” is too big to be a playlist.`, true); return; }
+      const text = (await file.text()).replace(/^\uFEFF/, '');
+      if (dead) return;
+      const entries = [];
+      let label = '';
+      for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (/^#EXTINF:/i.test(line)) { label = line.slice(line.indexOf(',') + 1).trim(); continue; }
+        if (line.startsWith('#')) continue;
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(line) && !/^file:/i.test(line)) { entries.push({ name: line, label, web: true }); label = ''; continue; }
+        let path = line.replace(/^file:\/\/(localhost)?/i, '');
+        try { path = decodeURIComponent(path); } catch (e) { /* not encoded */ }
+        entries.push({ name: path.split(/[\\/]/).pop(), label });
+        label = '';
+      }
+      const lib = library();
+      const byName = new Map(), byStem = new Map();
+      for (const e of lib) {
+        if (!media.isMedia(e.node)) continue;
+        if (!byName.has(e.node.name.toLowerCase())) byName.set(e.node.name.toLowerCase(), e.node);
+        if (!byStem.has(stemOf(e.node.name).toLowerCase())) byStem.set(stemOf(e.node.name).toLowerCase(), e.node);
+      }
+      const found = [], missing = [];
+      for (const en of entries) {
+        if (en.web) { missing.push({ name: en.label || en.name, why: 'an internet address — Music only plays your own files' }); continue; }
+        const n = byName.get(en.name.toLowerCase()) || byStem.get(stemOf(en.name).toLowerCase());
+        if (n) found.push(n); else missing.push({ name: en.name, why: 'not in Your music' });
+      }
+      if (!entries.length) { S.report = { title: tx('“{name}” has no songs in it', { name: file.name }), lines: [] }; paintList(); flash('That playlist file is empty.', true); return; }
+      if (!found.length) {
+        S.report = { title: tx('None of the {length} songs in “{name}” are in Your music', { length: entries.length, name: file.name }), lines: missing };
+        paintList();
+        return;
+      }
+      const id = plCreate(plFreeName(cleanPlName(stemOf(file.name)) || 'Imported playlist'), found);
+      S.report = missing.length ? { title: `Imported “${plGet(id).name}”: ${found.length} of ${entries.length} songs found`, lines: missing } : null;
+      go(`pl:${id}`);
+      flash(`Imported “${plGet(id).name}” — ${songCount(plGet(id).tracks.length)}${missing.length ? `, ${missing.length} not found` : ''}.`);
+    }
     function playPl(id, shuffle) {
       if (!playPlaylist(id, shuffle)) flash('Nothing in this playlist can play — add songs from Your music.', true);
+      else markNow(id, P.cur?.node?.content);
     }
     async function deletePl(id) {
       const p = plGet(id);
       if (!p) return;
-      const yes = await api.confirm({ title: `Delete “${p.name}”?`, ok: 'Delete playlist', danger: true,
+      const yes = await api.confirm({ title: tx('Delete “{name}”?', { name: p.name }), ok: 'Delete playlist', danger: true,
         message: `The ${songCount(p.tracks.length)} in it stay in Your music — only the playlist goes.` });
       if (!yes || dead) return;
       SH.byPlaylist(id)?.leave();
@@ -1694,11 +2292,12 @@ defineApp({
       if (!p) return;
       const r = ev.currentTarget?.getBoundingClientRect?.();
       api.menu([
-        { label: 'Play', icon: 'play', disabled: !p.tracks.length, onClick: () => playPl(id, false) },
-        { label: 'Shuffle', icon: 'shuffle', disabled: !p.tracks.length, onClick: () => playPl(id, true) },
+        { label: tx('Play'), icon: 'play', disabled: !p.tracks.length, onClick: () => playPl(id, false) },
+        { label: tx('Shuffle'), icon: 'shuffle', disabled: !p.tracks.length, onClick: () => playPl(id, true) },
         '-',
-        { label: 'Rename…', icon: 'edit-3', onClick: () => { if (S.view !== `pl:${id}`) go(`pl:${id}`); S.plRenaming = id; paintList(); } },
-        { label: 'Delete playlist…', icon: 'trash', danger: true, onClick: () => deletePl(id) },
+        { label: tx('Rename…'), icon: 'edit-3', onClick: () => { if (S.view !== `pl:${id}`) go(`pl:${id}`); S.plRenaming = id; paintList(); } },
+        { label: tx('Export as .m3u'), icon: 'download', onClick: () => exportM3u(id) },
+        { label: tx('Delete playlist…'), icon: 'trash', danger: true, onClick: () => deletePl(id) },
       ], ev.clientX || (r ? r.left : 0), ev.clientY || (r ? r.bottom : 0));
     }
     /** "Add songs": every song in Your music, the ones already in it ticked. */
@@ -1709,15 +2308,15 @@ defineApp({
       const have = new Set(p.tracks.map(t => t.ref));
       const songs = sortedLibrary('title');
       api.menu(songs.length ? [
-        { header: true, label: `Add to ${p.name}` },
+        { header: true, label: tx('Add to {name}', { name: p.name }) },
         ...songs.map(e => {
           const inIt = media.isMedia(e.node) && have.has(e.node.content);
           return { label: `${e.title}${e.artist ? ` — ${e.artist}` : ''}`, icon: inIt ? 'check' : 'plus',
             disabled: inIt || !media.isMedia(e.node), onClick: () => addTo(id, e.node) };
         }),
       ] : [
-        { label: 'Your music is empty', icon: 'music', disabled: true },
-        { label: 'Import songs…', icon: 'upload', onClick: pickFiles },
+        { label: tx('Your music is empty'), icon: 'music', disabled: true },
+        { label: tx('Import songs…'), icon: 'upload', onClick: pickFiles },
       ], r.left, r.bottom + 4);
     }
 
@@ -1751,6 +2350,10 @@ defineApp({
       paintAll();
     });
     disposers.push(offShare);
+    /* shared playlists: how the songs are shown (display only), and the "playing now" marker */
+    const SH_SORTS = ['order', 'name', 'who'];
+    let shSort = 'order';
+    const markNow = (id, ref) => { const sess = SH.byPlaylist(id); if (sess && ref) sess.setNow(ref); };
     function sharePanelFor(id) {
       const sess = SH.byPlaylist(id);
       if (!sess) return null;
@@ -1766,6 +2369,9 @@ defineApp({
         playStation: st => startStation(st, true),
         stationsList: STATIONS,
         menu: shMenu,
+        sort: shSort,
+        setSort: v => { shSort = SH_SORTS.includes(v) ? v : 'order'; paintAll(); },
+        clearNow: () => sess.clearNow(),
       });
     }
 
@@ -1774,13 +2380,14 @@ defineApp({
       if (!lists.length) {
         return [join.el, h('div.mu-empty',
           h('div.mu-empty__art', icon('list')),
-          h('h3', { text: 'No playlists yet' }),
-          h('p', { text: 'Make one, then fill it from Your music with ⋯ › Add to playlist. Playlists are kept in this browser.' }),
+          h('h3', { text: tx('No playlists yet') }),
+          h('p', { text: tx('Make one, then fill it from Your music with ⋯ › Add to playlist. Playlists are kept in this browser.') }),
           h('div.mu-empty__acts',
-            h('button.btn.btn--primary', { onclick: () => newPlaylist() }, icon('plus'), 'New playlist'),
-            library().length ? null : h('button.btn', { onclick: pickFiles }, icon('upload'), 'Import songs')))];
+            h('button.btn.btn--primary', { onclick: () => newPlaylist() }, icon('plus'), tx('New playlist')),
+            h('button.btn', { dataset: { role: 'import-m3u' }, onclick: () => m3uIn.click() }, icon('upload'), tx('Import .m3u')),
+            library().length ? null : h('button.btn', { onclick: pickFiles }, icon('upload'), tx('Import songs'))))];
       }
-      const grid = h('div.mu-plgrid', { role: 'list', 'aria-label': 'Playlists' });
+      const grid = h('div.mu-plgrid', { role: 'list', 'aria-label': tx('Playlists') });
       for (const p of lists) {
         const tracks = plTracks(p);
         const { total, known } = plLength(tracks);
@@ -1791,12 +2398,13 @@ defineApp({
             h('span.mu-plcard__art', { 'aria-hidden': 'true' }, icon('list')),
             h('span.mu-plcard__txt', h('b', { text: p.name }),
               h('small', { text: [songCount(p.tracks.length), total && known ? dur(total) : null, gone ? `${gone} gone` : null].filter(Boolean).join(' · ') }))),
-          h('button.ibtn.mu-plcard__play', { dataset: { role: 'play' }, 'aria-label': `Play ${p.name}`, disabled: !tracks.some(t => t.e && playable(t.e.node)),
+          h('button.ibtn.mu-plcard__play', { dataset: { role: 'play' }, 'aria-label': tx('Play {name}', { name: p.name }), disabled: !tracks.some(t => t.e && playable(t.e.node)),
             onclick: () => playPl(p.id, false) }, icon('play', { fill: true }))));
       }
       grid.appendChild(h('button.mu-plcard.mu-plcard--new', { dataset: { key: 'pc:new', role: 'main' }, onclick: () => newPlaylist() },
-        h('span.mu-plcard__art', { 'aria-hidden': 'true' }, icon('plus')), h('span.mu-plcard__txt', h('b', { text: 'New playlist' }))));
-      return [h('div.mu-qhead', h('span.label', { text: `Playlists · ${lists.length}` }), h('span.dim', { text: 'kept in this browser' })), join.el, grid];
+        h('span.mu-plcard__art', { 'aria-hidden': 'true' }, icon('plus')), h('span.mu-plcard__txt', h('b', { text: tx('New playlist') }))));
+      return [h('div.mu-qhead', h('span.label', { text: tx('Playlists · {length}', { length: lists.length }) }), h('span.dim', { text: tx('kept in this browser') }), h('div.grow'),
+        h('button.btn.btn--sm', { dataset: { role: 'import-m3u' }, onclick: () => m3uIn.click() }, icon('upload'), tx('Import .m3u'))), join.el, grid];
     }
 
     function plHeader(p, tracks) {
@@ -1816,32 +2424,33 @@ defineApp({
           queueMicrotask(() => listBox.querySelector('[data-role="rename"]')?.focus({ preventScroll: true }));
         };
         const input = h('input.mu-rename__in.mu-plhead__in', { value: p.name, maxlength: String(PL_NAME_MAX), spellcheck: 'false',
-          'aria-label': 'Playlist name',
+          'aria-label': tx('Playlist name'),
           onkeydown: ev => {
             ev.stopPropagation();
             if (ev.key === 'Enter') { ev.preventDefault(); commit(input.value, true); }
             else if (ev.key === 'Escape') { ev.preventDefault(); commit('', false); }
           },
           onblur: () => { if (document.hasFocus()) commit(input.value, true); } });
-        name = h('div.mu-plhead__edit', input, h('small', { text: 'Enter to keep · Esc to cancel' }));
+        name = h('div.mu-plhead__edit', input, h('small', { text: tx('Enter to keep · Esc to cancel') }));
         queueMicrotask(() => { if (input.isConnected && document.activeElement !== input) { input.focus(); input.select(); } });
       } else {
-        name = h('h3.mu-plhead__name', { text: p.name, title: 'Double-click to rename', ondblclick: () => { S.plRenaming = id; paintList(); } });
+        name = h('h3.mu-plhead__name', { text: p.name, title: tx('Double-click to rename'), ondblclick: () => { S.plRenaming = id; paintList(); } });
       }
       const meta = [songCount(p.tracks.length), total ? `${dur(total)}${known ? '' : '+'}` : null, gone ? `${gone} no longer in Your music` : null];
       return h('header.mu-plhead', { dataset: { key: `ph:${id}` } },
         h('div.mu-plhead__art', { 'aria-hidden': 'true' }, icon('list')),
         h('div.mu-plhead__meta',
-          h('span.label', { text: 'Playlist' }),
+          h('span.label', { text: tx('Playlist') }),
           name,
           h('small.mu-plhead__sub', { text: meta.filter(Boolean).join(' · ') })),
         h('div.mu-plhead__acts',
-          h('button.btn.btn--primary.btn--sm', { dataset: { role: 'pplay' }, disabled: !canPlay, onclick: () => playPl(id, false) }, icon('play', { fill: true }), 'Play'),
-          h('button.btn.btn--sm', { dataset: { role: 'pshuffle' }, disabled: !canPlay, onclick: () => playPl(id, true) }, icon('shuffle'), 'Shuffle'),
-          h('button.btn.btn--sm', { dataset: { role: 'padd' }, 'aria-haspopup': 'menu', onclick: e => addSongsMenu(e, id) }, icon('plus'), 'Add songs'),
-          SH.byPlaylist(id) ? null : h('button.btn.btn--sm', { dataset: { role: 'pshare' }, title: 'Get a code or link and edit this playlist together', onclick: () => shareToEdit(id) }, icon('users'), 'Share to edit with a friend'),
-          h('button.ibtn', { dataset: { role: 'rename' }, 'aria-label': `Rename ${p.name}`, title: 'Rename', onclick: () => { S.plRenaming = id; paintList(); } }, icon('edit-3')),
-          h('button.ibtn', { dataset: { role: 'pmore' }, 'aria-label': `More for ${p.name}`, 'aria-haspopup': 'menu', onclick: e => plMenu(e, id) }, icon('more-horizontal'))));
+          h('button.btn.btn--primary.btn--sm', { dataset: { role: 'pplay' }, disabled: !canPlay, onclick: () => playPl(id, false) }, icon('play', { fill: true }), tx('Play')),
+          h('button.btn.btn--sm', { dataset: { role: 'pshuffle' }, disabled: !canPlay, onclick: () => playPl(id, true) }, icon('shuffle'), tx('Shuffle')),
+          h('button.btn.btn--sm', { dataset: { role: 'padd' }, 'aria-haspopup': 'menu', onclick: e => addSongsMenu(e, id) }, icon('plus'), tx('Add songs')),
+          h('button.btn.btn--sm', { dataset: { role: 'pexport' }, title: tx('Save this playlist as an .m3u file'), onclick: () => exportM3u(id) }, icon('download'), tx('Export .m3u')),
+          SH.byPlaylist(id) ? null : h('button.btn.btn--sm', { dataset: { role: 'pshare' }, title: tx('Get a code or link and edit this playlist together'), onclick: () => shareToEdit(id) }, icon('users'), tx('Share to edit with a friend')),
+          h('button.ibtn', { dataset: { role: 'rename' }, 'aria-label': tx('Rename {name}', { name: p.name }), title: tx('Rename'), onclick: () => { S.plRenaming = id; paintList(); } }, icon('edit-3')),
+          h('button.ibtn', { dataset: { role: 'pmore' }, 'aria-label': tx('More for {name}', { name: p.name }), 'aria-haspopup': 'menu', onclick: e => plMenu(e, id) }, icon('more-horizontal'))));
     }
 
     function playlistView(p) {
@@ -1850,24 +2459,30 @@ defineApp({
       const frag = [plHeader(p, tracks), sharePanelFor(id)];
       if (!tracks.length) {
         frag.push(h('div.mu-empty.mu-empty--sm',
-          h('h3', { text: 'This playlist is empty' }),
+          h('h3', { text: tx('This playlist is empty') }),
           h('p', { text: library().length
             ? 'Add songs with “Add songs” above, or from Your music with ⋯ › Add to playlist.'
             : 'Import songs into Your music first, then add them here.' }),
           h('div.mu-empty__acts', library().length
-            ? h('button.btn', { onclick: () => go('songs') }, icon('music'), 'Your music')
-            : h('button.btn.btn--primary', { onclick: pickFiles }, icon('upload'), 'Import songs'))));
+            ? h('button.btn', { onclick: () => go('songs') }, icon('music'), tx('Your music'))
+            : h('button.btn.btn--primary', { onclick: pickFiles }, icon('upload'), tx('Import songs')))));
         return frag;
       }
       const nodes = tracks.filter(t => t.e && playable(t.e.node)).map(t => t.e.node);
-      const ul = h('div.mu-list.mu-pllist', { role: 'list', 'aria-label': `Songs in ${p.name}` });
-      tracks.forEach((t, i) => ul.appendChild(plRow(p, t, i, nodes)));
+      const ul = h('div.mu-list.mu-pllist', { role: 'list', 'aria-label': tx('Songs in {name}', { name: p.name }) });
+      /* a shared playlist can be shown by name or by who added a song; that is only how it is drawn */
+      const sess = SH.byPlaylist(id);
+      const how = sess ? shSort : 'order';
+      const order = tracks.map((t, i) => ({ t, i }));
+      if (how === 'name') order.sort((a, b) => (a.t.e ? a.t.e.title : parseName(a.t.name || 'Song').title).localeCompare(b.t.e ? b.t.e.title : parseName(b.t.name || 'Song').title) || a.i - b.i);
+      else if (how === 'who') order.sort((a, b) => (sess.whoAdded(a.t.ref) === 'You' ? 0 : 1) - (sess.whoAdded(b.t.ref) === 'You' ? 0 : 1) || a.i - b.i);
+      order.forEach(({ t, i }) => ul.appendChild(plRow(p, t, i, nodes, { sess, shown: how !== 'order' })));
       frag.push(ul);
-      frag.push(h('p.mu-plhint', { text: 'Drag the grip to reorder — or focus it and press ↑ ↓.' }));
+      frag.push(h('p.mu-plhint', { text: tx('Drag the grip to reorder — or focus it and press ↑ ↓.') }));
       return frag;
     }
 
-    function plRow(p, t, i, nodes) {
+    function plRow(p, t, i, nodes, sh = {}) {
       const id = p.id;
       const e = t.e;
       const n = e?.node || null;
@@ -1879,9 +2494,11 @@ defineApp({
       const grip = h('button.mu-grip', {
         type: 'button', dataset: { role: 'grip' },
         'aria-label': `Move ${title} (position ${i + 1} of ${p.tracks.length}) — drag, or press up or down`,
-        onpointerdown: ev => startDrag(ev, id, i),
+        disabled: sh.shown || null,
+        title: sh.shown ? tx('Switch to List order to reorder') : null,
+        onpointerdown: ev => { if (!sh.shown) startDrag(ev, id, i); },
         onkeydown: ev => {
-          if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+          if (sh.shown || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown')) return;
           ev.preventDefault();
           ev.stopPropagation();
           const to = i + (ev.key === 'ArrowUp' ? -1 : 1);
@@ -1893,13 +2510,13 @@ defineApp({
         ? h('button.mu-row__main', {
           dataset: { role: 'main' },
           'aria-label': `${cur && soundOn() ? 'Pause' : 'Play'} ${title}${e.artist ? ` by ${e.artist}` : ''}`,
-          onclick: () => { if (isCurNode(n)) toggle(); else playFrom(nodes.includes(n) ? nodes : [n], n, { pl: id }); },
+          onclick: () => { if (isCurNode(n)) toggle(); else { playFrom(nodes.includes(n) ? nodes : [n], n, { pl: id }); markNow(id, t.ref); } },
           onkeydown: rowNav,
-        }, leadFor(n, i + 1), h('span.mu-row__txt', h('b', { text: title }), h('small', { text: e.artist || 'Unknown artist' })))
+        }, leadFor(n, i + 1), h('span.mu-row__txt', h('b', { text: title }), h('small', { text: e.artist || tx('Unknown artist') }), sh.sess ? shTag(sh.sess, t) : null))
         : h('div.mu-row__main.is-gone', { dataset: { role: 'main' } },
           h('span.mu-row__lead', { 'aria-hidden': 'true', text: String(i + 1) }),
           h('span.mu-row__txt', h('b', { text: title }),
-            h('small.is-err', { text: 'Not in Your music any more — it was deleted or moved out of ~/Music.' })));
+            h('small.is-err', { text: tx('Not in Your music any more — it was deleted or moved out of ~/Music.') })));
       const lenTxt = !n ? '—' : !has ? 'No audio' : d === 'bad' ? 'Can’t play' : typeof d === 'number' ? dur(d) : '…';
       return h('div.mu-row.mu-plrow', {
         role: 'listitem', dataset: { key: `t:${t.ref}`, i: String(i) },
@@ -1911,29 +2528,39 @@ defineApp({
         h('span.mu-row__fmt', { text: fmtTag(n ? n.name : t.name || '') }),
         h('span.mu-row__size', { text: n ? bytes(n.size) : '—' }),
         h('span.mu-row__len', { text: lenTxt, class: !n || d === 'bad' ? 'is-bad' : null }),
-        h('button.ibtn.mu-row__more.mu-plrow__x', { dataset: { role: 'remove' }, 'aria-label': `Remove ${title} from ${p.name}`, title: 'Remove from playlist',
+        h('button.ibtn.mu-row__more.mu-plrow__x', { dataset: { role: 'remove' }, 'aria-label': tx('Remove {title} from {name}', { title, name: p.name }), title: tx('Remove from playlist'),
           onclick: () => removeTrack(id, i, title) }, icon('x')));
+    }
+    /* "added by" and the playing-now marker on a row of a shared playlist */
+    function shTag(sess, t) {
+      const by = sess.whoAdded(t.ref);
+      const v = sess.view();
+      const row = v.items.find(x => x.ref === t.ref);
+      return h('small.mu-row__by', { dataset: { role: 'row-by' } },
+        row && row.playing ? h('em.mu-row__now', { dataset: { role: 'row-now' }, text: tx('Playing now · set by {who}', { who: v.now.who }) }) : null,
+        row && row.playing && by ? ' · ' : null,
+        by ? tx('added by {by}', { by }) : null);
     }
     function removeTrack(id, i, title) {
       const p = plGet(id);
       if (!p || !p.tracks[i]) return;
       const t = p.tracks[i];
       plRemoveAt(id, i);
-      api.notify({ app: 'Music', icon: 'list', title: `Removed from ${p.name}`, message: title, timeout: 6000,
-        actions: [{ label: 'Undo', onClick: () => plEdit(id, q => (q.tracks.some(x => x.ref === t.ref) ? null
+      api.notify({ app: 'Music', icon: 'list', title: tx('Removed from {name}', { name: p.name }), message: title, timeout: 6000,
+        actions: [{ label: tx('Undo'), onClick: () => plEdit(id, q => (q.tracks.some(x => x.ref === t.ref) ? null
           : { ...q, tracks: [...q.tracks.slice(0, i), t, ...q.tracks.slice(i)] })) }] });
     }
     function plRowMenu(ev, p, t, i, nodes) {
       const n = t.e?.node || null;
       const last = p.tracks.length - 1;
       api.menu([
-        n && { label: 'Play from here', icon: 'play', disabled: !media.isMedia(n), onClick: () => playFrom(nodes.includes(n) ? nodes : [n], n, { pl: p.id }) },
+        n && { label: tx('Play from here'), icon: 'play', disabled: !media.isMedia(n), onClick: () => playFrom(nodes.includes(n) ? nodes : [n], n, { pl: p.id }) },
         n && '-',
-        { label: 'Move to top', icon: 'arrow-up', disabled: i === 0, onClick: () => plMove(p.id, i, 0) },
-        { label: 'Move to bottom', icon: 'arrow-down', disabled: i === last, onClick: () => plMove(p.id, i, last) },
+        { label: tx('Move to top'), icon: 'arrow-up', disabled: i === 0, onClick: () => plMove(p.id, i, 0) },
+        { label: tx('Move to bottom'), icon: 'arrow-down', disabled: i === last, onClick: () => plMove(p.id, i, last) },
         '-',
-        n && { label: 'Show in Files', icon: 'folder-open', onClick: () => api.openApp('files', { path: alive(n) || DIR }) },
-        { label: 'Remove from playlist', icon: 'x', danger: true, onClick: () => removeTrack(p.id, i, t.e ? t.e.title : t.name) },
+        n && { label: tx('Show in Files'), icon: 'folder-open', onClick: () => api.openApp('files', { path: alive(n) || DIR }) },
+        { label: tx('Remove from playlist'), icon: 'x', danger: true, onClick: () => removeTrack(p.id, i, t.e ? t.e.title : t.name) },
       ].filter(Boolean), ev.clientX, ev.clientY);
     }
 
@@ -1942,7 +2569,7 @@ defineApp({
     function startDrag(ev, id, from) {
       if (ev.button > 0 || S.plDrag) return;
       const grip = ev.currentTarget;
-      const row = grip.closest('.mu-plrow');
+      const row = grip.closest('.mu-row');
       const box = row?.parentElement;
       if (!row || !box) return;
       ev.preventDefault();
@@ -1988,14 +2615,19 @@ defineApp({
         row.classList.remove('is-dragging');
         box.classList.remove('is-sorting');
         S.plDrag = null;
+        let focusKey = key;
         if (cancel || to === from || to < 0) paintList();
-        else {
+        else if (id === '__queue') {
+          queueMove(P.qi + 1 + from, P.qi + 1 + to);
+          focusKey = `q${P.qi + 1 + to}`;
+          flash(`Moved to position ${to + 1} in Up next.`);
+        } else {
           plMove(id, from, to);
           const t = plGet(id);
           if (t) flash(`Moved to position ${to + 1} of ${t.tracks.length}.`);
         }
         /* moving the row took focus off its grip; put it back */
-        listBox.querySelector(`[data-key="${CSS.escape(key)}"] [data-role="grip"]`)?.focus({ preventScroll: true });
+        listBox.querySelector(`[data-key="${CSS.escape(focusKey)}"] [data-role="grip"]`)?.focus({ preventScroll: true });
       };
       const up = e => { if (e.pointerId === pid) finish(false); };
       const cx = e => { if (e.pointerId === pid) finish(true); };
@@ -2021,24 +2653,26 @@ defineApp({
       const go2 = h('span.mu-st__go', { 'aria-hidden': 'true' }, icon(on ? 'square' : 'play', { fill: true }));
       const btn = h('button.mu-st__play', {
         dataset: { role: 'main' },
-        'aria-label': on ? `Stop ${st.name}` : `Play ${st.name}, ${st.genre}`,
+        'aria-label': on ? tx('Stop {name}', { name: st.name }) : tx('Play {name}, {genre}', { name: st.name, genre: st.genre }),
         'aria-pressed': String(on),
         onclick: () => (on ? pause() : startStation(st, true)),
       }, logo, h('span.mu-st__txt', h('b', { text: st.name }), h('small', { text: st.genre })), go2);
       const bits = [];
       const fav = radioFavs().includes(st.id);
+      const tr = trouble.get(st.id);
+      if (tr) bits.push(h('span.mu-st__trouble', { dataset: { role: 'trouble' }, title: tr.why === 'reported' ? tx('Reported as not playing — this mark lasts for this visit') : tx('Failed to play earlier this visit') }, icon('alert'), tr.why === 'reported' ? tx('Reported') : tx('Had trouble')));
       bits.push(h('button.ibtn.mu-st__fav', {
         type: 'button', class: fav ? 'is-on' : null, dataset: { role: 'fav' }, 'aria-pressed': fav ? 'true' : 'false',
-        'aria-label': fav ? `Remove ${st.name} from favorites` : `Add ${st.name} to favorites`,
-        title: fav ? 'Remove from favorites (shared with Static Radio)' : 'Add to favorites (shared with Static Radio)',
+        'aria-label': fav ? tx('Remove {name} from favorites', { name: st.name }) : tx('Add {name} to favorites', { name: st.name }),
+        title: fav ? tx('Remove from favorites (shared with Static Radio)') : tx('Add to favorites (shared with Static Radio)'),
         onclick: () => toggleRadioFav(st.id),
       }, icon('heart', fav ? { fill: true } : undefined)));
-      if (info) bits.push(h('span.mu-st__n', { title: 'Listeners right now, as reported by SomaFM' }, h('i.mu-dot'), `${info.listeners.toLocaleString()} listening`));
-      bits.push(h('a.mu-st__link', { href: st.page, target: '_blank', rel: 'noopener noreferrer', 'aria-label': `${st.name} on somafm.com (opens a new tab)` },
-        'Station page', icon('external-link')));
+      if (info) bits.push(h('span.mu-st__n', { title: tx('Listeners right now, as reported by SomaFM') }, h('i.mu-dot'), `${info.listeners.toLocaleString()} listening`));
+      bits.push(h('a.mu-st__link', { href: st.page, target: '_blank', rel: 'noopener noreferrer', 'aria-label': tx('{name} on somafm.com (opens a new tab)', { name: st.name }) },
+        tx('Station page'), icon('external-link')));
       let airLine = null;
-      if (air) airLine = h('div.mu-st__air', h('span.label', { text: 'On air' }), h('span.trunc', { text: `${air.title}${air.artist ? ` — ${air.artist}` : ''}` }));
-      else if (info?.last) airLine = h('div.mu-st__air', h('span.label', { text: 'Recently' }), h('span.trunc', { text: info.last }));
+      if (air) airLine = h('div.mu-st__air', h('span.label', { text: tx('On air') }), h('span.trunc', { text: `${air.title}${air.artist ? ` — ${air.artist}` : ''}` }));
+      else if (info?.last) airLine = h('div.mu-st__air', h('span.label', { text: tx('Recently') }), h('span.trunc', { text: info.last }));
       return h('article.mu-st', { class: cur ? 'is-cur' : null, dataset: { key: `r:${st.id}` } },
         btn,
         h('p.mu-st__blurb', { text: st.blurb }),
@@ -2053,15 +2687,15 @@ defineApp({
       frag.push(h('div.mu-intro',
         h('div.mu-intro__ic', icon('cast')),
         h('div.mu-intro__txt',
-          h('h3', { text: 'Live radio from SomaFM (listener-supported)' }),
-          h('p', { text: 'An independent, commercial-free station in San Francisco, paid for by its listeners — not affiliated with StaticOS. The streams come straight from SomaFM and need the internet.' })),
+          h('h3', { text: tx('Live radio from SomaFM (listener-supported)') }),
+          h('p', { text: tx('An independent, commercial-free station in San Francisco, paid for by its listeners — not affiliated with StaticOS. The streams come straight from SomaFM and need the internet.') })),
         h('div.mu-intro__acts',
-          h('a.btn.btn--sm', { href: `${SOMA}/support/`, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Support SomaFM (opens somafm.com in a new tab)' },
-            icon('heart'), 'Support SomaFM', icon('external-link')),
-          h('button.btn.btn--sm.btn--ghost', { onclick: () => api.openApp('spotify') }, icon('list-music'), 'Spotify instead'))));
+          h('a.btn.btn--sm', { href: `${SOMA}/support/`, target: '_blank', rel: 'noopener noreferrer', 'aria-label': tx('Support SomaFM (opens somafm.com in a new tab)') },
+            icon('heart'), tx('Support SomaFM'), icon('external-link')),
+          h('button.btn.btn--sm.btn--ghost', { onclick: () => api.openApp('spotify') }, icon('list-music'), tx('Spotify instead')))));
       if (offline) {
         frag.push(h('div.mu-banner', icon('wifi-off'),
-          h('span', { text: 'You’re offline. Radio needs the internet — the stations will play once you reconnect.' })));
+          h('span', { text: tx('You’re offline. Radio needs the internet — the stations will play once you reconnect.') })));
       }
       /* favourites (Static Radio's hearts) come first */
       const favIds = radioFavs();
@@ -2077,10 +2711,10 @@ defineApp({
         return grid;
       };
       if (favs.length) {
-        frag.push(h('div.mu-qhead.mu-rhead', icon('heart', { fill: true }), h('span.label', { text: `Favorites · ${favs.length}` }),
-          h('span.dim', { text: 'saved on this device, shared with Static Radio' })));
+        frag.push(h('div.mu-qhead.mu-rhead', icon('heart', { fill: true }), h('span.label', { text: tx('Favorites · {length}', { length: favs.length }) }),
+          h('span.dim', { text: tx('saved on this device, shared with Static Radio') })));
         frag.push(gridOf(favs, 'Favorite stations'));
-        if (rest.length) frag.push(h('div.mu-qhead.mu-rhead', h('span.label', { text: 'All stations' })));
+        if (rest.length) frag.push(h('div.mu-qhead.mu-rhead', h('span.label', { text: tx('All stations') })));
       }
       if (rest.length) frag.push(gridOf(rest, favs.length ? 'More SomaFM stations' : 'SomaFM stations'));
       return frag;
@@ -2091,6 +2725,7 @@ defineApp({
        Control Centre, the sleep timer) is written into the same elements,
        so a slider being dragged is never rebuilt under the pointer. */
     const AM = { els: null, focus: null };
+    const SD = { els: null };
     const SLEEP_LABEL = { 15: '15 min', 30: '30 min', 60: '1 hour', 90: '1½ hours' };
     const clock12 = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); const m = Math.floor(s / 60); return m >= 1 ? `${m} min` : `${s} s`; };
@@ -2107,16 +2742,16 @@ defineApp({
       frag.push(h('div.mu-intro.mu-amb__intro',
         h('div.mu-intro__ic', icon('cloud-rain')),
         h('div.mu-intro__txt',
-          h('h3', { text: 'Ambient sounds, made live in this browser' }),
-          h('p', { text: 'Rain, fire, wind, a café and brown noise are synthesised as they play — noise, filters and tiny grains of sound — so nothing is downloaded and they work offline. They mix with your music and keep playing when this window closes; stop them here or from Control Centre.' })),
+          h('h3', { text: tx('Ambient sounds, made live in this browser') }),
+          h('p', { text: tx('Rain, fire, wind, a café and brown noise are synthesised as they play — noise, filters and tiny grains of sound — so nothing is downloaded and they work offline. They mix with your music and keep playing when this window closes; stop them here or from Control Centre.') })),
         h('div.mu-intro__acts', els.play, els.status)));
 
       if (!st.supported) {
-        frag.push(h('div.mu-banner', icon('alert'), h('span', { text: 'This browser has no Web Audio, so StaticOS can’t make these sounds here.' })));
+        frag.push(h('div.mu-banner', icon('alert'), h('span', { text: tx('This browser has no Web Audio, so StaticOS can’t make these sounds here.') })));
       }
 
       /* presets */
-      const pBox = h('div.mu-amb__presets', { role: 'group', 'aria-label': 'Presets' });
+      const pBox = h('div.mu-amb__presets', { role: 'group', 'aria-label': tx('Presets') });
       for (const p of AMB.presets()) {
         const names = Object.keys(p.mix).map(id => AMB.SOUNDS.find(x => x.id === id)?.name).filter(Boolean);
         const b = h('button.mu-amb__preset', { type: 'button', dataset: { preset: p.id }, onclick: () => AMB.applyPreset(p.id) },
@@ -2126,14 +2761,14 @@ defineApp({
         els.presets.set(p.id, b);
         pBox.appendChild(b);
       }
-      frag.push(h('div.mu-qhead', h('span.label', { text: 'Presets' })), pBox);
+      frag.push(h('div.mu-qhead', h('span.label', { text: tx('Presets') })), pBox);
 
       /* the mixer */
-      const mix = h('div.mu-amb__mix', { role: 'group', 'aria-label': 'Mixer' });
+      const mix = h('div.mu-amb__mix', { role: 'group', 'aria-label': tx('Mixer') });
       for (const x of AMB.sounds()) {
         const out = h('span.mu-amb__pct', { 'aria-hidden': 'true' });
         const input = h('input.slider.mu-amb__range', {
-          type: 'range', min: '0', max: '100', step: '1', 'aria-label': `${x.name} level`, dataset: { sound: x.id },
+          type: 'range', min: '0', max: '100', step: '1', 'aria-label': tx('{name} level', { name: x.name }), dataset: { sound: x.id },
           oninput: e => { const v = Number(e.target.value); out.textContent = `${v}%`; e.target.setAttribute('aria-valuetext', `${v}%`); AMB.setLevel(x.id, v / 100); },
         });
         const r = h('div.mu-amb__row', { dataset: { sound: x.id } },
@@ -2143,18 +2778,18 @@ defineApp({
         els.rows.set(x.id, { r, input, out });
         mix.appendChild(r);
       }
-      frag.push(h('div.mu-qhead', h('span.label', { text: 'Mixer' }), h('span.dim', { text: 'each sound has its own level' })), mix);
+      frag.push(h('div.mu-qhead', h('span.label', { text: tx('Mixer') }), h('span.dim', { text: tx('each sound has its own level') })), mix);
 
       /* the sleep timer */
-      const chips = h('div.mu-amb__chips', { role: 'group', 'aria-label': 'Sleep timer' });
+      const chips = h('div.mu-amb__chips', { role: 'group', 'aria-label': tx('Sleep timer') });
       for (const m of [0, ...AMB.SLEEP_CHOICES]) {
         const b = h('button.mu-amb__chip', { type: 'button', dataset: { sleep: String(m) }, onclick: () => AMB.setSleep(m) },
-          m ? SLEEP_LABEL[m] || `${m} min` : 'Off');
+          m ? SLEEP_LABEL[m] || tx('{m} min', { m }) : tx('Off'));
         els.sleep.set(m, b);
         chips.appendChild(b);
       }
       els.sleepNote = h('small.mu-amb__sleepnote');
-      frag.push(h('div.mu-qhead', icon('moon'), h('span.label', { text: 'Sleep timer' })),
+      frag.push(h('div.mu-qhead', icon('moon'), h('span.label', { text: tx('Sleep timer') })),
         h('div.mu-amb__sleep', chips, els.sleepNote));
 
       /* focus sessions: only where Clock › Focus exists (js/core/focus.js) */
@@ -2166,16 +2801,16 @@ defineApp({
 
     function paintAmbFocus(els) {
       const f = AMB.state().focus;
-      const sw = h('button.switch', { role: 'switch', type: 'button', 'aria-label': 'Play during focus sessions',
+      const sw = h('button.switch', { role: 'switch', type: 'button', 'aria-label': tx('Play during focus sessions'),
         'aria-checked': String(f.on), class: f.on ? 'is-on' : null,
         onclick: () => AMB.setFocus({ on: !AMB.state().focus.on }) });
-      const sel = h('select.select', { 'aria-label': 'Preset for focus sessions', onchange: e => AMB.setFocus({ preset: e.target.value }) },
+      const sel = h('select.select', { 'aria-label': tx('Preset for focus sessions'), onchange: e => AMB.setFocus({ preset: e.target.value }) },
         AMB.presets().map(p => h('option', { value: p.id, selected: p.id === f.preset, text: p.name })));
       api.render(els.focus,
-        h('div.mu-qhead', icon('clock'), h('span.label', { text: 'Focus sessions' })),
+        h('div.mu-qhead', icon('clock'), h('span.label', { text: tx('Focus sessions') })),
         h('div.mu-amb__frow', sw,
-          h('span.mu-amb__name', h('b', { text: 'Play during focus sessions' }),
-            h('small', { text: 'When a focus session starts in Clock › Focus, this preset starts with it, and stops when the session pauses or ends.' })),
+          h('span.mu-amb__name', h('b', { text: tx('Play during focus sessions') }),
+            h('small', { text: tx('When a focus session starts in Clock › Focus, this preset starts with it, and stops when the session pauses or ends.') })),
           sel));
       els.focus.classList.remove('hidden');
       els.focusSw = sw;
@@ -2186,7 +2821,7 @@ defineApp({
       const els = AM.els;
       if (!els || !listBox.contains(els.play)) return;
       if (els.sig !== ambSig()) { paintList(); return; }   /* the season added or took away a layer */
-      clearEl(els.play).append(icon(st.playing ? 'square' : 'play', { fill: !st.playing }), h('span', { text: st.playing ? 'Stop' : 'Play' }));
+      clearEl(els.play).append(icon(st.playing ? 'square' : 'play', { fill: !st.playing }), h('span', { text: st.playing ? tx('Stop') : tx('Play') }));
       els.play.setAttribute('aria-label', st.playing ? 'Stop ambient sounds' : 'Play ambient sounds');
       els.play.setAttribute('aria-pressed', String(st.playing));
       els.status.textContent = st.error ? st.error
@@ -2226,10 +2861,12 @@ defineApp({
     }
 
     let radioKey = '';
-    const radioSig = () => `${P.cur?.kind === 'radio' ? P.cur.st.id : ''}|${soundOn()}|${P.onAir?.title || ''}|${CH.at}|${CH.err || ''}|${navigator.onLine}|${radioFavs().join(',')}`;
+    const radioSig = () => `${P.cur?.kind === 'radio' ? P.cur.st.id : ''}|${soundOn()}|${P.onAir?.title || ''}|${CH.at}|${CH.err || ''}|${navigator.onLine}|${radioFavs().join(',')}|${trouble.ids().join(',')}`;
     function paintList() {
       if (S.plDrag) return;                         /* never rebuild the rows out from under a drag */
       keepFocus(() => {
+        /* a frame taken out of the page and put back reloads, and would stop the song Sonora is playing */
+        if (S.view === 'sonora' && SO && listBox.contains(SO)) return;
         rowRefs.clear();
         radioKey = S.view === 'radio' ? radioSig() : '';
         clearEl(listBox);
@@ -2239,11 +2876,15 @@ defineApp({
         const pl = plOf(v);
         if (pl) content.dataset.view = 'playlist';
         if (v !== 'ambient') AM.els = null;
+        if (v !== 'sound') SD.els = null;
         if (v !== 'tuner' && TU) TU.stop('The microphone was turned off when you left the Tuner.');
         const nodes = pl ? playlistView(pl) : v === 'lists' ? listsView() : v === 'radio' ? radioView() : v === 'queue' ? queueView()
-          : v === 'ambient' ? ambientView() : v === 'tuner' ? tunerView() : songsView();
-        listBox.append(...nodes.filter(Boolean));
+          : v === 'ambient' ? ambientView() : v === 'books' ? booksView() : v === 'tuner' ? tunerView() : v === 'sonora' ? sonoraView() : v === 'lyrics' ? lyricsView() : v === 'sound' ? soundView()
+          : v === 'most' || v === 'recent' ? playsView(v) : songsView();
+        listBox.append(reportBox(), ...nodes.filter(Boolean));
         if (v === 'ambient') syncAmbient();
+        if (v === 'sound') syncSound();
+        if (v === 'lyrics') syncLyrics(true);
       });
     }
 
@@ -2259,23 +2900,27 @@ defineApp({
         const gone = tracks.filter(t => !t.e).length;
         bits.push(h('span.dim', { text: `${songCount(tracks.length)} in this playlist` }));
         if (total) bits.push(h('span.dim', { text: '·' }), h('span.dim', { text: `${dur(total)}${known ? '' : '+'} total` }));
-        if (gone) bits.push(h('span.chip', icon('alert'), `${gone} no longer in Your music`));
+        if (gone) bits.push(h('span.chip', icon('alert'), tx('{gone} no longer in Your music', { gone })));
         bits.push(h('div.grow'));
-        if (P.from?.pl === p.id && P.cur?.kind === 'file') bits.push(h('span.chip.chip--accent', icon('play'), 'Playing'));
-        if (P.shuffle) bits.push(h('span.chip.chip--accent', icon('shuffle'), 'Shuffle'));
+        if (P.from?.pl === p.id && P.cur?.kind === 'file') bits.push(h('span.chip.chip--accent', icon('play'), tx('Playing')));
+        if (P.shuffle) bits.push(h('span.chip.chip--accent', icon('shuffle'), tx('Shuffle')));
       } else if (S.view === 'lists') {
         const n = plAll().length;
         bits.push(h('span.dim', { text: `${n} playlist${n === 1 ? '' : 's'} · kept in this browser` }));
       } else if (S.view === 'ambient') {
         const st = AMB.state();
-        bits.push(h('span.dim', { text: 'Synthesised live · nothing downloaded' }));
+        bits.push(h('span.dim', { text: tx('Synthesised live · nothing downloaded') }));
         bits.push(h('div.grow'));
         if (st.playing) bits.push(h('span.chip.chip--accent', icon('volume-2'), st.label));
-        if (st.sleep) bits.push(h('span.chip', icon('moon'), `Sleep ${st.sleep.minutes} min`));
+        if (st.sleep) bits.push(h('span.chip', icon('moon'), tx('Sleep {minutes} min', { minutes: st.sleep.minutes })));
+      } else if (S.view === 'books') {
+        bits.push(h('span.dim', { text: tx('LibriVox recordings, in the public domain · played from archive.org') }));
       } else if (S.view === 'tuner') {
-        bits.push(h('span.dim', { text: 'Listens through your microphone · nothing is recorded' }));
+        bits.push(h('span.dim', { text: tx('Listens through your microphone · nothing is recorded') }));
+      } else if (S.view === 'sonora') {
+        bits.push(h('span.dim', { text: tx('Sonora keeps playing while this page is open; another page here stops it') }));
       } else if (S.view === 'radio') {
-        bits.push(h('span.dim', { text: `${STATIONS.length} stations · 128 kbps MP3 from SomaFM` }));
+        bits.push(h('span.dim', { text: tx('{length} stations · 128 kbps MP3 from SomaFM', { length: STATIONS.length }) }));
         bits.push(h('div.grow'));
         const ago = Math.round((Date.now() - CH.at) / 60000);
         bits.push(h('span.dim', { text: CH.map
@@ -2290,13 +2935,13 @@ defineApp({
         const pending = all.filter(e => media.isMedia(e.node) && durOf(e.node) === undefined).length;
         bits.push(h('span.dim', { text: `${all.length} song${all.length === 1 ? '' : 's'}` }));
         if (all.length) {
-          bits.push(h('span.dim', { text: '·' }), h('span.dim', { text: pending ? 'reading lengths…' : `${dur(total)} total` }));
+          bits.push(h('span.dim', { text: '·' }), h('span.dim', { text: pending ? tx('reading lengths…') : `${dur(total)} total` }));
           bits.push(h('span.dim', { text: '·' }), h('span.dim', { text: `${bytes(size)} in ~/Music` }));
         }
-        if (empty) bits.push(h('span.chip', icon('alert'), `${empty} with no audio`));
+        if (empty) bits.push(h('span.chip', icon('alert'), tx('{empty} with no audio', { empty })));
         bits.push(h('div.grow'));
-        if (P.shuffle) bits.push(h('span.chip.chip--accent', icon('shuffle'), 'Shuffle'));
-        if (P.repeat !== 'off') bits.push(h('span.chip.chip--accent', icon('repeat'), P.repeat === 'one' ? 'Repeat one' : 'Repeat all'));
+        if (P.shuffle) bits.push(h('span.chip.chip--accent', icon('shuffle'), tx('Shuffle')));
+        if (P.repeat !== 'off') bits.push(h('span.chip.chip--accent', icon('repeat'), P.repeat === 'one' ? tx('Repeat one') : tx('Repeat all')));
       }
       foot.append(...bits);
     }
@@ -2308,6 +2953,328 @@ defineApp({
       paintHero();
       paintList();
       paintFoot();
+    }
+
+    /* ---------------- the sound row under the seek bar ---------------- */
+    function paintFx() {
+      const c = P.cur, radio = c?.kind === 'radio', file = c?.kind === 'file';
+      const ab = P.ab;
+      abBtn.disabled = !file;
+      abBtn.classList.toggle('hidden', radio);
+      abBtn.classList.toggle('is-on', ab.a !== null);
+      abBtn.setAttribute('aria-pressed', String(ab.a !== null));
+      abBtn.lastChild.textContent = ab.a === null ? 'A–B loop' : ab.b === null ? `A ${dur(ab.a)} · now B` : `Loop ${dur(ab.a)}–${dur(ab.b)}`;
+      abBtn.title = ab.a === null ? 'Mark the start (A) of a part to practise (L)' : ab.b === null ? 'Mark the end (B): the part between loops (L)' : 'Looping this part. Press to clear it (L)';
+      const sp = fx.speed();
+      speedBtn.classList.toggle('hidden', radio);
+      speedBtn.disabled = !(file || c?.kind === 'book');
+      speedBtn.classList.toggle('is-on', sp !== 1);
+      speedBtn.lastChild.textContent = `${sp}×`;
+      speedBtn.title = 'Playback speed';
+      const sl = sleepT.state();
+      sleepBtn.classList.toggle('is-on', !!sl);
+      sleepBtn.lastChild.textContent = !sl ? 'Sleep timer' : sl.afterSong ? 'After this song' : `Stops in ${mmss(sl.left)}`;
+      copyBtn.classList.toggle('hidden', !c);
+      copyBtn.disabled = radio && !P.onAir;
+      const kept = radio && P.onAir ? finds.has(P.onAir) : false;
+      heartBtn.classList.toggle('hidden', !radio);
+      heartBtn.disabled = !P.onAir;
+      heartBtn.classList.toggle('is-on', kept);
+      heartBtn.setAttribute('aria-pressed', String(kept));
+      heartBtn.lastChild.textContent = kept ? 'Kept in your finds' : 'Keep this song';
+      heartBtn.title = P.onAir ? 'Keep the song on air in your finds (Static Radio)' : 'SomaFM hasn’t said what is on yet';
+      miniBtn.dataset.tip = S.mini ? 'Back to the full player (Z)' : 'Mini player (Z)';
+      miniBtn.setAttribute('aria-label', S.mini ? 'Back to the full player' : 'Mini player');
+      miniBtn.setAttribute('aria-pressed', String(S.mini));
+      clearEl(miniBtn).appendChild(icon(S.mini ? 'maximize-2' : 'minimize-2'));
+      miniBtn.classList.toggle('hidden', document.body.classList.contains('is-mobile'));
+    }
+    function speedMenu(ev) {
+      const r = ev.currentTarget.getBoundingClientRect();
+      const cur = fx.speed();
+      api.menu(fx.SPEEDS.map(v => ({ label: `${v}×${v === 1 ? ' (normal)' : ''}`, icon: v === cur ? 'check' : 'dot', onClick: () => fx.setSpeed(v) })), r.left, r.bottom + 4);
+    }
+    function sleepMenu(ev) {
+      const r = ev.currentTarget.getBoundingClientRect();
+      const sl = sleepT.state();
+      api.menu([
+        { label: tx('Off'), icon: !sl ? 'check' : 'dot', onClick: () => sleepT.clear() },
+        (P.cur?.kind === 'file' || P.cur?.kind === 'book') && { label: P.cur.kind === 'book' ? tx('After this chapter') : tx('After this song'), icon: sl?.afterSong ? 'check' : 'moon', onClick: () => sleepT.setAfterSong() },
+        ...sleepT.CHOICES.map(m => ({ label: tx('{m} minutes', { m }), icon: sl && sl.minutes === m ? 'check' : 'moon', onClick: () => sleepT.set(m) })),
+      ].filter(Boolean), r.left, r.bottom + 4);
+    }
+    async function copySong() {
+      const t = trackInfo();
+      if (!t) return;
+      const air = P.onAir;
+      const text = t.live ? (air ? `${air.artist ? `${air.artist} - ` : ''}${air.title}` : '')
+        : `${t.artist && t.artist !== 'Unknown artist' ? `${t.artist} - ` : ''}${t.title}`;
+      if (!text) { flash('SomaFM hasn’t said what is on yet.', true); return; }
+      try { await navigator.clipboard.writeText(text); flash(`Copied “${text}”.`); }
+      catch (e) { flash(`Copying was blocked. The song is: ${text}`, true); }
+    }
+    function heartSong() {
+      if (P.cur?.kind !== 'radio' || !P.onAir) return;
+      const now = finds.toggle(P.onAir, P.cur.st.id);
+      flash(now ? `Kept “${P.onAir.title}” in your finds — Static Radio › Song finds.` : `Removed “${P.onAir.title}” from your finds.`);
+      paintFx();
+    }
+
+    /* mini player: the same player in a small window kept on top; Z or the button puts it back */
+    function setMini(on) {
+      on = !!on && !document.body.classList.contains('is-mobile');
+      if (on === S.mini) return;
+      S.mini = on;
+      shell.classList.toggle('mu--mini', on);
+      if (on) {
+        S.keep = { x: win.x, y: win.y, w: win.w, h: win.h, minW: win.el.style.minWidth, minH: win.el.style.minHeight, pinned: !!win.pinned };
+        win.el.style.minWidth = '300px';
+        win.el.style.minHeight = '120px';
+        setRect(win, { x: win.x + Math.max(0, win.w - 380), y: win.y, w: 380, h: 138 });
+        if (!win.pinned) setPinned(win, true);
+      } else if (S.keep) {
+        const k = S.keep;
+        S.keep = null;
+        win.el.style.minWidth = k.minW;
+        win.el.style.minHeight = k.minH;
+        setRect(win, { x: Math.max(0, win.x + win.w - k.w), y: win.y, w: k.w, h: k.h });
+        if (!k.pinned && win.pinned) setPinned(win, false);
+      }
+      paintFx();
+    }
+
+    /* ---------------- lyrics: a .lrc or .txt beside the song ---------------- */
+    const LY = { sig: '', data: null, els: [], idx: -2, box: null };
+    const lyricsSig = () => {
+      const c = P.cur;
+      if (c?.kind !== 'file') return c ? c.kind : 'none';
+      const f = findLyrics(c.node, c.path);
+      return `${c.node.content}|${f ? `${f.path}|${f.text.length}` : ''}`;
+    };
+    function lyricsView() {
+      const c = P.cur;
+      LY.sig = lyricsSig();
+      LY.data = null; LY.els = []; LY.idx = -2; LY.box = null;
+      if (!c) {
+        return [h('div.mu-empty.mu-empty--sm', h('div.mu-empty__art', icon('align-left')), h('h3', { text: tx('Play a song to see its lyrics') }),
+          h('p', { text: tx('Lyrics come from a file beside the song: Song.lrc (timed, so the line being sung lights up) or Song.txt (plain words). StaticOS never looks them up on the internet.') }))];
+      }
+      if (c.kind === 'book') {
+        return [h('div.mu-empty.mu-empty--sm', h('div.mu-empty__art', icon('mic')), h('h3', { text: tx('Audiobooks have no lyrics') }),
+          h('p', { text: tx('The words of a LibriVox recording are the book itself; the LibriVox page for it links the text.') }))];
+      }
+      if (c.kind === 'radio') {
+        return [h('div.mu-empty.mu-empty--sm', h('div.mu-empty__art', icon('cast')), h('h3', { text: tx('Radio has no lyrics file') }),
+          h('p', { text: tx('Lyrics are read from a file beside one of your own songs. A live station plays whatever SomaFM is broadcasting, and StaticOS doesn’t fetch lyrics for it.') }))];
+      }
+      const t = describe(c.node);
+      const f = findLyrics(c.node, c.path);
+      if (!f) {
+        return [h('div.mu-empty.mu-empty--sm', { dataset: { role: 'lyrics-none' } }, h('div.mu-empty__art', icon('align-left')),
+          h('h3', { text: tx('No lyrics beside “{title}”', { title: t.title }) }),
+          h('p', { text: `Put a file named “${siblingNames(c.node.name)[0]}” (timed) or “${siblingNames(c.node.name)[1]}” (plain) in the same folder, or add one now. It stays on this device.` }),
+          h('div.mu-empty__acts', h('button.btn.btn--primary', { dataset: { role: 'add-lyrics' }, onclick: () => lyricIn.click() }, icon('upload'), tx('Add a .lrc or .txt file'))))];
+      }
+      const data = parseLyrics(f.text, { lrc: f.lrc });
+      LY.data = data;
+      const box = h('div.mu-ly', { dataset: { synced: String(data.synced) } });
+      LY.box = box;
+      data.lines.forEach((ln, i) => {
+        const el = data.synced
+          ? h('button.mu-ly__line', { type: 'button', dataset: { i: String(i), t: String(ln.t) }, title: `Go to ${dur(ln.t)}`, onclick: () => seek(ln.t) }, ln.text || '♪')
+          : h('p.mu-ly__line', { dataset: { i: String(i) }, text: ln.text || ' ' });
+        LY.els.push(el);
+        box.appendChild(el);
+      });
+      return [
+        h('div.mu-qhead', icon('align-left'), h('span.label', { text: t.title }),
+          h('span.dim', { text: `${data.synced ? 'Synced' : 'Plain'} · from ${f.name}` }), h('div.grow'),
+          h('button.btn.btn--sm.btn--ghost', { dataset: { role: 'add-lyrics' }, onclick: () => lyricIn.click() }, icon('upload'), tx('Replace'))),
+        data.lines.length ? box : h('p.mu-qnone', { text: tx('That file has no lyrics in it.') }),
+      ];
+    }
+    /** light the line being sung and keep it in view */
+    function syncLyrics(force) {
+      if (S.view !== 'lyrics' || !LY.data?.synced || !LY.els.length) return;
+      const i = activeLine(LY.data.lines, (audio.currentTime || 0) + 0.05);
+      if (i === LY.idx && !force) return;
+      LY.idx = i;
+      LY.els.forEach((el, k) => {
+        const on = k === i;
+        if (el.classList.contains('is-on') !== on) el.classList.toggle('is-on', on);
+        el.classList.toggle('is-past', k < i);
+      });
+      const el = LY.els[i];
+      if (el && content.clientHeight) {
+        const top = el.offsetTop - content.clientHeight / 2 + el.offsetHeight / 2;
+        try { content.scrollTo({ top: Math.max(0, top), behavior: reduced() || force ? 'auto' : 'smooth' }); } catch (e) { content.scrollTop = Math.max(0, top); }
+      }
+    }
+    async function addLyricsFile(f) {
+      const c = P.cur;
+      if (!f) return;
+      if (c?.kind !== 'file' || !c.path) { flash('Play one of your songs first, then add its lyrics.', true); return; }
+      if (f.size > 512 * 1024) { flash(`“${f.name}” is too big to be lyrics.`, true); return; }
+      const ext = /\.lrc$/i.test(f.name) ? '.lrc' : '.txt';
+      const text = await f.text();
+      if (dead) return;
+      const target = `${vfs.parentPath(c.path)}/${stemOf(c.node.name)}${ext}`;
+      vfs.write(target, text);
+      flash(`Saved the lyrics as ${vfs.baseName(target)}, beside the song.`);
+      if (S.view === 'lyrics') paintList();
+    }
+
+    /* ---------------- Sound: equalizer, speed, crossfade, sleep timer, radio quality ---------------- */
+    function soundView() {
+      const els = { presets: new Map(), speed: new Map(), sleep: new Map(), quality: new Map(), bands: [] };
+      SD.els = els;
+      const frag = [];
+      frag.push(h('div.mu-intro', h('div.mu-intro__ic', icon('sliders')),
+        h('div.mu-intro__txt', h('h3', { text: tx('Shape the sound') }),
+          h('p', { text: tx('An equalizer, playback speed, a crossfade between songs and a sleep timer for songs and stations. They change how StaticOS plays; nothing is sent anywhere.') }))));
+
+      /* equalizer */
+      els.eqSw = h('button.switch', { role: 'switch', type: 'button', 'aria-label': tx('Equalizer'), dataset: { role: 'eq-switch' }, onclick: () => fx.setEqOn(!fx.EQ().on) });
+      els.eqNote = h('small.mu-eq__note', { role: 'status', dataset: { role: 'eq-note' } });
+      frag.push(h('div.mu-qhead', icon('sliders'), h('span.label', { text: tx('Equalizer') }), els.eqSw, h('div.grow'),
+        h('button.btn.btn--sm.btn--ghost', { type: 'button', dataset: { role: 'eq-reset' }, onclick: () => fx.resetEq() }, icon('rotate-ccw'), tx('Reset'))));
+      const pre = h('div.mu-amb__presets.mu-eq__presets', { role: 'group', 'aria-label': tx('Equalizer presets') });
+      for (const pr of fx.PRESETS) {
+        const b = h('button.mu-amb__chip', { type: 'button', dataset: { preset: pr.id }, onclick: () => fx.setPreset(pr.id) }, pr.name);
+        els.presets.set(pr.id, b);
+        pre.appendChild(b);
+      }
+      frag.push(pre);
+      const bands = h('div.mu-eq__bands', { role: 'group', 'aria-label': tx('Equalizer bands, 12 decibels either way') });
+      fx.BANDS.forEach((f, i) => {
+        const out = h('span.mu-eq__db', { 'aria-hidden': 'true' });
+        const input = h('input.mu-eq__band', { type: 'range', min: String(-fx.RANGE), max: String(fx.RANGE), step: '0.5', value: '0',
+          'aria-label': `${fx.BAND_LABELS[i]} hertz`, 'aria-orientation': 'vertical', dataset: { band: String(i) },
+          oninput: e => fx.setGain(i, Number(e.target.value)) });
+        els.bands.push({ input, out });
+        bands.appendChild(h('div.mu-eq__col', out, input, h('span.mu-eq__hz', { 'aria-hidden': 'true', text: fx.BAND_LABELS[i] })));
+      });
+      frag.push(bands, els.eqNote);
+
+      /* speed */
+      const sp = h('div.mu-amb__chips', { role: 'group', 'aria-label': tx('Playback speed') });
+      for (const v of fx.SPEEDS) {
+        const b = h('button.mu-amb__chip', { type: 'button', dataset: { speed: String(v) }, onclick: () => fx.setSpeed(v) }, `${v}×`);
+        els.speed.set(v, b);
+        sp.appendChild(b);
+      }
+      frag.push(h('div.mu-qhead', icon('gauge'), h('span.label', { text: tx('Speed') }), h('span.dim', { text: tx('your own songs · pitch stays the same') })), sp);
+
+      /* crossfade */
+      els.xfOut = h('span.mu-amb__pct', { 'aria-hidden': 'true' });
+      els.xf = h('input.slider.mu-amb__range', { type: 'range', min: '0', max: String(fx.XFADE_MAX), step: '1', 'aria-label': tx('Crossfade between songs, in seconds'), dataset: { role: 'xfade' },
+        oninput: e => fx.setCrossfade(Number(e.target.value)) });
+      frag.push(h('div.mu-qhead', icon('shuffle'), h('span.label', { text: tx('Crossfade') }), h('span.dim', { text: tx('the end of one song fades into the next') })),
+        h('div.mu-amb__row', h('span.mu-amb__name', h('b', { text: tx('Overlap') }), h('small', { text: tx('Not used on the last song, on Repeat this song, or on radio.') })), els.xf, els.xfOut));
+
+      /* sleep timer */
+      const chips = h('div.mu-amb__chips', { role: 'group', 'aria-label': tx('Sleep timer') });
+      const choice = (key, label, fn) => {
+        const b = h('button.mu-amb__chip', { type: 'button', dataset: { sleep: key }, onclick: fn }, label);
+        els.sleep.set(key, b);
+        chips.appendChild(b);
+      };
+      choice('off', 'Off', () => sleepT.clear());
+      choice('song', 'After this song', () => sleepT.setAfterSong());
+      for (const m of sleepT.CHOICES) choice(String(m), m === 60 ? '1 hour' : m === 90 ? '1½ hours' : `${m} min`, () => sleepT.set(m));
+      els.sleepNote = h('small.mu-amb__sleepnote', { role: 'status', dataset: { role: 'sleep-note' } });
+      frag.push(h('div.mu-qhead', icon('moon'), h('span.label', { text: tx('Sleep timer') }), h('span.dim', { text: tx('songs and stations · Ambient sounds have their own') })),
+        h('div.mu-amb__sleep', chips, els.sleepNote));
+
+      /* radio stream quality */
+      const qs = h('div.mu-amb__chips', { role: 'group', 'aria-label': tx('Radio stream quality') });
+      for (const q of QUALITIES) {
+        const b = h('button.mu-amb__chip', { type: 'button', dataset: { quality: q.id }, title: q.detail, onclick: () => { setQuality(q.id); syncSound(); } }, `${q.label} · ${q.detail}`);
+        els.quality.set(q.id, b);
+        qs.appendChild(b);
+      }
+      frag.push(h('div.mu-qhead', icon('cast'), h('span.label', { text: tx('Radio stream') }), h('span.dim', { text: tx('applies the next time a station starts · Static Radio uses it too') })), qs,
+        h('small.mu-amb__sleepnote', { text: tx('The 64 and 32 kbps streams are SomaFM’s own low-bandwidth AAC streams for slow connections. If this browser can’t play one, the 128 kbps MP3 plays instead.') }));
+      return frag;
+    }
+    function syncSound() {
+      const els = SD.els;
+      if (!els || !listBox.contains(els.eqSw)) return;
+      const e = fx.EQ(), st = fx.status();
+      els.eqSw.classList.toggle('is-on', e.on);
+      els.eqSw.setAttribute('aria-checked', String(e.on));
+      for (const [id, b] of els.presets) {
+        const on = e.on ? e.preset === id : id === 'flat';
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', String(on));
+      }
+      e.gains.forEach((g, i) => {
+        const { input, out } = els.bands[i];
+        if (document.activeElement !== input) input.value = String(g);
+        out.textContent = `${g > 0 ? '+' : ''}${g}`;
+        input.setAttribute('aria-valuetext', `${g > 0 ? '+' : ''}${g} decibels`);
+        input.disabled = false;
+      });
+      els.eqNote.textContent = !e.on ? 'Off — the sound is played as it is. Pick a preset or drag a band to turn it on.'
+        : st.active ? 'On. Songs and stations on SomaFM’s CORS servers are shaped; the wallpaper visualizer keeps working.'
+        : st.why;
+      for (const [v, b] of els.speed) { const on = fx.speed() === v; b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', String(on)); }
+      const x = fx.crossfade();
+      if (document.activeElement !== els.xf) els.xf.value = String(x);
+      els.xfOut.textContent = x ? `${x} s` : 'Off';
+      els.xf.setAttribute('aria-valuetext', x ? `${x} seconds` : 'Off');
+      const sl = sleepT.state();
+      const cur = !sl ? 'off' : sl.afterSong ? 'song' : String(sl.minutes);
+      for (const [k, b] of els.sleep) { b.classList.toggle('is-on', k === cur); b.setAttribute('aria-pressed', String(k === cur)); }
+      els.sleepNote.textContent = !sl ? 'Off — sound plays until you stop it.'
+        : sl.afterSong ? 'Stops when the song that is playing ends.'
+        : sl.fading ? `Fading out — stops at ${clock12(sl.endsAt)}.`
+        : `Stops at ${clock12(sl.endsAt)}, in ${mmss(sl.left)}. The last seconds fade out gently. This only runs while StaticOS is open.`;
+      const q = streamQuality();
+      for (const [k, b] of els.quality) { b.classList.toggle('is-on', k === q); b.setAttribute('aria-pressed', String(k === q)); }
+    }
+
+    /* ---------------- Most played / Recently played ---------------- */
+    function playsView(kind) {
+      const all = playsAll();
+      const home = homeAudio();
+      const rows = Object.entries(all).map(([ref, v]) => ({ ...v, ref, e: home.byRef.get(ref) || null }));
+      const live = rows.filter(r => r.e);
+      const gone = rows.length - live.length;
+      live.sort(kind === 'most' ? (a, b) => b.n - a.n || b.last - a.last : (a, b) => b.last - a.last);
+      const list = live.slice(0, 50);
+      const frag = [h('div.mu-qhead',
+        h('span.label', { text: `${kind === 'most' ? 'Most played' : 'Recently played'} · ${list.length}` }),
+        h('span.dim', { text: tx('a song counts once you have listened to half of it (or 30 seconds)') }),
+        h('div.grow'),
+        rows.length ? h('button.btn.btn--sm.btn--ghost', { dataset: { role: 'clear-plays' }, onclick: async () => {
+          const yes = await api.confirm({ title: tx('Clear your listening history?'), ok: 'Clear it', danger: true, message: tx('Most played and Recently played start again from nothing. Your songs and playlists are not touched.') });
+          if (yes && !dead) { clearPlays(); flash('Cleared your listening history.'); }
+        } }, tx('Clear history')) : null)];
+      if (!list.length) {
+        frag.push(h('div.mu-empty.mu-empty--sm', h('div.mu-empty__art', icon(kind === 'most' ? 'bar-chart' : 'clock')),
+          h('h3', { text: tx('Nothing here yet') }),
+          h('p', { text: tx('Songs show up after you have really listened to them — half the song, or 30 seconds, whichever comes first. Skipping past one doesn’t count.') }),
+          h('div.mu-empty__acts', h('button.btn', { onclick: () => go('songs') }, icon('music'), tx('Your music')))));
+        return frag;
+      }
+      const ul = h('div.mu-list', { role: 'list', 'aria-label': kind === 'most' ? tx('Most played') : tx('Recently played') });
+      list.forEach((r, i) => ul.appendChild(songRow(r.e, i + 1, list.map(x => x.e),
+        { badge: kind === 'most' ? `${r.n} play${r.n === 1 ? '' : 's'}` : api.fmt.fmtAgo(r.last) })));
+      frag.push(ul);
+      if (gone) frag.push(h('p.mu-plhint', { text: `${gone} played song${gone === 1 ? ' is' : 's are'} no longer in Your music, so ${gone === 1 ? 'it isn’t' : 'they aren’t'} listed.` }));
+      return frag;
+    }
+
+    /* ---------------- what an import or an .m3u skipped, and why ---------------- */
+    function reportBox() {
+      const r = S.report;
+      if (!r) return null;
+      return h('section.mu-report', { dataset: { role: 'report' }, 'aria-label': r.title },
+        h('div.mu-report__head', icon(r.lines.length ? 'alert' : 'check'), h('b', { text: r.title }), h('div.grow'),
+          h('button.ibtn', { 'aria-label': tx('Dismiss'), dataset: { role: 'report-x' }, onclick: () => { S.report = null; paintList(); } }, icon('x'))),
+        r.lines.length ? h('ul.mu-report__list', r.lines.slice(0, 200).map(l => h('li', h('span.trunc', { text: l.name, title: l.name }), h('small', { text: l.why })))) : null,
+        r.lines.length > 200 ? h('small.dim', { text: `…and ${r.lines.length - 200} more.` }) : null);
     }
 
     /* ---------------- actions ---------------- */
@@ -2327,36 +3294,82 @@ defineApp({
     }
 
     async function importAudio(fileList) {
-      const files = Array.from(fileList || []);
-      if (!files.length) return;
+      return importItems(Array.from(fileList || []).map(file => ({ file, rel: file.name })));
+    }
+    /* items: [{ file, rel }] — rel is the path inside what was picked or dropped ("Album/01 Song.mp3"),
+       so a folder keeps its sub-folders under ~/Music. A .lrc or .txt joins the song with the same name
+       beside it. Anything left out is listed with the reason, never silently. */
+    async function importItems(items) {
+      items = (items || []).filter(it => it && it.file);
+      if (!items.length) return;
       const isAudio = f => media.kindOf(f.type) === 'audio' || media.kindOf(f.name) === 'audio';
-      const songs = files.filter(isAudio);
-      const skipped = files.filter(f => !isAudio(f));
-      const saved = [], failed = [], iffy = [];
-      S.busy = `Importing ${songs.length} song${songs.length === 1 ? '' : 's'}…`;
-      paintFoot();
-      for (const f of songs) {
+      const isLyric = f => /\.(lrc|txt)$/i.test(f.name);
+      const songs = items.filter(it => isAudio(it.file));
+      const lyrics = items.filter(it => !isAudio(it.file) && isLyric(it.file));
+      const skipped = items.filter(it => !isAudio(it.file) && !isLyric(it.file))
+        .map(it => ({ name: it.rel || it.file.name, why: whyNotSong(it.file.name, it.file.type) }));
+      const dirOf = rel => {
+        const segs = String(rel || '').split('/').slice(0, -1).map(cleanSeg).filter(x => x && x !== '.' && x !== '..').slice(0, 6);
+        return segs.length ? `${DIR}/${segs.join('/')}` : DIR;
+      };
+      const saved = [], failed = [], iffy = [], dup = [];
+      const where = new Map();                  /* "dir/stem" of the original -> { dir, stem } of the file now in Your music */
+      const keyFor = (dir, stem) => `${dir}/${stem.toLowerCase()}`;
+      let n = 0;
+      for (const it of songs) {
+        n++;
+        S.busy = `Importing ${n} of ${songs.length}…`;
+        paintFoot();
+        const f = it.file;
+        const dir = dirOf(it.rel);
         /* keep the name, but give it an audio extension the library will know
            (an audio/webm recording named .webm would otherwise count as video) */
         let name = f.name;
         if (media.kindOf(name) !== 'audio') name = `${stemOf(name)}.${media.extFor(f.type) || 'mp3'}`;
+        const there = vfs.node(`${dir}/${name}`);
+        if (there && there.type === 'file' && Number(there.size) === f.size) {
+          dup.push(it.rel || f.name);
+          skipped.push({ name: it.rel || f.name, why: 'already in Your music' });
+          where.set(keyFor(dir, stemOf(f.name)), { dir, stem: stemOf(name) });
+          continue;
+        }
         try {
-          const r = await media.save(DIR, name, f);
+          const r = await media.save(dir, name, f);
           saved.push(r);
+          where.set(keyFor(dir, stemOf(f.name)), { dir, stem: stemOf(vfs.baseName(r.path)) });
           if (f.type && audio && audio.canPlayType(f.type) === '') iffy.push(vfs.baseName(r.path));
         } catch (e) {
           failed.push(`${f.name} (${/quota/i.test(String(e?.name || e?.message)) ? 'browser storage is full' : e?.message || 'could not be saved'})`);
+          skipped.push({ name: it.rel || f.name, why: /quota/i.test(String(e?.name || e?.message)) ? 'browser storage is full' : (e?.message || 'could not be saved') });
         }
+      }
+      /* lyrics join their songs */
+      let lyricsSaved = 0;
+      for (const it of lyrics) {
+        const f = it.file;
+        const dir = dirOf(it.rel);
+        const w = where.get(keyFor(dir, stemOf(f.name)));
+        if (!w) { skipped.push({ name: it.rel || f.name, why: 'no song with the same name beside it' }); continue; }
+        if (f.size > 512 * 1024) { skipped.push({ name: it.rel || f.name, why: 'too big to be lyrics' }); continue; }
+        const target = `${w.dir}/${w.stem}${/\.lrc$/i.test(f.name) ? '.lrc' : '.txt'}`;
+        if (vfs.node(target)) { skipped.push({ name: it.rel || f.name, why: 'those lyrics are already there' }); continue; }
+        try { vfs.write(target, await f.text()); lyricsSaved++; } catch (e) { skipped.push({ name: it.rel || f.name, why: 'could not be read' }); }
       }
       S.busy = '';
       if (dead) return;
       const parts = [];
       if (saved.length) parts.push(`Added ${saved.length} song${saved.length === 1 ? '' : 's'} to Your music.`);
-      if (skipped.length) parts.push(`Skipped ${skipped.length} that ${skipped.length === 1 ? 'isn’t' : 'aren’t'} audio: ${skipped.slice(0, 3).map(f => f.name).join(', ')}${skipped.length > 3 ? '…' : ''}.`);
-      if (iffy.length) parts.push(`This browser may not play ${iffy.join(', ')}.`);
-      if (failed.length) parts.push(`Couldn’t save ${failed.join(', ')}.`);
+      if (lyricsSaved) parts.push(`${lyricsSaved} lyrics file${lyricsSaved === 1 ? '' : 's'} went in beside ${lyricsSaved === 1 ? 'its song' : 'their songs'}.`);
+      if (dup.length) parts.push(`${dup.length} ${dup.length === 1 ? 'was' : 'were'} already there.`);
+      if (skipped.length - dup.length > 0) parts.push(`Skipped ${skipped.length - dup.length} — see the list below.`);
+      if (iffy.length) parts.push(`This browser may not play ${iffy.slice(0, 3).join(', ')}${iffy.length > 3 ? '…' : ''}.`);
       if (!parts.length) parts.push('Nothing to import.');
+      S.report = skipped.length || iffy.length
+        ? { title: `${saved.length} song${saved.length === 1 ? '' : 's'} added, ${skipped.length} skipped`,
+            lines: [...skipped, ...iffy.map(x => ({ name: x, why: 'imported, but this browser may not be able to play it' }))] }
+        : null;
       if (S.view !== 'songs' && saved.length) go('songs');
+      else paintList();
       flash(parts.join(' '), !saved.length || failed.length > 0);
       if (saved.length) {
         api.notify({ app: 'Music', icon: 'music', title: parts[0], message: saved.map(r => vfs.baseName(r.path)).slice(0, 3).join(', ') + (saved.length > 3 ? '…' : ''), timeout: 4000 });
@@ -2408,8 +3421,8 @@ defineApp({
       if (!path) return;
       const name = node.name, dir = vfs.parentPath(path);
       if (!vfs.rm(path)) { flash(`Couldn’t move “${name}” to the Trash.`, true); return; }
-      api.notify({ app: 'Music', icon: 'trash', title: 'Moved to the Trash', message: name, timeout: 7000,
-        actions: [{ label: 'Undo', onClick: () => {
+      api.notify({ app: 'Music', icon: 'trash', title: tx('Moved to the Trash'), message: name, timeout: 7000,
+        actions: [{ label: tx('Undo'), onClick: () => {
           if (!vfs.node(`${TRASH}/${node.name}`) || vfs.node(`${TRASH}/${node.name}`) !== node) return;
           if (vfs.mv(`${TRASH}/${node.name}`, dir) && node.name !== name && !vfs.node(`${dir}/${name}`)) vfs.rename(`${dir}/${node.name}`, name);
         } }] });
@@ -2424,24 +3437,24 @@ defineApp({
       const r = ev.currentTarget?.getBoundingClientRect?.();
       const x = ev.clientX || (r ? r.left : 0), y = ev.clientY || (r ? r.bottom : 0);
       api.menu([
-        { label: cur && soundOn() ? 'Pause' : 'Play', icon: cur && soundOn() ? 'pause' : 'play', disabled: !has,
+        { label: cur && soundOn() ? tx('Pause') : tx('Play'), icon: cur && soundOn() ? 'pause' : 'play', disabled: !has,
           onClick: () => (cur ? toggle() : playFrom(list.map(x2 => x2.node), n)) },
-        fileQueue && !cur && { label: 'Play next', icon: 'chevrons-right', disabled: !has, onClick: () => { playNext(n); flash(`“${e.title}” plays next.`); } },
-        fileQueue && !cur && { label: 'Add to queue', icon: 'list-music', disabled: !has, onClick: () => { addToQueue(n); flash(`Added “${e.title}” to Up next.`); } },
-        { label: 'Add to playlist', icon: 'list-plus', disabled: !has, items: [
+        fileQueue && !cur && { label: tx('Play next'), icon: 'chevrons-right', disabled: !has, onClick: () => { playNext(n); flash(`“${e.title}” plays next.`); } },
+        fileQueue && !cur && { label: tx('Add to queue'), icon: 'list-music', disabled: !has, onClick: () => { addToQueue(n); flash(`Added “${e.title}” to Up next.`); } },
+        { label: tx('Add to playlist'), icon: 'list-plus', disabled: !has, items: [
           ...plAll().map(p => {
             const inIt = has && p.tracks.some(t => t.ref === n.content);
-            return { label: inIt ? `${p.name} (already in it)` : p.name, icon: inIt ? 'check' : 'list', disabled: inIt, onClick: () => addTo(p.id, n) };
+            return { label: inIt ? tx('{name} (already in it)', { name: p.name }) : p.name, icon: inIt ? 'check' : 'list', disabled: inIt, onClick: () => addTo(p.id, n) };
           }),
           plAll().length ? '-' : null,
-          { label: 'New playlist…', icon: 'plus', onClick: () => newPlaylist([n]) },
+          { label: tx('New playlist…'), icon: 'plus', onClick: () => newPlaylist([n]) },
         ].filter(Boolean) },
         '-',
-        { label: 'Download to this computer', icon: 'download', disabled: !has, onClick: () => download(e) },
-        { label: 'Rename…', icon: 'edit-3', onClick: () => { S.renaming = n; S.renameErr = ''; paintList(); } },
-        { label: 'Show in Files', icon: 'folder-open', onClick: () => api.openApp('files', { path: vfs.parentPath(alive(n) || DIR) }) },
+        { label: tx('Download to this computer'), icon: 'download', disabled: !has, onClick: () => download(e) },
+        { label: tx('Rename…'), icon: 'edit-3', onClick: () => { S.renaming = n; S.renameErr = ''; paintList(); } },
+        { label: tx('Show in Files'), icon: 'folder-open', onClick: () => api.openApp('files', { path: vfs.parentPath(alive(n) || DIR) }) },
         '-',
-        { label: 'Move to Trash', icon: 'trash', danger: true, onClick: () => trash(n) },
+        { label: tx('Move to Trash'), icon: 'trash', danger: true, onClick: () => trash(n) },
       ].filter(Boolean), x, y);
     }
 
@@ -2457,15 +3470,19 @@ defineApp({
       const r = ev.currentTarget.getBoundingClientRect();
       const mode = m => () => setRepeat(m);
       api.menu([
-        { label: 'Import songs…', icon: 'upload', onClick: pickFiles },
-        { label: 'Shuffle all', icon: 'shuffle', disabled: !playableLibrary().length, onClick: () => shuffleAll() },
+        { label: tx('Import songs…'), icon: 'upload', onClick: pickFiles },
+        { label: tx('Import a folder…'), icon: 'folder', onClick: pickFolder },
+        { label: tx('Shuffle all'), icon: 'shuffle', disabled: !playableLibrary().length, onClick: () => shuffleAll() },
         '-',
-        { label: 'Repeat off', icon: P.repeat === 'off' ? 'check' : 'dot', onClick: mode('off') },
-        { label: 'Repeat all', icon: P.repeat === 'all' ? 'check' : 'repeat', onClick: mode('all') },
-        { label: 'Repeat this song', icon: P.repeat === 'one' ? 'check' : 'repeat', onClick: mode('one') },
+        { label: tx('Repeat off'), icon: P.repeat === 'off' ? 'check' : 'dot', onClick: mode('off') },
+        { label: tx('Repeat all'), icon: P.repeat === 'all' ? 'check' : 'repeat', onClick: mode('all') },
+        { label: tx('Repeat this song'), icon: P.repeat === 'one' ? 'check' : 'repeat', onClick: mode('one') },
         '-',
-        { label: 'Open Music folder', icon: 'folder', onClick: () => api.openApp('files', { path: DIR }) },
-        { label: 'Open Spotify', icon: 'list-music', onClick: () => api.openApp('spotify') },
+        { label: tx('Open Music folder'), icon: 'folder', onClick: () => api.openApp('files', { path: DIR }) },
+        { label: tx('Open Spotify'), icon: 'list-music', onClick: () => api.openApp('spotify') },
+        '-',
+        { label: S.mini ? tx('Back to the full player') : tx('Mini player'), icon: 'minimize-2', onClick: () => setMini(!S.mini) },
+        { label: tx('Keyboard shortcuts'), icon: 'keyboard', onClick: () => showKeys(true) },
       ], ev.clientX || r.left, ev.clientY || r.bottom);
     }
 
@@ -2474,12 +3491,32 @@ defineApp({
     const onDragEnter = e => { if (!hasFiles(e)) return; e.preventDefault(); S.drag++; shell.classList.add('is-drop'); };
     const onDragOver = e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; };
     const onDragLeave = e => { if (!hasFiles(e)) return; S.drag = Math.max(0, S.drag - 1); if (!S.drag) shell.classList.remove('is-drop'); };
+    /* a dropped folder arrives as an entry to walk, not as files */
+    async function walkEntry(entry, prefix, out) {
+      if (entry.isFile) {
+        await new Promise(res => entry.file(file => { out.push({ file, rel: `${prefix}${file.name}` }); res(); }, () => res()));
+      } else if (entry.isDirectory && prefix.split('/').length < 8) {
+        const r = entry.createReader();
+        for (;;) {
+          const batch = await new Promise(res => r.readEntries(res, () => res([])));
+          if (!batch.length) break;
+          for (const ch of batch) await walkEntry(ch, `${prefix}${entry.name}/`, out);
+        }
+      }
+    }
     const onDrop = e => {
       if (!hasFiles(e)) return;
       e.preventDefault();
       S.drag = 0;
       shell.classList.remove('is-drop');
-      importAudio(e.dataTransfer.files);
+      const dt = e.dataTransfer;
+      const entries = [...(dt.items || [])].map(it => (typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null));
+      if (entries.some(en => en && en.isDirectory)) {
+        const out = [];
+        Promise.all(entries.filter(Boolean).map(en => walkEntry(en, '', out))).then(() => importItems(out));
+        return;
+      }
+      importAudio(dt.files);
     };
     shell.addEventListener('dragenter', onDragEnter);
     shell.addEventListener('dragover', onDragOver);
@@ -2507,12 +3544,36 @@ defineApp({
       } else if (k === 'n' || k === 'N') { e.preventDefault(); next(); }
       else if (k === 'p' || k === 'P') { e.preventDefault(); prev(); }
       else if (k === 'm' || k === 'M') { e.preventDefault(); store.set('prefs.muted', store.get('prefs.muted') !== true); }
-      else if ((k === 'ArrowRight' || k === 'ArrowLeft') && P.cur?.kind === 'file' && e.target.getAttribute?.('role') !== 'slider') {
+      else if ((k === 'ArrowRight' || k === 'ArrowLeft') && (P.cur?.kind === 'file' || P.cur?.kind === 'book') && e.target.getAttribute?.('role') !== 'slider') {
         e.preventDefault(); seek((audio.currentTime || 0) + (k === 'ArrowRight' ? 5 : -5));
       } else if (k === '/' && S.view === 'songs') {
         if (!toolsBox.classList.contains('hidden')) { e.preventDefault(); searchIn.focus(); }
-      }
+      } else if (k === 'l' || k === 'L') { e.preventDefault(); abStep(); }
+      else if (k === ',' || k === '.') {
+        if (P.cur?.kind !== 'file' && P.cur?.kind !== 'book') return;
+        e.preventDefault();
+        const i = fx.SPEEDS.indexOf(fx.speed());
+        const at = i < 0 ? fx.SPEEDS.indexOf(1) : i;
+        fx.setSpeed(fx.SPEEDS[clamp(at + (k === '.' ? 1 : -1), 0, fx.SPEEDS.length - 1)]);
+      } else if (k === 'c' || k === 'C') { if (P.cur) { e.preventDefault(); copySong(); } }
+      else if (k === 'h' || k === 'H') { if (P.cur?.kind === 'radio') { e.preventDefault(); heartSong(); } }
+      else if (k === 'z' || k === 'Z') { e.preventDefault(); setMini(!S.mini); }
+      else if (k === '?' || k === 'i' || k === 'I') { e.preventDefault(); showKeys(!S.keys); }
+      else if (k === 'Escape' && S.keys) { e.preventDefault(); showKeys(false); }
     };
+    /* the list of keys, in this window (the OS's own sheet — hold ⌘ or Ctrl — shows the same list) */
+    const keysBox = h('div.mu-keys.hidden', { role: 'dialog', 'aria-label': tx('Music keyboard shortcuts'), dataset: { role: 'keys' } });
+    shell.appendChild(keysBox);
+    function showKeys(on) {
+      S.keys = !!on;
+      keysBox.classList.toggle('hidden', !on);
+      if (!on) { clearEl(keysBox); return; }
+      const rows = [...defKeys, ['Esc', 'Close this list']];
+      clearEl(keysBox).append(
+        h('div.mu-keys__head', icon('keyboard'), h('b', { text: tx('Music keys') }), h('div.grow'),
+          h('button.ibtn', { 'aria-label': tx('Close'), onclick: () => showKeys(false) }, icon('x'))),
+        h('dl.mu-keys__list', rows.map(([k, d]) => h('div', h('dt', h('kbd', { text: k })), h('dd', { text: d })))));
+    }
     window.addEventListener('keydown', onKey);
     disposers.push(() => window.removeEventListener('keydown', onKey));
 
@@ -2520,7 +3581,7 @@ defineApp({
     let listRaf = 0;
     const onPlayer = kind => {
       if (dead) return;
-      if (kind === 'time') { if (S.scrub === null && !raf) paintTime(); return; }
+      if (kind === 'time') { if (S.scrub === null && !raf) paintTime(); syncLyrics(); return; }
       if (kind === 'list' || kind === 'radio') {
         if (!listRaf) listRaf = requestAnimationFrame(() => {
           listRaf = 0;
@@ -2533,12 +3594,14 @@ defineApp({
         return;
       }
       /* track / state / queue */
+      if (AB && S.view === 'books') AB.sync();
       paintHero();
       paintSide();
       paintFoot();
       if (S.renaming || S.plRenaming) return;       /* don't yank a rename field away mid-typing */
-      if (S.view === 'songs') markSongs();
+      if (S.view === 'songs' || S.view === 'most' || S.view === 'recent') markSongs();
       else if (S.view === 'queue') paintList();
+      else if (S.view === 'lyrics') { if (lyricsSig() !== LY.sig) paintList(); }
       else if (radioSig() !== radioKey) paintList();
     };
     subs.add(onPlayer);
@@ -2558,6 +3621,7 @@ defineApp({
       paintFoot();
       if (P.from) paintHero();
     }));
+    disposers.push(trouble.on(() => { if (!dead && S.view === 'radio') paintList(); }));
     /* radio favourites are shared with Static Radio */
     disposers.push(store.sub(RADIO_KEY, () => { if (!dead && S.view === 'radio') paintList(); }));
     /* ambient sounds: changed here, in Control Centre, by the sleep timer or a focus session */
@@ -2568,9 +3632,16 @@ defineApp({
       if (st.playing !== ambWasOn) { ambWasOn = st.playing; paintSide(); }
     }));
     disposers.push(bus.on('tick:1s', () => { if (!dead && S.view === 'ambient' && AM.els && AMB.state().sleep) paintSleepNote(); }));
+    /* the equalizer, speed, crossfade and sleep timer: changed here, from the hero row, or by Static Radio */
+    disposers.push(bus.on('playerfx:change', () => { if (dead) return; paintFx(); if (S.view === 'sound') syncSound(); }));
+    disposers.push(bus.on('mediasleep:change', () => { if (dead) return; paintFx(); if (S.view === 'sound') syncSound(); }));
+    disposers.push(bus.on('radiofinds:change', () => { if (!dead) paintFx(); }));
+    disposers.push(bus.on('tick:1s', () => { if (!dead && sleepT.state()) { paintFx(); if (S.view === 'sound') syncSound(); } }));
     /* a minimised window can't be watched, so its microphone goes off */
     disposers.push(bus.on('win:minimize', w => { if (w === win && TU) TU.stop('The microphone was turned off because the window was minimised.'); }));
     disposers.push(() => { if (TU) { TU.destroy(); TU = null; } });
+    disposers.push(() => { if (AB) { AB.dispose(); AB = null; } });
+    disposers.push(() => { if (SO) { SO.remove(); SO = null; } });
     const offMotion = store.sub('prefs.reduceMotion', () => { visClear(); paintHero(); });
     disposers.push(offMotion);
     const offAccent = bus.on('theme:change', readAccent);

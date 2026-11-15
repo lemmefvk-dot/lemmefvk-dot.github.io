@@ -392,6 +392,72 @@
   .wx-card--wide{grid-column:auto}
 }
 
+/* ---- today at a glance: the coat and the rain, with their numbers ---- */
+.wx-plan{display:flex;flex-direction:column;gap:var(--sp-2)}
+.wx-plan__row{display:flex;align-items:flex-start;gap:var(--sp-3);font-size:var(--fs-12);line-height:1.45;color:var(--ink-1)}
+.wx-plan__row>.icon{width:15px;height:15px;flex:0 0 auto;margin-top:1px;color:var(--ink-3)}
+.wx-plan__row b{color:var(--ink-0);font-weight:660}
+.wx-plan__row.is-coat>.icon{color:var(--wx-rain-soft)}
+.wx-plan__row.is-rain>.icon{color:var(--wx-rain)}
+.wx-plan__row.is-dry>.icon{color:var(--wx-sun)}
+.wx-plan__rule{font-size:var(--fs-10);color:var(--ink-3);line-height:1.45}
+
+/* the strip / chart switch and the chart */
+.wx-hview button{height:20px;padding:0 var(--sp-3)}
+.wx-chart{position:relative;outline:none;border-radius:var(--r-md);touch-action:pan-y}
+.wx-chart:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wx-chart__svg{display:block;width:100%;height:auto;overflow:visible}
+.wx-chart__grid{stroke:var(--line-0);stroke-width:1;fill:none}
+.wx-chart__day{stroke:var(--line-1);stroke-width:1;stroke-dasharray:2 3;fill:none}
+.wx-chart__ax{font-size:calc(11px * var(--fs-k,1));fill:var(--ink-3);font-family:var(--font);font-variant-numeric:tabular-nums}
+.wx-chart__ax--pop{fill:var(--wx-rain)}
+.wx-chart__pop{fill:var(--wx-rain);opacity:.45}
+.wx-chart__line{fill:none;stroke:var(--wx-sun);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.wx-chart__now{fill:var(--wx-sun);stroke:var(--ink-0);stroke-width:1.5}
+.wx-chart__cur{stroke:var(--ink-2);stroke-width:1;fill:none}
+.wx-chart__dot{fill:var(--ink-0);stroke:var(--wx-sun);stroke-width:2}
+.wx-chart__read{min-height:1.5em;margin-top:var(--sp-2);font-size:var(--fs-12);color:var(--ink-0);font-variant-numeric:tabular-nums}
+.wx-chart__key{display:flex;flex-wrap:wrap;gap:var(--sp-4);margin-top:var(--sp-1);font-size:var(--fs-10);color:var(--ink-3)}
+.wx-chart__k1::before,.wx-chart__k2::before{content:'';display:inline-block;width:14px;height:3px;margin-right:6px;vertical-align:middle;border-radius:2px;background:var(--wx-sun)}
+.wx-chart__k2::before{height:8px;width:6px;background:var(--wx-rain);opacity:.6}
+
+/* air quality and the hero's copy button */
+.wx-meter--aq i{background:linear-gradient(90deg,#3ecf6e,#e6d23a 35%,#f39a2a 60%,#e8483c 85%,#9b5de5)}
+.wx-card__src{font-size:calc(9px * var(--fs-k,1));color:var(--ink-3);line-height:1.35}
+.wx-chip--btn{cursor:pointer}
+.wx-chip--btn:hover{color:var(--ink-0);border-color:var(--line-2)}
+.wx-chip--btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+/* the past week: dimmer than the forecast, and it says so */
+.wx-past.is-closed .wx-sec__head{margin-bottom:0}
+.wx-past__tag{padding:1px 8px;border-radius:var(--r-pill);border:1px dashed var(--line-2);font-size:calc(9px * var(--fs-k,1));font-weight:650;color:var(--ink-3);white-space:nowrap}
+.wx-past__list{display:flex;flex-direction:column}
+.wx-past__row{display:grid;grid-template-columns:minmax(92px,1.1fr) 24px minmax(0,1.4fr) 84px 64px;align-items:center;gap:var(--sp-3);min-height:36px;padding:0 var(--sp-2);font-size:var(--fs-12);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.wx-past__row+.wx-past__row{box-shadow:0 -1px 0 var(--line-0)}
+.wx-past__row .wx-g{--wx-gs:20px;opacity:.75}
+.wx-past__n{color:var(--ink-1);font-weight:600}
+.wx-past__c{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wx-past__t{text-align:right}
+@container wx (max-width: 520px){
+  .wx-past__row{grid-template-columns:minmax(80px,1fr) 22px 80px 56px}
+  .wx-past__c{display:none}
+}
+.wx-past__r{text-align:right;color:var(--wx-rain)}
+.wx-past__msg{margin:0;font-size:var(--fs-11);color:var(--ink-2);line-height:1.5}
+.wx-past__src{display:block;margin-top:var(--sp-2);font-size:var(--fs-10);color:var(--ink-3);line-height:1.45}
+
+/* two places side by side */
+.wx-cmp__sel{height:26px;max-width:220px}
+.wx-cmp__wrap{overflow-x:auto}
+.wx-cmp__t{width:100%;border-collapse:collapse;font-size:var(--fs-12);color:var(--ink-1);font-variant-numeric:tabular-nums}
+.wx-cmp__t th,.wx-cmp__t td{padding:6px var(--sp-2);text-align:left;vertical-align:top}
+.wx-cmp__t thead th{font-size:var(--fs-10);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.wx-cmp__t tbody th{font-weight:560;color:var(--ink-2);white-space:nowrap}
+.wx-cmp__t tbody tr+tr{box-shadow:0 -1px 0 var(--line-0)}
+.wx-cmp__t td{color:var(--ink-0)}
+.wx-cmp__d{color:var(--ink-3)!important;white-space:nowrap}
+.wx-cmp__sep th{padding-top:var(--sp-4);font-size:var(--fs-10);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)!important}
+
 /* ---- motion ------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce){
   .wx-spin svg,.wx-refresh.is-busy .icon svg{animation:none}

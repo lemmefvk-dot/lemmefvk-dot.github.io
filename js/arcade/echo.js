@@ -23,19 +23,52 @@
    StaticOS's Mute and Volume, and is closed in stop(). When sound is
    muted or unavailable the game still works from the lights alone,
    and the start screen says so.
+
+   Modes (ctx.mode, each with its own best):
+     Classic  one wrong pad ends the game; no time limit.
+     Strict   one wrong pad ends it, and each step must come within
+              STRICT_MS of the last (twice that in one-button mode,
+              where the ring needs time to come round).
+     Free     a wrong pad costs one of three tries and the round is
+              played again; the third miss ends the game.
+
+   Shapes: each pad can carry a shape as well as its colour — a
+   triangle, a circle, a square and a diamond — so the pads can be
+   told apart without colour. They are on with the Arcade's
+   colour-blind colours (ctx.palette 'cb', which also swaps the pads
+   to that set) or with the game's own "Shapes on the pads" setting.
+
+   One-button mode (ctx.oneButton, from the Arcade's options) is
+   switch scanning: on your turn a white ring moves from pad to pad,
+   clockwise from the top, one pad every SCAN_MS; press the one
+   button — Space, Enter, a click or a tap anywhere on the game —
+   while the ring is on the pad you want. After each press the ring
+   starts again at the top. It never times out: the ring keeps going
+   round until you choose. The number keys and arrows still work.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { store } from '../core/store.js';
+import { PALETTE_CB } from './index.js';
 
-/* clockwise from the top; `arrow` is the key that also plays the pad */
+/* clockwise from the top; `arrow` is the key that also plays the pad; `cb` its colour-blind colour */
 const PADS = [
-  { name: 'green', where: 'top', color: '#22c55e', hz: 329.63, arrow: 'ArrowUp', glyph: '↑' },
-  { name: 'red', where: 'right', color: '#f43f5e', hz: 440.0, arrow: 'ArrowRight', glyph: '→' },
-  { name: 'yellow', where: 'bottom', color: '#facc15', hz: 554.37, arrow: 'ArrowDown', glyph: '↓' },
-  { name: 'blue', where: 'left', color: '#3b82f6', hz: 659.25, arrow: 'ArrowLeft', glyph: '←' },
+  { name: 'green', where: 'top', color: '#22c55e', cb: PALETTE_CB[2], shape: 'triangle', hz: 329.63, arrow: 'ArrowUp', glyph: '↑' },
+  { name: 'red', where: 'right', color: '#f43f5e', cb: PALETTE_CB[5], shape: 'circle', hz: 440.0, arrow: 'ArrowRight', glyph: '→' },
+  { name: 'yellow', where: 'bottom', color: '#facc15', cb: PALETTE_CB[3], shape: 'square', hz: 554.37, arrow: 'ArrowDown', glyph: '↓' },
+  { name: 'blue', where: 'left', color: '#3b82f6', cb: PALETTE_CB[4], shape: 'diamond', hz: 659.25, arrow: 'ArrowLeft', glyph: '←' },
 ];
+/* each shape as an SVG path in a 24 × 24 box, drawn upright on its pad */
+const SHAPES = {
+  triangle: 'M12 3 L22 20 H2 Z',
+  circle: 'M12 3 a9 9 0 1 0 0.01 0 Z',
+  square: 'M4 4 H20 V20 H4 Z',
+  diamond: 'M12 2 L22 12 L12 22 L2 12 Z',
+};
 const PRESS_MS = 230;
+const SCAN_MS = 1100;             /* one-button mode: how long the ring stays on each pad */
+const STRICT_MS = 3000;           /* Strict: the most a step may take */
+const TRIES = 3;                  /* Free: misses before the game ends */
 
 const CSS = `
 .arx-echo{position:relative;width:100%;height:100%;min-height:340px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--sp-4,12px);
@@ -58,6 +91,7 @@ const CSS = `
 .arx-echo__pad.is-due{animation:arx-echo-due .5s steps(1) 3}
 @keyframes arx-echo-due{50%{filter:brightness(.4) saturate(.8)}}
 .arx-echo.is-reduced .arx-echo__pad.is-due{animation:none}
+.arx-echo__pad.is-scan::after{content:"";position:absolute;inset:6%;border-radius:inherit;border:calc(var(--size) * .014) solid #fff;box-shadow:0 0 0 calc(var(--size) * .006) #000,inset 0 0 0 calc(var(--size) * .006) #000;pointer-events:none}
 .arx-echo__pad:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ink-0,#fff),inset 0 1px 0 rgba(255,255,255,.12)}
 .arx-echo.is-watch .arx-echo__pad,.arx-echo.is-over .arx-echo__pad,.arx-echo.is-intro .arx-echo__pad{cursor:default}
 .arx-echo.is-reduced .arx-echo__pad{transition:none}
@@ -66,6 +100,22 @@ const CSS = `
   padding:.35em .55em;border-radius:6px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.14);pointer-events:none}
 .arx-echo__key i{font-style:normal;font-weight:600;opacity:.62}
 .arx-echo__pad.is-lit .arx-echo__key,.arx-echo__pad.is-due .arx-echo__key{color:rgba(0,0,0,.72);background:rgba(255,255,255,.35);border-color:rgba(0,0,0,.14)}
+.arx-echo__shape{position:absolute;left:50%;top:50%;width:calc(var(--size) * .1);height:calc(var(--size) * .1);transform:translate(-50%,-50%) rotate(-45deg);pointer-events:none;display:none}
+.arx-echo__shape path{fill:rgba(255,255,255,.88);stroke:rgba(0,0,0,.55);stroke-width:1.6;stroke-linejoin:round}
+.arx-echo__pad.is-lit .arx-echo__shape path,.arx-echo__pad.is-due .arx-echo__shape path{fill:rgba(0,0,0,.72);stroke:rgba(255,255,255,.6)}
+.arx-echo.has-shapes .arx-echo__shape{display:block}
+/* with a shape on the pad: the key label towards the rim, the shape towards the hub */
+.arx-echo.has-shapes .arx-echo__pad[data-p="0"] .arx-echo__key{left:38%;top:38%}
+.arx-echo.has-shapes .arx-echo__pad[data-p="0"] .arx-echo__shape{left:60%;top:60%}
+.arx-echo.has-shapes .arx-echo__pad[data-p="1"] .arx-echo__key{left:62%;top:38%}
+.arx-echo.has-shapes .arx-echo__pad[data-p="1"] .arx-echo__shape{left:40%;top:60%}
+.arx-echo.has-shapes .arx-echo__pad[data-p="2"] .arx-echo__key{left:62%;top:62%}
+.arx-echo.has-shapes .arx-echo__pad[data-p="2"] .arx-echo__shape{left:40%;top:40%}
+.arx-echo.has-shapes .arx-echo__pad[data-p="3"] .arx-echo__key{left:38%;top:62%}
+.arx-echo.has-shapes .arx-echo__pad[data-p="3"] .arx-echo__shape{left:60%;top:40%}
+.arx-echo__tries{display:flex;gap:4px;justify-content:center}
+.arx-echo__tries i{width:calc(var(--size) * .016);height:calc(var(--size) * .016);border-radius:50%;background:var(--ga)}
+.arx-echo__tries i.is-gone{background:rgba(255,255,255,.18)}
 .arx-echo__hub{position:absolute;left:50%;top:50%;width:40%;height:40%;transform:translate(-50%,-50%);border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:calc(var(--size) * .008);text-align:center;background:radial-gradient(circle at 50% 30%,#2a1a24,#0c070a),#0c070a;color:#fff;
   border:calc(var(--size) * .018) solid #150b11;box-shadow:0 10px 30px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);padding:6%}
@@ -95,6 +145,13 @@ export default {
     let pos = 0;
     let longest = 0;
     let cleared = false;             // this round was repeated; the next step is on its way
+    const one = !!ctx.oneButton;
+    const MODE = ['strict', 'free'].includes(ctx.mode) ? ctx.mode : 'classic';
+    const stepMs = one ? STRICT_MS * 2 : STRICT_MS;
+    let tries = TRIES;               // Free: misses left
+    let misses = 0;
+    let stepT = 0;                   // Strict: the timer on the step that is due
+    let scan = -1, scanT = 0;        // one-button mode: the pad the ring is on, and its timer
     let ac = null, master = null;
     const timers = new Set();
     const offs = [];
@@ -163,10 +220,18 @@ export default {
     }
 
     /* ---- build ---- */
+    const shapeEl = p => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'arx-echo__shape'); svg.setAttribute('aria-hidden', 'true');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', SHAPES[p.shape]);
+      svg.appendChild(path);
+      return svg;
+    };
     const pads = PADS.map((p, i) => h('button.arx-echo__pad', {
-      type: 'button', dataset: { p: String(i) }, style: { '--pc': p.color },
-      'aria-label': `Pad ${i + 1}, ${p.name}, ${p.where}`,
-    }, h('span.arx-echo__key', { 'aria-hidden': 'true' }, h('b', { text: String(i + 1) }), h('i', { text: p.glyph }))));
+      type: 'button', dataset: { p: String(i), shape: p.shape }, style: { '--pc': p.color },
+      'aria-label': `Pad ${i + 1}, ${p.name} ${p.shape}, ${p.where}`,
+    }, shapeEl(p), h('span.arx-echo__key', { 'aria-hidden': 'true' }, h('b', { text: String(i + 1) }), h('i', { text: p.glyph }))));
     const hub = h('div.arx-echo__hub');
     const disc = h('div.arx-echo__disc', { role: 'group', 'aria-label': 'Echo pads' }, h('div.arx-echo__ring', pads), hub);
     const foot = h('div.arx-echo__foot');
@@ -178,8 +243,54 @@ export default {
     el.appendChild(root);
     const say = msg => { live.textContent = ''; live.textContent = msg; };
 
+    /* the colour-blind colours swap the pads to that set; they, or the setting, put the shapes on */
+    let shapes = false;
+    function paintLook() {
+      const cb = ctx.palette === 'cb';
+      shapes = cb || !!ctx.settings?.shapes;
+      root.classList.toggle('has-shapes', shapes);
+      pads.forEach((b, i) => b.style.setProperty('--pc', cb ? PADS[i].cb : PADS[i].color));
+    }
+    paintLook();
+    const padName = i => (shapes ? `${PADS[i].name} ${PADS[i].shape}` : PADS[i].name);
+
+    /* Strict: the step that is due must come within stepMs */
+    function armStep() {
+      if (MODE !== 'strict') return;
+      if (stepT) { clearTimeout(stepT); timers.delete(stepT); }
+      stepT = later(() => { stepT = 0; if (state === 'input' && !paused) fail(null); }, stepMs);
+    }
+    function clearStep() { if (stepT) { clearTimeout(stepT); timers.delete(stepT); stepT = 0; } }
+
+    /* ---- one-button scanning ---- */
+    function paintScan() { pads.forEach((p, i) => p.classList.toggle('is-scan', i === scan)); }
+    function stopScan() {
+      if (scanT) { clearTimeout(scanT); timers.delete(scanT); scanT = 0; }
+      scan = -1; paintScan();
+    }
+    function startScan() {
+      stopScan();
+      if (!one || dead || paused || state !== 'input') return;
+      const step = () => {
+        if (dead || paused || state !== 'input') return;
+        scan = (scan + 1) % PADS.length;
+        paintScan();
+        say(`${PADS[scan].name}`);
+        scanT = later(step, SCAN_MS);
+      };
+      step();
+    }
+    function pick() {
+      if (!one || state !== 'input' || scan < 0) return;
+      const p = scan;
+      stopScan();
+      press(p);
+      if (state === 'input') startScan();
+    }
+
     function setState(s) {
       state = s;
+      if (s !== 'input') { stopScan(); clearStep(); }
       root.classList.toggle('is-intro', s === 'intro');
       root.classList.toggle('is-watch', s === 'watch');
       root.classList.toggle('is-over', s === 'over');
@@ -190,7 +301,10 @@ export default {
       hub.replaceChildren(...[                   // (a null child would print "null")
         kick ? h('div.arx-echo__kick', { text: kick }) : null,
         num != null ? h('div.arx-echo__num', { text: String(num) }) : null,
-        msg ? h('div.arx-echo__msg' + (bad ? '.is-bad' : ''), { text: msg }) : null].filter(Boolean));
+        msg ? h('div.arx-echo__msg' + (bad ? '.is-bad' : ''), { text: msg }) : null,
+        /* Free: the tries left, as dots */
+        MODE === 'free' && kick !== 'Echo' ? h('div.arx-echo__tries', { 'aria-label': `${tries} of ${TRIES} tries left` },
+          Array.from({ length: TRIES }, (_, i) => h('i' + (i >= tries ? '.is-gone' : '')))) : null].filter(Boolean));
     }
 
     function footHint() {
@@ -198,9 +312,12 @@ export default {
         : muted() || !volume() ? 'Sound is off, so Echo is lights only — the lights alone are enough to play.' : null;
       foot.className = 'arx-echo__foot' + (quiet ? ' is-warn' : '');
       foot.replaceChildren(...(quiet ? [quiet]
-        : coarse ? ['Tap the pads in the same order · no time limit']
-          : ['Tap the pads, press ', h('kbd', { text: '1' }), '–', h('kbd', { text: '4' }), ' or use the arrow keys · no time limit']));
+        : one ? ['One button: when the ring is on the pad you want, press ', h('kbd', { text: 'Space' }), `, click or tap · ${rule}`]
+        : coarse ? [`Tap the pads in the same order · ${rule}`]
+          : ['Tap the pads, press ', h('kbd', { text: '1' }), '–', h('kbd', { text: '4' }), ` or use the arrow keys · ${rule}`]));
     }
+    /* what this mode asks, in a few words */
+    const rule = MODE === 'strict' ? `${stepMs / 1000} seconds a step` : MODE === 'free' ? `a miss plays the round again, ${TRIES} tries` : 'no time limit';
 
     function light(p, ms) {
       const pad = pads[p];
@@ -223,6 +340,7 @@ export default {
       audio();                       // created inside the click: the browser allows sound from here on
       seq.length = 0;
       longest = 0;
+      tries = TRIES; misses = 0;
       next();
     }
 
@@ -251,18 +369,21 @@ export default {
       later(() => {
         setState('input');
         hubShow(`Round ${seq.length}`, `0/${seq.length}`, 'Your turn');
-        say(`Your turn. ${seq.length} ${seq.length === 1 ? 'step' : 'steps'}.`);
+        say(`Your turn. ${seq.length} ${seq.length === 1 ? 'step' : 'steps'}.${one ? ' Press when the ring is on the pad you want.' : ''}${MODE === 'strict' ? ` ${stepMs / 1000} seconds a step.` : ''}`);
+        startScan();
+        armStep();
       }, t);
     }
 
     function press(p) {
       if (dead || paused || state !== 'input') return;
       light(p, PRESS_MS);
-      if (p !== seq[pos]) return fail(p);
+      if (p !== seq[pos]) return MODE === 'free' && tries > 1 ? miss(p) : fail(p);
       tone(p, PRESS_MS);
       pos++;
       if (pos < seq.length) {
         hubShow(`Round ${seq.length}`, `${pos}/${seq.length}`, 'Your turn');
+        armStep();
         return;
       }
       longest = seq.length;
@@ -274,30 +395,54 @@ export default {
       later(next, 650);
     }
 
+    /* Free: a wrong pad costs a try, and the same round is played again */
+    function miss(wrong) {
+      tries--; misses++;
+      setState('watch');
+      buzz();
+      const due = seq[pos];
+      pads[due].classList.add('is-due');
+      hubShow(`Round ${seq.length}`, longest, `It was ${padName(due)}`, true);
+      say(`Wrong pad: ${padName(wrong)}. It was ${padName(due)}. ${tries} ${tries === 1 ? 'try' : 'tries'} left; the round plays again.`);
+      later(() => { pads[due].classList.remove('is-due'); play(300); }, 1400);
+    }
+
+    /* wrong: the pad pressed, or null when Strict's time ran out */
     function fail(wrong) {
+      if (MODE === 'free') { tries = 0; misses++; }
       setState('over');
       buzz();
       const due = seq[pos];
       pads[due].classList.add('is-due');
-      hubShow('Game over', longest, `It was ${PADS[due].name}`, true);
-      say(`Wrong pad. It was ${PADS[due].name}. Longest sequence ${longest}.`);
+      hubShow('Game over', longest, wrong === null ? `Too slow: it was ${padName(due)}` : `It was ${padName(due)}`, true);
+      say(`${wrong === null ? 'Too slow' : 'Wrong pad'}. It was ${padName(due)}. Longest sequence ${longest}.`);
+      const how = wrong === null ? `ran out of time on step ${pos + 1} of round ${seq.length}` : `missed step ${pos + 1} of round ${seq.length} (${padName(wrong)} instead of ${padName(due)})`;
       onEnd({
         score: longest, won: false,
-        detail: `Longest sequence: ${longest} · missed step ${pos + 1} of round ${seq.length} (${PADS[wrong].name} instead of ${PADS[due].name})`,
+        detail: `Longest sequence: ${longest}${MODE === 'classic' ? '' : MODE === 'strict' ? ' · Strict' : ` · Free, ${misses} ${misses === 1 ? 'miss' : 'misses'}`} · ${how}`,
       });
     }
 
     /* pointer presses answer on pointerdown (no click delay); a keyboard
        Enter/Space on a focused pad arrives as a click with detail 0 */
     listen(disc, 'pointerdown', e => {
+      if (one) return;                 /* one-button mode: see the root's listener below */
       const b = e.target.closest?.('.arx-echo__pad');
       if (!b || (e.button !== undefined && e.button !== 0)) return;
       e.preventDefault();
       press(Number(b.dataset.p));
     });
     listen(disc, 'click', e => {
+      if (one) return;
       const b = e.target.closest?.('.arx-echo__pad');
       if (b && e.detail === 0) press(Number(b.dataset.p));
+    });
+    /* one-button mode: a click or tap anywhere on the game picks the pad the ring is on */
+    listen(root, 'pointerdown', e => {
+      if (!one || state !== 'input' || (e.button !== undefined && e.button !== 0)) return;
+      if (e.target.closest?.('.arx-echo__start')) return;
+      e.preventDefault();
+      pick();
     });
     /* 1–4 or the arrows play a pad (also a controller's D-pad, through the
        bridge); Space / Enter press Start (a controller's A / Start) */
@@ -306,10 +451,11 @@ export default {
       let k = ['1', '2', '3', '4'].indexOf(e.key);
       if (k < 0) k = PADS.findIndex(p => p.arrow === e.key);
       const go = state === 'intro' && (e.key === ' ' || e.key === 'Enter');
-      if ((k < 0 && !go) || !ownsKey(root, e)) return;
+      const sel = one && state === 'input' && (e.key === ' ' || e.key === 'Enter');
+      if ((k < 0 && !go && !sel) || !ownsKey(root, e)) return;
       e.preventDefault();
       if (e.repeat) return;
-      if (go) start(); else press(k);
+      if (go) start(); else if (sel) pick(); else press(k);
     });
     const onSound = () => { if (dead) return; footHint(); if (master) master.gain.value = muted() ? 0 : 0.55 * volume(); };
     const unsubs = [store.sub?.('prefs', onSound), store.sub?.('portal', onSound)];
@@ -329,6 +475,7 @@ export default {
       pause() {
         if (dead || paused) return;
         paused = true;
+        stopScan();
         if (state === 'watch' || state === 'input') {
           clearAll();
           pads.forEach(p => p.classList.remove('is-lit'));
@@ -340,11 +487,15 @@ export default {
       resume() {
         if (dead || !paused) return;
         paused = false;
+        paintLook();                 /* the colours or the shapes may have changed in Options */
         if (ac && ac.state === 'suspended') ac.resume().catch(() => {});
         /* the round starts over, nothing is lost; a round already repeated
            goes straight on to the next one */
         if (seq.length && state !== 'over') { if (cleared) next(); else play(600); }
       },
+      /* a read-only snapshot for automated play-tests */
+      peek: () => ({ state, paused, round: seq.length, pos, longest, seq: seq.slice(), oneButton: one, scan, mode: MODE, tries, misses, shapes, stepMs: MODE === 'strict' ? stepMs : null,
+        colors: pads.map(b => b.style.getPropertyValue('--pc')) }),
     };
   },
 };

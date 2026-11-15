@@ -32,6 +32,10 @@
    it is swallowed, so it never types into a field or clicks what is
    underneath, and focus goes back where it was.
 
+   Over the scene sits the time and date and, under them, the next thing
+   on your Calendar (js/core/calendar.js; nothing when there is none).
+   prefs.screensaverClock turns that off.
+
    While it shows: one canvas drawn with requestAnimationFrame (none
    at all otherwise), a frame-rate claim on js/core/metrics.js so the
    System Monitor can show its cost, and the rest of the shell inert
@@ -48,6 +52,8 @@ import * as M from '../core/metrics.js';
 import * as TAP from '../core/audiotap.js';
 import { GAME_APPS } from '../core/gamemode.js';
 import { spookyOn } from '../core/season.js';
+import * as CAL from '../core/calendar.js';
+import { whenText } from '../core/automations.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-screensaver-css')) {
   const l = document.createElement('link');
@@ -652,6 +658,36 @@ SCENES.nightsky = {
   },
 };
 
+/** The next Calendar occurrence that has not finished, as one line — or null. */
+export function nextEventLine(now = Date.now()) {
+  let o = null;
+  try { o = CAL.upcoming(now, { days: 14, limit: 1 })[0] || null; } catch (e) { return null; }
+  if (!o) return null;
+  const when = o.now ? 'Now' : o.allDay ? `${whenText(o.start, now).split(' at ')[0]} · all day` : whenText(o.start, now);
+  return { title: o.title, when };
+}
+
+/** The clock over the scene: { el, tick }. */
+function buildClock() {
+  const { h } = api;
+  const time = h('div.ssaver__time');
+  const date = h('div.ssaver__date');
+  const next = h('div.ssaver__next', { hidden: true });
+  const el = h('div.ssaver__clock', { 'aria-hidden': 'true' }, time, date, next);
+  const tick = () => {
+    const d = new Date();
+    const h24 = !!store.get('prefs.h24');
+    const c = api.fmt.fmtClock(d, h24);
+    api.render(time, c.time, !h24 && h('span.ssaver__ap', { text: c.ap }));
+    date.textContent = api.fmt.fmtDateLong(d);
+    const ev = nextEventLine(d.getTime());
+    next.hidden = !ev;
+    if (ev) api.render(next, h('b', { text: ev.title }), ` · ${ev.when}`);
+  };
+  tick();
+  return { el, tick };
+}
+
 /* ---------- the shell part ---------------------------------------- */
 export function mountScreensaver(host) {
   const { h } = api;
@@ -685,17 +721,19 @@ export function mountScreensaver(host) {
     const style = styleNow();
     const still = reducedMotion();
     const cv = h('canvas.ssaver__cv', { 'aria-hidden': 'true' });
+    const clock = store.get('prefs.screensaverClock', true) !== false ? buildClock() : null;
     const el = h('div.ssaver' + (still ? '.is-still' : ''), {
       role: 'dialog', 'aria-modal': 'true', tabindex: '-1',
       'aria-label': 'Screensaver. Press any key or move the pointer to come back.',
       dataset: { style },
-    }, cv);
+    }, cv, clock ? clock.el : null);
     const prev = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     view = {
       el, cv, ctx: cv.getContext('2d'), style, still, prev,
       scene: null, raf: 0, fadeT: 0, t0: performance.now(), lastT: 0,
       armedAt: performance.now() + (preview ? 900 : 250),
       moved: 0, at: null, leaving: false, buttons: 0,
+      clockT: clock ? setInterval(clock.tick, 1000) : 0,
     };
     host.appendChild(el);
     size();
@@ -757,6 +795,7 @@ export function mountScreensaver(host) {
     v.leaving = true;
     cancelAnimationFrame(v.raf);
     clearTimeout(v.fadeT);
+    clearInterval(v.clockT);
     M.stop('screensaver');
     cover('screensaver', false);
     v.release?.({ restoreFocus: false });
@@ -829,7 +868,7 @@ export function mountScreensaver(host) {
 
   arm(1000);
   /* for tests and the console */
-  if (window.Static) window.Static.screensaver = { show: () => show({ preview: true }), wake, blocker, styleNow, showing: () => !!view && !view.leaving };
+  if (window.Static) window.Static.screensaver = { show: () => show({ preview: true }), wake, blocker, styleNow, showing: () => !!view && !view.leaving, nextEventLine };
 
   return () => {
     dead = true;

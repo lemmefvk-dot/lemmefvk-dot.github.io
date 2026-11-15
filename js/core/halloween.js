@@ -199,6 +199,20 @@ export const CURSORS = [
     '<path d="M24.5 4.5l.9 2 2 .9-2 .9-.9 2-.9-2-2-.9 2-.9z" fill="#ffd451"/>') },
 ];
 
+/* Pointers anyone can wear, all year (Static Store > Cursors): drawn here, nothing
+   to earn and nothing seasonal. They go through the same plumbing as the earned
+   ones — prefs.cursorSkin and data-cursor-skin — so they obey Large pointer the same way. */
+export const YEAR_CURSORS = [
+  { id: 'yr-classic', name: 'Classic pointer', note: 'White with a dark edge: easy to find on any wallpaper.', svg: () => cursorSvg('#ffffff', '#111318') },
+  { id: 'yr-night', name: 'Night pointer', note: 'Dark with a pale blue edge, for bright wallpapers.', svg: () => cursorSvg('#141a2e', '#9fb7ff') },
+  { id: 'yr-mint', name: 'Mint pointer', note: 'A cool green arrow.', svg: () => cursorSvg('#5eead4', '#042f2e') },
+  { id: 'yr-sun', name: 'Sunny pointer', note: 'Warm yellow with an orange edge.', svg: () => cursorSvg('#fde047', '#9a3412') },
+  { id: 'yr-star', name: 'Star pointer', note: 'A small star at the tip.', svg: () => cursorSvg('#f5f3ff', '#4c1d95',
+    '<path d="M24 5l1.2 2.7 2.8.4-2.1 2 .6 2.9L24 11.6l-2.5 1.4.6-2.9-2.1-2 2.8-.4z" fill="#fbbf24"/>') },
+  { id: 'yr-heart', name: 'Heart pointer', note: 'A rose arrow with a little heart.', svg: () => cursorSvg('#fda4af', '#881337',
+    '<path d="M24 12.5c-3-2-4.2-4.4-2.7-5.8 1-.9 2.2-.4 2.7.7.5-1.1 1.7-1.6 2.7-.7 1.5 1.4.3 3.8-2.7 5.8z" fill="#e11d48"/>') },
+];
+
 export const STICKERS = [
   { id: 'pumpkin', name: 'Jack-o’-lantern', svg: () => sticker('0 0 100 100', PUMPKIN_SYMBOL, '<use href="#pk" width="100" height="100"/>') },
   { id: 'ghost',   name: 'Friendly ghost',  svg: () => sticker('0 0 100 100', GHOST_SYMBOL, '<use href="#gh" width="100" height="100"/>') },
@@ -225,7 +239,7 @@ export const STICKERS = [
     + '<circle cx="47" cy="44" r="1.7" fill="#fff"/><circle cx="53" cy="44" r="1.7" fill="#fff"/>') },
 ];
 
-const CATALOG = { wallpaper: WALLPAPERS, cursor: CURSORS, sticker: STICKERS };
+const CATALOG = { wallpaper: WALLPAPERS, cursor: [...CURSORS, ...YEAR_CURSORS], sticker: STICKERS };
 export const TYPE_LABEL = { wallpaper: 'wallpaper', cursor: 'cursor', sticker: 'sticker' };
 const own = (type, id) => (CATALOG[type] || []).find(t => t.id === id) || null;
 /* a sticker or cursor from the advent calendar is looked up there */
@@ -241,8 +255,9 @@ export const loadPack = () => (PACK ? Promise.resolve(PACK) : import('./stickerp
 const packFind = id => (PACK ? PACK.find(id) : { id, name: 'Sticker', svg: null });
 export const find = (type, id) => own(type, id) || (isWinter(type, id) ? WINTER.find(type, id) : null)
   || (type === 'sticker' && isPackSticker(id) ? packFind(id) : null);
-/** Every cursor that can be worn: Halloween's and winter's. */
-export const allCursors = () => [...CURSORS, ...WINTER.CATALOG.cursor];
+/** Every cursor that can be worn: the all-year ones, Halloween's and winter's. */
+export const allCursors = () => [...YEAR_CURSORS, ...CURSORS, ...WINTER.CATALOG.cursor];
+export const isYearCursor = id => YEAR_CURSORS.some(c => c.id === id);
 
 /* data URLs are built once per item, on first use */
 const urls = new Map();
@@ -273,7 +288,7 @@ export const userSticker = s => !!(s && typeof s.user === 'string' && s.user);
 /* always a NEW object: store.set short-circuits on identity */
 const save = next => store.set(KEY, { days: { ...next.days }, owned: { ...next.owned }, stickers: [...next.stickers] });
 
-export const owns = (type, id) => (type === 'sticker' && isPackSticker(id)) || state().owned[type]?.includes(id) || (isWinter(type, id) && WINTER.owns(type, id)) || false;
+export const owns = (type, id) => (type === 'sticker' && isPackSticker(id)) || (type === 'cursor' && isYearCursor(id)) || state().owned[type]?.includes(id) || (isWinter(type, id) && WINTER.owns(type, id)) || false;
 export const ownedList = type => state().owned[type].map(id => find(type, id)).filter(Boolean);
 export const daysCount = () => Object.keys(state().days).length;
 export const today = (d = new Date()) => state().days[dayKey(d)] || null;

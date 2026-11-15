@@ -33,7 +33,7 @@ const PREFIX = 'notehist:';
 const db = kv('misc');
 
 /* the words a version shows in the list */
-const textOf = v => (v.fmt === NF.FMT ? NF.plainOf(v.body) : String(v.body || ''));
+const textOf = v => NF.noteText(v);      /* any format a version was kept in (fmt 3, 2 or plain) */
 const summaryOf = v => {
   const text = textOf(v).replace(/\s+/g, ' ').trim();
   return { text: text.slice(0, 90), words: text ? text.split(' ').length : 0 };

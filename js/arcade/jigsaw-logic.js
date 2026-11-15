@@ -161,7 +161,10 @@ export function scatter(geo, seed, area, count = geo.cols * geo.rows) {
 }
 
 /* ---------- saved progress (no picture in it) ---------- */
-export const isSource = s => !!s && typeof s === 'object' && (s.kind === 'path' || s.kind === 'asset') && typeof s.ref === 'string' && s.ref.length > 0 && s.ref.length < 400;
+/* a picture: a file in Pictures ('path'), a bundled wallpaper ('asset'), or one drawn in code ('drawn', ./jigsaw-art.js) */
+export const isSource = s => !!s && typeof s === 'object' && (s.kind === 'path' || s.kind === 'asset' || (s.kind === 'drawn' && /^[a-z0-9-]{1,30}$/.test(s.ref))) && typeof s.ref === 'string' && s.ref.length > 0 && s.ref.length < 400;
+/* the pieces on the picture's border: the ones the Edges filter keeps */
+export const isEdge = (cols, rows, id) => { const c = id % cols, r = Math.floor(id / cols); return c === 0 || r === 0 || c === cols - 1 || r === rows - 1; };
 
 export function packState({ src, count, cols, rows, seed, aspect, elapsed, pieces }) {
   const q = v => Math.round(v * 10000) / 10000;

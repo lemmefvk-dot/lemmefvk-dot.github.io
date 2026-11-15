@@ -1,15 +1,19 @@
 /* ============================================================
    study/cite.js — the Cite tab of Static Study.
 
-   Type the fields of a website, book, journal article or video and get
-   the reference in MLA 9, APA 7 or Chicago 17, with the italics the style
-   asks for. Nothing is looked up: the formatter (js/core/citations.js)
-   only arranges what is typed. Copy puts text/html (italics kept) and a
-   plain-text version on the clipboard. Saved sources are kept in
-   store('portal.citations') as fields, so changing the style re-sorts
-   and re-formats the whole list.
+   Type the fields of a website, book, journal or newspaper article,
+   video, podcast episode, film or interview and get the reference in
+   MLA 9, APA 7 or Chicago 17, with the italics the style asks for.
+   Nothing is looked up: the formatter (js/core/citations.js) only
+   arranges what is typed. Copy puts text/html (italics kept) and a
+   plain-text version on the clipboard; Insert into a note adds the
+   citation, or the whole list under its heading, at the end of a note
+   (italics as Notes' *italic*), or makes a new note. Saved sources are
+   kept in store('portal.citations') as fields, so changing the style
+   re-sorts and re-formats the whole list.
    ============================================================ */
 import * as C from '../core/citations.js';
+import * as NF from '../core/notesfmt.js';
 
 const KEY = 'portal.citations';
 const MAX = 300;
@@ -21,19 +25,33 @@ const FIELDS = [
   ['title', 'Title', true, null],
   ['journal', 'Journal name', true, ['article']],
   ['site', 'Website name', false, ['website']],
+  ['site', 'Newspaper', false, ['newspaper']],
   ['site', 'Video site', false, ['video']],
+  ['site', 'Podcast name', false, ['podcast']],
+  ['site', 'Where it appeared (newspaper, magazine, site…)', true, ['interview']],
+  ['interviewer', 'Interviewer (first and last name)', false, ['interview']],
   ['uploader', 'Channel or uploader', false, ['video']],
+  ['season', 'Season', false, ['podcast']],
+  ['episode', 'Episode number', false, ['podcast']],
   ['edition', 'Edition (e.g. 2nd)', false, ['book']],
   ['publisher', 'Publisher', false, ['book', 'website']],
+  ['publisher', 'Publisher or network', false, ['podcast']],
+  ['publisher', 'Studio or production company', false, ['film']],
   ['city', 'City (Chicago only)', false, ['book'], ['chicago']],
   ['volume', 'Volume', false, ['article']],
   ['issue', 'Issue', false, ['article']],
   ['pages', 'Pages (e.g. 127-53)', false, ['article']],
-  ['length', 'Length (Chicago, e.g. 6:00)', false, ['video'], ['chicago']],
-  ['url', 'URL', true, ['website', 'article', 'video']],
+  ['pages', 'Page in print (e.g. A1)', false, ['newspaper']],
+  ['length', 'Length (Chicago, e.g. 6:00)', false, ['video', 'podcast'], ['chicago']],
+  ['url', 'URL', true, ['website', 'article', 'newspaper', 'video', 'podcast', 'interview']],
+  ['url', 'URL (if you streamed it)', true, ['film']],
   ['doi', 'DOI', false, ['article']],
 ];
-const blank = type => ({ type, authors: [{ first: '', last: '' }], title: '', site: type === 'video' ? 'YouTube' : '', publisher: '', city: '', edition: '', journal: '', volume: '', issue: '', pages: '', year: '', month: '', day: '', accessed: '', url: '', doi: '', uploader: '', length: '' });
+/* what an interview you did yourself has: the person, the date */
+const PERSONAL_SKIP = new Set(['title', 'site', 'interviewer', 'url']);
+const WHO = { video: 'Creators (optional)', film: 'Directors', podcast: 'Hosts', interview: 'Person interviewed' };
+const WHEN = { film: 'Released', interview: 'Date of the interview' };
+const blank = type => ({ type, authors: [{ first: '', last: '' }], title: '', site: type === 'video' ? 'YouTube' : '', publisher: '', city: '', edition: '', journal: '', volume: '', issue: '', pages: '', year: '', month: '', day: '', accessed: '', url: '', doi: '', uploader: '', length: '', season: '', episode: '', interviewer: '', ikind: 'published' });
 
 async function copyRich(html, text) {
   try {
@@ -69,7 +87,7 @@ export function mountCite(host, ctx) {
 
   /* ---------- style and type ---------- */
   const styleBar = h('div.tabs.st-c__styles', { role: 'radiogroup', 'aria-label': 'Citation style' });
-  const typeSel = h('select.select.st-sel', { dataset: { fk: 'cite-type' }, 'aria-label': 'Source type', onchange: e => { S.src.type = e.target.value; if (S.src.type === 'video' && !S.src.site) S.src.site = 'YouTube'; paintForm(); paintPreview(); } },
+  const typeSel = h('select.select.st-sel', { dataset: { fk: 'cite-type' }, 'aria-label': 'Source type', onchange: e => { const was = S.src.type; S.src.type = e.target.value; if (was === 'video' && S.src.site === 'YouTube') S.src.site = ''; if (S.src.type === 'video' && !S.src.site) S.src.site = 'YouTube'; paintForm(); paintPreview(); } },
     C.TYPES.map(([v, l]) => h('option', { value: v, text: l })));
   function paintStyles() {
     clear(styleBar);
@@ -96,21 +114,26 @@ export function mountCite(host, ctx) {
     clear(form);
     paintAuthors();
     form.append(
-      h('div.st-f', h('span.st-f__l', { text: s.type === 'video' ? 'Creators (optional)' : 'Authors' }), authorsBox,
+      s.type === 'interview' ? h('label.st-f', h('span.st-f__l', { text: 'Kind of interview' }),
+        h('select.select.st-sel', { dataset: { fk: 'f-ikind' }, 'aria-label': 'Kind of interview', onchange: e => { s.ikind = e.target.value; paintForm(); paintPreview(); } },
+          h('option', { value: 'published', text: 'Published (in a newspaper, magazine, on a site…)', selected: s.ikind !== 'personal' }),
+          h('option', { value: 'personal', text: 'One you did yourself', selected: s.ikind === 'personal' }))) : null,
+      h('div.st-f', h('span.st-f__l', { text: WHO[s.type] || 'Authors' }), authorsBox,
         h('div.st-row', h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'add-author' }, onclick: () => { s.authors.push({ first: '', last: '' }); paintAuthors(); const ins = authorsBox.querySelectorAll('input'); if (ins.length > 1) ins[ins.length - 2].focus(); } }, icon('plus'), h('span', { text: 'Add author' })))));
     const grid = h('div.st-form__grid');
     for (const [key, label, wide, types, styles] of FIELDS) {
       if (types && !types.includes(s.type)) continue;
       if (styles && !styles.includes(S.style)) continue;
+      if (s.type === 'interview' && s.ikind === 'personal' && PERSONAL_SKIP.has(key)) continue;
       const id = `cite-${key}`;
-      grid.append(h('label.st-f', { style: wide ? 'grid-column: 1 / -1' : '' }, h('span.st-f__l', { text: label }),
+      grid.append(h('label.st-f', { style: wide ? 'grid-column: 1 / -1' : '' }, h('span.st-f__l', { text: key === 'title' && s.type === 'interview' ? 'Title (if it has one)' : label }),
         h('input.st-in', { type: 'text', value: s[key] || '', dataset: { fk: `f-${key}` }, id, oninput: e => { s[key] = e.target.value; paintPreview(); } })));
     }
     const month = h('select.select.st-sel', { dataset: { fk: 'f-month' }, 'aria-label': 'Month', onchange: e => { s.month = e.target.value; paintPreview(); } },
       h('option', { value: '', text: 'Month' }), MONTHS.map((m, k) => h('option', { value: String(k + 1), text: m })));
     month.value = s.month ? String(s.month) : '';
     form.append(grid,
-      h('div.st-f', h('span.st-f__l', { text: 'Published' }),
+      h('div.st-f', h('span.st-f__l', { text: WHEN[s.type] || 'Published' }),
         h('div.st-row',
           h('input.st-in', { type: 'text', inputmode: 'numeric', maxlength: '4', placeholder: 'Year', value: s.year, 'aria-label': 'Year', style: 'width:80px', dataset: { fk: 'f-year' }, oninput: e => { s.year = e.target.value; paintPreview(); } }),
           month,
@@ -121,15 +144,19 @@ export function mountCite(host, ctx) {
 
   /* ---------- preview, copy, save ---------- */
   const preview = h('div.st-c__prev', { dataset: { fk: 'cite-preview' }, 'aria-live': 'polite' });
+  const styleNote = h('p.st-note', { dataset: { fk: 'cite-style-note' }, hidden: true });
   const msg = h('small.dim', { role: 'status', dataset: { fk: 'cite-msg' } });
   const saveBtn = h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: 'cite-save' }, onclick: () => saveSource() });
   const cancelBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'cite-cancel' }, onclick: () => { S.editing = null; S.src = blank(S.src.type); paintForm(); paintPreview(); } }, h('span', { text: 'Cancel edit' }));
   function paintPreview() {
     const f = C.format(S.src, S.style);
     clear(preview);
-    if (f.empty) preview.append(h('small.dim', { text: 'Fill in the title to see the citation.' }));
+    if (f.empty) preview.append(h('small.dim', { text: S.src.type === 'interview' ? 'Fill in the person interviewed to see the citation.' : 'Fill in the title to see the citation.' }));
+    else if (f.skip) preview.append(h('small', { dataset: { fk: 'cite-skip' }, text: f.skip }));
     else preview.append(runsNode(f.runs));
-    preview.classList.toggle('is-empty', f.empty);
+    preview.classList.toggle('is-empty', f.empty || !!f.skip);
+    styleNote.textContent = f.note || '';
+    styleNote.hidden = !f.note;
     clear(saveBtn); saveBtn.append(icon(S.editing ? 'check' : 'plus'), h('span', { text: S.editing ? 'Update in list' : 'Add to list' }));
     cancelBtn.hidden = !S.editing;
   }
@@ -139,7 +166,7 @@ export function mountCite(host, ctx) {
   }
   function saveSource() {
     const f = C.format(S.src, S.style);
-    if (f.empty) { say(msg, 'Add a title first.'); return; }
+    if (f.empty) { say(msg, S.src.type === 'interview' ? 'Add the person interviewed first.' : 'Add a title first.'); return; }
     if (S.editing) {
       const i = S.list.findIndex(x => x.id === S.editing);
       if (i >= 0) S.list[i] = { ...JSON.parse(JSON.stringify(S.src)), id: S.editing };
@@ -154,6 +181,46 @@ export function mountCite(host, ctx) {
     paintForm(); paintPreview(); paintList();
   }
 
+  /* ---------- into a note ---------- */
+  /* a note's runs: italics kept as Notes' *italic* (js/core/notesfmt.js) */
+  const noteRuns = runs => runs.map(r => ({ text: r.t, b: false, i: !!r.i }));
+  const notes = () => (Array.isArray(store.get('notes')) ? store.get('notes') : []).filter(n => n && n.id && !n.trashed && !n.path);
+  const openNoteId = () => {
+    const w = api.wm && api.wm.list ? api.wm.list().find(x => x.appId === 'notes') : null;
+    return w && w.state && w.state.reopen ? w.state.reopen.noteId : null;
+  };
+  /** Ask which note, then add `blocks` at its end (or make a new note called `title`). */
+  function pickNote(btn, blocks, what, title, target) {
+    const open = openNoteId();
+    const list = notes().sort((a, b) => (b.id === open) - (a.id === open) || String(b.mtime || '').localeCompare(String(a.mtime || ''))).slice(0, 30);
+    const r = btn.getBoundingClientRect();
+    api.menu([{ label: 'A new note', icon: 'plus', onClick: () => insertInto(null, blocks, what, title, target) },
+      ...(list.length ? ['-', { header: true, label: 'Add to the end of' }] : []),
+      ...list.map(n => ({ label: `${n.id === open ? 'Open note: ' : ''}${n.title || 'Untitled'}`, icon: 'notes', onClick: () => insertInto(n.id, blocks, what, title, target) }))],
+    r.left, r.bottom + 4, { label: 'Insert into a note' });
+  }
+  function insertInto(noteId, blocks, what, title, target) {
+    if (S.dead) return;
+    const md = NF.serialize(blocks);
+    const cur = Array.isArray(store.get('notes')) ? store.get('notes') : [];
+    const list = cur.slice();
+    let id = noteId, name = title;
+    if (!noteId) {
+      id = `note-${Date.now().toString(36)}-cite`;
+      list.push({ id, title, body: md, fmt: NF.FMT, mtime: new Date().toISOString() });
+    } else {
+      const i = list.findIndex(n => n && n.id === noteId);
+      if (i < 0) { say(target, 'That note is not there any more.'); return; }
+      const n = list[i];
+      const body = NF.upgrade(n.body, n.fmt);
+      list[i] = { ...n, body: body.trim() ? `${body}\n\n${md}` : md, fmt: NF.FMT, mtime: new Date().toISOString() };
+      name = n.title || 'Untitled';
+    }
+    try { store.set('notes', list); } catch (e) { say(target, 'The note could not be saved.'); return; }
+    say(target, noteId ? `Added ${what} to the end of “${name}”.` : `Made the note “${name}” with ${what}.`);
+    if (api.getApp('notes')) api.notify({ app: 'Static Study', icon: 'notes', title: noteId ? 'Added to a note' : 'Saved to Notes', message: name, actions: [{ label: 'Open', onClick: () => api.openApp('notes', { noteId: id }) }] });
+  }
+
   /* ---------- the saved list ---------- */
   const listBox = h('div.st-c__list', { dataset: { fk: 'cite-list' } });
   const listMsg = h('small.dim', { role: 'status', dataset: { fk: 'list-msg' } });
@@ -164,8 +231,12 @@ export function mountCite(host, ctx) {
       b.items.length ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'list-copy-all' }, onclick: async () => {
         const how = await copyRich(C.listHtml(b.items), C.listText(b.items));
         say(listMsg, how === 'rich' ? `Copied ${b.items.length} entries, with italics.` : how === 'plain' ? 'Copied as plain text.' : 'The browser would not let this copy.');
-      } }, icon('copy'), h('span', { text: 'Copy list' })) : null, listMsg));
-    if (!b.items.length) { listBox.append(h('p.st-none', { text: `Nothing saved yet. Build a citation above and choose Add to list; the list is kept in ${C.HEADINGS[S.style].toLowerCase()} order for the style you pick.` })); return; }
+      } }, icon('copy'), h('span', { text: 'Copy list' })) : null,
+      b.items.length ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'list-note' }, onclick: e => pickNote(e.currentTarget,
+        [{ t: 'h2', runs: [{ text: b.heading, b: false, i: false }] }, ...b.items.map(it => ({ t: 'p', runs: noteRuns(it.runs) }))],
+        `the ${b.heading} list (${b.items.length} ${b.items.length === 1 ? 'entry' : 'entries'})`, b.heading, listMsg) }, icon('notes'), h('span', { text: 'Insert into a note' })) : null, listMsg));
+    if (b.skipped.length) listBox.append(h('p.st-note', { dataset: { fk: 'list-skipped' }, text: `${b.skipped.length === 1 ? 'One source is' : `${b.skipped.length} sources are`} not in this list: ${b.skipped[0].why}` }));
+    if (!b.items.length) { if (!b.skipped.length) listBox.append(h('p.st-none', { text: `Nothing saved yet. Build a citation above and choose Add to list; the list is kept in ${C.HEADINGS[S.style].toLowerCase()} order for the style you pick.` })); return; }
     const ol = h('div.st-c__items', { role: 'list' });
     for (const it of b.items) {
       ol.append(h('div.st-c__item', { role: 'listitem', dataset: { id: it.id } },
@@ -191,16 +262,23 @@ export function mountCite(host, ctx) {
 
   const copyBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'cite-copy' }, onclick: () => {
     const f = C.format(S.src, S.style);
-    if (f.empty) { say(msg, 'Add a title first.'); return; }
+    if (f.empty) { say(msg, S.src.type === 'interview' ? 'Add the person interviewed first.' : 'Add a title first.'); return; }
+    if (f.skip) { say(msg, `There is no ${C.STYLES.find(x => x[0] === S.style)[1]} entry to copy for this one.`); return; }
     copyOne(f.runs, msg);
   } }, icon('copy'), h('span', { text: 'Copy citation' }));
+  const noteBtn = h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'cite-note' }, onclick: e => {
+    const f = C.format(S.src, S.style);
+    if (f.empty) { say(msg, S.src.type === 'interview' ? 'Add the person interviewed first.' : 'Add a title first.'); return; }
+    if (f.skip) { say(msg, `There is no ${C.STYLES.find(x => x[0] === S.style)[1]} entry to put in a note for this one.`); return; }
+    pickNote(e.currentTarget, [{ t: 'p', runs: noteRuns(f.runs) }], 'the citation', 'Citation', msg);
+  } }, icon('notes'), h('span', { text: 'Insert into a note' }));
 
   const root = h('div.st-c.st-scroll', { dataset: { fk: 'cite' } },
     h('p.st-note', { text: 'Type the details of your source; nothing is looked up. Words you put between *asterisks* in a title are italicised. Check the result against your teacher’s guide: MLA 9, APA 7 and Chicago 17 (notes-bibliography) are applied as written, but a title’s proper nouns are only kept if you type them capitalised.' }),
     h('div.st-row', styleBar, h('label.st-inline', h('span.st-f__l', { text: 'Source' }), typeSel)),
     h('div.st-c__cols', form, h('div.st-c__side',
-      h('span.st-f__l', { text: 'Citation' }), preview,
-      h('div.st-row', copyBtn, saveBtn, cancelBtn), msg)),
+      h('span.st-f__l', { text: 'Citation' }), preview, styleNote,
+      h('div.st-row', copyBtn, saveBtn, cancelBtn), h('div.st-row', noteBtn), msg)),
     listBox);
   host.appendChild(root);
   paintStyles(); paintForm(); paintPreview(); paintList();

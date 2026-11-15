@@ -28,9 +28,28 @@
    Write together… shares a note with a friend, live: notes-coop.js,
    which hears about every change through bodyChanged(). opts.coop fills
    a room code in (an invite link, #note=<CODE>) and joins nothing.
+
+   Notes 3 (format 3, js/core/notesfmt.js) adds quote lines ("> "),
+   dividers ("---", or the Insert menu) and tables (each row a line; Tab
+   moves between cells, Enter adds a row). "/" at the start of a line, or
+   after a space, opens the insert menu; ⌘/Ctrl+; types today's date.
+   [[Another note]] links to that note (View mode opens it) and the note
+   it points at lists what links to it; #words are tags, and the sidebar
+   filters by them. Pins, sorting, a daily note, templates, .md export
+   and import, and a Trash with restore live in the sidebar; the rules
+   behind them are js/core/notesmeta.js. Find and replace, read aloud,
+   Summarise / Quiz me, Tasks, flashcards and event links are
+   js/apps/notestools.js.
+
+   The Trash keeps a note until you empty it. A note someone is still
+   writing with you is never deleted from it: Delete forever and Empty
+   Trash leave it, and if another window deletes it anyway, the window
+   with the room puts it back (Write together still has every word).
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import * as NF from '../core/notesfmt.js';
+import * as NM from '../core/notesmeta.js';
+import { mountTools } from './notestools.js';
 import * as media from '../core/media.js';
 import { fold } from '../core/textindex.js';
 import * as NH from '../core/notehistory.js';
@@ -38,6 +57,7 @@ import { openHistory as openHistoryPanel } from '../core/notehistoryui.js';
 import { createCoop } from './notes-coop.js';
 import { countWords } from '../core/wordtools.js';
 import { mountPlan } from './notesplan.js';
+import { t as tr } from '../core/i18n.js';
 
 /* self-injected stylesheet, guarded so re-opening never double-adds it */
 if (typeof document !== 'undefined' && !document.getElementById('feat-notes-css')) {
@@ -62,13 +82,15 @@ const DRAG_NOTE = 'application/x-staticos-note';
    content pretending to be someone's notes.) */
 const SEED = kb => [{
   id: nid(), mtime: new Date().toISOString(), fmt: NF.FMT,
-  title: 'Welcome to Notes',
+  title: tr('Welcome to Notes'),
   body: [
     'Everything you type here saves by itself, on this device.',
     '',
     '## Write it the way you think',
     '- [ ] Type # and a space for a heading, - for a list, [ ] for a checklist',
     `- [ ] Select some words and press ${kb('B')} for **bold**, ${kb('I')} for *italic*`,
+    '- [ ] Type / at the start of a line for a table, a quote, a divider, today’s date or a template',
+    '- [ ] Link another note by typing [[ and its title; tag a note with a word that starts with #',
     '- [ ] Drop or paste a picture in, or pick one from Pictures with the picture button',
     '',
     '## Keep it tidy',
@@ -88,6 +110,14 @@ const isOldSeed = n => n && OLD_SEED_TITLES.includes(n.title)
   && OLD_SEED_STARTS.some(t => String(n.body || '').startsWith(t))
   && String(n.body || '').length < 700;
 
+/* lines that hold no words: a picture, a divider. The editor draws both as an
+   uneditable figure that is selected, moved past and deleted whole. */
+const ATOM = t => t === 'img' || t === 'hr';
+/* the elements that group the editor's lines: lists hold items, a table holds rows */
+const GROUP = new Set(['UL', 'OL', 'TABLE', 'TBODY', 'THEAD', 'TFOOT']);
+const isCell = el => !!el && (el.tagName === 'TD' || el.tagName === 'TH');
+const CELL_PAD = 2;          /* a new table: header + this many rows */
+
 /* what the DOM reader treats as a line of its own, and what it never reads */
 const BLOCKISH = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'UL', 'OL', 'FIGURE', 'BLOCKQUOTE', 'PRE',
   'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'MAIN', 'ASIDE', 'NAV', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH',
@@ -103,25 +133,28 @@ defineApp({
   icon: 'sticky-note',
   g1: '#ffe08a', g2: '#c98a08',
   category: 'Productivity',
-  keywords: ['note', 'memo', 'write', 'text', 'markdown', 'scratch', 'checklist', 'to-do', 'folder', 'pdf', 'write together', 'friend', 'co-op', 'collaborate'],
-  desc: 'Jot things down and keep them',
+  keywords: ['note', 'memo', 'write', 'text', 'markdown', 'scratch', 'checklist', 'to-do', 'folder', 'pdf', 'write together', 'friend', 'co-op', 'collaborate',
+    'table', 'tag', 'daily note', 'template', 'cornell', 'flashcards', 'summarise', 'trash'],
+  desc: tr('Jot things down and keep them'),
   pinned: true, dock: true,
   handles: ['text'],          /* PDFs ('doc') open in Files' viewer */
   win: { w: 760, h: 460, minW: 440, minH: 300 },
   /* keys listed on the shortcut sheet (hold ⌘ / Ctrl): each one is bound below */
   shortcuts: [
-    ['Mod+N', 'New note'],
-    ['Mod+S', 'Save'],
-    ['Mod+F', 'Search notes'],
-    ['Mod+B', 'Bold'],
-    ['Mod+I', 'Italic'],
-    ['Mod+Alt+1 / Mod+Alt+2 / Mod+Alt+3', 'Heading 1 / 2 / 3'],
-    ['Mod+Alt+0', 'Body text'],
-    ['Mod+Shift+8', 'Bulleted list'],
-    ['Mod+Shift+7', 'Numbered list'],
-    ['Mod+Shift+9', 'Checklist'],
-    ['Mod+Enter', 'Tick or untick a checklist item'],
-    ['Mod+P', 'Export as PDF (print)'],
+    ['Mod+N', tr('New note')],
+    ['Mod+S', tr('Save')],
+    ['Mod+F', tr('Search notes')],
+    ['Mod+B', tr('Bold')],
+    ['Mod+I', tr('Italic')],
+    ['Mod+Alt+1 / Mod+Alt+2 / Mod+Alt+3', tr('Heading 1 / 2 / 3')],
+    ['Mod+Alt+0', tr('Body text')],
+    ['Mod+Shift+8', tr('Bulleted list')],
+    ['Mod+Shift+7', tr('Numbered list')],
+    ['Mod+Shift+9', tr('Checklist')],
+    ['Mod+Enter', tr('Tick or untick a checklist item')],
+    ['Mod+P', tr('Export as PDF (print)')],
+    ['Mod+Shift+F', tr('Find and replace in this note')],
+    ['Mod+;', tr('Insert today’s date')],
   ],
 
   mount(ctx) {
@@ -140,6 +173,8 @@ defineApp({
       fig: null,            /* the picture selected in the editor (its block index) */
       renaming: null,       /* the folder whose name is being edited */
       drawn: { id: null, md: null },   /* what the editor shows right now */
+      sort: NM.SORTS.some(([k]) => k === store.get('prefs.notesSort')) ? store.get('prefs.notesSort') : 'edited',
+      tag: null,            /* the tag the list is filtered by (its folded key) */
     };
 
     let mine = store.get('notes');
@@ -173,73 +208,101 @@ defineApp({
     /* opts.noteId opens a specific note (Spotlight, the widget…) */
     const wanted = opts?.noteId ? S.notes.find(n => n.id === opts.noteId) : null;
 
-    const sorted = () => [...S.notes].sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+    const sorted = () => NM.sortNotes(S.notes, S.sort);
     const all = () => (S.file ? [S.file, ...sorted()] : sorted());
     const current = () => all().find(n => n.id === S.sel) || null;
     const folderOf = id => S.folders.find(f => f.id === id) || null;
     const textOf = n => (n.path ? String(n.body || '') : NF.noteText(n));
-    const inFolder = n => n === S.file || S.folder === 'all' || n.folder === S.folder;
+    const inFolder = n => n === S.file || (S.folder === 'trash' ? !!n.trashed : !n.trashed && (S.folder === 'all' || n.folder === S.folder));
+    /* the Trash, newest first: when it went in is what tells its notes apart */
+    const trashOrder = list => [...list].sort((a, b) => new Date(b.trashed) - new Date(a.trashed));
     const visible = () => {
       const f = S.filter;
-      if (!f) return all().filter(inFolder);
-      return all().filter(n => fold(`${n.title || ''}\n${textOf(n)}`).includes(f));
+      if (f) return all().filter(n => (S.folder === 'trash' ? !!n.trashed : !n.trashed) && fold(`${n.title || ''}\n${textOf(n)}`).includes(f));
+      if (S.tag && S.folder !== 'trash') return all().filter(n => !n.path && !n.trashed && NM.hasTag(n, S.tag));
+      const list = all().filter(inFolder);
+      return S.folder === 'trash' ? trashOrder(list) : list;
     };
+    /* what this note can't have done to it right now, said plainly ('' = anything) */
+    const readOnly = n => (!n ? tr('No note is open.') : n.trashed ? tr('This note is in the Trash. Restore it to change it.')
+      : CO?.readOnly(n) ? tr('Your friend shared this note for reading only.') : '');
+    if (wanted && wanted.trashed) S.folder = 'trash';
     S.sel = S.file ? S.file.id : wanted ? wanted.id : (visible()[0] ? visible()[0].id : null);
 
     /* ---------------- chrome --------------- */
     const search = h('input', {
-      type: 'search', placeholder: 'Search notes…', spellcheck: 'false', 'aria-label': 'Search notes',
+      type: 'search', placeholder: tr('Search notes…'), spellcheck: 'false', 'aria-label': tr('Search notes'),
       oninput: e => { S.filter = fold(e.target.value.trim()); paintList(); },
       onkeydown: e => { if (e.key === 'Escape') { e.target.value = ''; S.filter = ''; paintList(); } },
     });
 
     const newBtn = () => h('button.ibtn.tip', {
-      'data-tip': `New note  ${kb('N')}`, 'aria-label': 'New note', onclick: () => newNote(),
+      'data-tip': `${tr('New note')}  ${kb('N')}`, 'aria-label': tr('New note'), onclick: () => newNote(),
     }, icon('plus'));
 
+    const pinBtn = h('button.ibtn.tip', { 'data-tip': tr('Pin to the top'), 'aria-label': tr('Pin to the top'), 'aria-pressed': 'false', dataset: { fk: 'pin' }, onclick: () => togglePin(current()) }, icon('pin'));
     win.setTools(
       newBtn(),
-      h('button.ibtn.tip', { 'data-tip': 'Write together…', 'aria-label': 'Write together', onclick: () => CO?.toggle() }, icon('users')),
-      h('button.ibtn.tip', { 'data-tip': `Export as PDF  ${kb('P')}`, 'aria-label': 'Export as PDF', onclick: () => exportPdf() }, icon('printer')),
-      h('button.ibtn.tip', { 'data-tip': 'History', 'aria-label': 'Note history', onclick: () => openHistory() }, icon('clock')),
-      h('button.ibtn.tip', { 'data-tip': 'Duplicate', 'aria-label': 'Duplicate note', onclick: () => duplicate(current()) }, icon('copy')),
-      h('button.ibtn.tip', { 'data-tip': 'Delete', 'aria-label': 'Delete note', onclick: () => destroy(current()) }, icon('trash')),
+      h('button.ibtn.tip', { 'data-tip': tr('Write together…'), 'aria-label': tr('Write together'), onclick: () => CO?.toggle() }, icon('users')),
+      h('button.ibtn.tip', { 'data-tip': `${tr('Export as PDF')}  ${kb('P')}`, 'aria-label': tr('Export as PDF'), onclick: () => exportPdf() }, icon('printer')),
+      h('button.ibtn.tip', { 'data-tip': tr('Export as Markdown (.md)'), 'aria-label': tr('Export as Markdown'), dataset: { fk: 'export-md' }, onclick: e => exportMenu(e.currentTarget) }, icon('download')),
+      h('button.ibtn.tip', { 'data-tip': tr('History'), 'aria-label': tr('Note history'), onclick: () => openHistory() }, icon('clock')),
+      h('button.ibtn.tip', { 'data-tip': tr('Duplicate'), 'aria-label': tr('Duplicate note'), onclick: () => duplicate(current()) }, icon('copy')),
+      pinBtn,
+      h('button.ibtn.tip', { 'data-tip': tr('Move to Trash'), 'aria-label': tr('Move to Trash'), dataset: { fk: 'trash-note' }, onclick: () => destroy(current()) }, icon('trash')),
     );
 
     /* ---------------- layout --------------- */
-    const foldersEl = h('div.notes__folders', { 'aria-label': 'Folders' });
+    const foldersEl = h('div.notes__folders', { 'aria-label': tr('Folders') });
+    const tagsEl = h('div.notes__tags', { role: 'group', 'aria-label': tr('Tags'), hidden: true });
     const listEl = h('div.list', { style: { flex: '1 1 auto', minHeight: '0', overflowY: 'auto' } });
     const listLabel = h('div.side__label', { style: { padding: '0' } });
     const countEl = h('div.side__label', { style: { padding: '0' } });
+    const sideBtn = (ic, tip, fk, fn) => h('button.ibtn.tip', { type: 'button', 'data-tip': tip, 'aria-label': tip, dataset: { fk }, onclick: fn }, icon(ic));
+    const sortBtn = sideBtn('filter', tr('Sort notes'), 'sort', e => sortMenu(e.currentTarget));
+    const dailyBtn = sideBtn('calendar', tr('Today’s note'), 'daily', () => openDaily());
+    const tplBtn = sideBtn('file-text', tr('New from a template or a file'), 'template', e => templateMenu(e.currentTarget));
+    const emptyBtn = sideBtn('trash', tr('Empty the Trash'), 'empty-trash', () => emptyTrash());
+    const importIn = h('input', { type: 'file', accept: '.md,.markdown,.txt,text/markdown,text/plain', multiple: true, hidden: true, 'aria-label': tr('Import .md or .txt files'),
+      onchange: () => { const files = [...importIn.files]; importIn.value = ''; importFiles(files); } });
     const side = h('aside.app__side.app__side--wide.notes__side', { style: { overflow: 'hidden' } },
       h('div.field', { style: { height: '26px', flex: '0 0 auto' } }, icon('search'), search),
       h('div.row.notes__fhead',
-        h('div.side__label', { text: 'Folders' }), h('div.grow'),
-        h('button.ibtn.tip', { type: 'button', 'data-tip': 'New folder', 'aria-label': 'New folder', onclick: () => newFolder() }, icon('plus'))),
+        h('div.side__label', { text: tr('Folders') }), h('div.grow'),
+        h('button.ibtn.tip', { type: 'button', 'data-tip': tr('New folder'), 'aria-label': tr('New folder'), onclick: () => newFolder() }, icon('plus'))),
       foldersEl,
-      h('div.row', { style: { flex: '0 0 auto' } }, listLabel, h('div.grow'), countEl, newBtn()),
-      listEl);
+      tagsEl,
+      h('div.row.notes__lhead', { style: { flex: '0 0 auto' } }, listLabel, h('div.grow'), countEl, sortBtn, emptyBtn, dailyBtn, tplBtn, newBtn()),
+      listEl, importIn);
 
     const where = h('button.notes__where', { type: 'button', 'aria-haspopup': 'menu', onclick: e => moveMenu(e.currentTarget) });
+    /* under the title: what it is linked to, a twin title, the Trash */
+    const metaEl = h('div.notes__meta');
+    const backEl = h('div.notes__back', { role: 'navigation', 'aria-label': tr('Linked from'), hidden: true });
     const titleIn = h('input.notes__title', {
-      placeholder: 'Title', spellcheck: 'false', 'aria-label': 'Note title',
+      placeholder: tr('Title'), spellcheck: 'false', 'aria-label': tr('Note title'),
       oninput: () => edit('title', titleIn.value),
       onkeydown: e => { if (e.key === 'Enter' && !S.file && S.mode === 'edit') { e.preventDefault(); rich.focus(); setSel({ i: 0, o: 0 }); } },
+      /* a renamed note: the [[links]] to its old title are offered an update */
+      onfocus: () => { const n = current(); S.titleWas = n && !n.path ? { id: n.id, title: n.title || '' } : null; },
+      onblur: () => offerRelink(),
     });
     /* a text file is plain text: it stays a textarea */
     const ta = h('textarea', {
-      placeholder: 'Start writing…', spellcheck: 'false', 'aria-label': 'Note body',
+      placeholder: tr('Start writing…'), spellcheck: 'false', 'aria-label': tr('Note body'),
       oninput: () => edit('body', ta.value),
     });
     const rich = h('div.notes__rich.notes__doc', {
-      contenteditable: 'true', role: 'textbox', 'aria-multiline': 'true', 'aria-label': 'Note body',
-      spellcheck: 'false', 'data-placeholder': 'Start writing…',
+      contenteditable: 'true', role: 'textbox', 'aria-multiline': 'true', 'aria-label': tr('Note body'),
+      spellcheck: 'false', 'data-placeholder': tr('Start writing…'),
     });
-    const view = h('div.notes__view.notes__doc', { role: 'document', 'aria-label': 'Note (view mode)' });
+    const view = h('div.notes__view.notes__doc', { role: 'document', 'aria-label': tr('Note (view mode)') });
     const wrap = h('div.notes__wrap', ta, rich, view);
     /* outline, word goal and timer: js/apps/notesplan.js */
     const plan = mountPlan({
-      api, note: () => { const n = current(); return n && !n.path ? n : null; },
+      api, note: () => { const n = current(); return n && !n.path && !n.trashed ? n : null; },
+      byId: id => S.notes.find(n => n.id === id) || null,
+      counts: n => !CO?.live(n),
       blocks: () => { flushEditor(); return NF.blocksOf(current()); },
       change: fn => apply(fn), undo: () => undo(), redo: () => redo(),
       jump: i => { if (S.mode !== 'edit') setMode('edit'); rich.focus(); setSel({ i, o: 0 }); },
@@ -252,38 +315,69 @@ defineApp({
     const tool = (ic, label, fn) => h('button.ibtn.tip', { type: 'button', 'data-tip': label, 'aria-label': label.split('  ')[0], onmousedown: keep, onclick: fn }, icon(ic));
     const ftool = (text, cls, label, fn) => h(`button.ibtn.tip.notes__fmt${cls}`, { type: 'button', 'data-tip': label, 'aria-label': label.split('  ')[0], onmousedown: keep, onclick: fn }, text);
     const richOnly = [
-      ftool('B', '.is-b', `Bold  ${kb('B')}`, () => inlineFmt('bold')),
-      ftool('I', '.is-i', `Italic  ${kb('I')}`, () => inlineFmt('italic')),
-      tool('type', 'Heading', e => headingMenu(e.currentTarget)),
-      tool('list', `Bulleted list  ${kbShift('8')}`, () => setType('ul')),
-      ftool('1.', '.is-num', `Numbered list  ${kbShift('7')}`, () => setType('ol')),
+      ftool('B', '.is-b', `${tr('Bold')}  ${kb('B')}`, () => inlineFmt('bold')),
+      ftool('I', '.is-i', `${tr('Italic')}  ${kb('I')}`, () => inlineFmt('italic')),
+      tool('type', tr('Heading'), e => headingMenu(e.currentTarget)),
+      tool('list', `${tr('Bulleted list')}  ${kbShift('8')}`, () => setType('ul')),
+      ftool('1.', '.is-num', `${tr('Numbered list')}  ${kbShift('7')}`, () => setType('ol')),
     ];
-    const picBtn = tool('image', 'Insert a picture', e => pickPicture(e.currentTarget));
+    const picBtn = tool('image', tr('Insert a picture'), e => pickPicture(e.currentTarget));
+    const tableBtn = tool('table', tr('Table'), e => tableMenu(e.currentTarget));
+    const insBtn = tool('plus-circle', tr('Insert: divider, quote, date, template…  (or type / )'), e => insertMenu(e.currentTarget));
+    tableBtn.dataset.fk = 'table-btn';
+    insBtn.dataset.fk = 'insert-btn';
+    /* find and replace, read aloud, AI, Tasks and flashcards: js/apps/notestools.js */
+    const tools = mountTools({
+      api,
+      note: () => { const n = current(); return n && !n.path ? n : null; },
+      file: () => { const n = current(); return !!(n && n.path); },
+      blocks: () => {
+        const n = current();
+        if (!n || n.path) return [];
+        return S.mode === 'edit' && S.drawn.id === n.id && rich.isConnected ? readBlocks(rich) : NF.blocksOf(n);
+      },
+      change: fn => apply(fn),
+      caret: () => getCaret(),
+      rangeOf: (i, o, len) => {
+        const a = pointAt(i, o), z = pointAt(i, o + len);
+        if (!a || !z) return null;
+        const r = document.createRange();
+        try { r.setStart(a.node, a.off); r.setEnd(z.node, z.off); } catch (e) { return null; }
+        return r;
+      },
+      editorHost: () => (S.mode === 'view' || current()?.trashed ? view : rich),
+      mode: () => S.mode, setMode: m => setMode(m),
+      readOnly: () => readOnly(current()),
+      ta, editFile: v => { ta.value = v; edit('body', v); },
+      setMeta: (n, patch) => setMeta(n, patch),
+      focus: () => { const n = current(); if (!n) return; if (n.path) ta.focus(); else if (S.mode === 'edit') rich.focus(); },
+    });
     const toolbar = h('div.notes__tools',
       modeBtn,
       h('span.notes__sep'),
       ...richOnly,
-      tool('check-circle', `Checklist  ${kbShift('9')}`, () => setType('check')),
-      picBtn,
+      tool('check-circle', `${tr('Checklist')}  ${kbShift('9')}`, () => setType('check')),
+      picBtn, tableBtn, insBtn,
       h('span.notes__sep'),
-      tool('link', 'Link a game, Forge project or collection', e => linkMenu(e.currentTarget)),
+      tool('link', tr('Link a game, Forge project or collection'), e => linkMenu(e.currentTarget)),
       ...plan.buttons,
+      ...tools.buttons,
       h('div.grow'),
-      h('button.btn.btn--sm', { type: 'button', onclick: () => toForge() }, icon('sparkles'), 'Open in Static Forge'));
-    richOnly.push(picBtn);
+      h('button.btn.btn--sm', { type: 'button', onclick: () => toForge() }, icon('sparkles'), tr('Open in Static Forge')));
+    richOnly.push(picBtn, tableBtn, insBtn);
     const editor = h('div.notes__editor', {
       style: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-    }, where, titleIn, toolbar, plan.strip, wrap);
+    }, where, titleIn, metaEl, toolbar, tools.findBar, plan.strip, wrap, backEl);
     const blank = h('div.grow', { style: { display: 'flex' } },
-      h('div.empty', icon('sticky-note'), h('b', { text: 'No note selected' }),
-        h('small', { text: `Pick one on the left, or press ${kb('N')} to start a new note.` })));
+      h('div.empty', icon('sticky-note'), h('b', { text: tr('No note selected') }),
+        h('small', { text: tr('Pick one on the left, or press {key} to start a new note.', { key: kb('N') }) })));
 
     /* both halves stay on one line: in a 440px window "Saved to <path>"
        otherwise wraps and the 30px footer grows into the editor */
     const footL = h('span.row.dim', { style: { flex: '0 0 auto', whiteSpace: 'nowrap' } });
     const footR = h('span.dim.trunc');
     const foot = h('div.app__bar.app__bar--foot', footL, h('div.grow'), footR);
-    const main = h('div.app__main', editor, blank, foot);
+    const main = h('div.app__main', editor, blank, foot, tools.aiPanel);
     root.appendChild(h('div.app', side, main));
 
     /* ---------------- save ------------------ */
@@ -311,14 +405,15 @@ defineApp({
             n.title = vfs.baseName(n.path);
             titleIn.value = n.title;
             win.setTitle(n.title);
-            api.notify({ app: 'Notes', icon: 'alert', title: 'That name is taken',
-              message: `“${next}” already exists in ${vfs.parentPath(n.path)}.` });
+            api.notify({ app: 'Notes', icon: 'alert', title: tr('That name is taken'),
+              message: tr('“{name}” already exists in {folder}.', { name: next, folder: vfs.parentPath(n.path) }) });
           }
         }
       }
       mine = S.notes.slice();
       store.set('notes', mine);
       paintList(); paintFoot();
+      paintTags();               /* a #tag just typed shows in the sidebar */
     }
 
     function edit(key, value) {
@@ -327,8 +422,15 @@ defineApp({
       n[key] = value;
       if (key === 'body' && !n.path) n.fmt = NF.FMT;
       n.mtime = new Date().toISOString();
-      if (key === 'title') { win.setTitle(n.title || 'Untitled note'); CO?.title(n, n.title); }
+      if (key === 'title') { win.setTitle(n.title || tr('Untitled note')); CO?.title(n, n.title); paintMeta(); }
       queueSave();
+    }
+    /** Something about a note that isn't its words (a pin, a link, its deck): saved, not an edit. */
+    function setMeta(n, patch) {
+      if (!n || n.path) return;
+      for (const [k, v] of Object.entries(patch)) { if (v === null || v === undefined || v === false) delete n[k]; else n[k] = v; }
+      save();
+      paintMeta();
     }
 
     /* ---------------- history (js/core/notehistory.js) --------------- */
@@ -348,7 +450,8 @@ defineApp({
         apply: snap => {
           const c = current() || n;
           if (!c.path) { c.title = snap.title; c.fmt = NF.FMT; }
-          c.body = snap.body;
+          /* a version kept before this format (fmt 2, or plain) reads the same in it */
+          c.body = c.path ? snap.body : NF.upgrade(snap.body, snap.fmt);
           c.mtime = new Date().toISOString();
           if (c.path) ta.value = c.body;
           save();
@@ -368,61 +471,270 @@ defineApp({
       S.fig = null;
       paintAll();
     }
-    function newNote() {
+    /** A note of your own, made now, shown and saved. */
+    function addMine(fields, { focusTitle = false } = {}) {
       save();
-      const n = { id: nid(), title: 'Untitled note', body: '', fmt: NF.FMT, mtime: new Date().toISOString() };
-      if (folderOf(S.folder)) n.folder = S.folder;
+      const now = new Date().toISOString();
+      const n = { id: nid(), title: tr('Untitled note'), body: '', fmt: NF.FMT, mtime: now, ctime: now, ...fields };
+      if (!n.folder && folderOf(S.folder)) n.folder = S.folder;
       S.notes.push(n);
       S.sel = n.id;
+      if (S.folder === 'trash') S.folder = 'all';
+      S.tag = null;
       S.filter = ''; search.value = '';
       save();
       paintAll();
-      titleIn.focus(); titleIn.select();
+      if (focusTitle) { titleIn.focus(); titleIn.select(); }
+      return n;
     }
+    function newNote() { addMine({}, { focusTitle: true }); }
     function duplicate(n) {
       if (!n) return;
-      if (n.path) { api.notify({ app: 'Notes', icon: 'alert', title: 'That is a file', message: 'Duplicate it in Files instead.' }); return; }
+      if (n.path) { api.notify({ app: 'Notes', icon: 'alert', title: tr('That is a file'), message: tr('Duplicate it in Files instead.') }); return; }
       flushEditor();
-      const copy = { id: nid(), title: `${n.title} copy`, body: n.body, fmt: n.fmt, mtime: new Date().toISOString() };
-      if (n.folder) copy.folder = n.folder;
-      S.notes.push(copy);
-      S.sel = copy.id;
-      save(); paintAll();
+      addMine({ title: tr('{title} copy', { title: n.title }), body: NF.upgrade(n.body, n.fmt), ...(n.folder ? { folder: n.folder } : {}) });
     }
-    async function destroy(n) {
+    /** Delete: into the Trash, from where it comes back as it was. */
+    function destroy(n) {
       if (!n) return;
       if (n.path) {
-        api.notify({ app: 'Notes', icon: 'alert', title: 'That is a file', message: 'Delete it from Files instead.' });
+        api.notify({ app: 'Notes', icon: 'alert', title: tr('That is a file'), message: tr('Delete it from Files instead.') });
         return;
       }
+      if (n.trashed) { deleteForever(n); return; }
+      flushEditor();
+      n.trashed = new Date().toISOString();
+      if (S.sel === n.id) { const nx = visible().find(x => x.id !== n.id) || null; S.sel = nx ? nx.id : null; }
+      save(); paintAll();
+      /* a friend writing in it keeps writing: their words still come in, and it can come back with all of them */
+      const shared = CO?.owns(n);
+      api.notify({ app: 'Notes', icon: 'trash', timeout: 6000, title: tr('Moved to the Trash'), message: shared
+        ? tr('{name} — your friend still has it open, so their changes keep coming into it.', { name: n.title || tr('Untitled note') })
+        : (n.title || tr('Untitled note')),
+      actions: [{ label: tr('Undo'), onClick: () => restore(n.id) }] });
+    }
+    function restore(id) {
+      const n = S.notes.find(x => x.id === id);
+      if (!n || !n.trashed) return;
+      delete n.trashed;
+      S.folder = n.folder && folderOf(n.folder) ? n.folder : 'all';
+      if (!folderOf(n.folder)) delete n.folder;
+      S.tag = null;
+      S.filter = ''; search.value = '';
+      S.sel = n.id;
+      save(); paintAll();
+    }
+    async function deleteForever(n) {
+      if (!n || !n.trashed) return;
       if (CO?.owns(n)) {
-        api.notify({ app: 'Notes', icon: 'users', title: 'You’re writing this note with a friend', message: 'Leave the room first, then delete your copy.' });
+        api.notify({ app: 'Notes', icon: 'users', title: tr('Your friend still has this note open'), message: tr('Leave the room first, then delete it for good.') });
         return;
       }
       const ok = await api.confirm({
-        title: `Delete “${n.title || 'Untitled note'}”?`,
-        message: 'This note is removed for good — there is no Trash for notes. Pictures in it stay in Pictures.',
-        ok: 'Delete',
+        title: tr('Delete “{name}” for good?', { name: n.title || tr('Untitled note') }),
+        message: tr('It can’t be brought back after this. Pictures in it stay in Pictures.'),
+        ok: tr('Delete for good'),
       });
       if (!ok) return;
-      S.notes = S.notes.filter(x => x.id !== n.id);
-      plan.forget(n.id);
-      if (S.sel === n.id) { const nx = visible()[0] || all()[0]; S.sel = nx ? nx.id : null; }
+      forget([n.id]);
+      api.notify({ app: 'Notes', icon: 'trash', title: tr('Deleted for good'), message: n.title || tr('Untitled note'), timeout: 3000 });
+    }
+    async function emptyTrash() {
+      const bin = S.notes.filter(n => n.trashed);
+      const keep = bin.filter(n => CO?.owns(n));
+      const go = bin.filter(n => !keep.includes(n));
+      if (!go.length) {
+        api.notify({ app: 'Notes', icon: 'trash', title: keep.length ? tr('Nothing else to delete') : tr('The Trash is empty'), message: keep.length ? tr('The note your friend still has open stays until you leave the room.') : '' });
+        return;
+      }
+      const ok = await api.confirm({
+        title: go.length === 1 ? tr('Delete the note in the Trash for good?') : tr('Delete all {n} notes in the Trash for good?', { n: go.length }),
+        message: tr('They can’t be brought back after this.') + (keep.length ? ' ' + tr('The note your friend still has open stays.') : ''),
+        ok: tr('Empty the Trash'),
+      });
+      if (!ok) return;
+      forget(go.map(n => n.id));
+      api.notify({ app: 'Notes', icon: 'trash', title: go.length === 1 ? tr('Deleted 1 note for good') : tr('Deleted {n} notes for good', { n: go.length }), message: keep.length ? tr('The shared note stays until the room ends.') : '', timeout: 3500 });
+    }
+    function forget(ids) {
+      const gone = new Set(ids);
+      S.notes = S.notes.filter(x => !gone.has(x.id));
+      for (const id of gone) plan.forget(id);
+      if (gone.has(S.sel)) { const nx = visible()[0] || null; S.sel = nx ? nx.id : null; }
       save(); paintAll();
-      api.notify({ app: 'Notes', icon: 'trash', title: 'Note deleted', message: n.title || 'Untitled note', timeout: 3000 });
+    }
+    function togglePin(n) {
+      if (!n || n.path || n.trashed) return;
+      setMeta(n, { pinned: !n.pinned });
+      paintList();
+      paintPin();
+    }
+    function paintPin() {
+      const n = current();
+      const on = !!(n && n.pinned);
+      pinBtn.setAttribute('aria-pressed', String(on));
+      pinBtn.dataset.tip = on ? tr('Unpin') : tr('Pin to the top');
+      pinBtn.setAttribute('aria-label', on ? tr('Unpin') : tr('Pin to the top'));
+      pinBtn.disabled = !n || !!n.path || !!n.trashed;
     }
     function itemMenu(e, n) {
       e.preventDefault(); e.stopPropagation();
+      if (n.trashed) {
+        api.menu([
+          { label: tr('Open'), icon: 'external-link', onClick: () => select(n.id) },
+          { label: tr('Restore'), icon: 'rotate-ccw', onClick: () => restore(n.id) },
+          '-',
+          { label: tr('Delete for good'), icon: 'trash', danger: true, onClick: () => deleteForever(n) },
+        ], e.clientX, e.clientY);
+        return;
+      }
       api.menu([
-        { label: 'Open', icon: 'external-link', onClick: () => select(n.id) },
-        n.path && { label: 'Reveal in Files', icon: 'folder-open', onClick: () => api.openApp('files', { path: vfs.parentPath(n.path) }) },
-        !n.path && { label: 'Move to', icon: 'folder', items: moveItems(n) },
-        !n.path && { label: 'Write together…', icon: 'users', onClick: () => { select(n.id); CO?.toggle(true); } },
+        { label: tr('Open'), icon: 'external-link', onClick: () => select(n.id) },
+        n.path && { label: tr('Reveal in Files'), icon: 'folder-open', onClick: () => api.openApp('files', { path: vfs.parentPath(n.path) }) },
+        !n.path && { label: n.pinned ? tr('Unpin') : tr('Pin to the top'), icon: 'pin', onClick: () => togglePin(n) },
+        !n.path && { label: tr('Move to'), icon: 'folder', items: moveItems(n) },
+        !n.path && { label: tr('Write together…'), icon: 'users', onClick: () => { select(n.id); CO?.toggle(true); } },
         '-',
-        { label: 'Export as PDF', icon: 'printer', onClick: () => { select(n.id); exportPdf(); } },
-        { label: 'Duplicate', icon: 'copy', disabled: !!n.path, onClick: () => duplicate(n) },
-        { label: 'Delete', icon: 'trash', danger: true, disabled: !!n.path, onClick: () => destroy(n) },
+        { label: tr('Export as PDF'), icon: 'printer', onClick: () => { select(n.id); exportPdf(); } },
+        !n.path && { label: tr('Export as Markdown (.md)'), icon: 'download', onClick: () => { select(n.id); exportMd('download'); } },
+        { label: tr('Duplicate'), icon: 'copy', disabled: !!n.path, onClick: () => duplicate(n) },
+        { label: tr('Move to Trash'), icon: 'trash', danger: true, disabled: !!n.path, onClick: () => destroy(n) },
       ].filter(Boolean), e.clientX, e.clientY);
+    }
+
+    /* ---------------- sorting, the daily note, templates, .md files ---------------- */
+    function sortMenu(anchor) {
+      const r = anchor.getBoundingClientRect();
+      api.menu(NM.SORTS.map(([k, label]) => ({
+        label, icon: S.sort === k ? 'check' : 'list', onClick: () => { S.sort = k; store.set('prefs.notesSort', k); paintList(); },
+      })), r.left, r.bottom + 4, { label: tr('Sort notes by (pinned notes stay on top)') });
+    }
+    /** Today's note: the one made for today, or a new one. */
+    function openDaily() {
+      const day = NM.dayKey();
+      const had = NM.dailyNote(S.notes, day);
+      if (had) { S.folder = 'all'; S.tag = null; S.filter = ''; search.value = ''; select(had.id); paintAll(); return had; }
+      const d = new Date();
+      const n = addMine({ title: NM.longDate(d), daily: day, body: NF.serialize([{ t: 'h2', runs: [{ text: tr('Today'), b: false, i: false }] }, { t: 'check', done: false, runs: [] }]) });
+      if (S.mode === 'edit') { rich.focus(); setSel({ i: 1, o: 0 }); }
+      return n;
+    }
+    function templateMenu(anchor) {
+      const r = anchor.getBoundingClientRect();
+      api.menu([
+        ...NM.TEMPLATES.map(t => ({ label: t.name, icon: 'file-text', onClick: () => fromTemplate(t.id) })),
+        '-',
+        { label: tr('Import .md or .txt files…'), icon: 'upload', onClick: () => importIn.click() },
+      ], r.left, r.bottom + 4, { label: tr('New note from') });
+    }
+    function fromTemplate(id) {
+      const t = NM.template(id);
+      if (!t) return null;
+      const d = new Date();
+      const n = addMine({ title: t.title(d), body: NM.templateBody(id, d) });
+      if (S.mode === 'edit') { rich.focus(); setSel({ i: 0, o: lenOf(NF.blocksOf(n)[0]) }); }
+      return n;
+    }
+    /** .md and .txt files from this computer become notes (a .md file's # heading is its title). */
+    async function importFiles(files) {
+      const ok = [], bad = [];
+      for (const f of files || []) {
+        if (!/\.(md|markdown|txt)$/i.test(f.name || '') && !/^text\//.test(f.type || '')) { bad.push(`${f.name} (not a .md or .txt file)`); continue; }
+        if (f.size > 2 * 1024 * 1024) { bad.push(tr('{name} (over 2 MB)', { name: f.name })); continue; }
+        let text = '';
+        try { text = await f.text(); } catch (e) { bad.push(tr('{name} (couldn’t be read)', { name: f.name })); continue; }
+        const base = String(f.name || 'Imported note').replace(/\.(md|markdown|txt)$/i, '').slice(0, 120) || 'Imported note';
+        const md = /\.(md|markdown)$/i.test(f.name || '') || f.type === 'text/markdown';
+        const got = md ? NF.fromMarkdown(text) : { title: '', blocks: NF.plainBlocks(text.replace(/\r\n?/g, '\n')) };
+        ok.push(addMine({ title: got.title || base, body: NF.serialize(got.blocks) }));
+      }
+      if (ok.length) api.notify({ app: 'Notes', icon: 'upload', title: ok.length === 1 ? tr('Imported “{name}”', { name: ok[0].title }) : tr('Imported {length} notes', { length: ok.length }), message: bad.length ? tr('Not imported: {names}', { names: bad.join(', ') }) : tr('They’re yours now: the files themselves stay where they were.') });
+      else if (bad.length) api.notify({ app: 'Notes', icon: 'alert', title: tr('Nothing was imported'), message: bad.join(', ') });
+      return ok;
+    }
+    const fileSafe = s => String(s || 'Untitled note').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Untitled note';
+    function exportMenu(anchor) {
+      const n = current();
+      if (!n) { api.notify({ app: 'Notes', icon: 'download', title: tr('Pick a note to export first') }); return; }
+      const r = anchor.getBoundingClientRect();
+      api.menu([
+        { label: tr('Download to this computer'), icon: 'download', onClick: () => exportMd('download') },
+        { label: tr('Save in Documents'), icon: 'folder', onClick: () => exportMd('docs') },
+      ], r.left, r.bottom + 4, { label: tr('Export as Markdown (.md)') });
+    }
+    function mdOf(n) {
+      flushEditor();
+      return n.path ? String(n.body || '') : NF.toMarkdown(n.title, NF.blocksOf(n));
+    }
+    function exportMd(where) {
+      const n = current();
+      if (!n) return null;
+      const text = mdOf(n);
+      const name = `${fileSafe(n.path ? vfs.baseName(n.path).replace(/\.[^.]+$/, '') : n.title)}.md`;
+      if (where === 'docs') {
+        const dir = `${vfs.HOME}/Documents`;
+        if (!vfs.node(dir)) vfs.mkdir(dir);
+        let path = `${dir}/${name}`;
+        for (let k = 2; vfs.node(path); k++) path = `${dir}/${name.replace(/\.md$/, '')} ${k}.md`;
+        vfs.write(path, text);
+        api.bus.emit('file:saved', { path, app: 'notes' });
+        api.notify({ app: 'Notes', icon: 'folder', title: tr('Saved {name} in Documents', { name: vfs.baseName(path) }), message: tr('Pictures stay in Pictures: the file points at them.'), actions: [{ label: tr('Show in Files'), onClick: () => api.openApp('files', { path: dir }) }] });
+        return path;
+      }
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+      const a = h('a', { href: url, download: name, hidden: true });
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+      api.notify({ app: 'Notes', icon: 'download', title: tr('Downloading {name}', { name }), message: tr('Pictures aren’t inside a .md file: it names where they are in StaticOS.'), timeout: 4000 });
+      return name;
+    }
+
+    /* ---------------- links between notes ---------------- */
+    /** [[Title]]: that note, or a new one with that title when there is none yet. */
+    function openLinked(title) {
+      const t = String(title || '').replace(/\s+/g, ' ').trim().slice(0, NM.LINK_MAX);
+      if (!t) return;
+      const hit = NM.byTitle(S.notes, t);
+      if (hit) { S.folder = 'all'; S.tag = null; S.filter = ''; search.value = ''; select(hit.id); paintAll(); return; }
+      addMine({ title: t });
+      api.notify({ app: 'Notes', icon: 'sticky-note', title: tr('Made the note “{name}”', { name: t }), message: tr('No note had that title, so the link now points at this new one.'), timeout: 3500 });
+    }
+    /** After a rename: the notes that linked to the old title may follow — only if asked. */
+    function offerRelink() {
+      const was = S.titleWas;
+      S.titleWas = null;
+      const n = current();
+      if (!was || !n || n.id !== was.id || NM.key(was.title) === NM.key(n.title) || !NM.key(was.title)) return;
+      const k = NM.key(was.title);
+      if (S.notes.some(x => x.id !== n.id && !x.trashed && NM.key(x.title) === k)) return;     /* another note still has the old title */
+      const from = NM.live(S.notes).filter(x => x.id !== n.id && NM.linksIn(NF.noteText(x)).some(t => NM.key(t) === k));
+      if (!from.length || !NM.key(n.title)) return;
+      api.notify({ app: 'Notes', icon: 'link', timeout: 12000, title: from.length === 1 ? tr('1 note links to “{name}”', { name: was.title }) : tr('{n} notes link to “{name}”', { n: from.length, name: was.title }),
+        message: from.length === 1 ? tr('Change its link to “{name}”?', { name: n.title }) : tr('Change their links to “{name}”?', { name: n.title }),
+        actions: [{ label: tr('Update links'), onClick: () => relink(from.map(x => x.id), was.title, n.title) }] });
+    }
+    function relink(ids, from, to) {
+      let changed = 0;
+      for (const id of ids) {
+        const x = S.notes.find(y => y.id === id);
+        if (!x || x.trashed || CO?.live(x)) continue;
+        const blocks = NF.blocksOf(x);
+        let hit = 0;
+        for (const b of blocks) {
+          if (ATOM(b.t)) continue;
+          for (const m of [...NF.runsText(b.runs).matchAll(/\[\[([^[\]\n]{1,120})\]\]/g)].reverse()) {
+            if (NM.key(m[1]) !== NM.key(from)) continue;
+            b.runs = NM.replaceRuns(b.runs, m.index + 2, m[1].length, to);
+            hit++;
+          }
+        }
+        if (!hit) continue;
+        x.body = NF.serialize(blocks); x.fmt = NF.FMT; x.mtime = new Date().toISOString();
+        changed++;
+      }
+      save(); paintAll();
+      api.notify({ app: 'Notes', icon: 'link', title: changed ? (changed === 1 ? tr('Updated the links in 1 note') : tr('Updated the links in {n} notes', { n: changed })) : tr('No links needed changing'), timeout: 3000 });
     }
 
     /* ---------------- folders ---------------- */
@@ -450,7 +762,7 @@ defineApp({
       const next = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
       if (!f || !next || next === f.name) return;
       if (S.folders.some(x => x.id !== id && x.name.toLowerCase() === next.toLowerCase())) {
-        api.notify({ app: 'Notes', icon: 'alert', title: 'There is already a folder with that name', message: next });
+        api.notify({ app: 'Notes', icon: 'alert', title: tr('There is already a folder with that name'), message: next });
         return;
       }
       f.name = next;
@@ -461,9 +773,9 @@ defineApp({
       if (!f) return;
       const inside = S.notes.filter(n => n.folder === id).length;
       const ok = await api.confirm({
-        title: `Delete the folder “${f.name}”?`,
-        message: inside ? `Its ${inside} note${inside === 1 ? '' : 's'} stay${inside === 1 ? 's' : ''} in All notes — only the folder goes.` : 'It is empty.',
-        ok: 'Delete folder',
+        title: tr('Delete the folder “{name}”?', { name: f.name }),
+        message: inside ? (inside === 1 ? tr('Its 1 note stays in All notes — only the folder goes.') : tr('Its {n} notes stay in All notes — only the folder goes.', { n: inside })) : tr('It is empty.'),
+        ok: tr('Delete folder'),
       });
       if (!ok) return;
       S.folders = S.folders.filter(x => x.id !== id);
@@ -479,34 +791,35 @@ defineApp({
       if ((n.folder || null) === (to ? to.id : null)) return;
       if (to) n.folder = to.id; else delete n.folder;
       save(); paintAll();
-      if (!quiet) api.notify({ app: 'Notes', icon: 'folder', title: to ? `Moved to ${to.name}` : 'Moved out of its folder', message: n.title || 'Untitled note', timeout: 2500 });
+      if (!quiet) api.notify({ app: 'Notes', icon: 'folder', title: to ? tr('Moved to {name}', { name: to.name }) : tr('Moved out of its folder'), message: n.title || tr('Untitled note'), timeout: 2500 });
     }
     function moveItems(n) {
       return [
         ...S.folders.map(f => ({ label: f.name, icon: n.folder === f.id ? 'check' : 'folder', disabled: n.folder === f.id, onClick: () => moveNote(n.id, f.id) })),
         S.folders.length ? '-' : null,
-        { label: 'No folder', icon: n.folder ? 'x' : 'check', disabled: !n.folder, onClick: () => moveNote(n.id, null) },
-        { label: 'New folder…', icon: 'plus', onClick: () => newFolder(n) },
+        { label: tr('No folder'), icon: n.folder ? 'x' : 'check', disabled: !n.folder, onClick: () => moveNote(n.id, null) },
+        { label: tr('New folder…'), icon: 'plus', onClick: () => newFolder(n) },
       ].filter(Boolean);
     }
     function moveMenu(anchor) {
       const n = current();
       if (!n || n.path) return;
       const r = anchor.getBoundingClientRect();
-      api.menu(moveItems(n), r.left, r.bottom + 4, { label: 'Move to folder' });
+      api.menu(moveItems(n), r.left, r.bottom + 4, { label: tr('Move to folder') });
     }
     function folderMenu(e, id) {
       e.preventDefault(); e.stopPropagation();
       api.menu([
-        { label: 'Rename', icon: 'edit-3', onClick: () => { S.renaming = id; paintFolders(); } },
-        { label: 'New note here', icon: 'plus', onClick: () => { S.folder = id; newNote(); } },
+        { label: tr('Rename'), icon: 'edit-3', onClick: () => { S.renaming = id; paintFolders(); } },
+        { label: tr('New note here'), icon: 'plus', onClick: () => { S.folder = id; newNote(); } },
         '-',
-        { label: 'Delete folder', icon: 'trash', danger: true, onClick: () => deleteFolder(id) },
+        { label: tr('Delete folder'), icon: 'trash', danger: true, onClick: () => deleteFolder(id) },
       ], e.clientX, e.clientY);
     }
     function setFolder(id) {
-      if (S.folder === id && !S.filter) return;
+      if (S.folder === id && !S.filter && !S.tag) return;
       S.folder = id;
+      S.tag = null;
       S.filter = ''; search.value = '';
       const list = visible();
       if (!list.some(n => n.id === S.sel) && list[0]) select(list[0].id);
@@ -520,6 +833,7 @@ defineApp({
        the block kind and a picture's vfs path ever come out. */
     function readBlocks(rootEl, collapse = false) {
       const out = [];
+      let quoting = 0;          /* inside a <blockquote>: its lines are quote lines */
       const textOf = s => {
         const t = String(s).replace(/ /g, ' ');
         return collapse ? t.replace(/\s+/g, ' ') : t;
@@ -564,13 +878,32 @@ defineApp({
           if (!kept.length) return;
         }
         kept.forEach((ln, k) => {
-          const bt = k && /^h/.test(t) ? 'p' : t;
+          let bt = k && /^h/.test(t) ? 'p' : t;
+          if (bt === 'p' && quoting) bt = 'quote';
           const blk = { t: bt, runs: NF.mergeRuns(ln) };
           if (bt === 'check') blk.done = k ? false : !!extra.done;
           out.push(blk);
         });
       }
+      /* a table row: each cell is one line of words (a line break or tab in a cell is a space) */
+      function cellRuns(td) {
+        const rs = runs(td.childNodes).filter(r => !r.soft);
+        const len = rs.length;
+        /* the <br> an empty cell keeps so it can be clicked into is not a space */
+        if (len && rs[len - 1].text === '\n') rs.pop();
+        let cells = NF.mergeRuns(rs.map(r => ({ ...r, text: r.text.replace(/[\n\t]/g, ' ') })));
+        if (collapse && cells.length) { cells[0].text = cells[0].text.replace(/^\s+/, ''); cells[cells.length - 1].text = cells[cells.length - 1].text.replace(/\s+$/, ''); cells = cells.filter(r => r.text); }
+        return cells;
+      }
+      function table(el) {
+        for (const tr of el.rows || []) {
+          const cells = [...tr.cells].map(cellRuns);
+          if (collapse && !cells.some(c => c.length)) continue;
+          out.push(NF.rowOf(cells.length ? cells : [[]]));
+        }
+      }
       function pic(n) {
+        if (n.dataset && (n.dataset.hr || n.classList.contains('notes__hr'))) { out.push({ t: 'hr', runs: [] }); return; }
         const el = n.tagName === 'FIGURE' && !n.dataset.path ? n.querySelector('[data-path]') : n;
         const path = el && el.dataset ? el.dataset.path : null;
         if (path) out.push({ t: 'img', path, alt: (el.dataset.alt || '') || vfs.baseName(path), runs: [] });
@@ -608,6 +941,16 @@ defineApp({
           if (IGNORE.has(tag) || n.classList.contains('notes__box')) continue;
           if (tag === 'UL' || tag === 'OL') { flush(); list(n); continue; }
           if (tag === 'FIGURE' || tag === 'IMG') { flush(); pic(n); continue; }
+          if (tag === 'HR') { flush(); out.push({ t: 'hr', runs: [] }); continue; }
+          if (tag === 'TABLE') { flush(); table(n); continue; }
+          if (tag === 'BLOCKQUOTE') {
+            flush();
+            quoting++;
+            if ([...n.children].some(c => BLOCKISH.has(c.tagName) || c.tagName === 'UL' || c.tagName === 'OL')) walk(n);
+            else push('quote', runs(n.childNodes));
+            quoting--;
+            continue;
+          }
           if (/^H[1-6]$/.test(tag)) { flush(); push(`h${Math.min(3, Number(tag[1]))}`, runs(n.childNodes)); continue; }
           if (tag === 'LI') { flush(); item(n, 'ul'); continue; }
           if (tag === 'BR' && !inl.length) { push('p', []); continue; }
@@ -659,8 +1002,8 @@ defineApp({
       if (mode === 'edit' && reuse && reuse.get(b.path)?.length) return reuse.get(b.path).pop();
       const alt = b.alt || vfs.baseName(b.path);
       const img = h('img', { alt, draggable: 'false', decoding: 'async' });
-      const fig = h('figure.notes__fig', { 'data-path': b.path, 'data-alt': alt, contenteditable: mode === 'edit' ? 'false' : null, title: mode === 'edit' ? `${alt} — double-click to open` : null }, img);
-      if (mode === 'edit') fig.append(h('button.notes__figx', { type: 'button', tabindex: '-1', 'aria-label': `Remove picture ${alt}` }, icon('x')));
+      const fig = h('figure.notes__fig', { 'data-path': b.path, 'data-alt': alt, contenteditable: mode === 'edit' ? 'false' : null, title: mode === 'edit' ? tr('{alt} — double-click to open', { alt }) : null }, img);
+      if (mode === 'edit') fig.append(h('button.notes__figx', { type: 'button', tabindex: '-1', 'aria-label': tr('Remove picture {alt}', { alt }) }, icon('x')));
       loadPic(fig, img, b.path);
       return fig;
     }
@@ -691,21 +1034,36 @@ defineApp({
       cb.addEventListener('change', () => { label.classList.toggle('is-done', cb.checked); tickView(idx, cb.checked); });
       return h('li', label);
     }
+    /* a divider: an uneditable figure in the editor (selected and deleted whole, like a picture) */
+    function hrEl(mode) {
+      if (mode !== 'edit') return h('hr.notes__rule');
+      return h('figure.notes__hr', { contenteditable: 'false', 'data-hr': '1', title: tr('Divider') }, h('hr'),
+        h('button.notes__figx', { type: 'button', tabindex: '-1', 'aria-label': tr('Remove divider') }, icon('x')));
+    }
+    /* a table row: the first row of a table is its header */
+    function rowEl(b, head, mode) {
+      return h('tr', ...NF.cellsOf(b).map(c => fill(h(head ? 'th' : 'td'), c, mode)));
+    }
     function renderBlocks(blocks, mode, reuse) {
       const frag = document.createDocumentFragment();
       let list = null, lt = null;
       blocks.forEach((b, idx) => {
-        if (LISTY(b.t)) {
+        if (b.sep) return;                 /* a .md file's |---| line: nothing to draw, but its line counts */
+        if (LISTY(b.t) || b.t === 'row') {
           if (lt !== b.t) {
-            list = h(b.t === 'ol' ? 'ol' : 'ul', b.t === 'check' ? { class: 'notes__checks', 'data-list': 'check' } : null);
+            list = b.t === 'row' ? h('table.notes__table', h('tbody'))
+              : h(b.t === 'ol' ? 'ol' : 'ul', b.t === 'check' ? { class: 'notes__checks', 'data-list': 'check' } : null);
             frag.append(list);
             lt = b.t;
           }
-          list.append(itemEl(b, idx, mode));
+          if (b.t === 'row') list.tBodies[0].append(rowEl(b, !list.tBodies[0].rows.length, mode));
+          else list.append(itemEl(b, idx, mode));
           return;
         }
         list = null; lt = null;
         if (b.t === 'img') { frag.append(figEl(b, mode, reuse)); return; }
+        if (b.t === 'hr') { frag.append(hrEl(mode)); return; }
+        if (b.t === 'quote') { frag.append(fill(h('blockquote.notes__quote'), b.runs, mode)); return; }
         frag.append(fill(h(b.t === 'p' ? 'p' : b.t), b.runs, mode));
       });
       return frag;
@@ -716,31 +1074,50 @@ defineApp({
       const out = [];
       for (const el of rich.children) {
         if (el.tagName === 'UL' || el.tagName === 'OL') { for (const li of el.children) if (li.tagName === 'LI') out.push(li); }
+        else if (el.tagName === 'TABLE') { for (const tr of el.rows) out.push(tr); }
         else out.push(el);
       }
       return out;
     }
+    /* a table row's text is its cells with a tab between them, as the note keeps it */
+    const cellsIn = tr => [...tr.cells];
+    const elLen = el => (el && el.tagName === 'TR' ? cellsIn(el).reduce((s, c) => s + c.textContent.length, 0) + Math.max(0, el.cells.length - 1) : (el ? el.textContent.length : 0));
+    const cellStart = (tr, k) => cellsIn(tr).slice(0, k).reduce((s, c) => s + c.textContent.length + 1, 0);
+    /* the rows or items an element groups, first and last */
+    const firstIn = el => (el && el.tagName === 'TABLE' ? el.rows[0] || null : el && GROUP.has(el.tagName) ? el.firstElementChild : el);
+    const lastIn = el => (el && el.tagName === 'TABLE' ? el.rows[el.rows.length - 1] || null : el && GROUP.has(el.tagName) ? el.lastElementChild : el);
     function posOf(node, off) {
       if (!node || !rich.contains(node)) return null;
       const els = blockEls();
       const set = new Set(els);
-      const first = el => (el && (el.tagName === 'UL' || el.tagName === 'OL') ? el.firstElementChild : el);
-      if (node === rich || node.tagName === 'UL' || node.tagName === 'OL') {
-        const kid = first(node.childNodes[off]) || null;
+      if (node === rich || GROUP.has(node.tagName)) {
+        const kid = firstIn(node.childNodes[off]) || null;
         let i = kid ? els.indexOf(kid) : -1;
         if (i >= 0) return { i, o: 0 };
         const prev = node.childNodes[off - 1];
-        i = prev ? els.indexOf(prev.tagName === 'UL' || prev.tagName === 'OL' ? prev.lastElementChild : prev) : -1;
+        i = prev ? els.indexOf(lastIn(prev)) : -1;
         if (i < 0) i = els.length - 1;
-        return i >= 0 ? { i, o: els[i].textContent.length } : null;
+        return i >= 0 ? { i, o: elLen(els[i]) } : null;
       }
       let b = node.nodeType === 1 ? node : node.parentNode;
       while (b && b !== rich && !set.has(b)) b = b.parentNode;
       if (!b || b === rich) return null;
+      const i = els.indexOf(b);
+      if (b.tagName === 'TR') {
+        /* between two cells (the row itself), or inside one */
+        if (node === b) { const k = Math.min(off, b.cells.length); return { i, o: k >= b.cells.length ? elLen(b) : cellStart(b, k) }; }
+        let cell = node.nodeType === 1 ? node : node.parentNode;
+        while (cell && cell !== b && !isCell(cell)) cell = cell.parentNode;
+        if (!isCell(cell)) return { i, o: 0 };
+        const r = document.createRange();
+        r.selectNodeContents(cell);
+        try { r.setEnd(node, off); } catch (e) { return { i, o: cellStart(b, cell.cellIndex) }; }
+        return { i, o: cellStart(b, cell.cellIndex) + r.toString().length };
+      }
       const r = document.createRange();
       r.selectNodeContents(b);
-      try { r.setEnd(node, off); } catch (e) { return { i: els.indexOf(b), o: 0 }; }
-      return { i: els.indexOf(b), o: r.toString().length };
+      try { r.setEnd(node, off); } catch (e) { return { i, o: 0 }; }
+      return { i, o: r.toString().length };
     }
     function getCaret() {
       const sel = window.getSelection();
@@ -759,6 +1136,20 @@ defineApp({
         const k = [...rich.childNodes].indexOf(b);
         return { node: rich, off: k + 1 };
       }
+      if (b.tagName === 'TR') {
+        const cells = cellsIn(b);
+        let left = Math.max(0, o || 0);
+        for (let k = 0; k < cells.length; k++) {
+          const len = cells[k].textContent.length;
+          if (left <= len || k === cells.length - 1) return pointIn(cells[k], Math.min(left, len));
+          left -= len + 1;
+        }
+        return { node: b, off: 0 };
+      }
+      return pointIn(b, o);
+    }
+    /* offset o into an element's words (a line, or a table cell) */
+    function pointIn(b, o) {
       const tw = document.createTreeWalker(b, NodeFilter.SHOW_TEXT);
       let n, left = Math.max(0, o || 0), last = null;
       while ((n = tw.nextNode())) {
@@ -804,7 +1195,7 @@ defineApp({
         left -= n.data.length;
       }
       const els = blockEls();
-      if (els.length) setSel({ i: els.length - 1, o: els[els.length - 1].textContent.length });
+      if (els.length) setSel({ i: els.length - 1, o: elLen(els[els.length - 1]) });
     }
     function splitRuns(rs, o) {
       const a = [], z = [];
@@ -816,15 +1207,29 @@ defineApp({
       }
       return [NF.mergeRuns(a), NF.mergeRuns(z)];
     }
-    const lenOf = b => (b && b.t !== 'img' ? NF.runsText(b.runs).length : 0);
+    const lenOf = b => (b && !ATOM(b.t) ? NF.runsText(b.runs).length : 0);
+    /* a row's words between a and z go; its tabs (the cells) stay */
+    function clearRow(b, a, z) {
+      const [x, rest] = splitRuns(b.runs, a);
+      const [mid, y] = splitRuns(rest, Math.max(0, z - a));
+      const tabs = NF.runsText(mid).replace(/[^\t]/g, '');
+      b.runs = NF.mergeRuns([...x, ...(tabs ? [{ text: tabs, b: false, i: false }] : []), ...y]);
+    }
     /** Remove the text between two caret points (s before e) from the blocks. */
     function cut(blocks, s, e) {
       if (same(s, e)) return;
       const first = blocks[s.i], last = blocks[e.i];
       if (!first || !last) return;
-      const head = first.t === 'img' ? [] : splitRuns(first.runs, s.o)[0];
-      const tail = last.t === 'img' ? [] : splitRuns(last.runs, e.o)[1];
-      if (first.t === 'img') { first.t = 'p'; delete first.path; delete first.alt; }
+      /* all inside a table: the words go, its cells and rows stay */
+      if (blocks.slice(s.i, e.i + 1).every(b => b.t === 'row')) {
+        for (let i = s.i; i <= e.i; i++) clearRow(blocks[i], i === s.i ? s.o : 0, i === e.i ? e.o : lenOf(blocks[i]));
+        return;
+      }
+      const head = ATOM(first.t) ? [] : splitRuns(first.runs, s.o)[0];
+      let tail = ATOM(last.t) ? [] : splitRuns(last.runs, e.o)[1];
+      /* what's left of a row, joining a line that isn't one, is words: its tabs become spaces */
+      if (last.t === 'row' && first.t !== 'row') tail = tail.map(r => ({ ...r, text: r.text.replace(/\t/g, ' ') }));
+      if (ATOM(first.t)) { first.t = 'p'; delete first.path; delete first.alt; }
       first.runs = NF.mergeRuns([...head, ...tail]);
       if (e.i > s.i) blocks.splice(s.i + 1, e.i - s.i);
     }
@@ -840,13 +1245,13 @@ defineApp({
       return m;
     }
     function syncEmpty() {
-      const empty = !rich.textContent && !rich.querySelector('figure,ul,ol,h1,h2,h3') && rich.querySelectorAll('p').length <= 1;
+      const empty = !rich.textContent && !rich.querySelector('figure,ul,ol,h1,h2,h3,table,blockquote') && rich.querySelectorAll('p').length <= 1;
       rich.classList.toggle('is-empty', empty);
     }
     function draw(blocks, caret) {
       const bl = blocks.length ? blocks.slice() : [{ t: 'p', runs: [] }];
-      /* always somewhere to type after a picture */
-      if (bl[bl.length - 1].t === 'img') bl.push({ t: 'p', runs: [] });
+      /* always somewhere to type after a picture, a divider or a table */
+      if (ATOM(bl[bl.length - 1].t) || bl[bl.length - 1].t === 'row') bl.push({ t: 'p', runs: [] });
       rich.replaceChildren(renderBlocks(bl, 'edit', figsNow()));
       S.fig = null;
       syncEmpty();
@@ -872,6 +1277,8 @@ defineApp({
       if (md !== n.body) edit('body', md);
       syncEmpty();
       paintFoot();
+      tools.noteChanged();
+      tools.readChanged();
     }
     /** Every edit already reaches the note through its input event; this only
         catches a change that came without one. An editor showing an older
@@ -932,7 +1339,8 @@ defineApp({
       if (!rich.contains(document.activeElement)) rich.focus();
       apply((blocks, c) => {
         const s = c ? c.s.i : Math.max(0, blocks.length - 1), e = c ? c.e.i : s;
-        const picked = blocks.slice(s, e + 1).filter(b => b.t !== 'img');
+        /* pictures, dividers and table rows keep what they are */
+        const picked = blocks.slice(s, e + 1).filter(b => !ATOM(b.t) && b.t !== 'row');
         const back = t !== 'p' && picked.length && picked.every(b => b.t === t);
         for (const b of picked) {
           const was = b.t;
@@ -947,7 +1355,7 @@ defineApp({
         if (!c) return c;
         const span = blocks.slice(c.s.i, c.e.i + 1);
         const items = span.filter(b => b.t === 'check');
-        if (!items.length) { for (const b of span) if (b.t !== 'img') { b.t = 'check'; b.done = false; } return c; }
+        if (!items.length) { for (const b of span) if (!ATOM(b.t) && b.t !== 'row') { b.t = 'check'; b.done = false; } return c; }
         const to = !items.every(b => b.done);
         for (const b of items) b.done = to;
         return c;
@@ -961,8 +1369,20 @@ defineApp({
         const { i, o } = c.s;
         const b = blocks[i];
         if (!b) return c;
-        if (b.t === 'img') { blocks.splice(i + 1, 0, { t: 'p', runs: [] }); return { i: i + 1, o: 0 }; }
-        if (LISTY(b.t) && !NF.runsText(b.runs)) { b.t = 'p'; delete b.done; return { i, o: 0 }; }   /* Enter on an empty item leaves the list */
+        if (ATOM(b.t)) { blocks.splice(i + 1, 0, { t: 'p', runs: [] }); return { i: i + 1, o: 0 }; }
+        if (b.t === 'row') return rowEnter(blocks, i, o);
+        if ((LISTY(b.t) || b.t === 'quote') && !NF.runsText(b.runs)) { b.t = 'p'; delete b.done; return { i, o: 0 }; }   /* Enter on an empty item leaves the list */
+        const said = NF.runsText(b.runs);
+        if (b.t === 'p' && o === said.length) {
+          /* "---" and Enter: a divider. "| a | b |" and Enter: the first row of a table. */
+          if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(said)) { blocks.splice(i, 1, { t: 'hr', runs: [] }, { t: 'p', runs: [] }); return { i: i + 1, o: 0 }; }
+          const m = said.match(/^\s*\|(.+)\|\s*$/);
+          if (m && m[1].includes('|')) {
+            const cells = m[1].split('|').map(x => [{ text: x.trim(), b: false, i: false }].filter(r => r.text));
+            blocks.splice(i, 1, NF.rowOf(cells), NF.rowOf(cells.map(() => [])));
+            return { i: i + 1, o: 0 };
+          }
+        }
         const [a, z] = splitRuns(b.runs, o);
         const fresh = t => ({ t, runs: [], ...(t === 'check' ? { done: false } : {}) });
         if (o === 0 && z.length) {
@@ -977,13 +1397,152 @@ defineApp({
         return { i: i + 1, o: 0 };
       });
     }
-    /** "# ", "- ", "1. ", "[ ] " at the start of a line become the real thing. */
+    /* ---- tables: Enter adds a row, Tab moves between cells, cells never merge ---- */
+    /** [first, last] block index of the table block i is in */
+    function tableSpan(blocks, i) {
+      let a = i, z = i;
+      while (a > 0 && blocks[a - 1].t === 'row') a--;
+      while (z < blocks.length - 1 && blocks[z + 1].t === 'row') z++;
+      return [a, z];
+    }
+    const colAt = (b, o) => (NF.runsText(b.runs).slice(0, o).match(/\t/g) || []).length;
+    const cellOff = (b, col) => NF.cellsOf(b).slice(0, col).reduce((s, c) => s + NF.runsText(c).length + 1, 0);
+    const cellEnd = (b, col) => cellOff(b, col) + NF.runsText(NF.cellsOf(b)[col] || []).length;
+    const emptyRow = n => NF.rowOf(Array.from({ length: Math.max(1, n) }, () => []));
+    const widthOf = (blocks, a, z) => Math.max(1, ...blocks.slice(a, z + 1).map(r => NF.cellsOf(r).length));
+    function rowEnter(blocks, i, o) {
+      const b = blocks[i];
+      const [a, z] = tableSpan(blocks, i);
+      /* Enter on an empty last row leaves the table: that row becomes a line of text */
+      if (i === z && i > a && !NF.runsText(b.runs).replace(/\t/g, '')) { blocks.splice(i, 1, { t: 'p', runs: [] }); return { i, o: 0 }; }
+      const col = colAt(b, o);
+      blocks.splice(i + 1, 0, emptyRow(widthOf(blocks, a, z)));
+      return { i: i + 1, o: cellOff(blocks[i + 1], col) };
+    }
+    /** Tab / Shift+Tab in a table: the next or the previous cell; past the last one, a new row. */
+    function tabCell(back) {
+      const c = getCaret();
+      if (!c) return false;
+      const blocks = readBlocks(rich);
+      const b = blocks[c.e.i];
+      if (!b || b.t !== 'row') return false;
+      const [a, z] = tableSpan(blocks, c.e.i);
+      let i = c.e.i, k = colAt(b, c.e.o) + (back ? -1 : 1);
+      if (k < 0) {
+        if (i === a) return true;
+        i--; k = NF.cellsOf(blocks[i]).length - 1;
+      } else if (k >= NF.cellsOf(b).length) {
+        if (i < z) { i++; k = 0; } else {
+          const w = widthOf(blocks, a, z);
+          apply(bl => { bl.splice(c.e.i + 1, 0, emptyRow(w)); return { i: c.e.i + 1, o: 0 }; });
+          return true;
+        }
+      }
+      setSel({ i, o: cellEnd(blocks[i], k) });
+      return true;
+    }
+    /** A change to the table the caret is in. */
+    function tableOp(op) {
+      apply((blocks, c) => {
+        if (!c) return c;
+        const i = c.e.i, b = blocks[i];
+        if (!b || b.t !== 'row') return c;
+        const [a, z] = tableSpan(blocks, i);
+        const col = colAt(b, c.e.o), w = widthOf(blocks, a, z);
+        const recell = fn => { for (let k = a; k <= z; k++) { const cs = NF.cellsOf(blocks[k]); fn(cs); blocks[k] = NF.rowOf(cs.length ? cs : [[]]); } };
+        const dropTable = () => { blocks.splice(a, z - a + 1, { t: 'p', runs: [] }); return { i: a, o: 0 }; };
+        switch (op) {
+          case 'rowAbove': blocks.splice(i, 0, emptyRow(w)); return { i, o: cellOff(blocks[i], col) };
+          case 'rowBelow': blocks.splice(i + 1, 0, emptyRow(w)); return { i: i + 1, o: cellOff(blocks[i + 1], col) };
+          case 'colLeft': case 'colRight': {
+            const at = op === 'colLeft' ? col : col + 1;
+            recell(cs => { while (cs.length < at) cs.push([]); cs.splice(at, 0, []); });
+            return { i, o: cellOff(blocks[i], at) };
+          }
+          case 'delCol':
+            /* the last column: the table goes */
+            if (w <= 1) return dropTable();
+            recell(cs => { if (cs.length > col) cs.splice(col, 1); });
+            return { i, o: cellOff(blocks[i], Math.max(0, Math.min(col, NF.cellsOf(blocks[i]).length - 1))) };
+          case 'delTable': return dropTable();
+          case 'delRow': {
+            if (a === z) { blocks.splice(i, 1, { t: 'p', runs: [] }); return { i, o: 0 }; }
+            blocks.splice(i, 1);
+            const j = i <= z - 1 ? i : i - 1;
+            return { i: j, o: cellOff(blocks[j], Math.min(col, NF.cellsOf(blocks[j]).length - 1)) };
+          }
+          default: return c;
+        }
+      });
+    }
+    /** A new table (a header and two rows, three columns) after the line the caret is on. */
+    function insertTable() {
+      if (!current() || current().path) return;
+      if (S.mode !== 'edit') setMode('edit');
+      apply((blocks, c) => {
+        const rows = [emptyRow(3), ...Array.from({ length: CELL_PAD }, () => emptyRow(3))];
+        let i = c ? c.e.i : blocks.length - 1;
+        const b = blocks[i];
+        if (b && b.t === 'row') return c;
+        if (b && b.t === 'p' && !lenOf(b)) { blocks.splice(i, 1, ...rows); return { i, o: 0 }; }
+        if (!b) i = blocks.length - 1;
+        blocks.splice(i + 1, 0, ...rows);
+        return { i: i + 1, o: 0 };
+      });
+    }
+    function insertDivider() {
+      if (!current() || current().path) return;
+      if (S.mode !== 'edit') setMode('edit');
+      apply((blocks, c) => {
+        const i = c ? c.e.i : blocks.length - 1;
+        const b = blocks[i];
+        if (b && b.t === 'p' && !lenOf(b)) { blocks.splice(i, 1, { t: 'hr', runs: [] }, { t: 'p', runs: [] }); return { i: i + 1, o: 0 }; }
+        const k = b && b.t === 'row' ? tableSpan(blocks, i)[1] : Math.max(0, i);
+        blocks.splice(k + 1, 0, { t: 'hr', runs: [] }, { t: 'p', runs: [] });
+        return { i: k + 2, o: 0 };
+      });
+    }
+    /** A template's lines put in this note, after the line the caret is on. */
+    function insertTemplate(id) {
+      const t = NM.template(id);
+      if (!t || !current() || current().path) return;
+      if (S.mode !== 'edit') setMode('edit');
+      apply((blocks, c) => {
+        const add = t.blocks(new Date());
+        const i = c ? c.e.i : blocks.length - 1;
+        const b = blocks[i];
+        if (b && b.t === 'p' && !lenOf(b)) { blocks.splice(i, 1, ...add); return { i, o: lenOf(add[0]) }; }
+        const k = b && b.t === 'row' ? tableSpan(blocks, i)[1] : Math.max(0, i);
+        blocks.splice(k + 1, 0, ...add);
+        return { i: k + 1, o: lenOf(add[0]) };
+      });
+    }
+    /** Words typed at the caret, as if typed (so undo takes them back in one go). */
+    function typeAtCaret(text) {
+      const n = current();
+      if (!n || readOnly(n)) return;
+      if (S.mode !== 'edit') setMode('edit');
+      if (n.path) {
+        const v = ta.value, a = ta.selectionStart ?? v.length, z = ta.selectionEnd ?? a;
+        ta.value = v.slice(0, a) + text + v.slice(z);
+        ta.setSelectionRange(a + text.length, a + text.length);
+        ta.focus();
+        edit('body', ta.value);
+        return;
+      }
+      if (!rich.contains(document.activeElement)) rich.focus();
+      if (!getCaret()) { const els = blockEls(); setSel({ i: els.length - 1, o: elLen(els[els.length - 1]) }); }
+      document.execCommand('insertText', false, text);
+    }
+    const insertDate = () => typeAtCaret(NM.longDate(new Date()));
+
+    /** "# ", "- ", "1. ", "[ ] ", "> " at the start of a line become the real thing. */
     function autoFormat() {
       const c = getCaret();
       if (!c || !same(c.s, c.e)) return false;
       const blocks = readBlocks(rich);
       const b = blocks[c.s.i];
-      if (!b || b.t === 'img' || blockEls().length !== blocks.length) return false;
+      if (!b || ATOM(b.t) || b.t === 'row' || blockEls().length !== blocks.length) return false;
       const before = NF.runsText(b.runs).slice(0, c.s.o);
       let to = null, done = false;
       if (b.t === 'p') {
@@ -991,6 +1550,7 @@ defineApp({
         else if (/^[-*+]$/.test(before)) to = 'ul';
         else if (/^\d{1,3}[.)]$/.test(before)) to = 'ol';
         else if (/^(?:[-*+] )?\[[ xX]?\]$/.test(before)) { to = 'check'; done = /x/i.test(before); }
+        else if (before === '>') to = 'quote';
       } else if (b.t === 'ul' && /^\[[ xX]?\]$/.test(before)) { to = 'check'; done = /x/i.test(before); }
       if (!to) return false;
       pushUndo();
@@ -1001,37 +1561,93 @@ defineApp({
       bodyChanged();
       return true;
     }
-    /** Backspace at the start of a heading or list item makes it plain text
-        first; next to a picture, the picture is selected rather than eaten. */
+    /** Backspace at the start of a heading, list item or quote makes it plain text
+        first; next to a picture or a divider, that is selected rather than eaten;
+        a table's cells and rows never run into each other or into the lines around. */
     function edgeDelete(e) {
       const c = getCaret();
       if (!c || !same(c.s, c.e)) return false;
       const blocks = readBlocks(rich);
       if (blocks.length !== blockEls().length) return false;
       const b = blocks[c.s.i];
-      if (!b || b.t === 'img') return false;
-      if (e.key === 'Backspace' && c.s.o === 0) {
+      if (!b || ATOM(b.t)) return false;
+      const { i, o } = c.s;
+      const redraw = at => { pushUndo(); draw(blocks, at); bodyChanged(); };
+      if (b.t === 'row') {
+        const text = NF.runsText(b.runs);
+        if (e.key === 'Backspace') {
+          if (o === 0) {
+            e.preventDefault();
+            /* an empty row goes; a row with words in it stays put */
+            if (!text.replace(/\t/g, '')) {
+              blocks.splice(i, 1);
+              if (!blocks.length) blocks.push({ t: 'p', runs: [] });
+              const k = Math.max(0, i - 1);
+              redraw({ i: k, o: lenOf(blocks[k]) });
+            }
+            return true;
+          }
+          if (text[o - 1] === '\t') { e.preventDefault(); setSel({ i, o: o - 1 }); return true; }
+        }
+        if (e.key === 'Delete') {
+          if (o >= text.length) { e.preventDefault(); return true; }
+          if (text[o] === '\t') { e.preventDefault(); setSel({ i, o: o + 1 }); return true; }
+        }
+        return false;
+      }
+      if (e.key === 'Backspace' && o === 0) {
         if (b.t !== 'p') {
           e.preventDefault();
-          pushUndo();
           b.t = 'p'; delete b.done;
-          draw(blocks, { i: c.s.i, o: 0 });
-          bodyChanged();
+          redraw({ i, o: 0 });
           return true;
         }
-        const prev = blocks[c.s.i - 1];
-        if (prev && prev.t === 'img') {
+        const prev = blocks[i - 1];
+        if (prev && ATOM(prev.t)) {
           e.preventDefault();
-          if (!lenOf(b) && c.s.i < blocks.length - 1) { pushUndo(); blocks.splice(c.s.i, 1); draw(blocks); bodyChanged(); }
-          selectFig(c.s.i - 1);
+          if (!lenOf(b) && i < blocks.length - 1) { blocks.splice(i, 1); redraw(); }
+          selectFig(i - 1);
+          return true;
+        }
+        if (prev && prev.t === 'row') {
+          e.preventDefault();
+          if (!lenOf(b) && i < blocks.length - 1) { blocks.splice(i, 1); redraw({ i: i - 1, o: lenOf(prev) }); }
+          else setSel({ i: i - 1, o: lenOf(prev) });
           return true;
         }
       }
-      if (e.key === 'Delete' && c.s.o === lenOf(b)) {
-        const next = blocks[c.s.i + 1];
-        if (next && next.t === 'img') { e.preventDefault(); selectFig(c.s.i + 1); return true; }
+      if (e.key === 'Delete' && o === lenOf(b)) {
+        const next = blocks[i + 1];
+        if (next && ATOM(next.t)) { e.preventDefault(); selectFig(i + 1); return true; }
+        if (next && next.t === 'row') {
+          e.preventDefault();
+          if (!lenOf(b)) { blocks.splice(i, 1); redraw({ i, o: 0 }); } else setSel({ i: i + 1, o: 0 });
+          return true;
+        }
       }
       return false;
+    }
+    /** Typing or deleting over a selection that takes in part of a table: done here,
+        so cells stay cells (the browser would merge them, or leave stray ones). */
+    function overTable(e) {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) return false;
+      const c = getCaret();
+      if (!c) return false;
+      const els = blockEls().slice(c.s.i, c.e.i + 1);
+      if (!els.some(el => el.tagName === 'TR')) return false;
+      const t = e.inputType;
+      if (!/^delete/.test(t) && t !== 'insertText' && t !== 'insertReplacementText') return false;
+      e.preventDefault();
+      const text = /^insert/.test(t) ? String(e.data ?? e.dataTransfer?.getData('text/plain') ?? '').replace(/[\n\t]/g, ' ') : '';
+      apply((blocks, cc) => {
+        if (!cc) return cc;
+        cut(blocks, cc.s, cc.e);
+        const b = blocks[cc.s.i];
+        if (text && b && !ATOM(b.t)) { const [x, y] = splitRuns(b.runs, cc.s.o); b.runs = NF.mergeRuns([...x, { text, b: false, i: false }, ...y]); }
+        return { i: cc.s.i, o: cc.s.o + text.length };
+      });
+      return true;
     }
 
     /* ---- pictures in the editor ---- */
@@ -1050,7 +1666,7 @@ defineApp({
     }
     function removeFig(i) {
       apply(blocks => {
-        if (!blocks[i] || blocks[i].t !== 'img') return null;
+        if (!blocks[i] || !ATOM(blocks[i].t)) return null;
         blocks.splice(i, 1);
         const k = Math.max(0, Math.min(i, blocks.length) - 1);
         return blocks.length ? { i: i < blocks.length ? i : k, o: i < blocks.length ? 0 : lenOf(blocks[k]) } : null;
@@ -1073,7 +1689,7 @@ defineApp({
         clearFig();
         if (els[j] && els[j].tagName !== 'FIGURE') {
           if (/^Arrow/.test(e.key)) e.preventDefault();
-          setSel({ i: j, o: up ? els[j].textContent.length : 0 });
+          setSel({ i: j, o: up ? elLen(els[j]) : 0 });
         }
         return /^Arrow/.test(e.key);
       }
@@ -1085,7 +1701,7 @@ defineApp({
       const n = current();
       if (!n) return;
       if (n.path) {
-        api.notify({ app: 'Notes', icon: 'image', title: 'Pictures go in notes', message: 'A text file can only hold text. Make a note to put this picture in.' });
+        api.notify({ app: 'Notes', icon: 'image', title: tr('Pictures go in notes'), message: tr('A text file can only hold text. Make a note to put this picture in.') });
         return;
       }
       if (S.mode !== 'edit') setMode('edit');
@@ -1095,9 +1711,11 @@ defineApp({
         const pos = end ? { i: lastI, o: lenOf(blocks[lastI]) } : (at || (c && c.s) || { i: lastI, o: lenOf(blocks[lastI]) });
         const b = blocks[pos.i];
         if (!b) { blocks.push(...pics); return { i: blocks.length, o: 0 }; }
+        /* not inside a table: after it */
+        if (b.t === 'row') { const z = tableSpan(blocks, pos.i)[1]; blocks.splice(z + 1, 0, ...pics); return { i: z + 1 + pics.length, o: 0 }; }
         const len = lenOf(b);
-        if (b.t !== 'img' && !len) { blocks.splice(pos.i, 1, ...pics); return { i: pos.i + pics.length, o: 0 }; }
-        if (b.t !== 'img' && pos.o > 0 && pos.o < len) {
+        if (!ATOM(b.t) && !len) { blocks.splice(pos.i, 1, ...pics); return { i: pos.i + pics.length, o: 0 }; }
+        if (!ATOM(b.t) && pos.o > 0 && pos.o < len) {
           const [a, z] = splitRuns(b.runs, pos.o);
           b.runs = a;
           const rest = { t: /^h/.test(b.t) ? 'p' : b.t, runs: z };
@@ -1105,7 +1723,7 @@ defineApp({
           blocks.splice(pos.i + 1, 0, ...pics, rest);
           return { i: pos.i + 1 + pics.length, o: 0 };
         }
-        const k = b.t !== 'img' && pos.o === 0 ? pos.i : pos.i + 1;
+        const k = !ATOM(b.t) && pos.o === 0 ? pos.i : pos.i + 1;
         blocks.splice(k, 0, ...pics);
         return { i: k + pics.length, o: 0 };
       });
@@ -1120,7 +1738,7 @@ defineApp({
         const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ').replace(/:/g, '.');
         const name = f.name && !/^image\.\w+$/i.test(f.name) ? f.name : `Pasted picture ${stamp}.${media.extFor(f.type) || 'png'}`;
         try { out.push((await media.save(PICS, name, f)).path); }
-        catch (err) { api.notify({ app: 'Notes', icon: 'alert', title: 'That picture could not be kept', message: String(err && err.message || err) }); }
+        catch (err) { api.notify({ app: 'Notes', icon: 'alert', title: tr('That picture could not be kept'), message: String(err && err.message || err) }); }
       }
       if (out.length) {
         api.notify({ app: 'Notes', icon: 'image', timeout: 3500,
@@ -1138,8 +1756,15 @@ defineApp({
         cut(blocks, c.s, c.e);
         const { i, o } = c.s;
         const b = blocks[i];
-        if (!b || b.t === 'img') { blocks.splice(i + 1, 0, ...pasted); const k = i + pasted.length; return { i: k, o: lenOf(blocks[k]) }; }
+        if (!b || ATOM(b.t)) { blocks.splice(i + 1, 0, ...pasted); const k = i + pasted.length; return { i: k, o: lenOf(blocks[k]) }; }
         const [a, z] = splitRuns(b.runs, o);
+        if (b.t === 'row') {
+          /* into one cell: the words, on one line (a pasted table's cells, and its pictures, don't fit in a cell) */
+          const words = pasted.filter(x => !ATOM(x.t)).map(x => NF.mergeRuns(x.runs.map(r => ({ ...r, text: r.text.replace(/[\t\n]/g, ' ') }))));
+          const flat = words.flatMap((rs, k) => (k ? [{ text: ' ', b: false, i: false }, ...rs] : rs));
+          b.runs = NF.mergeRuns([...a, ...flat, ...z]);
+          return { i, o: o + NF.runsText(flat).length };
+        }
         if (pasted.length === 1 && pasted[0].t !== 'img') {
           b.runs = NF.mergeRuns([...a, ...pasted[0].runs]);
           const at = lenOf(b);
@@ -1214,10 +1839,10 @@ defineApp({
       let paths;
       if (raw) {
         paths = raw.split('\n').map(s => s.trim()).filter(p => p && vfs.node(p) && media.kindOf(vfs.baseName(p)) === 'image');
-        if (!paths.length) { api.notify({ app: 'Notes', icon: 'image', title: 'Only pictures can go in a note', timeout: 3000 }); return; }
+        if (!paths.length) { api.notify({ app: 'Notes', icon: 'image', title: tr('Only pictures can go in a note'), timeout: 3000 }); return; }
       } else {
         const files = e.dataTransfer.files;
-        if (![...files].some(isImageFile)) { api.notify({ app: 'Notes', icon: 'image', title: 'Only pictures can go in a note', message: 'Drop .png, .jpg, .gif or .webp files.', timeout: 3500 }); return; }
+        if (![...files].some(isImageFile)) { api.notify({ app: 'Notes', icon: 'image', title: tr('Only pictures can go in a note'), message: tr('Drop .png, .jpg, .gif or .webp files.'), timeout: 3500 }); return; }
         paths = await savePictures(files);
       }
       insertPictures(paths, at, { end: !at });
@@ -1229,8 +1854,11 @@ defineApp({
       const t = e.inputType;
       if (t === 'historyUndo') { e.preventDefault(); undo(); return; }
       if (t === 'historyRedo') { e.preventDefault(); redo(); return; }
-      if (t === 'insertParagraph' || t === 'insertLineBreak') { e.preventDefault(); splitLine(); return; }
+      if (readOnly(current())) { e.preventDefault(); return; }
+      if (t === 'insertParagraph' || t === 'insertLineBreak') { e.preventDefault(); popClose(); splitLine(); return; }
+      if (overTable(e)) return;
       if (t === 'insertText' && e.data === ' ' && autoFormat()) { e.preventDefault(); return; }
+      if (t === 'insertText' && e.data === '/') S.slashAt = getCaret()?.s || null;
       if (S.fig !== null) clearFig();
       if (/^format/.test(t)) { pushUndo(); return; }
       /* typing and deleting: one undo step per burst */
@@ -1245,7 +1873,8 @@ defineApp({
       const blocks = readBlocks(rich);
       const els = blockEls();
       const odd = blocks.length !== els.length || !rich.firstElementChild
-        || [...rich.childNodes].some(c => (c.nodeType === 3 && c.data.trim()) || (c.nodeType === 1 && !/^(P|H1|H2|H3|UL|OL|FIGURE)$/.test(c.tagName)))
+        || [...rich.childNodes].some(c => (c.nodeType === 3 && c.data.trim()) || (c.nodeType === 1 && !/^(P|H1|H2|H3|UL|OL|FIGURE|BLOCKQUOTE|TABLE)$/.test(c.tagName)))
+        || [...rich.querySelectorAll(':scope > table')].some(t => t.tBodies.length !== 1 || [...t.rows].some(tr => !tr.cells.length || [...tr.childNodes].some(x => !isCell(x))))
         || [...rich.querySelectorAll('ul.notes__checks > li')].some(li => li.firstChild !== li.querySelector(':scope > .notes__box'))
         || [...rich.querySelectorAll('.notes__box')].some(b => !b.parentElement.matches('ul.notes__checks > li'));
       if (odd) {
@@ -1256,8 +1885,13 @@ defineApp({
         if (k !== null) setCharCaret(k);
       }
       bodyChanged();
+      popCheck();
     });
     rich.addEventListener('compositionend', () => bodyChanged());
+    /* the menu at the caret follows the caret, and goes when the editor is left */
+    rich.addEventListener('keyup', e => { if (POP.el && /^(Arrow(Left|Right)|Home|End)$/.test(e.key)) popCheck(); });
+    rich.addEventListener('mousedown', () => { if (POP.el) popClose(); });
+    rich.addEventListener('focusout', () => setTimeout(() => { if (POP.el && !rich.contains(document.activeElement)) popClose(); }, 0));
     rich.addEventListener('change', e => {
       const cb = e.target;
       if (!(cb instanceof HTMLInputElement) || !cb.closest('.notes__box')) return;
@@ -1268,14 +1902,16 @@ defineApp({
     });
     rich.addEventListener('mousedown', e => {
       const x = e.target.closest && e.target.closest('.notes__figx');
-      const fig = e.target.closest && e.target.closest('figure.notes__fig');
+      const fig = e.target.closest && e.target.closest('figure.notes__fig, figure.notes__hr');
       if (x || fig) e.preventDefault();
       if (fig && !x) selectFig(blockEls().indexOf(fig));
       else if (!fig && S.fig !== null) clearFig();
     });
     rich.addEventListener('click', e => {
       const x = e.target.closest && e.target.closest('.notes__figx');
-      if (x) { const i = blockEls().indexOf(x.closest('figure')); if (i >= 0) removeFig(i); }
+      if (x) { const i = blockEls().indexOf(x.closest('figure')); if (i >= 0) removeFig(i); return; }
+      /* ⌘/Ctrl+click on [[a link]] opens that note; on a #tag, shows the notes with it */
+      if (e.metaKey || e.ctrlKey) followAt(e.clientX, e.clientY);
     });
     rich.addEventListener('dblclick', e => {
       const fig = e.target.closest && e.target.closest('figure.notes__fig');
@@ -1285,7 +1921,10 @@ defineApp({
       if (e.isComposing) return;
       const mod = e.metaKey || e.ctrlKey;
       if (S.fig !== null && figKey(e)) return;
+      if (POP.el && popKey(e)) return;
+      if (e.key === 'Tab' && !mod && !e.altKey && tabCell(e.shiftKey)) { e.preventDefault(); return; }
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      if (mod && !e.altKey && !e.shiftKey && (e.key === ';' || e.code === 'Semicolon')) { e.preventDefault(); insertDate(); return; }
       if (mod && !e.altKey && !e.shiftKey && k === 'z') { e.preventDefault(); undo(); return; }
       if (mod && !e.altKey && ((e.shiftKey && k === 'z') || (!e.shiftKey && k === 'y'))) { e.preventDefault(); redo(); return; }
       if (mod && !e.altKey && !e.shiftKey && e.code === 'KeyB') { e.preventDefault(); inlineFmt('bold'); return; }
@@ -1315,12 +1954,207 @@ defineApp({
       const at = getCaret();
       const go = t => () => { if (at) { rich.focus(); setSel(at.s, at.e); } setType(t); };
       api.menu([
-        { label: 'Title', icon: 'type', hint: kbAlt('1'), onClick: go('h1') },
-        { label: 'Heading', icon: 'type', hint: kbAlt('2'), onClick: go('h2') },
-        { label: 'Subheading', icon: 'type', hint: kbAlt('3'), onClick: go('h3') },
+        { label: tr('Title'), icon: 'type', hint: kbAlt('1'), onClick: go('h1') },
+        { label: tr('Heading'), icon: 'type', hint: kbAlt('2'), onClick: go('h2') },
+        { label: tr('Subheading'), icon: 'type', hint: kbAlt('3'), onClick: go('h3') },
+        { label: tr('Quote'), icon: 'message-circle', onClick: go('quote') },
         '-',
-        { label: 'Body text', icon: 'edit-3', hint: kbAlt('0'), onClick: go('p') },
-      ], r.left, r.bottom + 4, { label: 'Heading' });
+        { label: tr('Body text'), icon: 'edit-3', hint: kbAlt('0'), onClick: go('p') },
+      ], r.left, r.bottom + 4, { label: tr('Heading') });
+    }
+    /* the toolbar's menus keep the caret where it was (their buttons never take focus) */
+    const atCaret = (at, fn) => () => { if (at) { rich.focus(); setSel(at.s, at.e); } fn(); };
+    function tableMenu(anchor) {
+      const n = current();
+      if (!n || n.path || readOnly(n)) return;
+      const at = getCaret();
+      const els = blockEls();
+      if (!at || !els[at.e.i] || els[at.e.i].tagName !== 'TR') { atCaret(at, insertTable)(); return; }
+      const r = anchor.getBoundingClientRect();
+      const go = op => atCaret(at, () => tableOp(op));
+      api.menu([
+        { label: tr('Add a row above'), icon: 'arrow-up', onClick: go('rowAbove') },
+        { label: tr('Add a row below'), icon: 'arrow-down', hint: 'Enter', onClick: go('rowBelow') },
+        { label: tr('Add a column on the left'), icon: 'arrow-left', onClick: go('colLeft') },
+        { label: tr('Add a column on the right'), icon: 'arrow-right', onClick: go('colRight') },
+        '-',
+        { label: tr('Delete this row'), icon: 'minus', onClick: go('delRow') },
+        { label: tr('Delete this column'), icon: 'minus', onClick: go('delCol') },
+        { label: tr('Delete the table'), icon: 'trash', danger: true, onClick: go('delTable') },
+      ], r.left, r.bottom + 4, { label: tr('Table') });
+    }
+    function insertMenu(anchor) {
+      const n = current();
+      if (!n || readOnly(n)) return;
+      const at = getCaret();
+      const r = anchor.getBoundingClientRect();
+      const go = fn => atCaret(at, fn);
+      api.menu(n.path ? [
+        { label: tr('Today’s date'), icon: 'calendar', hint: kb(';'), onClick: () => insertDate() },
+      ] : [
+        { label: tr('Table'), icon: 'table', onClick: go(insertTable) },
+        { label: tr('Divider'), icon: 'minus', onClick: go(insertDivider) },
+        { label: tr('Quote'), icon: 'message-circle', onClick: go(() => setType('quote')) },
+        { label: tr('Today’s date'), icon: 'calendar', hint: kb(';'), onClick: go(insertDate) },
+        { label: tr('Link to another note'), icon: 'link', hint: '[[', onClick: go(() => typeAtCaret('[[')) },
+        '-',
+        { label: tr('Template'), icon: 'file-text', items: NM.TEMPLATES.map(t => ({ label: t.name, icon: 'file-text', onClick: go(() => insertTemplate(t.id)) })) },
+      ], r.left, r.bottom + 4, { label: tr('Insert') });
+    }
+
+    /* ---- the menus that open at the caret: "/" (insert) and "[[" (link a note) ---- */
+    const SLASH = () => [
+      { label: tr('Title'), words: 'heading 1 h1 title', ic: 'type', run: () => setType('h1') },
+      { label: tr('Heading'), words: 'heading 2 h2', ic: 'type', run: () => setType('h2') },
+      { label: tr('Subheading'), words: 'heading 3 h3 subheading', ic: 'type', run: () => setType('h3') },
+      { label: tr('Text'), words: 'text paragraph body plain', ic: 'edit-3', run: () => setType('p') },
+      { label: tr('Bulleted list'), words: 'bulleted list bullet ul', ic: 'list', run: () => setType('ul') },
+      { label: tr('Numbered list'), words: 'numbered list ol number', ic: 'list', run: () => setType('ol') },
+      { label: tr('Checklist'), words: 'checklist to-do todo task check', ic: 'check-circle', run: () => setType('check') },
+      { label: tr('Quote'), words: 'quote blockquote', ic: 'message-circle', run: () => setType('quote') },
+      { label: tr('Divider'), words: 'divider line rule separator hr', ic: 'minus', run: () => insertDivider() },
+      { label: tr('Table'), words: 'table grid columns rows', ic: 'table', run: () => insertTable() },
+      { label: tr('Today’s date'), words: 'today date day', ic: 'calendar', hint: kb(';'), run: () => insertDate() },
+      { label: tr('Link to another note'), words: 'link note wiki', ic: 'link', run: () => typeAtCaret('[[') },
+      { label: tr('Picture…'), words: 'picture image photo', ic: 'image', run: () => pickPicture(picBtn) },
+      ...NM.TEMPLATES.map(t => ({ label: tr('{name} template', { name: t.name }), words: `template ${t.name}`, ic: 'file-text', run: () => insertTemplate(t.id) })),
+    ];
+    const POP = { el: null, kind: null, at: null, q: '', items: [], k: 0 };
+    function popClose() {
+      POP.el?.remove();
+      POP.el = null; POP.kind = null; POP.at = null; POP.items = []; POP.k = 0;
+      S.slashAt = null;
+    }
+    /** After typing: open, follow or close the menu at the caret. */
+    function popCheck() {
+      const n = current();
+      if (!n || n.path || S.mode !== 'edit') { popClose(); return; }
+      const c = getCaret();
+      if (!c || !same(c.s, c.e)) { popClose(); return; }
+      const b = readBlocks(rich)[c.s.i];
+      const text = b && !ATOM(b.t) ? NF.runsText(b.runs) : '';
+      const before = text.slice(0, c.s.o);
+      /* [[ and the start of a title */
+      const lk = before.match(/\[\[([^[\]\n]{0,60})$/);
+      if (lk && b.t !== 'row') { POP.kind = 'link'; POP.at = { i: c.s.i, o: c.s.o - lk[0].length }; POP.q = lk[1]; popPaint(); return; }
+      if (POP.kind === 'link') { popClose(); return; }
+      /* "/" typed at the start of a line or after a space, then what's typed after it */
+      if (S.slashAt && !POP.el) {
+        const at = S.slashAt;
+        S.slashAt = null;
+        const pre = text.slice(0, at.o);
+        if (at.i === c.s.i && text[at.o] === '/' && c.s.o === at.o + 1 && (!pre || /\s$/.test(pre))) { POP.kind = 'slash'; POP.at = at; POP.q = ''; popPaint(); }
+        return;
+      }
+      if (POP.kind === 'slash') {
+        const q = POP.at.i === c.s.i && c.s.o > POP.at.o && text[POP.at.o] === '/' ? text.slice(POP.at.o + 1, c.s.o) : null;
+        if (q === null || q.length > 24 || /\s/.test(q)) { popClose(); return; }
+        POP.q = q;
+        popPaint();
+      }
+    }
+    function popItems() {
+      const q = fold(POP.q.trim());
+      if (POP.kind === 'slash') {
+        const all = SLASH();
+        return q ? all.filter(x => fold(`${x.label} ${x.words}`).split(/\s+/).some(w => w.startsWith(q)) || fold(x.label).includes(q)) : all;
+      }
+      const cur = current();
+      const list = NM.live(S.notes).filter(x => x.id !== cur?.id && !x.path && String(x.title || '').trim())
+        .filter(x => !q || fold(x.title).includes(q))
+        .sort((a, b) => (fold(a.title).startsWith(q) ? 0 : 1) - (fold(b.title).startsWith(q) ? 0 : 1) || new Date(b.mtime) - new Date(a.mtime))
+        .slice(0, 8)
+        .map(x => ({ label: x.title, sub: fmt.fmtAgo(x.mtime), ic: 'sticky-note', title: x.title }));
+      const typed = POP.q.trim();
+      if (typed && !list.some(x => NM.key(x.title) === NM.key(typed))) list.push({ label: tr('Link to “{typed}”', { typed }), sub: tr('no note has this title yet: clicking the link makes it'), ic: 'plus', title: typed });
+      return list;
+    }
+    function popPaint() {
+      POP.items = popItems();
+      if (!POP.items.length) { if (POP.kind === 'slash') { popClose(); return; } }
+      POP.k = Math.max(0, Math.min(POP.k, POP.items.length - 1));
+      if (!POP.el) {
+        POP.el = h('div.notes__pop', { role: 'listbox', 'aria-label': POP.kind === 'slash' ? tr('Insert') : tr('Link to a note') });
+        POP.el.addEventListener('mousedown', e => e.preventDefault());
+        document.body.appendChild(POP.el);
+      }
+      POP.el.dataset.kind = POP.kind;
+      POP.el.setAttribute('aria-label', POP.kind === 'slash' ? 'Insert' : 'Link to a note');
+      api.render(POP.el, POP.items.length ? POP.items.map((x, k) => h(`button.notes__poprow${k === POP.k ? '.is-on' : ''}`, {
+        type: 'button', role: 'option', 'aria-selected': String(k === POP.k), tabindex: '-1', onclick: () => popPick(k),
+      }, icon(x.ic), h('span', { text: x.label }), x.hint || x.sub ? h('small', { text: x.hint || x.sub }) : null))
+        : h('div.notes__popnone', { text: tr('Type a title — no other note has one yet.') }));
+      /* under the caret, kept on the screen */
+      const sel = window.getSelection();
+      const rr = sel && sel.rangeCount ? sel.getRangeAt(0).getClientRects()[0] || sel.getRangeAt(0).getBoundingClientRect() : null;
+      const box = rr && rr.height ? rr : rich.getBoundingClientRect();
+      const w = 260;
+      POP.el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, box.left))}px`;
+      const below = box.bottom + 6, hgt = Math.min(320, POP.el.scrollHeight || 200);
+      POP.el.style.top = `${below + hgt > innerHeight - 8 ? Math.max(8, box.top - hgt - 6) : below}px`;
+      POP.el.querySelector('.is-on')?.scrollIntoView?.({ block: 'nearest' });
+    }
+    function popKey(e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (POP.items.length) { POP.k = (POP.k + (e.key === 'ArrowDown' ? 1 : -1) + POP.items.length) % POP.items.length; popPaint(); }
+        return true;
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && POP.items.length) { e.preventDefault(); popPick(POP.k); return true; }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); popClose(); return true; }
+      return false;
+    }
+    function popPick(k) {
+      const x = POP.items[k];
+      const { kind, at } = POP;
+      if (!x || !at) { popClose(); return; }
+      const c = getCaret();
+      const end = c && c.s.i === at.i ? c.s.o : at.o + 1 + POP.q.length + (kind === 'link' ? 1 : 0);
+      popClose();
+      rich.focus();
+      if (kind === 'link') {
+        /* what was typed after [[ becomes the whole link; a ]] already there is kept, not doubled */
+        apply(blocks => {
+          const b = blocks[at.i];
+          if (!b || ATOM(b.t)) return null;
+          const text = NF.runsText(b.runs);
+          const close = text.slice(end, end + 2) === ']]' ? 2 : 0;
+          const link = `[[${x.title}]]`;
+          b.runs = NM.replaceRuns(b.runs, at.o, end + close - at.o, link);
+          return { i: at.i, o: at.o + link.length };
+        });
+        return;
+      }
+      /* the "/word" goes, then the choice happens where it was */
+      apply(blocks => {
+        const b = blocks[at.i];
+        if (!b || ATOM(b.t)) return null;
+        b.runs = NM.replaceRuns(b.runs, at.o, Math.max(1, end - at.o), '');
+        return { i: at.i, o: at.o };
+      });
+      x.run();
+    }
+    /* ⌘/Ctrl+click in the editor: a [[link]] or #tag under the pointer */
+    function followAt(x, y) {
+      const r = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+      if (!r || !rich.contains(r.startContainer)) return;
+      const at = posOf(r.startContainer, r.startOffset);
+      const b = at && readBlocks(rich)[at.i];
+      if (!b || ATOM(b.t)) return;
+      const text = NF.runsText(b.runs);
+      for (const m of text.matchAll(/\[\[([^[\]\n]{1,120})\]\]/g)) if (at.o >= m.index && at.o <= m.index + m[0].length) { openLinked(m[1]); return; }
+      for (const m of text.matchAll(/(^|[\s([{])#([\p{L}\p{N}_][\p{L}\p{N}_\-/]{0,39})/gu)) {
+        const a = m.index + m[1].length;
+        if (at.o >= a && at.o <= a + 1 + m[2].length) { const t = NM.tagsIn(`#${m[2]}`)[0]; if (t) showTag(t.key); return; }
+      }
+    }
+    function showTag(k) {
+      S.tag = S.tag === k ? null : k;
+      S.filter = ''; search.value = '';
+      if (S.folder === 'trash') S.folder = 'all';
+      const list = visible();
+      if (S.tag && !list.some(n => n.id === S.sel) && list[0]) { select(list[0].id); }
+      paintAll();
     }
 
     /* ---------------- paint ----------------- */
@@ -1331,12 +2165,13 @@ defineApp({
 
     function paintFolders() {
       api.clear(foldersEl);
-      const count = id => (id === 'all' ? S.notes.length : S.notes.filter(n => n.folder === id).length);
+      const live = S.notes.filter(n => !n.trashed);
+      const count = id => (id === 'all' ? live.length : id === 'trash' ? S.notes.length - live.length : live.filter(n => n.folder === id).length);
       const row = (id, name, ic) => {
         if (S.renaming === id) {
           let done = false;
           /* the draft outlives a repaint (a save elsewhere redraws the sidebar) */
-          const inp = h('input.notes__fin', { value: S.renameDraft ?? name, 'aria-label': 'Folder name', spellcheck: 'false', maxlength: '60' });
+          const inp = h('input.notes__fin', { value: S.renameDraft ?? name, 'aria-label': tr('Folder name'), spellcheck: 'false', maxlength: '60' });
           const finish = keepIt => {
             if (done) return;
             done = true;
@@ -1353,12 +2188,13 @@ defineApp({
           inp.addEventListener('blur', () => { if (inp.isConnected) finish(true); });
           return inp;
         }
-        const on = !S.filter && S.folder === id;
-        const b = h(`button.side__item.notes__folder${on ? '.is-on' : ''}`, {
+        const on = !S.filter && !S.tag && S.folder === id;
+        const fixed = id === 'all' || id === 'trash';
+        const b = h(`button.side__item.notes__folder${on ? '.is-on' : ''}${id === 'trash' ? '.notes__trashrow' : ''}`, {
           type: 'button', dataset: { folder: id }, 'aria-pressed': String(on),
           onclick: () => setFolder(id),
-          ondblclick: id === 'all' ? null : () => { S.renaming = id; paintFolders(); },
-          oncontextmenu: id === 'all' ? null : e => folderMenu(e, id),
+          ondblclick: fixed ? null : () => { S.renaming = id; paintFolders(); },
+          oncontextmenu: fixed ? (id === 'trash' ? e => { e.preventDefault(); api.menu([{ label: tr('Empty the Trash'), icon: 'trash', danger: true, onClick: () => emptyTrash() }], e.clientX, e.clientY); } : null) : e => folderMenu(e, id),
           ondragover: e => { if (!dropKinds(e).includes(DRAG_NOTE)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; b.classList.add('is-drop'); },
           ondragleave: () => b.classList.remove('is-drop'),
           ondrop: e => {
@@ -1366,43 +2202,68 @@ defineApp({
             const nidv = e.dataTransfer.getData(DRAG_NOTE);
             if (!nidv) return;
             e.preventDefault();
+            const n = S.notes.find(x => x.id === nidv);
+            if (id === 'trash') { if (n && !n.trashed) destroy(n); return; }
+            if (n && n.trashed) restore(n.id);
             moveNote(nidv, id === 'all' ? null : id);
           },
         }, icon(ic), h('span', { text: name }), h('small', { text: String(count(id)) }));
         return b;
       };
-      foldersEl.append(row('all', 'All notes', 'notes'), ...S.folders.map(f => row(f.id, f.name, 'folder')));
+      foldersEl.append(row('all', 'All notes', 'notes'), ...S.folders.map(f => row(f.id, f.name, 'folder')), row('trash', 'Trash', 'trash'));
       /* the name field takes the keyboard straight away, so typing a name
          right after pressing + never lands anywhere else */
       const fin = foldersEl.querySelector('input.notes__fin');
       if (fin && fin.isConnected) { fin.focus(); fin.select(); }
+      paintTags();
+    }
+    /** #tags across the notes: one chip each, the list shows the notes with it. */
+    function paintTags() {
+      const tags = NM.allTags(S.notes);
+      if (S.tag && !tags.some(t => t.key === S.tag)) S.tag = null;
+      tagsEl.hidden = !tags.length;
+      if (!tags.length) { tagsEl.replaceChildren(); return; }
+      api.render(tagsEl, h('div.side__label', { text: tr('Tags') }),
+        h('div.notes__tagrow', ...tags.slice(0, 40).map(t => h(`button.notes__tagchip${S.tag === t.key ? '.is-on' : ''}`, {
+          type: 'button', 'aria-pressed': String(S.tag === t.key), dataset: { tag: t.key }, title: `${t.count} note${t.count === 1 ? '' : 's'}`,
+          onclick: () => showTag(t.key),
+        }, h('span', { text: `#${t.tag}` }), h('small', { text: String(t.count) })))));
     }
 
     function paintList() {
       const list = visible();
       api.clear(listEl);
       const fo = folderOf(S.folder);
-      listLabel.textContent = S.filter ? 'Search results' : S.file ? 'Open file' : fo ? fo.name : 'All notes';
+      const inTrash = S.folder === 'trash' && !S.tag;
+      const tagName = S.tag ? (NM.allTags(S.notes).find(t => t.key === S.tag)?.tag || S.tag) : '';
+      listLabel.textContent = S.filter ? 'Search results' : S.tag ? `#${tagName}` : S.file ? 'Open file' : inTrash ? 'Trash' : fo ? fo.name : 'All notes';
       countEl.textContent = String(list.length);
+      emptyBtn.hidden = !inTrash || !list.length;
+      sortBtn.hidden = inTrash;
+      sortBtn.dataset.tip = `Sort: ${(NM.SORTS.find(([k]) => k === S.sort) || [0, 'Last edited'])[1]}`;
       if (!list.length) {
         listEl.appendChild(S.filter
-          ? h('div.empty', icon('search'), h('b', { text: 'No matches' }), h('small', { text: `No note has “${search.value.trim()}” in it.` }))
-          : h('div.empty', icon('folder'), h('b', { text: 'Nothing in here yet' }),
-            h('small', { text: fo ? 'Make a note here, or drag one onto this folder.' : `Press ${kb('N')} to start a note.` })));
+          ? h('div.empty', icon('search'), h('b', { text: tr('No matches') }), h('small', { text: `No note has “${search.value.trim()}” in it.` }))
+          : inTrash ? h('div.empty', icon('trash'), h('b', { text: tr('The Trash is empty') }), h('small', { text: tr('Notes you delete wait here until you empty it.') }))
+            : h('div.empty', icon('folder'), h('b', { text: tr('Nothing in here yet') }),
+              h('small', { text: fo ? tr('Make a note here, or drag one onto this folder.') : `Press ${kb('N')} to start a note.` })));
         return;
       }
       for (const n of list) {
-        const fn = S.filter && !n.path ? folderOf(n.folder) : null;
+        const fn = (S.filter || S.tag) && !n.path ? folderOf(n.folder) : null;
         const item = h('button.list__item.notes__item', {
           type: 'button',
           style: { alignItems: 'flex-start', padding: 'var(--sp-3) var(--sp-4)' },
           draggable: n.path ? null : 'true',
+          dataset: { note: n.id },
           ondragstart: n.path ? null : e => { e.dataTransfer.setData(DRAG_NOTE, n.id); e.dataTransfer.effectAllowed = 'move'; },
           onclick: () => select(n.id),
           oncontextmenu: e => itemMenu(e, n),
         },
           h('div.grow',
-            h('b.trunc', { text: n.title || 'Untitled note' }),
+            n.pinned && !n.trashed
+              ? h('div.notes__ititle', h('span.notes__pinned', { role: 'img', 'aria-label': tr('Pinned'), title: tr('Pinned') }, icon('pin', { size: 10 })), h('b.trunc', { text: n.title || tr('Untitled note') }))
+              : h('b.trunc', { text: n.title || tr('Untitled note') }),
             h('small', {
               text: preview(n),
               style: { display: '-webkit-box', webkitLineClamp: '2', webkitBoxOrient: 'vertical',
@@ -1410,39 +2271,88 @@ defineApp({
             }),
             fn ? h('small.notes__in', icon('folder'), h('span', { text: fn.name })) : null),
           n.path
-            ? h('span.badge.badge--accent', { style: { flex: '0 0 auto' } }, icon('file-text', { size: 10 }), 'File')
-            : h('small', { text: fmt.fmtAgo(n.mtime), style: { flex: '0 0 auto' } }));
+            ? h('span.badge.badge--accent', { style: { flex: '0 0 auto' } }, icon('file-text', { size: 10 }), tr('File'))
+            : h('small', { text: n.trashed ? `deleted ${fmt.fmtAgo(n.trashed)}` : sortWhen(n), style: { flex: '0 0 auto' } }));
         if (n.id === S.sel) item.classList.add('is-on');
         listEl.appendChild(item);
       }
+    }
+    /* the time a row shows is the one it is sorted by; a note with no known date says so */
+    function sortWhen(n) {
+      if (S.sort !== 'created') return fmt.fmtAgo(n.mtime);
+      const c = NM.created(n);
+      return c === null ? 'made: not known' : `made ${fmt.fmtAgo(new Date(c).toISOString())}`;
     }
 
     function paintFoot() {
       const n = current();
       const body = n ? textOf(n) : '';
       const words = countWords(body);   /* the Words tab's rule */
+      const mins = words / NM.WPM;
+      const read = !words ? null : mins < 1 ? 'under a minute to read' : `about ${Math.round(mins)} min to read`;
+      const sel = S.selWords && n ? S.selWords : 0;
       api.render(footL,
-        h('span', { text: `${words} word${words === 1 ? '' : 's'}` }),
+        h('span', { dataset: { fk: 'words' }, text: sel ? tr('{sel} of {words} words selected', { sel, words }) : `${words} word${words === 1 ? '' : 's'}` }),
         h('span.dim', { text: '·' }),
-        h('span', { text: `${body.length} character${body.length === 1 ? '' : 's'}` }));
+        h('span', { text: `${body.length} character${body.length === 1 ? '' : 's'}` }),
+        read ? h('span.dim', { text: '·' }) : null,
+        read ? h('span', { dataset: { fk: 'read-time' }, title: tr('At {WPM} words a minute', { WPM: NM.WPM }), text: read }) : null);
       plan.changed();
       api.render(footR, n
-        ? (S.saving ? h('span', { text: 'Saving…' })
-          : h('span.row', icon('check', { size: 12 }), h('span', { text: n.path ? `Saved to ${n.path}` : `Edited ${fmt.fmtAgo(n.mtime)}` })))
-        : h('span', { text: 'Nothing open' }));
+        ? (S.saving ? h('span', { text: tr('Saving…') })
+          : h('span.row', icon('check', { size: 12 }), h('span', { text: n.path ? tr('Saved to {path}', { path: n.path }) : `Edited ${fmt.fmtAgo(n.mtime)}` })))
+        : h('span', { text: tr('Nothing open') }));
     }
 
     function paintWhere() {
       const n = current();
       const f = n && !n.path ? folderOf(n.folder) : null;
-      api.render(where, icon('folder'), h('span', { text: f ? f.name : 'No folder' }), icon('chevron-down'));
+      api.render(where, icon('folder'), h('span', { text: f ? f.name : tr('No folder') }), icon('chevron-down'));
       where.setAttribute('aria-label', `Folder: ${f ? f.name : 'none'} — move this note`);
-      where.hidden = !n || !!n.path;
+      where.hidden = !n || !!n.path || !!n.trashed;
+    }
+    /** Under the title: the Trash, a twin title, the event or exam it's linked to. */
+    let metaTok = 0;
+    function paintMeta() {
+      const n = current();
+      const kids = [];
+      if (n && !n.path && n.trashed) {
+        kids.push(h('div.notes__trashbar', { role: 'status', dataset: { fk: 'trashbar' } }, icon('trash'),
+          h('span', { text: `In the Trash since ${fmt.fmtAgo(n.trashed)}: it stays there until you empty the Trash.` }),
+          h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'restore' }, onclick: () => restore(n.id) }, icon('rotate-ccw'), h('span', { text: tr('Restore') })),
+          h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'delete-forever' }, onclick: () => deleteForever(n) }, h('span', { text: tr('Delete for good') }))));
+      }
+      const twins = n && !n.path && !n.trashed ? NM.sameTitle(S.notes, n) : [];
+      if (twins.length) {
+        kids.push(h('div.notes__dup', { role: 'status', dataset: { fk: 'dup' } }, icon('alert'),
+          h('span', { text: `${twins.length === 1 ? 'Another note is' : `${twins.length} other notes are`} also called “${String(n.title).trim()}”. A [[link]] to this title opens the one edited last.` }),
+          h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'dup-open' }, onclick: () => { S.folder = 'all'; S.tag = null; select(twins[0].id); paintAll(); } }, h('span', { text: twins.length === 1 ? tr('Open it') : tr('Open one') }))));
+      }
+      const chipHost = n && !n.path && n.link ? h('span.notes__evhost') : null;
+      if (chipHost) kids.push(chipHost);
+      api.render(metaEl, ...kids);
+      metaEl.hidden = !kids.length;
+      const tok = ++metaTok;
+      if (chipHost) tools.linkChip(n).then(chip => { if (tok === metaTok && chip && chipHost.isConnected) chipHost.replaceWith(chip); });
+    }
+    /** Under the page: the notes that link here with [[this title]]. */
+    function paintBack() {
+      const n = current();
+      const from = n && !n.path && !n.trashed ? NM.linkedFrom(S.notes, n) : [];
+      backEl.hidden = !from.length;
+      if (!from.length) { backEl.replaceChildren(); return; }
+      api.render(backEl, h('span.notes__backlbl', icon('link'), h('span', { text: tr('Linked from') })),
+        ...from.slice(0, 12).map(x => h('button.notes__backlink', { type: 'button', onclick: () => { S.folder = 'all'; S.tag = null; S.filter = ''; search.value = ''; select(x.id); paintAll(); } }, h('span', { text: x.title || tr('Untitled note') }))),
+        from.length > 12 ? h('small', { text: `and ${from.length - 12} more` }) : null);
     }
 
     function paintMain() {
       const n = current();
       const isFile = !!(n && n.path);
+      const binned = !!(n && n.trashed);
+      const ro = readOnly(n);
+      /* a note in the Trash is read, not edited: View mode, whatever the setting is */
+      const mode = binned ? 'view' : S.mode;
       editor.classList.toggle('hidden', !n);
       blank.classList.toggle('hidden', !!n);
       if (n) {
@@ -1450,26 +2360,39 @@ defineApp({
         if (isFile) { if (document.activeElement !== ta && ta.value !== n.body) ta.value = n.body || ''; }
         else if (S.drawn.id !== n.id || (S.drawn.md !== n.body && !rich.contains(document.activeElement))) drawNote(n);
       }
-      ta.classList.toggle('hidden', S.mode === 'view' || !isFile);
-      rich.classList.toggle('hidden', S.mode === 'view' || isFile || !n);
-      view.classList.toggle('hidden', S.mode !== 'view');
+      ta.classList.toggle('hidden', mode === 'view' || !isFile);
+      rich.classList.toggle('hidden', mode === 'view' || isFile || !n);
+      view.classList.toggle('hidden', mode !== 'view');
+      rich.contentEditable = ro ? 'false' : 'true';
+      rich.setAttribute('aria-readonly', String(!!ro));
+      titleIn.readOnly = !!ro;
       for (const b of richOnly) b.hidden = isFile;
+      for (const b of toolbar.querySelectorAll('button')) if (b !== modeBtn && !tools.buttons.includes(b)) b.disabled = !!ro && !b.dataset.keep;
+      modeBtn.hidden = binned;
       api.render(modeBtn, icon(S.mode === 'view' ? 'edit-3' : 'eye'), S.mode === 'view' ? 'Edit' : 'View');
       modeBtn.setAttribute('aria-pressed', String(S.mode === 'view'));
-      if (S.mode === 'view' && n) renderView(n);
+      paintPin();
+      if (mode === 'view' && n) renderView(n);
       paintWhere();
+      paintMeta();
+      paintBack();
       win.setTitle(n ? (n.title || 'Untitled note') : 'Notes');
-      win.setSubtitle(isFile ? '— read-through' : '');
+      win.setSubtitle(isFile ? '— read-through' : binned ? '— in the Trash' : '');
       /* reopened later (js/core/reopen.js): this note, or this file */
       win.state.reopen = isFile ? { path: n.path, noteId: null, coop: null } : { noteId: S.sel, path: null, coop: null };
+      if (S.shownId !== (n && n.id)) { S.shownId = n && n.id; S.selWords = 0; tools.switched(); popClose(); }
+      tools.readChanged();
       paintFoot();
     }
 
     /* ---------------- Notes 2.0: view mode + OS links ---------------- */
     const LINK_RE = /(https:\/\/[^\s<>"']+)|\b(game|arcade|anime|project|collection):([A-Za-z0-9_-]{1,80})/g;
+    /* what View mode turns into something to click: LINK_RE, plus [[a note]] and #tags */
+    const VIEW_RE = /(https:\/\/[^\s<>"']+)|\b(game|arcade|anime|project|collection):([A-Za-z0-9_-]{1,80})|\[\[([^[\]\n]{1,120})\]\]|(^|[\s([{])#([\p{L}\p{N}_][\p{L}\p{N}_\-/]{0,39})/gu;
     const CHECK_RE = /^(\s*[-*]\s\[)( |x|X)(\]\s?)(.*)$/;
 
     function setMode(m) {
+      if (m === 'edit' && current()?.trashed) return;      /* the Trash is for reading: Restore to edit */
       flushEditor();
       S.mode = m;
       store.set('prefs.notesMode', m);
@@ -1510,7 +2433,7 @@ defineApp({
       }
       rich.focus();
       if (tokCaret) setSel(tokCaret.s, tokCaret.e);
-      else if (!getCaret()) { const els = blockEls(); setSel({ i: els.length - 1, o: (els[els.length - 1]?.textContent || '').length }); }
+      else if (!getCaret()) { const els = blockEls(); setSel({ i: els.length - 1, o: elLen(els[els.length - 1]) }); }
       const c = getCaret();
       const blocks = readBlocks(rich);
       const before = c ? NF.runsText(blocks[c.s.i]?.runs || []).slice(0, c.s.o) : '';
@@ -1525,8 +2448,8 @@ defineApp({
       await G.load().catch(() => {});
       const { ARCADE } = await import('../arcade/index.js');
       const r = anchor.getBoundingClientRect();
-      const box = h('div.notes__pick', { role: 'dialog', 'aria-label': 'Link a game' });
-      const inp = h('input.notes__pickin', { type: 'search', placeholder: 'Search games…', 'aria-label': 'Search games' });
+      const box = h('div.notes__pick', { role: 'dialog', 'aria-label': tr('Link a game') });
+      const inp = h('input.notes__pickin', { type: 'search', placeholder: tr('Search games…'), 'aria-label': tr('Search games') });
       const res = h('div.notes__pickres');
       const close = () => { box.remove(); window.removeEventListener('pointerdown', away, true); closePick = null; };
       closePick?.();
@@ -1534,12 +2457,12 @@ defineApp({
       const away = e => { if (!box.contains(e.target)) close(); };
       const paint = () => {
         const q = inp.value.trim().toLowerCase();
-        const arc = ARCADE.filter(g => !q || g.title.toLowerCase().includes(q)).slice(0, 4).map(g => ({ tok: `arcade:${g.id}`, title: g.title, sub: 'Static Arcade' }));
+        const arc = ARCADE.filter(g => !q || g.title.toLowerCase().includes(q)).slice(0, 4).map(g => ({ tok: `arcade:${g.id}`, title: g.title, sub: tr('Static Arcade') }));
         const web = (q ? G.all().filter(g => g.title.toLowerCase().includes(q)) : G.all().filter(g => (g.cats || []).includes('featured'))).slice(0, 8)
           .map(g => ({ tok: `game:${g.id}`, title: g.title, sub: (g.cats || [])[0] || 'game' }));
         const rows = [...arc, ...web];
         api.render(res, rows.length ? rows.map(x => h('button.notes__pickrow', { type: 'button', onclick: () => { close(); insertToken(x.tok); } },
-          h('b', { text: x.title }), h('small', { text: x.sub }))) : h('div.dim', { text: 'No games match.' }));
+          h('b', { text: x.title }), h('small', { text: x.sub }))) : h('div.dim', { text: tr('No games match.') }));
       };
       inp.addEventListener('input', paint);
       inp.addEventListener('keydown', e => { if (e.key === 'Escape') close(); if (e.key === 'Enter') res.querySelector('button')?.click(); });
@@ -1554,24 +2477,24 @@ defineApp({
       const P = await import('../core/projects.js');
       const list = await P.list();
       const r = anchor.getBoundingClientRect();
-      if (!list.length) { api.notify({ app: 'Notes', icon: 'sparkles', title: 'No Forge projects yet', message: 'Make a game in Static Forge and you can link it here.' }); return; }
+      if (!list.length) { api.notify({ app: 'Notes', icon: 'sparkles', title: tr('No Forge projects yet'), message: tr('Make a game in Static Forge and you can link it here.') }); return; }
       api.menu(list.slice(0, 15).map(p => ({ label: p.published?.title || p.name, icon: 'sparkles', onClick: () => insertToken(`project:${p.id}`) })), r.left, r.bottom + 4);
     }
     async function pickCollection(anchor) {
       const C = await import('../core/collections.js');
       const list = C.list();
       const r = anchor.getBoundingClientRect();
-      if (!list.length) { api.notify({ app: 'Notes', icon: 'bookmark', title: 'No collections yet', message: 'Make one in Static Library and you can link it here.' }); return; }
+      if (!list.length) { api.notify({ app: 'Notes', icon: 'bookmark', title: tr('No collections yet'), message: tr('Make one in Static Library and you can link it here.') }); return; }
       api.menu(list.map(c => ({ label: c.name, icon: 'bookmark', onClick: () => insertToken(`collection:${c.id}`) })), r.left, r.bottom + 4);
     }
     function linkMenu(anchor) {
       tokCaret = getCaret();
       const r = anchor.getBoundingClientRect();
       api.menu([
-        { label: 'A game…', icon: 'gamepad', onClick: () => pickGame(anchor) },
-        { label: 'A Forge project…', icon: 'sparkles', onClick: () => pickProject(anchor) },
-        { label: 'A collection…', icon: 'bookmark', onClick: () => pickCollection(anchor) },
-      ], r.left, r.bottom + 4, { label: 'Link' });
+        { label: tr('A game…'), icon: 'gamepad', onClick: () => pickGame(anchor) },
+        { label: tr('A Forge project…'), icon: 'sparkles', onClick: () => pickProject(anchor) },
+        { label: tr('A collection…'), icon: 'bookmark', onClick: () => pickCollection(anchor) },
+      ], r.left, r.bottom + 4, { label: tr('Link') });
     }
 
     /** The picture picker: what is in ~/Pictures, newest first, or a file from the computer. */
@@ -1585,8 +2508,8 @@ defineApp({
         if (node.type === 'file' && media.kindOf(node.name) === 'image' && media.isMedia(node)) pics.push({ p, node });
       });
       pics.sort((a, b) => new Date(b.node.mtime) - new Date(a.node.mtime));
-      const box = h('div.notes__pick.notes__picpick', { role: 'dialog', 'aria-label': 'Insert a picture' });
-      const inp = h('input.notes__pickin', { type: 'search', placeholder: 'Search Pictures…', 'aria-label': 'Search Pictures' });
+      const box = h('div.notes__pick.notes__picpick', { role: 'dialog', 'aria-label': tr('Insert a picture') });
+      const inp = h('input.notes__pickin', { type: 'search', placeholder: tr('Search Pictures…'), 'aria-label': tr('Search Pictures') });
       const res = h('div.notes__pickres.notes__pics');
       const fileIn = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
       const close = () => { box.remove(); window.removeEventListener('pointerdown', away, true); closePick = null; };
@@ -1606,13 +2529,13 @@ defineApp({
           media.urlOf(x.p).then(u => { if (u) img.src = u; }).catch(() => {});
           return h('button.notes__pic', { type: 'button', title: x.p, onclick: () => { close(); insertPictures([x.p], at); } },
             img, h('small', { text: x.node.name }));
-        }) : h('div.dim', { text: pics.length ? 'No pictures match.' : 'Pictures is empty — take one with Camera, or add one from this computer.' }));
+        }) : h('div.dim', { text: pics.length ? tr('No pictures match.') : tr('Pictures is empty — take one with Camera, or add one from this computer.') }));
       };
       inp.addEventListener('input', paint);
       inp.addEventListener('keydown', e => { if (e.key === 'Escape') close(); if (e.key === 'Enter') res.querySelector('button')?.click(); });
       box.append(inp, res, h('div.notes__pickfoot',
-        h('button.btn.btn--sm', { type: 'button', onclick: () => fileIn.click() }, icon('upload'), 'From this computer…'),
-        h('small', { text: 'Kept in Pictures › Notes' })), fileIn);
+        h('button.btn.btn--sm', { type: 'button', onclick: () => fileIn.click() }, icon('upload'), tr('From this computer…')),
+        h('small', { text: tr('Kept in Pictures › Notes') })), fileIn);
       box.style.left = `${Math.max(8, Math.min(innerWidth - 340, r.left))}px`;
       box.style.top = `${r.bottom + 6}px`;
       document.body.appendChild(box);
@@ -1628,8 +2551,8 @@ defineApp({
       const sel = S.mode === 'edit' && n.path && ta.selectionEnd > ta.selectionStart ? ta.value.slice(ta.selectionStart, ta.selectionEnd)
         : S.mode === 'edit' && !n.path && getCaret() ? live : '';
       const prompt = (sel || `${n.title && n.title !== 'Untitled note' ? n.title + '. ' : ''}${textOf(n).replace(LINK_RE, '')}`).replace(/\s+/g, ' ').trim().slice(0, 600);
-      if (!prompt) { api.notify({ app: 'Notes', icon: 'sparkles', title: 'Nothing to make yet', message: 'Write your game idea in the note first.' }); return; }
-      if (!api.getApp('forge')) { api.notify({ app: 'Notes', icon: 'alert', title: 'Static Forge isn’t installed' }); return; }
+      if (!prompt) { api.notify({ app: 'Notes', icon: 'sparkles', title: tr('Nothing to make yet'), message: tr('Write your game idea in the note first.') }); return; }
+      if (!api.getApp('forge')) { api.notify({ app: 'Notes', icon: 'alert', title: tr('Static Forge isn’t installed') }); return; }
       api.openApp('forge', { prompt });
     }
 
@@ -1648,7 +2571,7 @@ defineApp({
           /* the anime catalogue is several MB — only name the chip if it is already loaded */
           const A = await import('../portal/anime.data.js');
           const a = (A.peek('anime') || []).find(x => String(x.id) === id);
-          if (a || /^\d+$/.test(id)) out = { title: a ? a.title : `Anime #${id}`, ic: 'star', open: () => api.openApp('aether-anime', { url: `static://anime/${id}` }) };
+          if (a || /^\d+$/.test(id)) out = { title: a ? a.title : tr('Anime #{id}', { id }), ic: 'star', open: () => api.openApp('aether-anime', { url: `static://anime/${id}` }) };
         }
       } catch (e) { out = null; }
       chipCache.set(key, out);
@@ -1658,9 +2581,26 @@ defineApp({
     function inline(text) {
       const parts = [];
       let last = 0;
-      for (const m of text.matchAll(LINK_RE)) {
+      for (const m of text.matchAll(VIEW_RE)) {
         if (m.index > last) parts.push(document.createTextNode(text.slice(last, m.index)));
-        if (m[1]) {
+        if (m[4]) {
+          /* [[a note]]: opens it, or makes it when no note has that title yet */
+          const t = m[4].replace(/\s+/g, ' ').trim();
+          const hit = NM.byTitle(S.notes, t);
+          parts.push(h(`button.notes__wikilink${hit ? '' : '.is-missing'}`, {
+            type: 'button', title: hit ? tr('Open “{title}”', { title: hit.title }) : tr('No note is called “{t}” yet — click to make it', { t }),
+            onclick: () => openLinked(t),
+          }, h('span', { text: t })));
+        } else if (m[6] !== undefined) {
+          const tag = NM.tagsIn(`#${m[6]}`)[0];
+          if (m[5]) parts.push(document.createTextNode(m[5]));
+          if (!tag) parts.push(document.createTextNode(`#${m[6]}`));
+          else {
+            parts.push(h('button.notes__tag', { type: 'button', title: tr('Notes tagged #{tag}', { tag: tag.tag }), onclick: () => showTag(tag.key) }, h('span', { text: `#${tag.tag}` })));
+            const rest = `#${m[6]}`.slice(1 + tag.tag.length);
+            if (rest) parts.push(document.createTextNode(rest));
+          }
+        } else if (m[1]) {
           const url = m[1].replace(/[).,;!?]+$/, '');
           parts.push(h('a.notes__link', { href: url, target: '_blank', rel: 'noopener noreferrer', text: url }));
           if (url.length < m[1].length) parts.push(document.createTextNode(m[1].slice(url.length)));
@@ -1685,7 +2625,7 @@ defineApp({
     const viewBlocks = n => (n.path ? (isMdFile(n.path) ? NF.parse(n.body) : NF.plainBlocks(n.body)) : NF.blocksOf(n));
     function renderView(n) {
       if (!textOf(n).trim() && !NF.pictures(n.path ? '' : n.body).length) {
-        api.render(view, h('div.empty', icon('sticky-note'), h('b', { text: 'This note is empty' }), h('small', { text: 'Switch to Edit to write something.' })));
+        api.render(view, h('div.empty', icon('sticky-note'), h('b', { text: tr('This note is empty') }), h('small', { text: tr('Switch to Edit to write something.') })));
         return;
       }
       api.render(view, renderBlocks(viewBlocks(n), 'view'));
@@ -1694,6 +2634,7 @@ defineApp({
     function tickView(idx, checked) {
       const n = current();
       if (!n) return;
+      if (readOnly(n)) { renderView(n); return; }
       if (n.path) {
         const lines = String(n.body || '').split('\n');
         const mm = (lines[idx] || '').match(CHECK_RE);
@@ -1757,12 +2698,12 @@ defineApp({
     let afterPrint = null;
     async function exportPdf() {
       const n = current();
-      if (!n) { api.notify({ app: 'Notes', icon: 'printer', title: 'Pick a note to export first' }); return; }
+      if (!n) { api.notify({ app: 'Notes', icon: 'printer', title: tr('Pick a note to export first') }); return; }
       flushEditor();
       afterPrint?.();
       const when = new Date(n.mtime);
       const sheet = h('div.notes-print.notes__doc', { 'aria-hidden': 'true', dataset: { note: n.id || '' } },
-        h('h1.notes-print__title', { text: n.title || 'Untitled note' }),
+        h('h1.notes-print__title', { text: n.title || tr('Untitled note') }),
         h('div.notes-print__meta', { text: `${n.path || 'Notes'}${Number.isNaN(when.getTime()) ? '' : ` · ${when.toLocaleString()}`}` }),
         renderBlocks(viewBlocks(n), 'print'));
       document.body.appendChild(sheet);
@@ -1785,11 +2726,11 @@ defineApp({
       /* where a browser's print() returns before printing, the sheet waits a while */
       t = setTimeout(done, 120000);
       api.notify({ app: 'Notes', icon: 'printer', timeout: 9000,
-        title: 'Export as PDF opens your browser’s print window',
-        message: 'Choose “Save as PDF” as the printer (Destination) to get the PDF. Nothing is saved until you do.' });
+        title: tr('Export as PDF opens your browser’s print window'),
+        message: tr('Choose “Save as PDF” as the printer (Destination) to get the PDF. Nothing is saved until you do.') });
       try { window.print(); } catch (err) {
         done();
-        api.notify({ app: 'Notes', icon: 'alert', title: 'This browser would not print', message: String(err && err.message || err) });
+        api.notify({ app: 'Notes', icon: 'alert', title: tr('This browser would not print'), message: String(err && err.message || err) });
       }
     }
 
@@ -1801,7 +2742,7 @@ defineApp({
        selection, a loaded picture and the scroll position elsewhere are left alone */
     function patchEditor(blocks) {
       const bl = blocks.length ? blocks.slice() : [{ t: 'p', runs: [] }];
-      if (bl[bl.length - 1].t === 'img') bl.push({ t: 'p', runs: [] });
+      if (ATOM(bl[bl.length - 1].t) || bl[bl.length - 1].t === 'row') bl.push({ t: 'p', runs: [] });
       clearFig();
       const fresh = [...renderBlocks(bl, 'edit').childNodes], old = [...rich.childNodes];
       const alike = (a, b) => (a.nodeName === 'FIGURE' && b.nodeName === 'FIGURE' ? a.dataset.path === b.dataset.path : a.isEqualNode(b));
@@ -1823,7 +2764,7 @@ defineApp({
       parse: md => NF.parse(md),
       getCaret, pointAt, blockEls,
       focus: () => { rich.focus(); if (!getCaret()) setSel({ i: 0, o: 0 }); },
-      open: id => { S.folder = 'all'; S.filter = ''; search.value = ''; select(id); paintAll(); },
+      open: id => { const t = S.notes.find(n => n.id === id); S.folder = t && t.trashed ? 'trash' : 'all'; S.tag = null; S.filter = ''; search.value = ''; select(id); paintAll(); },
       paint: () => paintAll(),
       /** The shared text changed: the note follows it, and the editor if it is showing. */
       show(n, blocks, title, sel) {
@@ -1859,14 +2800,37 @@ defineApp({
       /** A guest's own copy of the shared note. */
       addNote(title, blocks) {
         save();
-        const n = { id: nid(), title, body: NF.serialize(blocks), fmt: NF.FMT, mtime: new Date().toISOString() };
+        const now = new Date().toISOString();
+        const n = { id: nid(), title, body: NF.serialize(blocks), fmt: NF.FMT, mtime: now, ctime: now };
         S.notes.push(n);
         S.folder = 'all';
+        S.tag = null;
         S.filter = ''; search.value = '';
         S.sel = n.id;
         S.mode = 'edit';
         save();
         return n;
+      },
+      /** Rejoining: the guest's copy from last time, brought up to date (it hadn't changed since). */
+      adopt(id, title, blocks) {
+        const n = S.notes.find(x => x.id === id);
+        if (!n) return this.addNote(title, blocks);
+        save();
+        n.title = title; n.body = NF.serialize(blocks); n.fmt = NF.FMT; n.mtime = new Date().toISOString();
+        S.folder = 'all'; S.tag = null; S.filter = ''; search.value = '';
+        S.sel = n.id;
+        S.mode = 'edit';
+        S.drawn = { id: null, md: null };
+        save();
+        return n;
+      },
+      /** The shared note was deleted for good elsewhere while the room is open: it comes back. */
+      revive(id, title, blocks) {
+        if (S.notes.some(x => x.id === id)) return;
+        const now = new Date().toISOString();
+        S.notes.push({ id, title, body: NF.serialize(blocks), fmt: NF.FMT, mtime: now, ctime: now });
+        save();
+        paintAll();
       },
       /** The room is over: this is an ordinary note again. */
       ended() { const n = current(); if (n && !n.path) { flushEditor(); resetHistory(); } },
@@ -1899,7 +2863,14 @@ defineApp({
       if (k === 'n' && !e.shiftKey) { e.preventDefault(); newNote(); }
       else if (k === 's' && !e.shiftKey) { e.preventDefault(); flushEditor(); save(); }
       else if (k === 'f' && !e.shiftKey) { e.preventDefault(); search.focus(); search.select(); }
+      else if (k === 'f' && e.shiftKey) { e.preventDefault(); tools.openFind(); }
       else if (k === 'p' && !e.shiftKey) { e.preventDefault(); exportPdf(); }
+      /* today's date, anywhere in the window but a box of its own (the title takes it as typing too) */
+      else if ((e.key === ';' || e.code === 'Semicolon') && !e.shiftKey && (e.target === titleIn || e.target === ta)) {
+        e.preventDefault();
+        if (e.target === titleIn) { const d = NM.longDate(new Date()); const a = titleIn.selectionStart ?? titleIn.value.length, z = titleIn.selectionEnd ?? a; titleIn.setRangeText(d, a, z, 'end'); edit('title', titleIn.value); }
+        else typeAtCaret(NM.longDate(new Date()));
+      }
     };
     window.addEventListener('keydown', onKey);
     /* "open this note / file" on a window that is already up */
@@ -1912,10 +2883,45 @@ defineApp({
         paintAll();
       } else if (o.noteId) {
         const hit = S.notes.find(n => n.id === o.noteId);
-        if (hit) { S.folder = 'all'; select(hit.id); paintAll(); }
+        if (hit) { S.folder = hit.trashed ? 'trash' : 'all'; S.tag = null; select(hit.id); paintAll(); }
       }
       if (o.find) requestAnimationFrame(() => findText(o.find, o.line));
     });
+
+    win.state.print = () => exportPdf();   /* File › Print in the menu bar */
+
+    /* words selected: the footer counts them (the Words tab's rule) */
+    let selRaf = 0;
+    const onSel = () => {
+      if (selRaf) return;
+      selRaf = requestAnimationFrame(() => {
+        selRaf = 0;
+        let t = '';
+        const a = document.activeElement;
+        if (a === ta) t = ta.value.slice(ta.selectionStart || 0, ta.selectionEnd || 0);
+        else {
+          const sel = window.getSelection();
+          if (sel && !sel.isCollapsed && (rich.contains(sel.anchorNode) || view.contains(sel.anchorNode))) t = String(sel);
+        }
+        const w = t ? countWords(t) : 0;
+        if (w !== S.selWords) { S.selWords = w; paintFoot(); }
+      });
+    };
+    document.addEventListener('selectionchange', onSel);
+    ta.addEventListener('select', onSel);
+    /* .md and .txt files from the computer, dropped on the list of notes, are imported */
+    const isTextDrop = e => dropKinds(e).includes('Files') && !dropKinds(e).includes(DRAG_PATH);
+    listEl.addEventListener('dragover', e => { if (!isTextDrop(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; listEl.classList.add('is-drop'); });
+    listEl.addEventListener('dragleave', e => { if (!listEl.contains(e.relatedTarget)) listEl.classList.remove('is-drop'); });
+    listEl.addEventListener('drop', e => {
+      listEl.classList.remove('is-drop');
+      if (!isTextDrop(e)) return;
+      e.preventDefault();
+      importFiles([...e.dataTransfer.files]);
+    });
+
+    /* for the play-tests: the editor's blocks, and where the caret is among them */
+    rich.notesPeek = () => ({ blocks: readBlocks(rich), caret: getCaret(), sel: S.sel, folder: S.folder, tag: S.tag, sort: S.sort, mode: S.mode });
 
     return () => {
       flushEditor();
@@ -1925,6 +2931,10 @@ defineApp({
       NH.flush();                             /* the window closing keeps a version */
       closePick?.();
       plan.close();
+      tools.destroy();
+      popClose();
+      document.removeEventListener('selectionchange', onSel);
+      cancelAnimationFrame(selRaf);
       offNotes();
       offFolders();
       window.removeEventListener('keydown', onKey);

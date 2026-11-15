@@ -17,6 +17,9 @@
    When no swap can make a match the board shuffles itself. After
    6 seconds without a move the game points at one (H shows it at
    once). Each gem has its own shape as well as its own colour.
+   With the Arcade's colour-blind colours on (ctx.palette 'cb') the
+   six gems take the Okabe–Ito colours instead (PALETTE_CB), drawn
+   flat with a dark edge so the shapes stand out too.
 
    Two ways to play: Timed (60 seconds from your first swap) or
    Moves (25 swaps). Score = points, higher is better; the best for
@@ -33,12 +36,16 @@ import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { clamp, hsl, FONT, fitView, surface, ownsKey, sounder, looper, rr, rng, randomSeed } from './kit.js';
 import { CSS as BASE, load, save, reducedMotion, bag } from './puzzlekit.js';
+import { PALETTE_CB } from './index.js';
 
 const GAME = 'gems';
 const N = 8, CELL = 48, VW = N * CELL, VH = N * CELL;
 const KINDS = 6;
 const HUES = [352, 28, 52, 128, 200, 282];
 const NAMES = ['ruby', 'amber', 'topaz', 'emerald', 'sapphire', 'amethyst'];
+/* the colour-blind set: ruby → vermilion, amber → orange, topaz → yellow,
+   emerald → bluish green, sapphire → blue, amethyst → reddish purple */
+const CB = [5, 0, 3, 2, 4, 6].map(i => PALETTE_CB[i]);
 const MODES = { timed: { name: 'Timed', total: 60, tip: '60 seconds from your first swap' }, moves: { name: 'Moves', total: 25, tip: '25 swaps' } };
 const HINT_AFTER = 6;
 const ROWCLEAR = 1, COLCLEAR = 2, BOMB = 3;
@@ -54,6 +61,8 @@ export default {
     const reduced = reducedMotion(ctx);
     const L = bag();
     const snd = sounder(ctx);
+    const cb = () => ctx.palette === 'cb';
+    const gemCol = t => (cb() ? CB[t] : hsl(HUES[t], 90, 62));
     const sv = load(GAME);
     const bests = { ...(sv.best || {}) };
     let mode = MODES[sv.mode] ? sv.mode : 'timed';
@@ -234,7 +243,7 @@ export default {
         const g = S.b[Math.floor(i / N)][i % N];
         if (!g) continue;
         g.dead = true;
-        if (!reduced) for (let q = 0; q < 3; q++) S.parts.push({ x: g.c + 0.5, y: g.r + 0.5, vx: (rand() - 0.5) * 5, vy: (rand() - 0.7) * 5, life: 0.45, hue: g.s === BOMB ? 0 : HUES[g.t] });
+        if (!reduced) for (let q = 0; q < 3; q++) S.parts.push({ x: g.c + 0.5, y: g.r + 0.5, vx: (rand() - 0.5) * 5, vy: (rand() - 0.7) * 5, life: 0.45, hue: g.s === BOMB ? 0 : HUES[g.t], t: g.s === BOMB ? -1 : g.t });
       }
       for (const m of make) { const g = S.b[m.r][m.c]; g.s = m.s; if (m.s === BOMB) g.t = -1; }
       S.make = make;
@@ -344,18 +353,25 @@ export default {
         const gr = g.createRadialGradient(cx - R * 0.3, cy - R * 0.3, 1, cx, cy, R * 1.1);
         gr.addColorStop(0, '#5a5f7a'); gr.addColorStop(1, '#14161f');
         g.fillStyle = gr; g.beginPath(); g.arc(cx, cy, R * 1.1, 0, Math.PI * 2); g.fill();
-        for (let i = 0; i < KINDS; i++) { g.strokeStyle = hsl(HUES[i], 90, 62); g.lineWidth = 3; g.beginPath(); g.arc(cx, cy, R * 0.82, i * Math.PI / 3, (i + 0.85) * Math.PI / 3); g.stroke(); }
+        for (let i = 0; i < KINDS; i++) { g.strokeStyle = gemCol(i); g.lineWidth = 3; g.beginPath(); g.arc(cx, cy, R * 0.82, i * Math.PI / 3, (i + 0.85) * Math.PI / 3); g.stroke(); }
         g.fillStyle = '#fff'; g.beginPath(); g.arc(cx, cy, R * 0.22, 0, Math.PI * 2); g.fill();
         return;
       }
-      const hu = HUES[o.t];
-      const gr = g.createRadialGradient(cx - R * 0.35, cy - R * 0.4, 1, cx, cy, R * 1.2);
-      gr.addColorStop(0, hsl(hu, 90, 74)); gr.addColorStop(1, hsl(hu, 80, 40));
-      g.fillStyle = gr; shape(g, o.t, cx, cy, R); g.fill();
-      g.strokeStyle = hsl(hu, 90, 82, 0.8); g.lineWidth = 1.5; g.stroke();
-      g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.arc(cx - R * 0.35, cy - R * 0.4, R * 0.16, 0, Math.PI * 2); g.fill();
+      if (cb()) {
+        /* flat colour (one exact colour per kind), a dark edge, the same gloss and line arrows */
+        g.fillStyle = CB[o.t]; shape(g, o.t, cx, cy, R); g.fill();
+        g.strokeStyle = 'rgba(0,0,0,.75)'; g.lineWidth = 2; g.stroke();
+        g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.arc(cx - R * 0.35, cy - R * 0.4, R * 0.14, 0, Math.PI * 2); g.fill();
+      } else {
+        const hu = HUES[o.t];
+        const gr = g.createRadialGradient(cx - R * 0.35, cy - R * 0.4, 1, cx, cy, R * 1.2);
+        gr.addColorStop(0, hsl(hu, 90, 74)); gr.addColorStop(1, hsl(hu, 80, 40));
+        g.fillStyle = gr; shape(g, o.t, cx, cy, R); g.fill();
+        g.strokeStyle = hsl(hu, 90, 82, 0.8); g.lineWidth = 1.5; g.stroke();
+        g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.arc(cx - R * 0.35, cy - R * 0.4, R * 0.16, 0, Math.PI * 2); g.fill();
+      }
       if (o.s === ROWCLEAR || o.s === COLCLEAR) {
-        g.strokeStyle = '#fff'; g.lineWidth = 2.4; g.lineCap = 'round';
+        g.strokeStyle = cb() && (o.t === 1 || o.t === 2) ? '#111' : '#fff';   /* dark arrows on the light orange and yellow */ g.lineWidth = 2.4; g.lineCap = 'round';
         const v = o.s === ROWCLEAR ? [1, 0] : [0, 1], L2 = R * 0.95;
         g.beginPath();
         g.moveTo(cx - v[0] * L2, cy - v[1] * L2); g.lineTo(cx + v[0] * L2, cy + v[1] * L2);
@@ -376,7 +392,11 @@ export default {
       for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) { g.fillStyle = (r + c) % 2 ? 'rgba(255,255,255,.035)' : 'rgba(255,255,255,.07)'; g.fillRect(c * CELL, r * CELL, CELL, CELL); }
       g.save(); g.beginPath(); g.rect(0, 0, VW, VH); g.clip();
       for (const o of gems()) drawGem(g, o);
-      for (const p of S.parts) { g.fillStyle = hsl(p.hue, 90, 70, clamp(p.life * 3, 0, 1)); g.fillRect(p.x * CELL - 2, p.y * CELL - 2, 4, 4); }
+      for (const p of S.parts) {
+        const a = clamp(p.life * 3, 0, 1), flat = cb() && p.t >= 0;
+        g.fillStyle = flat ? CB[p.t] : hsl(p.hue, 90, 70, a); g.globalAlpha = flat ? a : 1;
+        g.fillRect(p.x * CELL - 2, p.y * CELL - 2, 4, 4); g.globalAlpha = 1;
+      }
       g.restore();
       /* hint, selection, cursor */
       const ring = (r, c, col, w, pad = 2) => { g.strokeStyle = col; g.lineWidth = w; rr(g, c * CELL + pad, r * CELL + pad, CELL - pad * 2, CELL - pad * 2, 8); g.stroke(); };
@@ -471,7 +491,7 @@ export default {
         phase: S.phase, score: S.score, moves: S.moves, time: S.time, mode, started: S.started, over: S.over, paused: S.paused, casc: S.casc,
         grid: S.b.map(row => row.map(g => (g ? { t: g.t, s: g.s } : null))), hint: S.hint, sel: S.sel, cur: S.cur,
         bounces: S.bounces, specials: S.specials, cleared: S.cleared, shuffles: S.shuffles, seed, best: { ...bests },
-        geom: { ox: V.ox, oy: V.oy, cell: CELL * V.s },
+        geom: { ox: V.ox, oy: V.oy, cell: CELL * V.s }, palette: cb() ? 'cb' : 'standard', swatches: cb() ? CB.slice() : null,
       }),
       /* test hook — nothing in the game calls it:
          board(rows of 8 digits 0–5) · special({ r, c, s: 1 row | 2 column | 3 bomb }) · queue([types]) · seed(n) ·

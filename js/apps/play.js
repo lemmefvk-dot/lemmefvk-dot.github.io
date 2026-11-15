@@ -75,9 +75,12 @@ import { ARCADE } from '../arcade/index.js';
 import * as QP from '../core/quickplay.js';
 import { addToDesktop } from '../core/shortcuts.js';
 import * as collections from '../core/collections.js';
-import { inHalloween } from '../core/season.js';
+import { inHalloween, inSeason, SEASONS } from '../core/season.js';
+import * as ST from '../core/screentime.js';
+import * as DS from '../arcade/daily-state.js';
 import * as thumbs from '../core/thumbs.js';
 import { createIndex, T_FUZZY as FUZZY } from '../core/fuzzy.js';
+import { t as tr, plural as plu } from '../core/i18n.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-play-css')) {
   const l = document.createElement('link');
@@ -89,11 +92,11 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-play-css')
 
 /* ---------- constants ------------------------------------------------ */
 const TABS = [
-  { id: 'home', label: 'Home', icon: 'home' },
-  { id: 'discover', label: 'Discover', icon: 'compass' },
-  { id: 'multiplayer', label: 'Multiplayer', icon: 'users' },
-  { id: 'arcade', label: 'Arcade', icon: 'zap' },
-  { id: 'creations', label: 'Creations', icon: 'sparkles' },
+  { id: 'home', label: tr('Home'), icon: 'home' },
+  { id: 'discover', label: tr('Discover'), icon: 'compass' },
+  { id: 'multiplayer', label: tr('Multiplayer'), icon: 'users' },
+  { id: 'arcade', label: tr('Arcade'), icon: 'zap' },
+  { id: 'creations', label: tr('Creations'), icon: 'sparkles' },
 ];
 /* older links and the short form still land on the right tab */
 const TAB_ALIAS = { multi: 'multiplayer', mp: 'multiplayer', create: 'creations', creation: 'creations', mine: 'creations' };
@@ -103,13 +106,28 @@ const CAT_ROWS = ['action', 'adventure', 'puzzle', 'racing', 'sports', 'strategy
 const K_FAV = 'portal.games.favs';
 const K_RECENT = 'portal.games.recent';
 const K_QP = 'portal.playQuick';
+const K_BEATEN = 'portal.play.beaten';       /* [{ kind, id, title, art, at }] games YOU marked as beaten, newest first */
+const BEATEN_MAX = 120;
+const K_ARC = 'portal.arcade';               /* { best: { [id]: n } } — the Arcade's own best scores */
+/* Seasonal shelves: games whose publishers tag them with these words, shown
+   only while the season (core/season.js, this device's calendar) is on.
+   Halloween has its own shelf, built from the Arcade as well. */
+const SEASON_SHELVES = {
+  winter: { icon: 'sparkles', tags: ['christmas', 'snow', 'santa', 'ice'] },
+  firstsnow: { icon: 'sparkles', tags: ['christmas', 'snow', 'santa', 'ice'] },
+  valentine: { icon: 'heart', tags: ['love', 'valentine'] },
+  spring: { icon: 'sparkles', tags: ['easter', 'garden', 'farm'] },
+  earth: { icon: 'globe', tags: ['garden', 'farm'] },
+  summer: { icon: 'sparkles', tags: ['summer', 'water', 'fishing', 'pool'] },
+  school: { icon: 'star', tags: ['school'] },
+};
 const ROW = 16;
 const HERO_N = 6;
 const HERO_MS = 8000;
 const WEEK = 7 * 86400000;
 
-const NO_SERVER = 'Parties, lobbies, friends lists and “looking for players” all need a server that keeps track of people. StaticOS is a static site with no server, so none of that is here — and nothing is made up to fill the gap.';
-const IO_NOTE = 'Online play happens on each publisher’s own servers. StaticOS can’t see who is playing, so it doesn’t show player counts.';
+const NO_SERVER = tr('Parties, lobbies, friends lists and “looking for players” all need a server that keeps track of people. StaticOS is a static site with no server, so none of that is here — and nothing is made up to fill the gap.');
+const IO_NOTE = tr('Online play happens on each publisher’s own servers. StaticOS can’t see who is playing, so it doesn’t show player counts.');
 
 /* catalogue tags that literally name a control — nothing else counts */
 const CONTROL_TAGS = { mouse: 'Mouse', 'point and click': 'Mouse', touch: 'Touch', onetouch: 'One touch', keyboard: 'Keyboard', wasd: 'WASD', gamepad: 'Gamepad', controller: 'Controller' };
@@ -118,7 +136,14 @@ const INPUT_LABEL = { keyboard: 'Keyboard', mouse: 'Mouse', touch: 'Touch' };
 const NOISE_TAGS = /^(20\d\d games|best games?|best|amazing|fun|html5|free html5 games for your website|games?|3d games|2d|3d|mentolatux|mapi games|ai games|android|mobile|boys|girls|kids)$/i;
 
 const arr = v => (Array.isArray(v) ? v : []);
-const plural = (n, w) => `${Number(n).toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
+const plural = (n, w) => ({
+  game: () => plu(n, '{n} game', '{n} games'),
+  play: () => plu(n, '{n} play', '{n} plays'),
+  star: () => plu(n, '{n} star', '{n} stars'),
+  'Arcade game': () => plu(n, '{n} Arcade game', '{n} Arcade games'),
+  version: () => plu(n, '{n} version', '{n} versions'),
+  'close spelling': () => plu(n, '{n} close spelling', '{n} close spellings'),
+}[w] || (() => `${Number(n).toLocaleString()} ${w}${n === 1 ? '' : 's'}`))();
 const catName = id => catalogue.catMeta(id).name;
 const catIcon = id => catalogue.catMeta(id).icon || 'gamepad';
 const fnv = s => { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
@@ -151,11 +176,11 @@ const thumbOf = p => {
   const t = p && p.published && p.published.thumbnail;
   return typeof t === 'string' && /^(data:image\/|https?:)/.test(t) ? t : null;
 };
-const creItem = (p, extra) => ({ kind: 'creation', id: p.id, title: (p.published && p.published.title) || p.name || 'Untitled game', art: thumbOf(p), p, ...extra });
+const creItem = (p, extra) => ({ kind: 'creation', id: p.id, title: (p.published && p.published.title) || p.name || tr('Untitled game'), art: thumbOf(p), p, ...extra });
 
 function controlsOf(g) {
   const found = [...new Set(g.tags.map(t => CONTROL_TAGS[t.toLowerCase()]).filter(Boolean))];
-  return found.length ? `Controls: ${found.join(', ')}` : 'Controls not listed';
+  return found.length ? tr('Controls: {list}', { list: found.map(c => tr(c)).join(', ') }) : tr('Controls not listed');
 }
 
 /* 'direct' is how the sync marks a game it embeds without a publisher feed —
@@ -167,7 +192,7 @@ const webMeta = (g, skip = null) => {
   return [studioOf(g), c ? catName(c) : null].filter(Boolean).join(' · ') || catName(skip || g.cats[0]);
 };
 
-const playersText = a => (a.players.includes(2) ? (a.players.includes(1) ? '1–2 players' : '2 players') : '1 player');
+const playersText = a => (a.players.includes(2) ? (a.players.includes(1) ? tr('1–2 players') : tr('2 players')) : tr('1 player'));
 
 /* the Arcade list never changes while the page is open: one small index for its search */
 let arcIx = null;
@@ -188,7 +213,7 @@ defineApp({
   g1: '#ff7a98', g2: '#6d1026',
   category: 'Games', singleton: true,
   keywords: ['play', 'games', 'console', 'home', 'quick play', 'arcade', 'multiplayer', 'discover', 'creations', 'launcher'],
-  desc: 'Your games: continue, discover, quick play',
+  desc: tr('Your games: continue, discover, quick play'),
   win: { w: 1180, h: 720, minW: 520, minH: 460 },
 
   mount({ root, win, opts, api }) {
@@ -225,7 +250,7 @@ defineApp({
 
     const savedQP = api.store.get(K_QP, null);
     const S = {
-      tab: tabOf(opts?.tab) || 'home',
+      tab: tabOf(opts?.tab) && tabOf(opts?.tab) !== 'discover' ? tabOf(opts.tab) : 'home',
       q: typeof opts?.q === 'string' ? opts.q : '',
       ready: catalogue.isLoaded(),
       projects: null,
@@ -249,10 +274,10 @@ defineApp({
     const main = h('main.sp-main', { tabindex: '-1' }, view);
 
     const tabBtns = TABS.map(t => h('button.sp-tab', {
-      type: 'button', role: 'tab', id: `sp-tab-${t.id}`, dataset: { tab: t.id }, title: t.label,
+      type: 'button', role: 'tab', id: `sp-tab-${t.id}`, dataset: { tab: t.id }, title: t.id === 'discover' ? tr('Opens Static Discover') : t.label,
       'aria-controls': 'sp-panel', onclick: () => setTab(t.id),
     }, icon(t.icon), h('span.sp-tab__l', { text: t.label })));
-    const tabs = h('nav.sp-tabs', { role: 'tablist', 'aria-label': 'Static Play sections' }, tabBtns);
+    const tabs = h('nav.sp-tabs', { role: 'tablist', 'aria-label': tr('Static Play sections') }, tabBtns);
     tabs.addEventListener('keydown', e => {
       const i = tabBtns.indexOf(document.activeElement);
       if (i < 0) return;
@@ -268,10 +293,10 @@ defineApp({
     });
 
     const searchIn = h('input.sp-search__in', {
-      type: 'search', placeholder: 'Search games, Arcade, your creations', value: S.q,
-      'aria-label': 'Search the catalogue, the Static Arcade and your creations', autocomplete: 'off', spellcheck: 'false',
+      type: 'search', placeholder: tr('Search games, Arcade, your creations'), value: S.q,
+      'aria-label': tr('Search the catalogue, the Static Arcade and your creations'), autocomplete: 'off', spellcheck: 'false',
     });
-    const searchClear = h('button.sp-search__x', { type: 'button', 'aria-label': 'Clear search', hidden: !S.q,
+    const searchClear = h('button.sp-search__x', { type: 'button', 'aria-label': tr('Clear search'), hidden: !S.q,
       onclick: () => { searchIn.value = ''; onSearch(true); searchIn.focus(); } }, icon('x'));
     const search = h('label.sp-search', icon('search'), searchIn, searchClear);
     let searchT = 0;
@@ -293,16 +318,16 @@ defineApp({
     offs.push(() => { if (warmId) unidle(warmId); });
 
     /* quick play in the bar: the button picks at once; the chevron sets it up */
-    const qpPop = h('div.sp-pop', { id: 'sp-qp-pop', role: 'dialog', 'aria-label': 'Quick Play options', hidden: true });
-    const qpMore = h('button.sp-qpbar__more', { type: 'button', 'aria-label': 'Quick Play options', 'aria-expanded': 'false',
+    const qpPop = h('div.sp-pop', { id: 'sp-qp-pop', role: 'dialog', 'aria-label': tr('Quick Play options'), hidden: true });
+    const qpMore = h('button.sp-qpbar__more', { type: 'button', 'aria-label': tr('Quick Play options'), 'aria-expanded': 'false',
       'aria-controls': 'sp-qp-pop', onclick: () => togglePop() }, icon('sliders'));
     const qpBar = h('div.sp-qpbar',
       h('button.sp-qpbar__go', { type: 'button', onclick: () => quickPlay(),
-        'aria-label': 'Quick Play: pick a game for me and start it' }, icon('zap', { fill: true }), h('span.sp-qpbar__label', { text: 'Quick Play' })),
+        'aria-label': tr('Quick Play: pick a game for me and start it') }, icon('zap', { fill: true }), h('span.sp-qpbar__label', { text: tr('Quick Play') })),
       qpMore);
 
     const top = h('header.sp-top',
-      h('div.sp-brand', h('span.sp-brand__mark', icon('gamepad')), h('b', { text: 'Static Play' })),
+      h('div.sp-brand', h('span.sp-brand__mark', icon('gamepad')), h('b', { text: tr('Static Play') })),
       tabs, search, qpBar);
 
     el.append(top, h('div.sp-panel', { id: 'sp-panel', role: 'tabpanel', 'aria-labelledby': `sp-tab-${S.tab}` }, main), qpPop);
@@ -318,8 +343,8 @@ defineApp({
 
     function openOr(app, o, name) {
       if (!api.getApp(app)) {
-        api.notify({ app: 'Static Play', icon: 'alert', title: `${name} isn’t available`,
-          message: `This build of StaticOS doesn’t include ${name} yet.` });
+        api.notify({ app: 'Static Play', icon: 'alert', title: tr('{name} isn’t available', { name }),
+          message: tr('This build of StaticOS doesn’t include {name} yet.', { name }) });
         return null;
       }
       return api.openApp(app, o);
@@ -347,14 +372,14 @@ defineApp({
       const was = thumbOf(item);
       const now = thumbs.toggle(item.kind, item.id, v);
       if (now === -1) {
-        say.textContent = `${item.title} is hidden. Undo is in the notification.`;
+        say.textContent = tr('{title} is hidden. Undo is in the notification.', { title: item.title });
         api.notify({
-          app: 'Static Play', icon: 'eye-off', title: `Hidden: ${item.title}`, timeout: 8000,
-          message: 'It won’t show up in Static Play’s shelves, search or Quick Play. Home lists the games you hid.',
-          actions: [{ label: 'Undo', onClick: () => thumbs.set(item.kind, item.id, was) }],
+          app: 'Static Play', icon: 'eye-off', title: tr('Hidden: {title}', { title: item.title }), timeout: 8000,
+          message: tr('It won’t show up in Static Play’s shelves, search or Quick Play. Home lists the games you hid.'),
+          actions: [{ label: tr('Undo'), onClick: () => thumbs.set(item.kind, item.id, was) }],
         });
-      } else if (now === 1) say.textContent = `Thumbs-up for ${item.title}.`;
-      else say.textContent = was === -1 ? `${item.title} is back.` : `Thumbs-up taken back for ${item.title}.`;
+      } else if (now === 1) say.textContent = tr('Thumbs-up for {title}.', { title: item.title });
+      else say.textContent = was === -1 ? tr('{title} is back.', { title: item.title }) : tr('Thumbs-up taken back for {title}.', { title: item.title });
       return now;
     }
 
@@ -365,7 +390,7 @@ defineApp({
     function qpBusy(on) {
       el.classList.toggle('sp--qp-wait', on);
       for (const b of el.querySelectorAll('.sp-qpbar__go, .sp-qp__btn, .sp-pop__go')) b.setAttribute('aria-busy', String(on));
-      say.textContent = on ? 'Loading the games catalogue. Quick Play will pick as soon as it’s ready.' : '';
+      say.textContent = on ? tr('Loading the games catalogue. Quick Play will pick as soon as it’s ready.') : '';
     }
     function quickPlay(overrides) {
       /* never pick from the 110-game fallback while the full catalogue is on its way;
@@ -388,7 +413,7 @@ defineApp({
       try { item = QP.pick({ minutes: o.minutes, players: o.players, mood: o.mood, avoidIds: S.avoid }); }
       catch (err) {
         console.error('[play] quick play', err);
-        api.notify({ app: 'Static Play', icon: 'alert', title: 'Quick Play couldn’t choose', message: String(err && err.message || err) });
+        api.notify({ app: 'Static Play', icon: 'alert', title: tr('Quick Play couldn’t choose'), message: String(err && err.message || err) });
         return null;
       }
       S.avoid = [`${item.kind}:${item.id}`, ...S.avoid].slice(0, 6);
@@ -398,8 +423,8 @@ defineApp({
       const w = QP.launch(item, api);
       if (w) {
         api.notify({
-          app: 'Static Play', icon: 'zap', title: `Quick Play: ${item.title}`, message: item.reason, timeout: 9000,
-          actions: [{ label: 'Pick another', onClick: () => quickPlay(overrides) }],
+          app: 'Static Play', icon: 'zap', title: tr('Quick Play: {title}', { title: item.title }), message: item.reason, timeout: 9000,
+          actions: [{ label: tr('Pick another'), onClick: () => quickPlay(overrides) }],
         });
       }
       return item;
@@ -417,40 +442,60 @@ defineApp({
     const linkArt = a => (typeof a === 'string' && /^https?:/.test(a) ? a : null);
     const plainItem = it => ({ kind: it.kind, id: it.id, title: it.title, art: linkArt(it.art) });
 
+    /* ---- "Mark as beaten": only you can say so, and it is kept on this device ---- */
+    const beatenList = () => arr(api.store.get(K_BEATEN, [])).filter(b => b && typeof b.id === 'string' && ['web', 'arcade', 'creation'].includes(b.kind));
+    const isBeaten = it => beatenList().some(b => b.kind === it.kind && b.id === it.id);
+    function toggleBeaten(it) {
+      const cur = beatenList();
+      const on = !isBeaten(it);
+      api.store.set(K_BEATEN, on
+        ? [{ kind: it.kind, id: String(it.id), title: String(it.title || it.id).slice(0, 80), art: typeof it.art === 'string' && it.art.length < 600 ? it.art : null, at: Date.now() }, ...cur].slice(0, BEATEN_MAX)
+        : cur.filter(b => !(b.kind === it.kind && b.id === it.id)));
+      api.notify({ app: 'Static Play', icon: on ? 'check' : 'info', timeout: 3500,
+        title: on ? tr('Marked as beaten') : tr('Taken off Recently finished'), message: it.title });
+      refresh('finished');
+    }
+
+    /* ---- the Arcade's own best score on a tile ---- */
+    const bestOf = id => { const v = api.store.get(K_ARC, null); const n = v && v.best ? v.best[id] : null; return Number.isFinite(n) ? n : null; };
+
     function pinToDesktop(item) {
       let r = null;
       try { r = addToDesktop(plainItem(item)); } catch (err) { console.warn('[play] desktop', err); }
       if (!r) {
-        api.notify({ app: 'Static Play', icon: 'alert', title: 'Couldn’t add it to the Desktop',
-          message: 'There is no Desktop folder to put the shortcut in.' });
+        api.notify({ app: 'Static Play', icon: 'alert', title: tr('Couldn’t add it to the Desktop'),
+          message: tr('There is no Desktop folder to put the shortcut in.') });
       }
     }
 
     function menuItems(item, x, y) {
       const out = [];
       if (item.kind === 'creation') {
-        out.push({ label: 'Open in Static Forge', icon: 'play', onClick: () => play(item) });
-        if (api.getApp('studio')) out.push({ label: 'Edit code in Static Studio', icon: 'code', onClick: () => api.openApp('studio', { project: item.id }) });
+        out.push({ label: tr('Open in Static Forge'), icon: 'play', onClick: () => play(item) });
+        if (api.getApp('studio')) out.push({ label: tr('Edit code in Static Studio'), icon: 'code', onClick: () => api.openApp('studio', { project: item.id }) });
       } else {
-        out.push({ label: 'Play', icon: 'play', onClick: () => play(item) });
+        out.push({ label: tr('Play'), icon: 'play', onClick: () => play(item) });
       }
       if (item.kind === 'arcade' && item.a.players.includes(2)) {
-        out.push({ label: 'Play with a friend (2 players)', icon: 'users', onClick: () => play(item, { players: 2 }) });
+        out.push({ label: tr('Play with a friend (2 players)'), icon: 'users', onClick: () => play(item, { players: 2 }) });
       }
       if (item.kind === 'web') {
         const fav = isFav(item.id);
-        out.push({ label: fav ? 'Remove from favorites' : 'Add to favorites', icon: 'heart', hint: 'F', onClick: () => toggleFav(item.id) });
+        out.push({ label: fav ? tr('Remove from favorites') : tr('Add to favorites'), icon: 'heart', hint: 'F', onClick: () => toggleFav(item.id) });
       }
       if (thumbable(item)) {
         const t = thumbOf(item);
         out.push(
-          { label: t === 1 ? 'Take back your thumbs-up' : 'Thumbs up', icon: 'thumbs-up', hint: 'U', onClick: () => thumb(item, 1) },
-          { label: t === -1 ? 'Unhide (take back your thumbs-down)' : 'Thumbs down — hide it', icon: t === -1 ? 'eye' : 'thumbs-down', hint: 'D', onClick: () => thumb(item, -1) });
+          { label: t === 1 ? tr('Take back your thumbs-up') : tr('Thumbs up'), icon: 'thumbs-up', hint: 'U', onClick: () => thumb(item, 1) },
+          { label: t === -1 ? tr('Unhide (take back your thumbs-down)') : tr('Thumbs down — hide it'), icon: t === -1 ? 'eye' : 'thumbs-down', hint: 'D', onClick: () => thumb(item, -1) });
+      }
+      if (['web', 'arcade', 'creation'].includes(item.kind)) {
+        out.push({ label: isBeaten(item) ? tr('Take back “beaten”') : tr('Mark as beaten'), icon: 'check', onClick: () => toggleBeaten(item) });
       }
       out.push('-',
-        { label: 'Add to Desktop', icon: 'monitor', onClick: () => pinToDesktop(item) },
-        { label: 'Add to collection…', icon: 'bookmark', onClick: () => collections.pickMenu(api, plainItem(item), x, y) });
-      if (item.kind === 'web') out.push('-', { label: 'Details in Static Games', icon: 'info', hint: 'I', onClick: () => details(item) });
+        { label: tr('Add to Desktop'), icon: 'monitor', onClick: () => pinToDesktop(item) },
+        { label: tr('Add to collection…'), icon: 'bookmark', onClick: () => collections.pickMenu(api, plainItem(item), x, y) });
+      if (item.kind === 'web') out.push('-', { label: tr('Details in Static Games'), icon: 'info', hint: 'I', onClick: () => details(item) });
       return out;
     }
 
@@ -488,8 +533,8 @@ defineApp({
 
     /** the visible '…' button */
     function moreBtn(item, cls = '', focusable = false) {
-      return h(`button.sp-more-btn${cls}`, { type: 'button', tabindex: focusable ? null : '-1', title: 'More: favorite, thumbs, Add to Desktop, collections (M)',
-        'aria-label': `More options for ${item.title}`, 'aria-haspopup': 'menu',
+      return h(`button.sp-more-btn${cls}`, { type: 'button', tabindex: focusable ? null : '-1', title: tr('More: favorite, thumbs, Add to Desktop, collections (M)'),
+        'aria-label': tr('More options for {title}', { title: item.title }), 'aria-haspopup': 'menu',
         onclick: e => { e.stopPropagation(); openMenu(item, e.currentTarget); } }, icon('more-horizontal'));
     }
 
@@ -575,17 +620,17 @@ defineApp({
           }));
         }
       }
-      if (item.kind === 'arcade') box.append(h('span.sp-badge', icon('zap', { fill: true }), 'Instant'));
-      if (item.kind === 'creation') box.append(h('span.sp-badge.sp-badge--mine', item.p.published ? 'Published' : 'Draft'));
+      if (item.kind === 'arcade') box.append(h('span.sp-badge', icon('zap', { fill: true }), tr('Instant')));
+      if (item.kind === 'creation') box.append(h('span.sp-badge.sp-badge--mine', item.p.published ? tr('Published') : tr('Draft')));
       if (o.rank) box.append(h('span.sp-rank', { text: String(o.rank), 'aria-hidden': 'true' }));
       return box;
     }
 
     function metaOf(item) {
-      if (item.kind === 'arcade') return `Arcade · ~${item.a.minutes} min · ${playersText(item.a)}`;
+      if (item.kind === 'arcade') return tr('Arcade · ~{minutes} min · {players}', { minutes: item.a.minutes, players: playersText(item.a) });
       if (item.kind === 'creation') {
         const p = item.p;
-        return p.published ? `Your game · published ${QP.ago(p.published.at)}` : `Your draft · edited ${QP.ago(p.updatedAt)}`;
+        return p.published ? tr('Your game · published {when}', { when: QP.ago(p.published.at) }) : tr('Your draft · edited {when}', { when: QP.ago(p.updatedAt) });
       }
       return webMeta(item.g);
     }
@@ -597,12 +642,12 @@ defineApp({
       return b;
     }
     function paintFav(b, on, title) {
-      const t = title || b.dataset.title || 'this game';
+      const t = title || b.dataset.title || tr('this game');
       b.dataset.title = t;
       b.classList.toggle('is-on', on);
       b.setAttribute('aria-pressed', String(on));
-      b.setAttribute('aria-label', on ? `Remove ${t} from favorites` : `Add ${t} to favorites`);
-      b.title = on ? 'Remove from favorites (F)' : 'Add to favorites (F)';
+      b.setAttribute('aria-label', on ? tr('Remove {title} from favorites', { title: t }) : tr('Add {title} to favorites', { title: t }));
+      b.title = on ? tr('Remove from favorites (F)') : tr('Add to favorites (F)');
       api.render(b, icon('heart', { fill: on }));
     }
 
@@ -622,11 +667,11 @@ defineApp({
       b.classList.toggle('is-on', on);
       b.setAttribute('aria-pressed', String(on));
       if (v === 1) {
-        b.setAttribute('aria-label', on ? `Take back your thumbs-up for ${t}` : `Thumbs up ${t}`);
-        b.title = on ? 'Take back your thumbs-up (U)' : 'Thumbs up (U)';
+        b.setAttribute('aria-label', on ? tr('Take back your thumbs-up for {title}', { title: t }) : tr('Thumbs up {title}', { title: t }));
+        b.title = on ? tr('Take back your thumbs-up (U)') : tr('Thumbs up (U)');
       } else {
-        b.setAttribute('aria-label', on ? `Unhide ${t}` : `Thumbs down: hide ${t}`);
-        b.title = on ? 'Unhide — take back your thumbs-down (D)' : 'Thumbs down — hide it (D)';
+        b.setAttribute('aria-label', on ? tr('Unhide {title}', { title: t }) : tr('Thumbs down: hide {title}', { title: t }));
+        b.title = on ? tr('Unhide — take back your thumbs-down (D)') : tr('Thumbs down — hide it (D)');
       }
       api.render(b, icon(v === 1 ? 'thumbs-up' : 'thumbs-down', { fill: on }));
     }
@@ -648,7 +693,7 @@ defineApp({
       const size = o.size || 'md';
       const meta = o.meta !== undefined ? o.meta : metaOf(item);
       const why = o.why || item.why || '';
-      const label = `${item.kind === 'creation' ? 'Open' : 'Play'} ${item.title}${why ? `. ${why}` : ''}`;
+      const label = why ? tr(item.kind === 'creation' ? 'Open {title}. {why}' : 'Play {title}. {why}', { title: item.title, why }) : tr(item.kind === 'creation' ? 'Open {title}' : 'Play {title}', { title: item.title });
       return bindItem(h(`div.sp-card.sp-card--${size}`, { role: 'listitem', dataset: { kind: item.kind } },
         artNode(item, o),
         h('div.sp-card__b',
@@ -656,11 +701,11 @@ defineApp({
           meta ? h('div.sp-card__m', { text: meta }) : null,
           why ? h(`div.sp-card__why${o.muted ? '.sp-card__why--muted' : ''}`, icon(o.whyIcon || 'sparkles'), h('span', { text: why })) : null),
         goBtn(item, o, label),
-        thumbable(item) ? h('div.sp-thumbs', { role: 'group', 'aria-label': `Your thumbs for ${item.title}` }, thumbPair(item)) : null,
+        thumbable(item) ? h('div.sp-thumbs', { role: 'group', 'aria-label': tr('Your thumbs for {title}', { title: item.title }) }, thumbPair(item)) : null,
         h('div.sp-card__acts',
           item.kind === 'web' ? favBtn(item) : null,
-          item.kind === 'web' ? h('button.sp-info', { type: 'button', tabindex: '-1', title: 'Details in Static Games (I)',
-            'aria-label': `Details for ${item.title} in Static Games`,
+          item.kind === 'web' ? h('button.sp-info', { type: 'button', tabindex: '-1', title: tr('Details in Static Games (I)'),
+            'aria-label': tr('Details for {title} in Static Games', { title: item.title }),
             onclick: e => { e.stopPropagation(); details(item); } }, icon('info')) : null,
           moreBtn(item))), item);
     }
@@ -673,7 +718,7 @@ defineApp({
         artNode(item, o),
         h('div.sp-tile__b', h('div.sp-tile__t', { text: item.title }),
           h('div.sp-tile__m', { text: why || meta })),
-        goBtn(item, o, `Play ${item.title}${why ? `. ${why}` : ''}`),
+        goBtn(item, o, why ? tr('Play {title}. {why}', { title: item.title, why }) : tr('Play {title}', { title: item.title })),
         h('div.sp-tile__acts', thumbable(item) ? thumbBtn(item, 1) : null, item.kind === 'web' ? favBtn(item) : null, moreBtn(item))), item);
     }
 
@@ -702,8 +747,8 @@ defineApp({
       let prev = null, next = null;
       if (layout !== 'grid') {
         const step = d => rail.scrollBy({ left: d * Math.max(200, rail.clientWidth * 0.85), behavior: reduced() ? 'auto' : 'smooth' });
-        prev = h('button.sp-arrow', { type: 'button', tabindex: '-1', 'aria-label': `Scroll ${spec.title} back`, onclick: () => step(-1) }, icon('chevron-left'));
-        next = h('button.sp-arrow', { type: 'button', tabindex: '-1', 'aria-label': `Scroll ${spec.title} forward`, onclick: () => step(1) }, icon('chevron-right'));
+        prev = h('button.sp-arrow', { type: 'button', tabindex: '-1', 'aria-label': tr('Scroll {title} back', { title: spec.title }), onclick: () => step(-1) }, icon('chevron-left'));
+        next = h('button.sp-arrow', { type: 'button', tabindex: '-1', 'aria-label': tr('Scroll {title} forward', { title: spec.title }), onclick: () => step(1) }, icon('chevron-right'));
         tools.append(prev, next);
         const upd = () => {
           /* a row that fits has nothing to scroll: no arrows at all */
@@ -842,6 +887,48 @@ defineApp({
       if (to) focusGo(to);
     });
 
+    /* A controller's D-pad (or left stick) moves through the rows the way the arrow keys do:
+       it sends the same keys to the focused game card. A plays it, B goes back up to the tabs,
+       the bumpers switch tabs. Only while Play is the window in front. */
+    const pad = { prev: [], held: 0, next: 0 };
+    const padTick = () => {
+      if (!alive) return;
+      const pads = typeof navigator.getGamepads === 'function' ? [...navigator.getGamepads()].filter(Boolean) : [];
+      const gp = pads.find(g => g.connected);
+      if (!gp || !win.el?.classList.contains('is-active')) { pad.prev = []; return; }
+      const btn = i => !!(gp.buttons[i] && gp.buttons[i].pressed);
+      const ax = gp.axes || [];
+      const now = {
+        up: btn(12) || ax[1] < -0.6, down: btn(13) || ax[1] > 0.6, left: btn(14) || ax[0] < -0.6, right: btn(15) || ax[0] > 0.6,
+        a: btn(0), b: btn(1), lb: btn(4), rb: btn(5),
+      };
+      const t = performance.now();
+      const fresh = k => now[k] && !pad.prev[k];
+      const dir = ['up', 'down', 'left', 'right'].find(k => now[k]);
+      let key = null;
+      if (dir && (fresh(dir) || t >= pad.next)) {
+        key = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }[dir];
+        pad.next = t + (fresh(dir) ? 380 : 130);
+      }
+      pad.prev = now;
+      const cur = document.activeElement;
+      if (key) {
+        const target = cur && view.contains(cur) && cur.classList.contains('sp-go') ? cur : view.querySelector('.sp-go');
+        if (target) {
+          if (target !== cur) focusGo(target);
+          else target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+        }
+      } else if (fresh('a') && cur && cur.classList.contains('sp-go')) cur.click();
+      else if (fresh('b')) tabBtns[TABS.findIndex(x => x.id === S.tab)]?.focus();
+      else if (fresh('lb') || fresh('rb')) {
+        const ids = TABS.map(x => x.id).filter(x => x !== 'discover');
+        const i = ids.indexOf(S.tab);
+        setTab(ids[(i + (fresh('rb') ? 1 : -1) + ids.length) % ids.length]);
+      }
+    };
+    const padTimer = setInterval(padTick, 60);
+    offs.push(() => clearInterval(padTimer));
+
     /* '/' focuses search from anywhere in the app that is not a text field */
     const onRootKey = e => {
       if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -875,9 +962,9 @@ defineApp({
     /* ---------------------------------------------------------------- *
      *  quick play controls (shared by the bar popover and the Home banner)
      * ---------------------------------------------------------------- */
-    const QP_TIME = [{ v: null, l: 'Any' }, { v: 5, l: '5 min' }, { v: 15, l: '15 min' }, { v: 30, l: '30 min+' }];
-    const QP_WHO = [{ v: 1, l: 'Just me' }, { v: 2, l: 'With a friend' }];
-    const QP_MOOD = [{ v: '', l: 'Any' }, { v: 'relax', l: 'Chill' }, { v: 'scary', l: 'Scary' }, { v: 'race', l: 'Racing' }, { v: 'hard', l: 'Hard' }];
+    const QP_TIME = [{ v: null, l: tr('Any') }, { v: 5, l: tr('5 min') }, { v: 15, l: tr('15 min') }, { v: 30, l: tr('30 min+') }];
+    const QP_WHO = [{ v: 1, l: tr('Just me') }, { v: 2, l: tr('With a friend') }];
+    const QP_MOOD = [{ v: '', l: tr('Any') }, { v: 'relax', l: tr('Chill') }, { v: 'scary', l: tr('Scary') }, { v: 'race', l: tr('Racing') }, { v: 'hard', l: tr('Hard') }];
     const qpPainters = new Set();
 
     function setQP(patch) {
@@ -897,11 +984,11 @@ defineApp({
         return { node: h('div.sp-qpc__g', { role: 'group', 'aria-labelledby': `${idp}-${key}` },
           h('span.sp-qpc__l', { id: `${idp}-${key}`, text: label }), h('div.sp-qpc__pills', btns)), paint };
       };
-      const time = group('How long', QP_TIME, 'minutes');
-      const who = group('Players', QP_WHO, 'players');
-      const mood = group('Mood', QP_MOOD, 'mood');
-      const custom = h('input.sp-qpc__in', { type: 'text', placeholder: 'or type a mood…', maxlength: '40',
-        'aria-label': 'Describe a mood in your own words, for example zombies or something calm' });
+      const time = group(tr('How long'), QP_TIME, 'minutes');
+      const who = group(tr('Players'), QP_WHO, 'players');
+      const mood = group(tr('Mood'), QP_MOOD, 'mood');
+      const custom = h('input.sp-qpc__in', { type: 'text', placeholder: tr('or type a mood…'), maxlength: '40',
+        'aria-label': tr('Describe a mood in your own words, for example zombies or something calm') });
       custom.addEventListener('input', () => setQP({ mood: custom.value.trim() }));
       custom.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); quickPlay(); } });
       mood.node.querySelector('.sp-qpc__pills').append(custom);
@@ -923,9 +1010,9 @@ defineApp({
       if (!popCtl) {
         popCtl = qpControls('sp-pop');
         api.render(qpPop,
-          h('div.sp-pop__h', h('b', { text: 'Quick Play' }), h('span', { text: 'Picks from your favorites and history — and now and then something new that fits. It always says why.' })),
+          h('div.sp-pop__h', h('b', { text: tr('Quick Play') }), h('span', { text: tr('Picks from your favorites and history — and now and then something new that fits. It always says why.') })),
           popCtl.node,
-          h('button.sp-btn.sp-btn--play.sp-pop__go', { type: 'button', onclick: () => quickPlay() }, icon('zap', { fill: true }), 'Pick & play'));
+          h('button.sp-btn.sp-btn--play.sp-pop__go', { type: 'button', onclick: () => quickPlay() }, icon('zap', { fill: true }), tr('Pick & play')));
       }
       qpPop.hidden = false;
       qpMore.setAttribute('aria-expanded', 'true');
@@ -948,7 +1035,7 @@ defineApp({
       for (const n of lastPickNodes) {
         if (!n.isConnected) { lastPickNodes.delete(n); continue; }
         const p = S.lastPick;
-        api.render(n, p ? [h('b', { text: `Last pick: ${p.title}` }), h('span', { text: p.reason })] : []);
+        api.render(n, p ? [h('b', { text: tr('Last pick: {title}', { title: p.title }) }), h('span', { text: p.reason })] : []);
       }
     }
 
@@ -1006,7 +1093,7 @@ defineApp({
       const tag = g.tags.find(t => st.has(t.toLowerCase()) && !NOISE_TAGS.test(t));
       const bits = [...cats.slice(0, 2), tag ? tag.toLowerCase() : null].filter(Boolean);
       /* only ever shown under "Because you played <name>", so the name is not repeated */
-      return bits.length ? `Also ${bits.join(' · ')}` : (g.curated && src.curated ? 'Also hand-picked' : 'Shares its categories');
+      return bits.length ? tr('Also {list}', { list: bits.join(' · ') }) : (g.curated && src.curated ? tr('Also hand-picked') : tr('Shares its categories'));
     }
 
     /** categories you have played, with how many distinct games in each */
@@ -1060,15 +1147,15 @@ defineApp({
         const median = sorted[sorted.length >> 1];
         return {
           pool: rows.filter(g => g.rating >= 4.5 && g.plays < median && !played.has(g.id) && !thumbs.isHidden('web', g.id)),
-          rule: `rated 4.5 or higher, with fewer plays than the median game here (${median.toLocaleString()}), and not played on this device yet`,
-          why: g => `Rated ${g.rating.toFixed(1)} · ${g.plays.toLocaleString()} plays`,
+          rule: tr('rated 4.5 or higher, with fewer plays than the median game here ({median}), and not played on this device yet', { median: median.toLocaleString() }),
+          why: g => tr('Rated {rating} · {plays} plays', { rating: g.rating.toFixed(1), plays: g.plays.toLocaleString() }),
         };
       }
       const shown = new Set([...heroList(), ...featuredGames()].map(g => g.id));
       return {
         pool: curated().filter(g => !shown.has(g.id) && !played.has(g.id) && !thumbs.isHidden('web', g.id)),
-        rule: 'hand-picked for StaticOS, further down the shelf than Featured reaches, and never played on this device',
-        why: () => 'Hand-picked · not played here yet',
+        rule: tr('hand-picked for StaticOS, further down the shelf than Featured reaches, and never played on this device'),
+        why: () => tr('Hand-picked · not played here yet'),
       };
     }
 
@@ -1087,8 +1174,8 @@ defineApp({
       const bg = h('div.sp-hero__bg');
       const text = h('div.sp-hero__text');
       const pic = h('div.sp-hero__pic');
-      const dots = h('div.sp-hero__dots', { role: 'group', 'aria-label': 'Choose a featured game' });
-      const dotBtns = list.map((it, n) => h('button.sp-hero__dot', { type: 'button', 'aria-label': `Show ${it.title} (${n + 1} of ${list.length})`,
+      const dots = h('div.sp-hero__dots', { role: 'group', 'aria-label': tr('Choose a featured game') });
+      const dotBtns = list.map((it, n) => h('button.sp-hero__dot', { type: 'button', 'aria-label': tr('Show {title} ({n} of {total})', { title: it.title, n: n + 1, total: list.length }),
         onclick: () => show(n, true) }, h('i')));
       dots.append(...dotBtns);
       /* the dots are one tab stop: arrows move between them (and show that game) */
@@ -1101,7 +1188,7 @@ defineApp({
       });
       const pauseBtn = still ? null : h('button.sp-hero__pause', { type: 'button', onclick: () => { userPaused = !userPaused; sync(); } });
 
-      const node = h('section.sp-hero', { 'aria-roledescription': 'carousel', 'aria-label': 'Featured games', dataset: { nav: 'hero' } },
+      const node = h('section.sp-hero', { 'aria-roledescription': 'carousel', 'aria-label': tr('Featured games'), dataset: { nav: 'hero' } },
         bg, h('div.sp-hero__in', text, pic), h('div.sp-hero__foot', dots, pauseBtn));
       node._step = d => { show(i + d, true); node.querySelector('.sp-hero__play')?.focus({ preventScroll: true }); };
 
@@ -1114,16 +1201,16 @@ defineApp({
         const cats = g.cats.filter(c => c !== 'featured').slice(0, 3).map(c => h('span.sp-chip', icon(catIcon(c)), catName(c)));
         const playing = document.activeElement && node.contains(document.activeElement) && document.activeElement.classList.contains('sp-hero__play');
         api.render(text,
-          h('div.sp-eyebrow', icon('star', { fill: true }), h('span', { text: `Featured · ${i + 1} of ${list.length}` })),
+          h('div.sp-eyebrow', icon('star', { fill: true }), h('span', { text: tr('Featured · {n} of {total}', { n: i + 1, total: list.length }) })),
           h('h2.sp-hero__title', { text: it.title }),
           h('div.sp-hero__meta', studioOf(g) ? h('span', { text: studioOf(g) }) : null, ...cats),
-          g.desc ? h('p.sp-hero__desc', { text: QP.cleanText(g.desc) }) : h('p.sp-hero__desc.sp-hero__desc--muted', { text: 'Hand-picked for the StaticOS catalogue. Plays right here in Static Games.' }),
+          g.desc ? h('p.sp-hero__desc', { text: QP.cleanText(g.desc) }) : h('p.sp-hero__desc.sp-hero__desc--muted', { text: tr('Hand-picked for the StaticOS catalogue. Plays right here in Static Games.') }),
           h('div.sp-hero__acts',
             h('button.sp-btn.sp-btn--play.sp-go.sp-hero__play', { type: 'button', tabindex: '0', dataset: { kind: 'web', id: it.id },
-              'aria-label': `Play ${it.title}`, 'aria-keyshortcuts': 'F U D I M Shift+F10',
+              'aria-label': tr('Play {title}', { title: it.title }), 'aria-keyshortcuts': 'F U D I M Shift+F10',
               onclick: () => play(it),
-              on: { 'sp:fav': () => toggleFav(it.id), 'sp:info': () => details(it) } }, icon('play', { fill: true }), 'Play'),
-            h('button.sp-btn', { type: 'button', onclick: () => details(it) }, icon('info'), 'Details'),
+              on: { 'sp:fav': () => toggleFav(it.id), 'sp:info': () => details(it) } }, icon('play', { fill: true }), tr('Play')),
+            h('button.sp-btn', { type: 'button', onclick: () => details(it) }, icon('info'), tr('Details')),
             (() => { const b = h('button.sp-btn.sp-btn--icon.sp-fav', { type: 'button', dataset: { favId: it.id },
               onclick: () => toggleFav(it.id) }); paintFav(b, isFav(it.id), it.title); return b; })(),
             ...thumbPair(it, '.sp-btn.sp-btn--icon'),
@@ -1151,8 +1238,8 @@ defineApp({
         if (pauseBtn && pauseBtn.dataset.state !== String(userPaused)) {
           pauseBtn.dataset.state = String(userPaused);
           api.render(pauseBtn, icon(userPaused ? 'play' : 'pause', { fill: userPaused }));
-          pauseBtn.setAttribute('aria-label', userPaused ? 'Resume featured rotation' : 'Pause featured rotation');
-          pauseBtn.title = userPaused ? 'Resume rotation' : 'Pause rotation';
+          pauseBtn.setAttribute('aria-label', userPaused ? tr('Resume featured rotation') : tr('Pause featured rotation'));
+          pauseBtn.title = userPaused ? tr('Resume rotation') : tr('Pause rotation');
         }
         clearInterval(timer);
         timer = 0;
@@ -1192,9 +1279,9 @@ defineApp({
       hero: () => (S.ready ? hero(heroList()) : heroSkeleton()),
 
       continue: () => {
-        const items = recentItems(14).map(it => ({ ...it, o: { meta: `${metaOf(it).split(' · ')[0]} · played ${QP.ago(it.at)}` } }));
-        return shelf({ id: 'continue', title: 'Continue Playing', icon: 'play', size: 'xl', items,
-          sub: `${plural(plays.count() || items.length, 'game')} played on this device` });
+        const items = recentItems(14).map(it => ({ ...it, o: { meta: tr('{what} · played {when}', { what: metaOf(it).split(' · ')[0], when: QP.ago(it.at) }) } }));
+        return shelf({ id: 'continue', title: tr('Continue Playing'), icon: 'play', size: 'xl', items,
+          sub: tr('{games} played on this device', { games: plural(plays.count() || items.length, 'game') }) });
       },
 
       quick: () => {
@@ -1205,11 +1292,11 @@ defineApp({
         const node = h('section.sp-qp', { 'aria-labelledby': 'sp-qp-h' },
           h('div.sp-qp__lead',
             h('span.sp-qp__icon', icon('zap', { fill: true })),
-            h('div', h('h2.sp-qp__title', { id: 'sp-qp-h', text: 'Quick Play' }),
-              h('p.sp-qp__sub', { text: 'Can’t decide? One press picks something that fits — and tells you why.' }))),
+            h('div', h('h2.sp-qp__title', { id: 'sp-qp-h', text: tr('Quick Play') }),
+              h('p.sp-qp__sub', { text: tr('Can’t decide? One press picks something that fits — and tells you why.') }))),
           ctl.node,
           h('div.sp-qp__go',
-            h('div', { dataset: { nav: 'row' } }, h('button.sp-btn.sp-btn--play.sp-btn--lg.sp-go.sp-qp__btn', { type: 'button', onclick: () => quickPlay() }, icon('zap', { fill: true }), 'Pick & play')),
+            h('div', { dataset: { nav: 'row' } }, h('button.sp-btn.sp-btn--play.sp-btn--lg.sp-go.sp-qp__btn', { type: 'button', onclick: () => quickPlay() }, icon('zap', { fill: true }), tr('Pick & play'))),
             last));
         frame(paintLastPick);
         return node;
@@ -1218,31 +1305,31 @@ defineApp({
       /* favourites are kept newest first (every app that adds one puts it at the front) */
       favorites: () => {
         const items = catalogue.byIds(QP.favIds()).map(g => webItem(g)).filter(it => !isHidden(it));
-        return shelf({ id: 'favorites', title: 'Your Favorites', icon: 'heart', size: 'sm', items,
-          sub: `${plural(items.length, 'game')} you saved · newest first` });
+        return shelf({ id: 'favorites', title: tr('Your Favorites'), icon: 'heart', size: 'sm', items,
+          sub: tr('{games} you saved · newest first', { games: plural(items.length, 'game') }) });
       },
 
       thumbs: () => {
         const items = thumbs.list(1).map(x => markedItem(x)).filter(Boolean);
-        return shelf({ id: 'thumbs', title: 'Your thumbs-up', icon: 'thumbs-up', size: 'sm', items,
-          sub: `${plural(items.length, 'game')} you gave a thumbs-up on this device · newest first` });
+        return shelf({ id: 'thumbs', title: tr('Your thumbs-up'), icon: 'thumbs-up', size: 'sm', items,
+          sub: tr('{games} you gave a thumbs-up on this device · newest first', { games: plural(items.length, 'game') }) });
       },
 
       /* the games you gave a thumbs-down: closed until asked for, and the
          only place they still show, so each can be brought back */
       hidden: () => {
-        const items = thumbs.list(-1).map(x => markedItem(x, `Hidden ${QP.ago(x.at)}`)).filter(Boolean);
+        const items = thumbs.list(-1).map(x => markedItem(x, tr('Hidden {when}', { when: QP.ago(x.at) }))).filter(Boolean);
         if (!items.length) return null;
         const open = S.hiddenOpen;
-        const sec = shelf({ id: 'hidden', title: 'Hidden by you', icon: 'eye-off', size: 'sm', cls: 'sp-sec--hidden',
+        const sec = shelf({ id: 'hidden', title: tr('Hidden by you'), icon: 'eye-off', size: 'sm', cls: 'sp-sec--hidden',
           items: open ? items : [], keepEmpty: true, showHidden: true,
-          sub: `${plural(items.length, 'game')} you gave a thumbs-down. ${items.length === 1 ? 'It’s' : 'They’re'} left out of every shelf, search and Quick Play here${open ? ' — press a lit thumbs-down to bring one back.' : '.'}` });
+          sub: tr(items.length === 1 ? (open ? '{games} you gave a thumbs-down. It’s left out of every shelf, search and Quick Play here — press a lit thumbs-down to bring one back.' : '{games} you gave a thumbs-down. It’s left out of every shelf, search and Quick Play here.') : (open ? '{games} you gave a thumbs-down. They’re left out of every shelf, search and Quick Play here — press a lit thumbs-down to bring one back.' : '{games} you gave a thumbs-down. They’re left out of every shelf, search and Quick Play here.'), { games: plural(items.length, 'game') }) });
         const btn = h('button.sp-more.sp-hidden__toggle', { type: 'button', 'aria-expanded': String(open),
           onclick: () => {
             S.hiddenOpen = !S.hiddenOpen;
             fillSlot('hidden');
             slots.get('hidden')?.querySelector('.sp-hidden__toggle')?.focus({ preventScroll: true });
-          } }, h('span', { text: open ? 'Close the list' : 'Show them' }), icon(open ? 'chevron-up' : 'chevron-down'));
+          } }, h('span', { text: open ? tr('Close the list') : tr('Show them') }), icon(open ? 'chevron-up' : 'chevron-down'));
         sec.querySelector('.sp-sec__tools').prepend(btn);
         if (!open) {
           sec.querySelector('.sp-rail')?.remove();
@@ -1266,8 +1353,8 @@ defineApp({
         rows.sort((a, b) => b.latest - a.latest);
         const secs = rows.slice(0, 2).map(({ col, items, others }) => shelf({
           id: `col-${col.id}`, title: col.name, icon: col.icon, size: 'sm', items,
-          sub: `Your collection · ${plural(items.length, 'game')}${others ? ` here, ${others} more in the Library` : ''}`,
-          more: { label: 'Open in Library', onClick: () => openOr('aether-library', { url: `static://library/collections/${encodeURIComponent(col.id)}` }, 'Static Library') },
+          sub: others ? tr('Your collection · {games} here, {others} more in the Library', { games: plural(items.length, 'game'), others }) : tr('Your collection · {games}', { games: plural(items.length, 'game') }),
+          more: { label: tr('Open in Library'), onClick: () => openOr('aether-library', { url: `static://library/collections/${encodeURIComponent(col.id)}` }, 'Static Library') },
         })).filter(Boolean);
         return secs.length ? h('div.sp-cols', secs) : null;
       },
@@ -1278,17 +1365,17 @@ defineApp({
         const played = playedWebIds();
         const items = catalogue.related(last.g, ROW + 8).filter(g => !played.has(g.id)).slice(0, ROW)
           .map(g => webItem(g, { why: sharedWith(g, last.g) }));
-        return shelf({ id: 'because', title: `Because you played ${last.title}`, icon: 'sparkles', size: 'md', items,
-          sub: 'Games that share its categories and tags — ones you haven’t played yet.' });
+        return shelf({ id: 'because', title: tr('Because you played {title}', { title: last.title }), icon: 'sparkles', size: 'md', items,
+          sub: tr('Games that share its categories and tags — ones you haven’t played yet.') });
       },
 
       trending: () => {
         const week = [...QP.weekCounts().entries()].filter(([id]) => !thumbs.isHidden('web', id))
           .sort((a, b) => b[1] - a[1]).slice(0, 10);
         const items = week.map(([id, n]) => ({ g: catalogue.byId(id), n })).filter(x => x.g)
-          .map((x, k) => webItem(x.g, { why: `${plural(x.n, 'play')} this week`, o: { rank: k + 1, whyIcon: 'trending-up' } }));
-        return shelf({ id: 'trending', title: 'Trending on this device', icon: 'trending-up', size: 'md', items,
-          sub: 'Your most-launched games over the past 7 days, counted on this device only.' });
+          .map((x, k) => webItem(x.g, { why: tr('{plays} this week', { plays: plural(x.n, 'play') }), o: { rank: k + 1, whyIcon: 'trending-up' } }));
+        return shelf({ id: 'trending', title: tr('Trending on this device'), icon: 'trending-up', size: 'md', items,
+          sub: tr('Your most-launched games over the past 7 days, counted on this device only.') });
       },
 
       /* Oct 24 – Nov 1 only (core/season.js): the spooky Arcade games, then the
@@ -1299,45 +1386,132 @@ defineApp({
           .map(a => arcItem(a, { why: a.blurb, o: { whyIcon: 'zap' } }));
         const res = S.ready ? catalogue.query({ category: 'horror', sort: 'catalogue', perPage: ROW + 8 }) : { items: [], total: 0 };
         const web = res.items.map(g => webItem(g, { o: { meta: webMeta(g, 'horror') } }));
-        const parts = [`${spooky.length} spooky Arcade game${spooky.length === 1 ? '' : 's'} built into StaticOS`];
-        if (res.total) parts.push(`${plural(res.total, 'game')} from the catalogue’s Horror category`);
-        return shelf({ id: 'halloween', title: 'Halloween', icon: 'pumpkin', size: 'md', cls: 'sp-sec--halloween',
+        const parts = [plu(spooky.length, '{n} spooky Arcade game built into StaticOS', '{n} spooky Arcade games built into StaticOS')];
+        if (res.total) parts.push(tr('{games} from the catalogue’s Horror category', { games: plural(res.total, 'game') }));
+        return shelf({ id: 'halloween', title: tr('Halloween'), icon: 'pumpkin', size: 'md', cls: 'sp-sec--halloween',
           items: [...spooky, ...web],
-          sub: `Here until November 1 · ${parts.join(' and ')}.`,
-          more: api.getApp('pumpkin') ? { label: 'Carve a pumpkin', onClick: () => openOr('pumpkin', {}, 'Pumpkin Carver') }
-            : res.total > web.length ? { label: 'All horror', onClick: () => browseCat('horror') } : null });
+          sub: tr('Here until November 1 · {parts}.', { parts: parts.join(tr(' and ')) }),
+          more: api.getApp('pumpkin') ? { label: tr('Carve a pumpkin'), onClick: () => openOr('pumpkin', {}, 'Pumpkin Carver') }
+            : res.total > web.length ? { label: tr('All horror'), onClick: () => browseCat('horror') } : null });
       },
 
-      arcade: () => shelf({ id: 'arcade', title: 'Static Arcade', icon: 'zap', size: 'md',
+      /* Today's puzzle: Daily Stars, ticked once it is solved */
+      daily: () => {
+        const a = ARCADE.find(x => x.id === 'daily');
+        if (!a) return null;
+        const st = DS.status();
+        const it = arcItem(a);
+        const m = Math.floor(st.ms / 60000), sec = Math.round((st.ms % 60000) / 1000);
+        const line = st.solved ? tr('Solved in {time}', { time: `${m}:${String(sec).padStart(2, '0')}` })
+          : st.started ? tr('Started: {stars} placed so far', { stars: plural(st.stars, 'star') }) : tr('Not started yet');
+        return bindItem(h('section.sp-sec.sp-daily', { 'aria-labelledby': 'sp-daily-h', dataset: { sec: 'daily', solved: st.solved ? '1' : '0' } },
+          h('div.sp-daily__ic', icon('star', { fill: true })),
+          h('div.sp-daily__b',
+            h('h2.sp-sec__title', { id: 'sp-daily-h' }, h('span', { text: tr('Today’s puzzle') }),
+              st.solved ? h('span.sp-daily__tick', { role: 'img', 'aria-label': tr('Solved today') }, icon('check')) : null),
+            h('p.sp-sec__sub', { text: st.streak > 1 ? tr('Daily Stars · {line} · {days} days in a row', { line, days: st.streak }) : tr('Daily Stars · {line}', { line }) })),
+          h('button.sp-btn.sp-btn--play.sp-go', { type: 'button', dataset: { kind: 'arcade', id: 'daily' },
+            'aria-label': st.solved ? tr('Look at today’s Daily Stars again') : st.started ? tr('Carry on with today’s Daily Stars') : tr('Play today’s Daily Stars'),
+            onclick: () => play(it) }, icon('play', { fill: true }), st.solved ? tr('Look again') : st.started ? tr('Carry on') : tr('Play'))), it);
+      },
+
+      /* weekly goals, each one counted from real launches on this device */
+      goals: () => {
+        const since = Date.now() - WEEK;
+        const recent = plays.recent(80).filter(r => Number(r.at) >= since);
+        let days = 0;
+        for (let i = 0; i < 7; i++) {
+          try { if (ST.day(ST.dayKey(Date.now() - i * 86400000)).games.length) days++; } catch (e) { /* screen time unreadable */ }
+        }
+        const goals = [
+          { id: 'different', text: tr('Play 3 different games'), n: recent.length, goal: 3 },
+          { id: 'days', text: tr('Play on 3 different days'), n: days, goal: 3 },
+          { id: 'arcade', text: tr('Play 2 Arcade games'), n: recent.filter(r => r.kind === 'arcade').length, goal: 2 },
+        ];
+        const done = goals.filter(g => g.n >= g.goal).length;
+        return h('section.sp-sec.sp-goals', { 'aria-labelledby': 'sp-goals-h', dataset: { sec: 'goals' } },
+          h('div.sp-sec__h', h('div.sp-sec__tt',
+            h('h2.sp-sec__title', { id: 'sp-goals-h' }, icon('flag'), h('span', { text: tr('This week’s goals') }), h('small.sp-goals__n', { text: tr('{done} of {length}', { done, length: goals.length }) })),
+            h('p.sp-sec__sub', { text: tr('Counted from your own launches on this device over the last 7 days. They are fixed goals, not a ranking.') }))),
+          h('ul.sp-goals__list', goals.map(g => {
+            const pct = Math.min(100, Math.round((g.n / g.goal) * 100));
+            return h('li.sp-goal', { class: g.n >= g.goal ? 'is-done' : null, dataset: { goal: g.id } },
+              h('span.sp-goal__t', g.n >= g.goal ? icon('check') : null, h('span', { text: g.text })),
+              h('div.sp-goal__bar', { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(g.goal), 'aria-valuenow': String(Math.min(g.n, g.goal)), 'aria-label': g.text }, h('i', { style: { width: `${pct}%` } })),
+              h('small', { text: `${Math.min(g.n, g.goal)} / ${g.goal}` }));
+          })));
+      },
+
+      /* Arcade games, then hand-picked web games, that were never launched here */
+      untried: () => {
+        const keys = plays.playedKeys();
+        const old = playedWebIds();
+        const arc = ARCADE.filter(a => !keys.has(`arcade:${a.id}`) && !thumbs.isHidden('arcade', a.id))
+          .slice(0, 10).map(a => arcItem(a, { why: tr('You haven’t launched it on this device yet'), o: { whyIcon: 'sparkles' } }));
+        const web = S.ready ? curated().filter(g => g.art && !keys.has(`web:${g.id}`) && !old.has(g.id) && !thumbs.isHidden('web', g.id))
+          .slice(0, ROW).map(g => webItem(g, { why: tr('Hand-picked, and you haven’t launched it here yet'), o: { whyIcon: 'star' } })) : [];
+        return shelf({ id: 'untried', title: tr('Games you haven’t tried'), icon: 'sparkles', size: 'md', items: [...arc, ...web].slice(0, ROW + 4),
+          sub: tr('Never launched on this device, so they are new to you — not new to StaticOS.') });
+      },
+
+      /* the games you said you finished */
+      finished: () => {
+        const items = [];
+        for (const b of beatenList()) {
+          let it = null;
+          if (b.kind === 'web') { const g = S.ready ? catalogue.byId(b.id) : null; it = g ? webItem(g) : null; }
+          else if (b.kind === 'arcade') { const a = ARCADE.find(x => x.id === b.id); it = a ? arcItem(a) : null; }
+          else { const pr = arr(S.projects).find(x => x.id === b.id); it = pr ? creItem(pr) : null; }
+          if (it) items.push({ ...it, why: tr('You marked it beaten {when}', { when: QP.ago(b.at) }), o: { ...(it.o || {}), whyIcon: 'check' } });
+        }
+        return shelf({ id: 'finished', title: tr('Recently finished'), icon: 'check', size: 'sm', items: items.slice(0, ROW),
+          sub: tr('Games you marked as beaten from a card’s menu. Only you can say so; nothing is detected.') });
+      },
+
+      /* the season's shelf (Halloween has its own, above) */
+      seasonal: () => {
+        if (!S.ready) return null;
+        const id = Object.keys(SEASON_SHELVES).find(k => inSeason(k));
+        if (!id) return null;
+        const def = SEASON_SHELVES[id];
+        const seen = new Set();
+        const rows = def.tags.flatMap(t => catalogue.query({ tag: t, sort: 'catalogue', perPage: 40 }).items).filter(g => !seen.has(g.id) && seen.add(g.id) && !thumbs.isHidden('web', g.id));
+        if (rows.length < 3) return null;
+        return shelf({ id: 'seasonal', title: SEASONS[id].name, icon: def.icon, size: 'md',
+          items: rows.slice(0, ROW).map(g => webItem(g, { o: { meta: webMeta(g, 'seasonal') } })),
+          sub: tr('Here while it’s {season} on this device’s calendar · games their publishers tag {tags}.', { season: SEASONS[id].name, tags: def.tags.map(x => `“${x}”`).join(', ') }) });
+      },
+
+      arcade: () => shelf({ id: 'arcade', title: tr('Static Arcade'), icon: 'zap', size: 'md',
         items: ARCADE.map(a => arcItem(a, { why: a.blurb, o: { whyIcon: 'play' } })),
-        sub: 'Built into StaticOS — instant, no download.', more: { label: 'All Arcade', onClick: () => setTab('arcade') } }),
+        sub: tr('Built into StaticOS — instant, no download.'), more: { label: tr('All Arcade'), onClick: () => setTab('arcade') } }),
 
       creations: () => {
         const ps = sortedProjects();
         if (!ps.length) return null;
-        return shelf({ id: 'creations', title: 'Your Creations', icon: 'sparkles', size: 'md',
-          items: ps.slice(0, ROW).map(p => creItem(p)), sub: 'Games you made in Static Forge.',
-          more: { label: 'Creations', onClick: () => setTab('creations') } });
+        return shelf({ id: 'creations', title: tr('Your Creations'), icon: 'sparkles', size: 'md',
+          items: ps.slice(0, ROW).map(p => creItem(p)), sub: tr('Games you made in Static Forge.'),
+          more: { label: tr('Creations'), onClick: () => setTab('creations') } });
       },
 
       featured: () => {
         const items = featuredGames().map(g => webItem(g));
-        return shelf({ id: 'featured', title: 'Featured', icon: 'star', size: 'lg', items, lazy: true,
-          sub: 'Hand-picked from the catalogue.' });
+        return shelf({ id: 'featured', title: tr('Featured'), icon: 'star', size: 'lg', items, lazy: true,
+          sub: tr('Hand-picked from the catalogue.') });
       },
 
       popular: () => {
         const rows = measuredRows().sort((a, b) => b.plays - a.plays).slice(0, ROW);
-        return shelf({ id: 'popular', title: 'Popular', icon: 'flame', size: 'md', lazy: true,
-          items: rows.map(g => webItem(g, { why: `${g.plays.toLocaleString()} plays, as reported by ${g.studio}` })),
-          sub: 'Most plays, as reported by each game’s publisher.' });
+        return shelf({ id: 'popular', title: tr('Popular'), icon: 'flame', size: 'md', lazy: true,
+          items: rows.map(g => webItem(g, { why: tr('{plays} plays, as reported by {studio}', { plays: g.plays.toLocaleString(), studio: g.studio }) })),
+          sub: tr('Most plays, as reported by each game’s publisher.') });
       },
 
       gems: () => {
         const G = gemRule(playedWebIds());
         const items = shuffle(G.pool).slice(0, ROW).map(g => webItem(g, { why: G.why(g), o: { whyIcon: 'diamond' } }));
-        return shelf({ id: 'gems', title: 'Hidden Gems', icon: 'diamond', size: 'md', items, lazy: true,
-          sub: `The rule: ${G.rule}. ${plural(G.pool.length, 'game')} fit${G.pool.length > items.length ? `; these ${items.length} are a random draw` : ''}.` });
+        return shelf({ id: 'gems', title: tr('Hidden Gems'), icon: 'diamond', size: 'md', items, lazy: true,
+          sub: G.pool.length > items.length ? tr('The rule: {rule}. {games} fit; these {n} are a random draw.', { rule: G.rule, games: plural(G.pool.length, 'game'), n: items.length }) : tr('The rule: {rule}. {games} fit.', { rule: G.rule, games: plural(G.pool.length, 'game') }) });
       },
     };
     CAT_ROWS.forEach((c, k) => {
@@ -1346,10 +1520,10 @@ defineApp({
         return shelf({ id: `cat-${c}`, title: catName(c), icon: catIcon(c), lazy: true,
           size: 'sm', layout: k % 2 ? 'compact' : 'rail',
           items: res.items.map(g => webItem(g, { o: { meta: webMeta(g, c) } })), sub: plural(res.total, 'game'),
-          more: { label: 'Browse all', onClick: () => browseCat(c) } });
+          more: { label: tr('Browse all'), onClick: () => browseCat(c) } });
       };
     });
-    const HOME_ORDER = ['hero', 'continue', 'halloween', 'quick', 'favorites', 'thumbs', 'collections', 'because', 'trending', 'arcade', 'creations', 'featured', 'popular', 'gems', ...CAT_ROWS.map(c => `cat:${c}`), 'hidden'];
+    const HOME_ORDER = ['hero', 'continue', 'daily', 'halloween', 'seasonal', 'quick', 'goals', 'favorites', 'thumbs', 'finished', 'collections', 'because', 'trending', 'untried', 'arcade', 'creations', 'featured', 'popular', 'gems', ...CAT_ROWS.map(c => `cat:${c}`), 'hidden'];
 
     function buildHome() {
       slots.clear();
@@ -1372,7 +1546,7 @@ defineApp({
       const had = ae && slot.contains(ae)
         ? { kind: ae.dataset?.kind, id: ae.dataset?.id, idx: [...slot.querySelectorAll('.sp-go')].indexOf(ae) } : null;
       let node = null;
-      try { node = (S.ready || id === 'hero' || id === 'quick' || id === 'arcade' || id === 'creations' || id === 'halloween') ? HOME[id]() : (id === 'continue' ? skeletonRow('xl') : null); }
+      try { node = (S.ready || id === 'hero' || id === 'quick' || id === 'arcade' || id === 'creations' || id === 'halloween' || id === 'daily' || id === 'goals' || id === 'finished') ? HOME[id]() : (id === 'continue' ? skeletonRow('xl') : null); }
       catch (err) { console.error('[play] section', id, err); node = null; }
       for (const old of slot.children) old._dispose?.();
       api.render(slot, node);
@@ -1405,11 +1579,11 @@ defineApp({
       return h('aside.sp-about',
         icon('info'),
         h('div',
-          h('b', { text: 'How this page is built' }),
-          h('p', { text: 'Everything here comes from this device’s own history, the Static Arcade and the games catalogue. Nothing is shown about other players — StaticOS has no server to know about them.' }),
-          measuredAny ? null : h('p', { text: 'Play counts and ratings are left out on purpose: the catalogue’s numbers are placeholders, not measurements, so there is no Popular row until real ones exist, and Hidden Gems uses a rule that needs no ratings. There’s no “New” row either — the catalogue has no release dates.' }),
-          h('p', { text: 'Thumbs-up and thumbs-down are yours alone, kept on this device: they shape your shelves here and are never shown to, or counted for, anyone else.' }),
-          h('p.sp-about__keys', { text: 'Keyboard: arrows move between games · Enter plays · F favorites · U thumbs-up · D thumbs-down (hides it) · I details · M more (Add to Desktop, collections) · / search. On touch, press and hold a game for the same menu.' })));
+          h('b', { text: tr('How this page is built') }),
+          h('p', { text: tr('Everything here comes from this device’s own history, the Static Arcade and the games catalogue. Nothing is shown about other players — StaticOS has no server to know about them.') }),
+          measuredAny ? null : h('p', { text: tr('Play counts and ratings are left out on purpose: the catalogue’s numbers are placeholders, not measurements, so there is no Popular row until real ones exist, and Hidden Gems uses a rule that needs no ratings. There’s no “New” row either — the catalogue has no release dates.') }),
+          h('p', { text: tr('Thumbs-up and thumbs-down are yours alone, kept on this device: they shape your shelves here and are never shown to, or counted for, anyone else.') }),
+          h('p.sp-about__keys', { text: tr('Keyboard: arrows move between games · Enter plays · F favorites · U thumbs-up · D thumbs-down (hides it) · I details · M more (Add to Desktop, collections) · / search. On touch, press and hold a game for the same menu.') })));
     }
 
     /** rebuild some Home sections in place (after a play, a favourite, a project change) */
@@ -1491,99 +1665,6 @@ defineApp({
       }
     }
 
-    /* ---------------------------------------------------------------- *
-     *  Discover
-     * ---------------------------------------------------------------- */
-    function buildDiscover() {
-      const rng = Math.random;
-      const played = playedWebIds();
-      const recent = recentItems(40);
-      const webRecent = recent.filter(x => x.kind === 'web' && !isHidden(x));
-      const out = [h('div.sp-page-h',
-        h('div', h('h1', { text: 'Discover' }),
-          h('p', { text: 'Different every visit. Every pick says why it’s here.' })),
-        h('button.sp-btn.sp-shuffle', { type: 'button', 'aria-label': 'Shuffle: pick new games for every row',
-          onclick: e => {
-            const had = document.activeElement === e.currentTarget;
-            render();
-            if (had) view.querySelector('.sp-shuffle')?.focus({ preventScroll: true });
-          } }, icon('shuffle'), 'Shuffle'))];
-
-      /* Because You Played X — a random one of your last five */
-      if (webRecent.length) {
-        const src = webRecent[Math.floor(rng() * Math.min(5, webRecent.length))];
-        const items = shuffle(catalogue.related(src.g, 30).filter(g => !played.has(g.id)), rng).slice(0, 12)
-          .map(g => webItem(g, { why: sharedWith(g, src.g) }));
-        const n = Math.min(5, webRecent.length);
-        const when = src.at ? QP.ago(src.at) : '';
-        const lead = n === 1 ? (when ? `You played it ${when}.` : '')
-          : `Picked at random from your last ${n} games${when ? ` — you played this one ${when}` : ''}.`;
-        out.push(shelf({ title: `Because you played ${src.title}`, icon: 'sparkles', size: 'md', items,
-          sub: `${lead} These share its categories or tags, and you haven’t played them yet.`.trim() }));
-      }
-
-      /* You Might Like — categories weighted by your history */
-      const pc = playedCats();
-      const favCats = new Map();
-      for (const g of catalogue.byIds(QP.favIds())) for (const c of g.cats) if (c !== 'featured') favCats.set(c, (favCats.get(c) || 0) + 1);
-      const weights = new Map();
-      for (const [c, n] of pc) weights.set(c, (weights.get(c) || 0) + n * 2);
-      for (const [c, n] of favCats) weights.set(c, (weights.get(c) || 0) + n);
-      if (weights.size) {
-        const chosen = [];
-        const bag = [...weights.entries()].filter(([c]) => catalogue.counts().get(c));
-        while (chosen.length < 3 && bag.length) {
-          const total = bag.reduce((s, [, w]) => s + w, 0);
-          let r = rng() * total;
-          const k = bag.findIndex(([, w]) => (r -= w) <= 0);
-          chosen.push(bag.splice(k < 0 ? 0 : k, 1)[0][0]);
-        }
-        const items = [];
-        for (const c of chosen) {
-          const why = pc.get(c) ? `You’ve played ${plural(pc.get(c), `${catName(c)} game`)}` : `${plural(favCats.get(c), 'favorite')} ${favCats.get(c) === 1 ? 'is' : 'are'} ${catName(c)}`;
-          const pool = catalogue.query({ category: c, sort: 'catalogue', perPage: 300 }).items.filter(g => !played.has(g.id));
-          for (const g of shuffle(pool, rng).slice(0, 5)) items.push(webItem(g, { why, o: { meta: webMeta(g, c) } }));
-        }
-        out.push(shelf({ title: 'You Might Like', icon: 'heart', size: 'md', items: shuffle(items, rng),
-          sub: 'From the categories you play and save most.' }));
-      } else {
-        out.push(h('aside.sp-note', icon('compass'), h('div', h('b', { text: 'Discover learns from what you play' }),
-          h('p', { text: 'Play or favorite a few games and this page starts leaning toward what you like. Until then: quick picks, a random gem and something different.' }))));
-      }
-
-      /* Picks for 5 Minutes */
-      const quickArc = ARCADE.filter(a => a.minutes <= 2).map(a => arcItem(a, { why: `Rounds take about ${a.minutes} min`, o: { meta: a.blurb, whyIcon: 'clock' } }));
-      const quickWeb = shuffle([
-        ...catalogue.query({ tag: 'hypercasual', perPage: 200, sort: 'catalogue' }).items,
-        ...catalogue.query({ tag: 'clicker', perPage: 120, sort: 'catalogue' }).items,
-      ].filter((g, k, a) => a.findIndex(x => x.id === g.id) === k), rng).slice(0, 10)
-        .map(g => webItem(g, { why: `Tagged ${g.tags.find(t => /^(hypercasual|clicker)$/i.test(t)).toLowerCase()} by its publisher` }));
-      out.push(shelf({ title: 'Picks for 5 Minutes', icon: 'clock', size: 'sm', items: [...quickArc, ...quickWeb],
-        sub: 'Arcade games with rounds of 2 minutes or less, and games their publishers tag hypercasual or clicker.' }));
-
-      /* Random Hidden Gem */
-      out.push(gemSpot(rng, played));
-
-      /* Something Different */
-      const allCats = catalogue.categories().map(c => c.id).filter(c => c !== 'featured');
-      const never = allCats.filter(c => !pc.has(c));
-      let diff, why;
-      if (never.length) {
-        diff = never[Math.floor(rng() * never.length)];
-        why = `You haven’t played any ${catName(diff)} games here yet`;
-      } else {
-        diff = [...pc.entries()].sort((a, b) => a[1] - b[1])[0][0];
-        why = `${catName(diff)} is the category you’ve played least`;
-      }
-      const dPool = catalogue.query({ category: diff, sort: 'catalogue', perPage: 200 }).items.filter(g => !played.has(g.id));
-      const cardWhy = never.length ? `${catName(diff)} — new to you` : `${catName(diff)} — your least-played`;
-      const dItems = [...dPool.filter(g => g.curated), ...shuffle(dPool.filter(g => !g.curated), rng)].slice(0, 12)
-        .map(g => webItem(g, { why: cardWhy, o: { meta: webMeta(g, diff), whyIcon: 'compass' } }));
-      out.push(shelf({ title: `Something Different: ${catName(diff)}`, icon: catIcon(diff), size: 'md', items: dItems,
-        sub: why + '.', more: { label: 'Browse all', onClick: () => browseCat(diff) } }));
-      return out;
-    }
-
     function gemSpot(rng, played, notId = null) {
       const G = gemRule(played);
       /* "Roll again" never lands on the gem already showing */
@@ -1591,13 +1672,13 @@ defineApp({
       const g = pool[Math.floor(rng() * pool.length)] || null;
       if (!g) return null;
       const why = G.why(g);
-      const rule = `Picked at random from the ${plural(G.pool.length, 'game')} that fit the Hidden Gems rule: ${G.rule}.`;
+      const rule = tr('Picked at random from the {games} that fit the Hidden Gems rule: {rule}.', { games: plural(G.pool.length, 'game'), rule: G.rule });
       const it = webItem(g);
       const node = h('section.sp-sec.sp-gem', { 'aria-labelledby': 'sp-gem-h' },
         h('div.sp-sec__h', h('div.sp-sec__tt',
-          h('h2.sp-sec__title', { id: 'sp-gem-h' }, icon('diamond'), h('span', { text: 'Random Hidden Gem' })),
+          h('h2.sp-sec__title', { id: 'sp-gem-h' }, icon('diamond'), h('span', { text: tr('Random Hidden Gem') })),
           h('p.sp-sec__sub', { text: rule })),
-          h('div.sp-sec__tools', h('button.sp-more', { type: 'button', 'aria-label': 'Roll again: show another random hidden gem',
+          h('div.sp-sec__tools', h('button.sp-more', { type: 'button', 'aria-label': tr('Roll again: show another random hidden gem'),
             onclick: e => {
               const next = gemSpot(Math.random, played, g.id);
               if (!next) return;
@@ -1605,7 +1686,7 @@ defineApp({
               node.replaceWith(next);
               /* the button just pressed is gone: keep the keyboard where it was */
               if (hadFocus) next.querySelector('.sp-sec__tools .sp-more')?.focus({ preventScroll: true });
-            } }, icon('shuffle'), h('span', { text: 'Roll again' })))),
+            } }, icon('shuffle'), h('span', { text: tr('Roll again') })))),
         h('div.sp-gem__card', { dataset: { nav: 'row' } },
           artNode(it, { big: true }),
           h('div.sp-gem__b',
@@ -1616,11 +1697,11 @@ defineApp({
             g.desc ? h('p', { text: QP.cleanText(g.desc) }) : null,
             h('div.sp-gem__why', icon('keyboard'), h('span', { text: controlsOf(g) })),
             h('div.sp-hero__acts',
-              h('button.sp-btn.sp-btn--play.sp-go', { type: 'button', dataset: { kind: 'web', id: g.id }, 'aria-label': `Play ${it.title}. ${why}`,
+              h('button.sp-btn.sp-btn--play.sp-go', { type: 'button', dataset: { kind: 'web', id: g.id }, 'aria-label': tr('Play {title}. {why}', { title: it.title, why }),
                 'aria-keyshortcuts': 'F U D I M Shift+F10',
                 onclick: () => play(it),
-                on: { 'sp:fav': () => toggleFav(g.id), 'sp:info': () => details(it) } }, icon('play', { fill: true }), 'Play'),
-              h('button.sp-btn', { type: 'button', onclick: () => details(it) }, icon('info'), 'Details'),
+                on: { 'sp:fav': () => toggleFav(g.id), 'sp:info': () => details(it) } }, icon('play', { fill: true }), tr('Play')),
+              h('button.sp-btn', { type: 'button', onclick: () => details(it) }, icon('info'), tr('Details')),
               (() => { const b = h('button.sp-btn.sp-btn--icon.sp-fav', { type: 'button', dataset: { favId: g.id }, onclick: () => toggleFav(g.id) }); paintFav(b, isFav(g.id), it.title); return b; })(),
               ...thumbPair(it, '.sp-btn.sp-btn--icon'),
               moreBtn(it, '.sp-btn.sp-btn--icon', true)))));
@@ -1635,23 +1716,33 @@ defineApp({
       const out = [];
       out.push(h('div.sp-mp__hero',
         h('div.sp-mp__glyph', icon('gamepad'), icon('gamepad')),
-        h('div', h('h1', { text: 'Play together' }),
-          h('p', { text: 'Two players on one device, and online games that run on their publisher’s own servers.' }))));
+        h('div', h('h1', { text: tr('Play together') }),
+          h('p', { text: tr('Two players on one device, and online games that run on their publisher’s own servers.') }))));
 
       out.push(h('aside.sp-note.sp-note--server', { role: 'note' },
         icon('users'),
         h('div',
-          h('b', { text: 'No parties, lobbies or friends lists here' }),
+          h('b', { text: tr('No parties, lobbies or friends lists here') }),
           h('p', { text: NO_SERVER }),
-          h('p', { text: 'What does work: the local games below really take two players on one device, and online games connect to their publisher’s servers on their own.' }))));
+          h('p', { text: tr('What does work: the local games below really take two players on one device, and online games connect to their publisher’s servers on their own.') }))));
+
+      /* online: Arcade games that can be played against a friend, each with an invite */
+      const onlineArc = ARCADE.filter(a => a.online && !thumbs.isHidden('arcade', a.id));
+      if (onlineArc.length) {
+        out.push(h('section.sp-sec', { 'aria-labelledby': 'sp-mp-online', dataset: { sec: 'friend-online' } },
+          h('div.sp-sec__h', h('div.sp-sec__tt',
+            h('h2.sp-sec__title', { id: 'sp-mp-online' }, icon('send'), h('span', { text: tr('Play a friend online') })),
+            h('p.sp-sec__sub', { text: tr('Pick a friend and an Arcade room opens; its code goes to them and they choose whether to join. Only people on your friends list can be invited, and nobody is matched with strangers.') }))),
+          h('div.sp-agrid.sp-agrid--mp', { role: 'list', dataset: { nav: 'grid' } }, onlineArc.map(a => arcadeTile(a, { invite: true })))));
+      }
 
       /* local: the Arcade games that truly take two */
       const local = ARCADE.filter(a => a.players.includes(2) && !thumbs.isHidden('arcade', a.id));
       if (local.length) {
         out.push(h('section.sp-sec', { 'aria-labelledby': 'sp-mp-local' },
           h('div.sp-sec__h', h('div.sp-sec__tt',
-            h('h2.sp-sec__title', { id: 'sp-mp-local' }, icon('users'), h('span', { text: 'Local multiplayer on one device' })),
-            h('p.sp-sec__sub', { text: 'Static Arcade games built for two. They run on this device, so they really work.' }))),
+            h('h2.sp-sec__title', { id: 'sp-mp-local' }, icon('users'), h('span', { text: tr('Local multiplayer on one device') })),
+            h('p.sp-sec__sub', { text: tr('Static Arcade games built for two. They run on this device, so they really work.') }))),
           h('div.sp-agrid.sp-agrid--mp', { role: 'list', dataset: { nav: 'grid' } }, local.map(a => arcadeTile(a, { two: true })))));
       }
 
@@ -1661,64 +1752,102 @@ defineApp({
         ...catalogue.query({ category: '2player', sort: 'catalogue', perPage: 60 }).items,
         ...catalogue.query({ tag: '2 player', sort: 'catalogue', perPage: 40 }).items,
       ].filter(uniq).slice(0, 24);
-      out.push(shelf({ title: '2 Player', icon: 'users', size: 'md',
-        items: two.map(g => webItem(g, { why: controlsOf(g), o: { whyIcon: 'keyboard', muted: !/^Controls:/.test(controlsOf(g)) } })),
-        sub: 'Marked 2-player by their publishers. Controls are shown only when the publisher lists them.',
-        more: { label: 'Browse all', onClick: () => browseCat('2player') } }));
+      out.push(shelf({ title: tr('2 Player'), icon: 'users', size: 'md',
+        items: two.map(g => webItem(g, { why: controlsOf(g), o: { whyIcon: 'keyboard', muted: controlsOf(g) === tr('Controls not listed') } })),
+        sub: tr('Marked 2-player by their publishers. Controls are shown only when the publisher lists them.'),
+        more: { label: tr('Browse all'), onClick: () => browseCat('2player') } }));
 
       const io = catalogue.query({ category: 'io', sort: 'catalogue', perPage: 24 }).items;
-      out.push(shelf({ title: 'Online games', icon: 'globe', size: 'md',
-        items: io.map(g => webItem(g, { why: controlsOf(g), o: { whyIcon: 'keyboard', muted: !/^Controls:/.test(controlsOf(g)) } })), sub: IO_NOTE,
-        more: { label: 'Browse all', onClick: () => browseCat('io') } }));
+      out.push(shelf({ title: tr('Online games'), icon: 'globe', size: 'md',
+        items: io.map(g => webItem(g, { why: controlsOf(g), o: { whyIcon: 'keyboard', muted: controlsOf(g) === tr('Controls not listed') } })), sub: IO_NOTE,
+        more: { label: tr('Browse all'), onClick: () => browseCat('io') } }));
 
       const party = catalogue.all().filter(g => g.tags.some(t => /\bparty\b/i.test(t))).slice(0, 24);
-      out.push(shelf({ title: 'Party Games', icon: 'sparkles', size: 'md',
-        items: party.map(g => webItem(g, { why: controlsOf(g), o: { whyIcon: 'keyboard', muted: !/^Controls:/.test(controlsOf(g)) } })), sub: 'Tagged “party” by their publishers.' }));
+      out.push(shelf({ title: tr('Party Games'), icon: 'sparkles', size: 'md',
+        items: party.map(g => webItem(g, { why: controlsOf(g), o: { whyIcon: 'keyboard', muted: controlsOf(g) === tr('Controls not listed') } })), sub: tr('Tagged “party” by their publishers.') }));
       return out;
     }
 
     /* ---------------------------------------------------------------- *
      *  Arcade
      * ---------------------------------------------------------------- */
+    /* Invite a friend: pick someone from your friends list, an Arcade room opens, and its
+       code goes to that friend (js/core/friends.js). Nobody is matched with strangers. */
+    async function inviteFriend(a, anchor) {
+      let F = null;
+      try { F = await import('../core/friends.js'); } catch (e) { F = null; }
+      const say = (title, message, ic = 'info') => api.notify({ app: 'Static Play', icon: ic, title, message, timeout: 6000 });
+      if (!F || !F.available()) { say(tr('Friends aren’t available here'), tr('Sign in to a profile to add friends in Static Social.'), 'alert'); return; }
+      const list = F.friends();
+      if (!list.length) {
+        api.notify({ app: 'Static Play', icon: 'users', title: tr('No friends added yet'), message: tr('Add a friend with their friend code first.'), timeout: 6000,
+          actions: [{ label: tr('Open Friends'), onClick: () => api.openApp('social', { friends: true }) }] });
+        return;
+      }
+      const r = anchor.getBoundingClientRect();
+      api.menu([
+        { header: true, label: tr('Invite to {title}', { title: a.title }) },
+        ...list.map(f => ({
+          label: f.display, icon: 'send', hint: f.presence === 'offline' ? 'offline' : f.presence,
+          onClick: async () => {
+            const code = await new Promise(res => {
+              const t = setTimeout(() => { off(); res(null); }, 20000);
+              const off = api.bus.on('arcade:room', e => { if (e && e.game === a.id && e.code) { clearTimeout(t); off(); res(e.code); } });
+              api.openApp('arcade', { game: a.id, online: true, host: true });
+            });
+            if (!code) { say(tr('The room did not open'), tr('Open the game in the Arcade and make a room from there.'), 'alert'); return; }
+            const res = await F.sendRoomInvite(f.fp, { game: a.id, code });
+            if (res.ok) say(tr('Invited {name}', { name: f.display }), tr('Your room code {code} was sent. They choose whether to join. The code is also in your room.', { code }), 'send');
+            else say(tr('Could not send the invite'), tr('Your room is open — give {name} the code {code} yourself.', { name: f.display, code }), 'alert');
+          },
+        })),
+      ], r.left, r.bottom + 4);
+    }
+
     function arcadeTile(a, o = {}) {
       const it = arcItem(a);
       const chips = [
-        h('span.sp-chip', icon('clock'), `~${a.minutes} min`),
+        h('span.sp-chip', icon('clock'), tr('~{minutes} min', { minutes: a.minutes })),
         h('span.sp-chip', icon('users'), playersText(a)),
-        ...a.input.map(x => h('span.sp-chip', { text: INPUT_LABEL[x] || x })),
+        ...a.input.map(x => h('span.sp-chip', { text: tr(INPUT_LABEL[x] || x) })),
       ];
       const two = a.players.includes(2);
       const primaryTwo = o.two && two;
+      const best = bestOf(a.id);
+      if (best !== null) chips.push(h('span.sp-chip.sp-chip--best', { title: a.better === 'low' ? tr('Your best on this device — lower is better') : tr('Your best on this device'), dataset: { best: String(best) } },
+        icon('star', { fill: true }), `Best ${best.toLocaleString(undefined, { maximumFractionDigits: 1 })}${a.better === 'low' ? ' · low wins' : ''}`));
       return bindItem(h('div.sp-atile', { role: 'listitem', style: { '--hue': a.hue } },
         h('div.sp-atile__art', h('span.sp-art__glyph', icon(a.icon)),
-          h('div.sp-thumbs', { role: 'group', 'aria-label': `Your thumbs for ${a.title}` }, thumbPair(it, '.sp-thumb--tab'))),
+          h('div.sp-thumbs', { role: 'group', 'aria-label': tr('Your thumbs for {title}', { title: a.title }) }, thumbPair(it, '.sp-thumb--tab'))),
         h('div.sp-atile__b',
           h('h3', { text: a.title }),
           h('p', { text: a.blurb }),
           h('div.sp-atile__chips', chips),
           h('div.sp-atile__acts',
             h('button.sp-btn.sp-btn--play.sp-go', { type: 'button', dataset: { kind: 'arcade', id: a.id },
-              'aria-label': primaryTwo ? `Play ${a.title} with a friend, 2 players` : `Play ${a.title}`, 'aria-keyshortcuts': 'U D M Shift+F10',
+              'aria-label': primaryTwo ? tr('Play {title} with a friend, 2 players', { title: a.title }) : tr('Play {title}', { title: a.title }), 'aria-keyshortcuts': 'U D M Shift+F10',
               onclick: () => play(it, primaryTwo ? { players: 2 } : {}) },
-            icon(primaryTwo ? 'users' : 'play', { fill: !primaryTwo }), primaryTwo ? 'Play with a friend' : 'Play'),
-            two && !primaryTwo ? h('button.sp-btn', { type: 'button', 'aria-label': `Play ${a.title} with 2 players`,
-              onclick: () => play(it, { players: 2 }) }, icon('users'), '2 players') : null,
-            primaryTwo ? h('button.sp-btn', { type: 'button', 'aria-label': `Play ${a.title} alone`,
-              onclick: () => play(it) }, 'Solo') : null,
+            icon(primaryTwo ? 'users' : 'play', { fill: !primaryTwo }), primaryTwo ? tr('Play with a friend') : tr('Play')),
+            two && !primaryTwo ? h('button.sp-btn', { type: 'button', 'aria-label': tr('Play {title} with 2 players', { title: a.title }),
+              onclick: () => play(it, { players: 2 }) }, icon('users'), tr('2 players')) : null,
+            primaryTwo ? h('button.sp-btn', { type: 'button', 'aria-label': tr('Play {title} alone', { title: a.title }),
+              onclick: () => play(it) }, tr('Solo')) : null,
+            o.invite && a.online ? h('button.sp-btn', { type: 'button', dataset: { act: 'invite', id: a.id }, 'aria-haspopup': 'menu',
+              'aria-label': tr('Invite a friend to {title}', { title: a.title }), onclick: e => inviteFriend(a, e.currentTarget) }, icon('send'), tr('Invite a friend')) : null,
             moreBtn(it, '.sp-btn.sp-btn--icon.sp-atile__more', true)))), it);
     }
 
     let arcFilter = 'all';
     function buildArcade() {
       const FILTERS = [
-        { id: 'all', l: 'All', f: () => true },
-        { id: 'quick', l: '2 min or less', f: a => a.minutes <= 2 },
-        { id: 'two', l: '2 players', f: a => a.players.includes(2) },
-        { id: 'classic', l: 'Classic', f: a => a.tags.includes('classic') },
-        { id: 'skill', l: 'Skill', f: a => a.tags.includes('skill') },
-        { id: 'puzzle', l: 'Puzzle', f: a => a.tags.includes('puzzle') || a.tags.includes('memory') },
+        { id: 'all', l: tr('All'), f: () => true },
+        { id: 'quick', l: tr('2 min or less'), f: a => a.minutes <= 2 },
+        { id: 'two', l: tr('2 players'), f: a => a.players.includes(2) },
+        { id: 'classic', l: tr('Classic'), f: a => a.tags.includes('classic') },
+        { id: 'skill', l: tr('Skill'), f: a => a.tags.includes('skill') },
+        { id: 'puzzle', l: tr('Puzzle'), f: a => a.tags.includes('puzzle') || a.tags.includes('memory') },
       ];
-      const grid = h('div.sp-agrid', { role: 'list', 'aria-label': 'Static Arcade games', dataset: { nav: 'grid' } });
+      const grid = h('div.sp-agrid', { role: 'list', 'aria-label': tr('Static Arcade games'), dataset: { nav: 'grid' } });
       const pills = FILTERS.map(f => h('button.sp-pill', { type: 'button', dataset: { f: f.id },
         onclick: () => { arcFilter = f.id; paint(); } }, f.l));
       const paint = () => {
@@ -1731,7 +1860,7 @@ defineApp({
       /* the Arcade games you gave a thumbs-down are not in the grid; say so */
       const hiddenArc = ARCADE.filter(a => thumbs.isHidden('arcade', a.id)).length;
       const hidNote = hiddenArc ? h('div.sp-hidnote', { role: 'note' }, icon('eye-off'),
-        h('span', { text: `${plural(hiddenArc, 'Arcade game')} you hid ${hiddenArc === 1 ? 'is' : 'are'} left out.` }),
+        h('span', { text: tr(hiddenArc === 1 ? '{games} you hid is left out.' : '{games} you hid are left out.', { games: plural(hiddenArc, 'Arcade game') }) }),
         h('button.sp-more', { type: 'button', onclick: () => {
           S.hiddenOpen = true;
           setTab('home');
@@ -1741,13 +1870,14 @@ defineApp({
             sec.scrollIntoView({ block: 'start', behavior: reduced() ? 'auto' : 'smooth' });
             sec.querySelector('.sp-hidden__toggle')?.focus({ preventScroll: true });
           });
-        } }, h('span', { text: 'See hidden games' }), icon('chevron-right'))) : null;
+        } }, h('span', { text: tr('See hidden games') }), icon('chevron-right'))) : null;
       return [
         h('div.sp-page-h.sp-page-h--arcade',
-          h('div', h('h1', { text: 'Static Arcade' }),
-            h('p', { text: `${ARCADE.length} games built into StaticOS. They start instantly — no downloads, no ads, nothing fetched from the internet.` })),
-          h('button.sp-btn', { type: 'button', onclick: () => openOr('arcade', {}, 'Static Arcade') }, icon('external-link'), 'Open Arcade')),
-        h('div.sp-filters', { role: 'group', 'aria-label': 'Filter Arcade games' }, pills),
+          h('div', h('h1', { text: tr('Static Arcade') }),
+            h('p', { text: tr('{length} games built into StaticOS. They start instantly — no downloads, no ads, nothing fetched from the internet.', { length: ARCADE.length }) })),
+          h('button.sp-btn', { type: 'button', onclick: () => openOr('arcade', {}, 'Static Arcade') }, icon('external-link'), tr('Open Arcade'))),
+        h('div.sp-filters', { role: 'group', 'aria-label': tr('Filter Arcade games') }, pills),
+        h('div.sp-slot', { dataset: { slot: 'daily-arcade' } }, HOME.daily()),
         hidNote,
         grid,
       ];
@@ -1763,45 +1893,45 @@ defineApp({
     }
 
     function makeBar(quiet) {
-      const input = h('input.sp-make__in', { type: 'text', placeholder: 'Describe a game, e.g. “a space dodger with power-ups”', maxlength: '300',
-        'aria-label': 'Describe a game for Static Forge to make' });
+      const input = h('input.sp-make__in', { type: 'text', placeholder: tr('Describe a game, e.g. “a space dodger with power-ups”'), maxlength: '300',
+        'aria-label': tr('Describe a game for Static Forge to make') });
       const go = () => {
         const prompt = input.value.trim();
         openOr('forge', prompt ? { prompt } : {}, 'Static Forge');
       };
       input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
       return h('div.sp-make', icon('sparkles'), input,
-        h(quiet ? 'button.sp-btn' : 'button.sp-btn.sp-btn--play', { type: 'button', onclick: go }, icon('sparkles'), 'Make it'));
+        h(quiet ? 'button.sp-btn' : 'button.sp-btn.sp-btn--play', { type: 'button', onclick: go }, icon('sparkles'), tr('Make it')));
     }
 
     function buildCreations() {
       const head = h('div.sp-page-h',
-        h('div', h('h1', { text: 'Creations' }), h('p', { text: 'Games you made in Static Forge, on this device.' })),
-        h('button.sp-btn', { type: 'button', onclick: () => openOr('forge', {}, 'Static Forge') }, icon('external-link'), 'Open Static Forge'));
+        h('div', h('h1', { text: tr('Creations') }), h('p', { text: tr('Games you made in Static Forge, on this device.') })),
+        h('button.sp-btn', { type: 'button', onclick: () => openOr('forge', {}, 'Static Forge') }, icon('external-link'), tr('Open Static Forge')));
       if (S.projects === null) return [head, makeBar(), h('div.sp-agrid', Array.from({ length: 3 }, () => h('div.sp-skel.sp-skel--md')))];
       const ps = sortedProjects();
       if (!ps.length) {
         return [head, h('div.sp-empty',
           h('span.sp-empty__icon', icon('sparkles')),
-          h('h2', { text: 'You haven’t made a game yet' }),
-          h('p', { text: 'Describe one in a sentence and Static Forge builds it. Everything you make shows up here, ready to play.' }),
+          h('h2', { text: tr('You haven’t made a game yet') }),
+          h('p', { text: tr('Describe one in a sentence and Static Forge builds it. Everything you make shows up here, ready to play.') }),
           makeBar(true),
-          h('button.sp-btn.sp-btn--play.sp-btn--lg', { type: 'button', onclick: () => openOr('forge', {}, 'Static Forge') }, icon('sparkles'), 'Make a game in Static Forge'))];
+          h('button.sp-btn.sp-btn--play.sp-btn--lg', { type: 'button', onclick: () => openOr('forge', {}, 'Static Forge') }, icon('sparkles'), tr('Make a game in Static Forge')))];
       }
       const pub = ps.filter(p => p.published);
       const drafts = ps.filter(p => !p.published);
       const meta = p => {
-        const bits = [p.published ? `Published ${QP.ago(p.published.at)}` : `Edited ${QP.ago(p.updatedAt)}`, plural(arr(p.versions).length, 'version')];
-        if (p.remixCredit) bits.push(`remix of ${p.remixCredit.name}`);
+        const bits = [p.published ? tr('Published {when}', { when: QP.ago(p.published.at) }) : tr('Edited {when}', { when: QP.ago(p.updatedAt) }), plural(arr(p.versions).length, 'version')];
+        if (p.remixCredit) bits.push(tr('remix of {name}', { name: p.remixCredit.name }));
         return bits.join(' · ');
       };
       return [head, makeBar(),
-        shelf({ title: 'Published', icon: 'upload', size: 'md', layout: 'grid',
+        shelf({ title: tr('Published'), icon: 'upload', size: 'md', layout: 'grid',
           items: pub.map(p => creItem(p, { o: { meta: meta(p), why: p.published.description ? p.published.description.slice(0, 90) : '' } })),
-          sub: 'In your Workshop — listed on this device only. Nothing is uploaded, so nobody else can see them.' }),
-        shelf({ title: 'Drafts', icon: 'edit-3', size: 'md', layout: 'grid',
+          sub: tr('In your Workshop — listed on this device only. Nothing is uploaded, so nobody else can see them.') }),
+        shelf({ title: tr('Drafts'), icon: 'edit-3', size: 'md', layout: 'grid',
           items: drafts.map(p => creItem(p, { o: { meta: meta(p), why: p.prompt ? `“${p.prompt.slice(0, 80)}”` : '' } })),
-          sub: 'Open one in Static Forge to keep working on it.' })];
+          sub: tr('Open one in Static Forge to keep working on it.') })];
     }
 
     /* ---------------------------------------------------------------- *
@@ -1839,46 +1969,46 @@ defineApp({
       const asTyped = web.title + web.hay + arc.title + arc.hay + mine.title + mine.hay;
       const closeOnly = total > 0 && asTyped === 0;
       const suggestion = !web.title && !arc.title && !mine.title ? (web.suggestion || arc.suggestion || mine.suggestion) : null;
-      const where = [webHits.length ? 'the catalogue' : null, arcHits.length ? 'the Arcade' : null, mine.hits.length ? 'your creations' : null].filter(Boolean);
-      const whereText = where.length > 1 ? `${where.slice(0, -1).join(', ')} and ${where[where.length - 1]}` : where[0] || 'the catalogue';
-      const line = !total ? 'No matches.'
-        : closeOnly ? `Nothing matches “${q}” as typed — ${plural(total, 'close spelling')} from ${whereText}, closest first.`
-          : `${total.toLocaleString()} ${total === 1 ? 'match' : 'matches'} across ${whereText}.`;
+      const where = [webHits.length ? tr('the catalogue') : null, arcHits.length ? tr('the Arcade') : null, mine.hits.length ? tr('your creations') : null].filter(Boolean);
+      const whereText = where.length > 1 ? `${where.slice(0, -1).join(', ')}${tr(' and ')}${where[where.length - 1]}` : where[0] || tr('the catalogue');
+      const line = !total ? tr('No matches.')
+        : closeOnly ? tr('Nothing matches “{q}” as typed — {spellings} from {where}, closest first.', { q, spellings: plural(total, 'close spelling'), where: whereText })
+          : tr('{matches} across {where}.', { matches: plu(total, '{n} match', '{n} matches'), where: whereText });
 
       const tryIt = text => { searchIn.value = text; onSearch(true); };
       const out = [h('div.sp-page-h', { dataset: { ms: ms.toFixed(2) } },
-        h('div', h('h1', { text: `Results for “${q}”` }),
+        h('div', h('h1', { text: tr('Results for “{q}”', { q }) }),
           h('p', { text: line }),
-          suggestion ? h('p.sp-dym', icon('sparkles'), h('span', { text: 'Did you mean ' }),
-            h('button.sp-dym__go', { type: 'button', 'aria-label': `Search for ${suggestion} instead`, onclick: () => tryIt(suggestion) }, suggestion),
+          suggestion ? h('p.sp-dym', icon('sparkles'), h('span', { text: tr('Did you mean ') }),
+            h('button.sp-dym__go', { type: 'button', 'aria-label': tr('Search for {suggestion} instead', { suggestion }), onclick: () => tryIt(suggestion) }, suggestion),
             h('span', { text: '?' })) : null),
-        h('button.sp-btn', { type: 'button', onclick: () => { searchIn.value = ''; onSearch(true); searchIn.focus(); } }, icon('x'), 'Clear search'))];
+        h('button.sp-btn', { type: 'button', onclick: () => { searchIn.value = ''; onSearch(true); searchIn.focus(); } }, icon('x'), tr('Clear search')))];
 
       const showHiddenNow = on => { S.showHidden = on; rebuild(); };
       if (hiddenN || hiddenShown) {
         out.push(h('div.sp-hidnote', { role: 'note' }, icon('eye-off'),
-          h('span', { text: hiddenN ? `${plural(hiddenN, 'game')} you hid ${hiddenN === 1 ? 'matches' : 'match'} this search.` : `Showing ${plural(hiddenShown, 'game')} you hid, too.` }),
-          h('button.sp-more', { type: 'button', onclick: () => showHiddenNow(!!hiddenN) }, h('span', { text: hiddenN ? (hiddenN === 1 ? 'Show it' : 'Show them') : 'Leave them out' }))));
+          h('span', { text: hiddenN ? tr(hiddenN === 1 ? '{games} you hid matches this search.' : '{games} you hid match this search.', { games: plural(hiddenN, 'game') }) : tr('Showing {games} you hid, too.', { games: plural(hiddenShown, 'game') }) }),
+          h('button.sp-more', { type: 'button', onclick: () => showHiddenNow(!!hiddenN) }, h('span', { text: hiddenN ? (hiddenN === 1 ? tr('Show it') : tr('Show them')) : tr('Leave them out') }))));
       }
       if (!total) {
         out.push(h('div.sp-empty',
           h('span.sp-empty__icon', icon(hiddenN ? 'eye-off' : 'search')),
-          h('h2', { text: hiddenN ? `Only games you hid match “${q}”` : `Nothing matches “${q}”` }),
-          h('p', { text: hiddenN ? 'You gave them a thumbs-down, so they’re left out. Show them to bring one back.' : 'Try a shorter word, a category like racing or puzzle — or let Quick Play choose.' }),
-          hiddenN ? h('button.sp-btn', { type: 'button', onclick: () => showHiddenNow(true) }, icon('eye'), hiddenN === 1 ? 'Show it' : 'Show them') : null,
-          h('button.sp-btn.sp-btn--play', { type: 'button', onclick: () => quickPlay() }, icon('zap', { fill: true }), 'Quick Play')));
+          h('h2', { text: hiddenN ? tr('Only games you hid match “{q}”', { q }) : tr('Nothing matches “{q}”', { q }) }),
+          h('p', { text: hiddenN ? tr('You gave them a thumbs-down, so they’re left out. Show them to bring one back.') : tr('Try a shorter word, a category like racing or puzzle — or let Quick Play choose.') }),
+          hiddenN ? h('button.sp-btn', { type: 'button', onclick: () => showHiddenNow(true) }, icon('eye'), hiddenN === 1 ? tr('Show it') : tr('Show them')) : null,
+          h('button.sp-btn.sp-btn--play', { type: 'button', onclick: () => quickPlay() }, icon('zap', { fill: true }), tr('Quick Play'))));
         return out;
       }
       /* a close spelling listed after real matches says so */
-      const close = (x, exactToo) => (x.tier === FUZZY && exactToo ? { why: 'Close spelling of what you typed', o: { whyIcon: 'search' } } : undefined);
-      out.push(shelf({ title: 'Static Arcade', icon: 'zap', size: 'md', layout: 'grid', showHidden: S.showHidden,
+      const close = (x, exactToo) => (x.tier === FUZZY && exactToo ? { why: tr('Close spelling of what you typed'), o: { whyIcon: 'search' } } : undefined);
+      out.push(shelf({ title: tr('Static Arcade'), icon: 'zap', size: 'md', layout: 'grid', showHidden: S.showHidden,
         items: arcHits.map(x => arcItem(x.row, close(x, arc.title + arc.hay) || { why: x.row.blurb })) }));
-      out.push(shelf({ title: 'Your creations', icon: 'sparkles', size: 'md', layout: 'grid',
+      out.push(shelf({ title: tr('Your creations'), icon: 'sparkles', size: 'md', layout: 'grid',
         items: mine.hits.map(x => creItem(x.row, close(x, mine.title + mine.hay))) }));
       const page = webHits.slice(0, 36 * S.searchPage);
-      const webSec = shelf({ id: 'search-web', title: 'Games', icon: 'gamepad', size: 'md', layout: 'grid', showHidden: S.showHidden,
+      const webSec = shelf({ id: 'search-web', title: tr('Games'), icon: 'gamepad', size: 'md', layout: 'grid', showHidden: S.showHidden,
         items: page.map(x => webItem(x.row, close(x, web.title + web.hay))),
-        sub: web.title + web.hay ? `${plural(webHits.length, 'game')} in the catalogue` : `${plural(webHits.length, 'game')} in the catalogue with a close spelling` });
+        sub: web.title + web.hay ? tr('{games} in the catalogue', { games: plural(webHits.length, 'game') }) : tr('{games} in the catalogue with a close spelling', { games: plural(webHits.length, 'game') }) });
       if (webSec) {
         if (webHits.length > page.length) {
           const shown = page.length;
@@ -1892,7 +2022,7 @@ defineApp({
               /* the keyboard carries on from the first game that just appeared */
               if (had) focusGo(view.querySelectorAll('[data-sec="search-web"] .sp-go')[shown] || view.querySelector('[data-sec="search-web"] .sp-go'));
             } },
-            icon('chevron-down'), `Show more (${(webHits.length - page.length).toLocaleString()} left)`)));
+            icon('chevron-down'), tr('Show more ({n} left)', { n: (webHits.length - page.length).toLocaleString() }))));
         }
         out.push(webSec);
       }
@@ -1916,6 +2046,8 @@ defineApp({
      *  render
      * ---------------------------------------------------------------- */
     function setTab(id) {
+      /* Discover is its own app, so the tab opens it rather than building the same rows again */
+      if (id === 'discover') { openOr('discover', {}, 'Static Discover'); return; }
       if (S.q) { S.q = ''; searchIn.value = ''; searchClear.hidden = true; }
       S.tab = id;
       render();
@@ -1946,20 +2078,19 @@ defineApp({
       try {
         if (S.q) nodes = S.ready ? buildSearch() : [h('div.sp-loading', h('div.spinner'))];
         else if (S.tab === 'home') nodes = buildHome();
-        else if (S.tab === 'discover') nodes = S.ready ? buildDiscover() : [h('div.sp-loading', h('div.spinner'))];
         else if (S.tab === 'multiplayer') nodes = S.ready ? buildMulti() : [h('div.sp-loading', h('div.spinner'))];
         else if (S.tab === 'arcade') nodes = buildArcade();
         else nodes = buildCreations();
       } catch (err) {
         console.error('[play] render', err);
-        nodes = [h('div.sp-empty', h('span.sp-empty__icon', icon('alert')), h('h2', { text: 'This view hit a snag' }),
-          h('p', { text: String(err && err.message || err) }), h('button.sp-btn', { type: 'button', onclick: () => render() }, icon('refresh'), 'Try again'))];
+        nodes = [h('div.sp-empty', h('span.sp-empty__icon', icon('alert')), h('h2', { text: tr('This view hit a snag') }),
+          h('p', { text: String(err && err.message || err) }), h('button.sp-btn', { type: 'button', onclick: () => render() }, icon('refresh'), tr('Try again')))];
       }
       /* the fallback shelf stays until the page reloads (games.data.js keeps it),
          so say so on every view that draws from the catalogue */
       if (S.ready && catalogue.loadError() && S.tab !== 'arcade' && S.tab !== 'creations') {
-        nodes = [h('aside.sp-note.sp-note--warn', { role: 'note' }, icon('alert'), h('div', h('b', { text: 'Showing the built-in shelf' }),
-          h('p', { text: 'The full games catalogue didn’t load, so only the hand-picked games are here. Reload StaticOS to try again.' }))), ...arr(nodes)];
+        nodes = [h('aside.sp-note.sp-note--warn', { role: 'note' }, icon('alert'), h('div', h('b', { text: tr('Showing the built-in shelf') }),
+          h('p', { text: tr('The full games catalogue didn’t load, so only the hand-picked games are here. Reload StaticOS to try again.') }))), ...arr(nodes)];
       }
       const focusWasInView = view.contains(document.activeElement);
       api.render(view, nodes);
@@ -2003,7 +2134,12 @@ defineApp({
       for (const k of gone) dropFromView(k);
       refresh('thumbs', 'hidden');
     }));
-    offs.push(api.store.sub('portal.play', () => refresh('continue', 'because', 'trending')));
+    offs.push(api.store.sub('portal.play', () => refresh('continue', 'because', 'trending', 'goals', 'untried')));
+    offs.push(api.store.sub(DS.KEY, () => { refresh('daily'); if (S.tab === 'arcade' && !S.q) rebuild(); }));
+    offs.push(api.store.sub(K_BEATEN, () => refresh('finished')));
+    /* the descriptions follow the catalogue (games.data.js): the hero and the gem show them when they land */
+    offs.push(catalogue.onDescriptions(() => { if (S.tab === 'home' && !S.q) refresh('hero', 'gems'); }));
+    offs.push(api.store.sub(K_ARC, () => { if ((S.tab === 'arcade' || S.tab === 'multiplayer') && !S.q) rebuild(); }));
     offs.push(collections.subscribe(() => refresh('collections')));
     offs.push(api.store.sub('portal.games.playlog', () => refresh('trending')));
     /* the StaticOS switch and the system setting both stop the hero at once */
@@ -2029,7 +2165,8 @@ defineApp({
       if (!o) return;
       let changed = false;
       if (typeof o.q === 'string') { searchIn.value = o.q; S.q = o.q.trim(); S.searchPage = 1; S.showHidden = false; searchClear.hidden = !o.q; changed = true; }
-      if (tabOf(o.tab)) {
+      if (tabOf(o.tab) === 'discover') openOr('discover', {}, 'Static Discover');
+      else if (tabOf(o.tab)) {
         S.tab = tabOf(o.tab);
         if (typeof o.q !== 'string') { S.q = ''; searchIn.value = ''; searchClear.hidden = true; }
         changed = true;
@@ -2051,6 +2188,7 @@ defineApp({
         if (document.activeElement === searchIn) warmSearch();
       });
     }
+    if (tabOf(opts?.tab) === 'discover') frame(() => openOr('discover', {}, 'Static Discover'));
     if (opts?.quick) frame(() => quickPlay(typeof opts.quick === 'object' ? opts.quick : null));
 
     return () => {

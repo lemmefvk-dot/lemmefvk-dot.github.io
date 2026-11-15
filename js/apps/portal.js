@@ -8,6 +8,7 @@
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import { BRAND, LOCAL_PROXY_URL } from '../portal/brand.js?v=ps5-cloud-proxy-v11';
+import { COUNTS, fmtCount } from '../portal/counts.js';
 
 let PAGES = null, PROVIDERS = null, loadErr = null;
 let loading = null;
@@ -166,8 +167,8 @@ defineApp({
   id: 'aether-games', name: `${BRAND.name} Games`, icon: 'gamepad',
   g1: '#ffa2b6', g2: '#b01038',
   category: 'Internet', pinned: true, dock: false,
-  keywords: ['games', 'play', 'arcade', 'unblocked', 'aether', 'slope', 'subway'],
-  desc: '20 games that play right here',
+  keywords: ['games', 'play', 'arcade', 'aether', 'slope', 'subway'],
+  desc: `${fmtCount(COUNTS.games)} games that play right here`,
   win: { w: 920, h: 620, minW: 520, minH: 380 },
   mount: ctx => mountPortal(ctx, 'static://games'),
 });
@@ -177,7 +178,7 @@ defineApp({
   g1: '#cbb0ff', g2: '#5a1fbd',
   category: 'Internet', pinned: true, dock: false,
   keywords: ['anime', 'manga', 'watch', 'aether', 'myanimelist'],
-  desc: '7,963 anime and 1,200 manga',
+  desc: `${fmtCount(COUNTS.anime)} anime and ${fmtCount(COUNTS.manga)} manga`,
   win: { w: 980, h: 660, minW: 540, minH: 400 },
   mount: ctx => mountPortal(ctx, 'static://anime'),
 });
@@ -198,7 +199,7 @@ defineApp({
   id: 'aether-proxy', name: `${BRAND.name} Proxy`, icon: 'shield',
   g1: '#ffcbdb', g2: '#a01238',
   category: 'Internet', pinned: true, dock: false,
-  keywords: ['proxy', 'unblock', 'browse', 'vpn', 'tunnel', 'web', 'bypass', 'aether'],
+  keywords: ['proxy', 'browse', 'vpn', 'tunnel', 'web', 'aether'],
   desc: 'Browse anything, in this window',
   win: { w: 1060, h: 720, minW: 560, minH: 420 },
   mount: ctx => mountPortal(ctx, 'static://proxy'),
@@ -209,7 +210,7 @@ defineApp({
   g1: '#a6efa8', g2: '#17803c',
   category: 'Internet', pinned: true, dock: false,
   keywords: ['roblox', 'games', 'experiences', 'brookhaven', 'blox fruits', 'adopt me', 'obby'],
-  desc: '1,300 experiences, launched in the Roblox player',
+  desc: `${fmtCount(COUNTS.roblox)} experiences, launched in the Roblox player`,
   win: { w: 1000, h: 680, minW: 540, minH: 400 },
   mount: ctx => mountPortal(ctx, 'static://roblox'),
 });

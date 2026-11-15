@@ -16,12 +16,19 @@
 
    Links: https://<site>/#game=<id> · #arcade=<id> · #app=<id>
           · #arcade=<id>&room=<CODE> (an Arcade online-room invite)
-          · #drop=<CODE> · #watch=<CODE> · #draw=<CODE> · #quiz=<CODE> · #note=<CODE> (Static
-            Drop, Watch Together, Draw Together, live Quiz and Write Together invites: the app
+          · #arcade=<id>&seed=<s>&beat=<score>&by=<name> (an Arcade "Beat this" round)
+          · #party=<CODE> (Static Party opens with the code filled in; the person presses Join)
+          · #drop=<CODE> · #watch=<CODE> · #draw=<CODE> · #quiz=<CODE> · #note=<CODE> · #board=<CODE> · #map=<CODE> (Static
+            Drop, Watch Together, Draw Together, live Quiz, Write Together, shared Board and shared mind map invites: the app
             opens with the code filled in, and nothing happens until the person presses Join)
           · #friend=<CODE> (a friend code: Social › Friends opens with it filled in)
           · #jumper=<a Pixel Jumper level, packed and checked: preview first, then Play>
-          · #creation=<the game itself> · #project=<a web project from Code>.
+          · #creation=<the game itself> · #project=<a web project from Code>
+          · #event=<a Calendar event> · #tasklist=<a copy of a Static Tasks list>
+          · #deck=<a copy of a Static Study flashcard deck>
+            (packed by core/sharelink.js packLink; the app shows it, Add adds it).
+          · #graph=<a Static Graph: its functions, sliders and view>
+            (packed by core/sharelink.js packLink; the app shows it, Add/Open takes it).
    A #project= link opens Code on a read-only review (core/codeshare.js):
    the files can be read, and nothing runs until Run is pressed.
    openDeepLink() runs after boot and whenever the address's # part
@@ -34,6 +41,7 @@ import api from '../core/api.js?v=ps5-cloud-proxy-v11';
 import { bus } from '../core/bus.js';
 import { covered } from '../core/cover.js';
 import * as L from '../core/layers.js';
+import { t } from '../core/i18n.js';
 
 const LINKABLE = new Set(['web', 'arcade', 'app']);
 
@@ -90,92 +98,122 @@ export function mountShare(host) {
     /* a web project from Code: its files travel inside the link (core/codeshare.js) */
     async function projectLink(btn) {
       btn.disabled = true;
-      done('Packing the project into a link…', 'sparkles');
+      done(t('Packing the project into a link…'), 'sparkles');
       try {
         const C = await import('../core/codeshare.js');
         const r = await C.encodeProject({ name: item.title, files: item.files || [], creator: creatorName() });
         if (!sheet) return;
         if (!r.ok) { linkBox.hidden = true; done(r.error, 'alert'); return; }
-        const field = h('input.share__linkin', { type: 'text', readonly: true, value: r.link, 'aria-label': 'Share link', onfocus: e => e.target.select() });
+        const field = h('input.share__linkin', { type: 'text', readonly: true, value: r.link, 'aria-label': t('Share link'), onfocus: e => e.target.select() });
         linkBox.replaceChildren(field,
-          h('button.btn.btn--sm', { type: 'button', onclick: async () => done(await copy(r.link) ? 'Copied again.' : 'Select the link and copy it.') }, icon('copy'), h('span', { text: 'Copy' })));
+          h('button.btn.btn--sm', { type: 'button', onclick: async () => done(await copy(r.link) ? 'Copied again.' : t('Select the link and copy it.')) }, icon('copy'), h('span', { text: t('Copy') })));
         linkBox.hidden = false;
         const size = `${(r.chars / 1024).toFixed(1)} KB link, ${r.count} file${r.count === 1 ? '' : 's'}`;
         const left = r.skipped.length ? ` Left out (not web text files): ${r.skipped.slice(0, 4).join(', ')}${r.skipped.length > 4 ? '…' : ''}.` : '';
         done((await copy(r.link)
-          ? `Link copied (${size}). Whoever opens it in StaticOS reads the code first and chooses whether to run it.`
-          : `Here’s the link (${size}) — select it and copy it.`) + left);
+          ? t('Link copied ({size}). Whoever opens it in StaticOS reads the code first and chooses whether to run it.', { size })
+          : t('Here’s the link ({size}) — select it and copy it.', { size })) + left);
       } catch (e) {
         done(`The link couldn’t be made (${e?.message || e}).`, 'alert');
       } finally { btn.disabled = false; }
     }
     const libraryable = ['web', 'arcade', 'creation', 'anime', 'roblox'].includes(item.kind);
     const linkBox = h('div.share__linkbox', { hidden: true });
+    /* a QR code of a creation's link, drawn with Static QR's own encoder (apps/qr.js).
+       A code holds about 2.9 KB, so most games' links are too long: then it says so
+       instead of drawing something that would not scan. */
+    const qrBox = h('div.share__qr', { hidden: true });
+    async function showQr(link) {
+      try {
+        const Q = await import('../apps/qr.js');
+        const q = Q.encodeQR(link, { level: 'L' });
+        if (!sheet) return;
+        if (!q.ok) {
+          qrBox.replaceChildren(icon('info'), h('p.share__hint', { text: `No QR code for this game: its link is ${link.length.toLocaleString()} characters and a code holds at most ${q.max.toLocaleString()}. Copy the link, or export the game as a file.` }));
+          qrBox.hidden = false;
+          return;
+        }
+        const px = 220;
+        const cv = h('canvas.share__qrcv', { width: px, height: px, role: 'img', 'aria-label': t('QR code for the share link of {title}', { title: item.title }) });
+        Q.drawCode(cv.getContext('2d'), q, px, 4, '#000000', '#ffffff');
+        qrBox.replaceChildren(cv, h('div.share__qrtxt',
+          h('p.share__hint', { text: t('Scan it with a phone camera to open this game’s preview in StaticOS ({size}×{size2} modules). It is the same link as above.', { size: q.size, size2: q.size }) }),
+          h('button.btn.btn--sm', { type: 'button', onclick: () => {
+            const a = h('a', { href: cv.toDataURL('image/png'), download: `${String(item.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'game'}-qr.png` });
+            document.body.appendChild(a); a.click(); a.remove();
+          } }, icon('download'), h('span', { text: t('Save PNG') }))));
+        qrBox.hidden = false;
+      } catch (e) { qrBox.hidden = true; }
+    }
 
     /* a creation's link carries the game itself; it is made on request */
     async function creationLink(btn) {
       btn.disabled = true;
-      done('Packing the game into a link…', 'sparkles');
+      qrBox.hidden = true;
+      done(t('Packing the game into a link…'), 'sparkles');
       try {
         const [P, L] = await Promise.all([import('../core/projects.js'), import('../core/sharelink.js')]);
         const p = await P.get(item.id);
         if (!sheet) return;
-        if (!p) { done('This creation isn’t on this device any more.', 'alert'); return; }
+        if (!p) { done(t('This creation isn’t on this device any more.'), 'alert'); return; }
         const r = await L.encode({
           name: p.published?.title || p.name, html: P.current(p), prompt: p.prompt,
           creator: (p.creator && p.creator !== 'you') ? p.creator : creatorName(),
+          note: p.versions?.[p.head]?.note, controls: p.published?.controls || ((api.store.get('portal.forge.info', null) || {})[p.id] || {}).controls,
         });
         if (!sheet) return;
         if (!r.ok) { linkBox.hidden = true; done(r.error, 'alert'); return; }
-        const field = h('input.share__linkin', { type: 'text', readonly: true, value: r.link, 'aria-label': 'Share link', onfocus: e => e.target.select() });
+        const field = h('input.share__linkin', { type: 'text', readonly: true, value: r.link, 'aria-label': t('Share link'), onfocus: e => e.target.select() });
         linkBox.replaceChildren(field,
-          h('button.btn.btn--sm', { type: 'button', onclick: async () => done(await copy(r.link) ? 'Copied again.' : 'Select the link and copy it.') }, icon('copy'), h('span', { text: 'Copy' })));
+          h('button.btn.btn--sm', { type: 'button', onclick: async () => done(await copy(r.link) ? 'Copied again.' : t('Select the link and copy it.')) }, icon('copy'), h('span', { text: t('Copy') })));
         linkBox.hidden = false;
+        showQr(r.link);
         const size = `${(r.chars / 1024).toFixed(1)} KB link`;
         done(await copy(r.link)
-          ? `Link copied (${size}). Whoever opens it in StaticOS sees a safe preview first and chooses whether to play or save it.`
-          : `Here’s the link (${size}) — select it and copy it.`);
+          ? t('Link copied ({size}). Whoever opens it in StaticOS sees a safe preview first and chooses whether to play or save it.', { size })
+          : t('Here’s the link ({size}) — select it and copy it.', { size }));
       } catch (e) {
         done(`The link couldn’t be made (${e?.message || e}).`, 'alert');
       } finally { btn.disabled = false; }
     }
 
     const acts = [
-      link ? act('link', 'Copy link', async () => done(await copy(link) ? 'Link copied — anyone with StaticOS opens it straight away.' : `Copy this link: ${link}`), 'Opens it in StaticOS for anyone') : null,
+      link ? act('link', t('Copy link'), async () => done(await copy(link) ? 'Link copied — anyone with StaticOS opens it straight away.' : t('Copy this link: {link}', { link })), t('Opens it in StaticOS for anyone')) : null,
       item.kind === 'creation' ? act('link', 'Copy share link', e => creationLink(e.currentTarget), 'The whole game, inside a link') : null,
       item.kind === 'project' ? act('link', 'Copy share link', e => projectLink(e.currentTarget), 'The project’s files, inside a link') : null,
       api.getApp('social') && item.kind !== 'project' ? act('message-circle', 'Share to chat', () => {
         api.openApp('social', { share: { kind: item.kind, id: item.id, title: item.title, link } });
         close();
-      }, 'Post it in Static Social') : null,
-      act('copy', 'Copy', async () => {
+      }, t('Post it in Static Social')) : null,
+      act('copy', t('Copy'), async () => {
         const text = link ? `${item.title} — ${link}` : (item.text || item.title);
-        done(await copy(text) ? 'Copied.' : 'The clipboard isn’t available here.');
-      }, link ? 'Title and link' : 'The title'),
-      gameLike ? act('monitor', 'Desktop shortcut', async () => {
+        done(await copy(text) ? 'Copied.' : t('The clipboard isn’t available here.'));
+      }, link ? 'Title and link' : t('The title')),
+      gameLike ? act('monitor', t('Desktop shortcut'), async () => {
         const { addToDesktop } = await import('../core/shortcuts.js');
         addToDesktop({ kind: item.kind, id: item.id, title: item.title, art: item.art || null });
         close();
-      }, 'Pin it to the desktop') : null,
-      libraryable ? act('bookmark', 'Add to Library', async e => {
+      }, t('Pin it to the desktop')) : null,
+      libraryable ? act('bookmark', t('Add to Library'), async e => {
         const C = await import('../core/collections.js');
         const r = e.currentTarget.getBoundingClientRect();
         C.pickMenu(api, { kind: item.kind, id: item.id, title: item.title, art: item.art || null }, r.left, r.bottom + 4);
-      }, 'Save it to a collection') : null,
+      }, t('Save it to a collection')) : null,
     ].filter(Boolean);
 
-    sheet = h('div.share', { role: 'dialog', 'aria-modal': 'true', 'aria-label': `Share ${item.title}`, tabindex: '-1',
+    sheet = h('div.share', { role: 'dialog', 'aria-modal': 'true', 'aria-label': t('Share {title}', { title: item.title }), tabindex: '-1',
       onclick: e => { if (e.target === sheet) close(); } },
       h('div.share__card',
         h('div.share__head',
           item.art ? h('img.share__art', { src: item.art, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : h('div.share__art.share__art--ic', icon('share')),
-          h('div.share__who', h('small', { text: 'Share' }), h('b', { text: item.title })),
-          h('button.ibtn', { type: 'button', 'aria-label': 'Close', onclick: close }, icon('x'))),
+          h('div.share__who', h('small', { text: t('Share') }), h('b', { text: item.title })),
+          h('button.ibtn', { type: 'button', 'aria-label': t('Close'), onclick: close }, icon('x'))),
         h('div.share__acts', acts),
         linkBox,
-        localOnly ? h('p.share__hint', { text: 'This lives on this device, so there’s no link that would open it for someone else. To pass a game on, export it from Static Forge and send the file.' }) : null,
-        item.kind === 'project' ? h('p.share__hint', { text: 'Only HTML, CSS, JavaScript, JSON, text, Markdown and SVG files go in a link (at most 40 files, 1 MB, and about 64 KB once packed). There is no server: the link is the project. Whoever opens it reads the code first and nothing runs until they press Run.' }) : null,
-        item.kind === 'creation' ? h('p.share__hint', { text: 'A share link carries the whole game inside it — no server is involved. Very big games don’t fit in a link; export those from Static Forge as an .html file.' }) : null,
+        qrBox,
+        localOnly ? h('p.share__hint', { text: t('This lives on this device, so there’s no link that would open it for someone else. To pass a game on, export it from Static Forge and send the file.') }) : null,
+        item.kind === 'project' ? h('p.share__hint', { text: t('Only HTML, CSS, JavaScript, JSON, text, Markdown and SVG files go in a link (at most 40 files, 1 MB, and about 64 KB once packed). There is no server: the link is the project. Whoever opens it reads the code first and nothing runs until they press Run.') }) : null,
+        item.kind === 'creation' ? h('p.share__hint', { text: t('A share link carries the whole game inside it — no server is involved. Very big games don’t fit in a link; export those from Static Forge as an .html file.') }) : null,
         note));
     host.appendChild(sheet);
     release = L.push({ name: 'share', el: sheet, trap: true, close });
@@ -229,6 +267,17 @@ export async function openDeepLink() {
       api.openApp('code', { shared: link });
       return true;
     }
+    /* a Calendar event (#event=), a Static Tasks list (#tasklist=), a flashcard deck (#deck=) or a
+       Static Graph (#graph=) sent by a friend: the app shows what is in it, and takes it only when
+       the person presses Add or Open */
+    for (const [key, app] of [['event', 'calendar'], ['tasklist', 'tasks'], ['deck', 'study'], ['graph', 'graph']]) {
+      if (!params.has(key)) continue;
+      const frag = params.get(key);
+      clear();
+      if (!api.getApp(app)) return false;
+      api.openApp(app, { shared: frag });
+      return true;
+    }
     if (params.has('jumper')) {
       /* a Pixel Jumper level in the link: read strictly (arcade/jumper-share.js), shown as a preview
          with who the link says made it; nothing starts until the person presses Play */
@@ -236,7 +285,7 @@ export async function openDeepLink() {
       clear();
       const J = await import('../arcade/jumper-share.js');
       const r = await J.decodeLevel(frag);
-      if (!r.ok) { api.notify({ app: 'Static Arcade', icon: 'alert', title: 'That level link wasn’t opened', message: r.error }); return false; }
+      if (!r.ok) { api.notify({ app: t('Static Arcade'), icon: 'alert', title: t('That level link wasn’t opened'), message: r.error }); return false; }
       if (!api.getApp('arcade')) return false;
       J.offer(r.level);
       api.openApp('arcade', { game: 'jumper' });
@@ -246,7 +295,7 @@ export async function openDeepLink() {
       const id = params.get('game');
       const G = await import('../portal/games.data.js');
       await G.load().catch(() => {});
-      if (!G.byId(id)) { api.notify({ app: 'StaticOS', icon: 'alert', title: 'That game link doesn’t match a game here', message: String(id).slice(0, 60) }); clear(); return false; }
+      if (!G.byId(id)) { api.notify({ app: 'StaticOS', icon: 'alert', title: t('That game link doesn’t match a game here'), message: String(id).slice(0, 60) }); clear(); return false; }
       api.openApp('aether-games', { url: `static://games/${id}` });
       clear(); return true;
     }
@@ -260,14 +309,16 @@ export async function openDeepLink() {
       const spec = String(params.get('spectate') || '').toUpperCase();
       if (/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(spec)) api.openApp('arcade', { spectate: spec });   /* a watch link: the code is filled in, nothing starts */
       else if (/^[A-Z0-9]{6}$/.test(room) && arcadeById(id).online) api.openApp('arcade', { join: room });
-      else api.openApp('arcade', { game: id });
+      /* a Beat-this link (#arcade=<id>&seed=…&beat=<score>&by=…): the same round, behind a card; nothing starts until Play */
+      else if (params.has('seed') && params.has('beat')) api.openApp('arcade', { game: arcadeById(id).id, beat: { seed: params.get('seed'), score: params.get('beat'), by: params.get('by') || '', mode: params.get('mode') || '' } });
+      else api.openApp('arcade', { game: arcadeById(id).id });
       clear(); return true;
     }
     /* a with-a-friend invite: Static Drop (#drop=), Watch Together (#watch=),
        Draw Together in Paint (#draw=), a live quiz in Static Study (#quiz=). The app opens with the code filled in
        and the person presses Join / Receive themselves — a link never joins,
        receives or plays anything on its own. */
-    for (const [key, app, opt] of [['drop', 'drop', 'join'], ['watch', 'watch-together', 'join'], ['draw', 'paint', 'together'], ['quiz', 'study', 'quizJoin'], ['list', 'music', 'joinList'], ['note', 'notes', 'coop']]) {
+    for (const [key, app, opt] of [['drop', 'drop', 'join'], ['watch', 'watch-together', 'join'], ['draw', 'paint', 'together'], ['quiz', 'study', 'quizJoin'], ['list', 'music', 'joinList'], ['note', 'notes', 'coop'], ['board', 'board', 'boardJoin'], ['map', 'mindmap', 'mapJoin'], ['chat', 'chat', 'join'], ['party', 'party', 'prefill']]) {
       if (!params.has(key)) continue;
       const code = String(params.get(key) || '').toUpperCase();
       clear();

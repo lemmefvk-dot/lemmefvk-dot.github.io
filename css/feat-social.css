@@ -173,6 +173,14 @@
 .so-pf{display:flex;flex-direction:column;gap:var(--sp-3);width:300px;max-width:calc(100% - 16px)}
 .so-pf__opts{display:flex;flex-direction:column;gap:var(--sp-2)}
 .so-pollbtn{flex:0 0 auto}
+/* poll results: columns, a template row and the card's tools (also drawn in Static Chat) */
+.so-poll__tools{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-3)}
+.so-poll__chart{display:flex;align-items:flex-end;gap:var(--sp-3);height:120px;padding:var(--sp-3) var(--sp-2) 0;border-radius:var(--r-sm);background:var(--fill-0)}
+.so-poll__col{flex:1 1 0;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px}
+.so-poll__cn{font-size:var(--fs-10);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.so-poll__colbar{display:block;width:70%;min-height:2px;border-radius:4px 4px 0 0;background:var(--accent);transition:height var(--t-fast)}
+.so-poll__cl{max-width:100%;font-size:calc(9px * var(--fs-k,1));color:var(--ink-3);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.so-pf__tpls{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
 
 /* the unread line: where the new messages start */
 .so-div{
@@ -563,3 +571,22 @@ body.is-mobile:has(.win.is-active[data-app="social"]) .acct{visibility:hidden;po
   .so-side,.so-people,.so-scrim,.so-thumb>img,.so-msg__ct,.so-hue{transition:none}
 }
 body.reduce-motion .so *:not(.spinner){animation:none!important;transition:none!important}
+
+/* link cards, hidden messages, the status bar's friends count and Appear offline */
+.so-lcards{display:flex;flex-direction:column;gap:var(--sp-2);margin-top:var(--sp-2)}
+.so-lcards[hidden]{display:none}
+.so-lcard{display:flex;align-items:center;gap:var(--sp-3);max-width:420px;padding:var(--sp-2) var(--sp-3);border-radius:var(--r-md);background:var(--fill-1);border:1px solid var(--line-1)}
+.so-lcard>.icon{width:15px;height:15px;flex:0 0 auto;color:var(--accent-soft)}
+.so-lcard>.grow{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.so-lcard small{color:var(--ink-3)}
+.so-hidden{width:min(340px,86vw);display:flex;flex-direction:column;gap:var(--sp-3)}
+.so-hidden__list{display:flex;flex-direction:column;gap:var(--sp-2);max-height:260px;overflow:auto}
+.so-hidden__row{display:flex;align-items:flex-start;gap:var(--sp-3);padding:var(--sp-2);border-radius:var(--r-sm);background:var(--fill-1)}
+.so-hidden__row>.grow{min-width:0}
+.so-hidden__t{font-size:var(--fs-11);color:var(--ink-1);overflow-wrap:anywhere;margin-top:2px}
+.so-foot__friends{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--ink-1)}
+.so-foot__off{flex:0 0 auto;height:20px;padding:0 var(--sp-3);border-radius:var(--r-pill);border:1px solid var(--line-1);background:transparent;color:var(--ink-2);font:inherit;font-size:var(--fs-10);cursor:pointer}
+.so-foot__off:hover{background:var(--fill-1)}
+.so-foot__off[aria-pressed="true"]{background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0)}
+.so-foot__off:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.so-lcards__one:empty{display:none}

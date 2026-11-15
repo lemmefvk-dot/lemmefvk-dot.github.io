@@ -1,0 +1,56 @@
+/* ==================================================================
+   Settings: setups and modes, the quick settings strip, the "Changed ·
+   Reset" link, the text preview card, Labs details and the mixer.
+   (js/apps/setups-pane.js)
+   ================================================================== */
+
+/* "Changed · Reset" under a setting that is not at its default */
+.st-reset{
+  margin-top:3px;padding:0;border:0;background:none;cursor:pointer;
+  font-size:var(--fs-10);font-weight:600;color:var(--accent-soft);text-align:left;
+}
+.st-reset:hover{text-decoration:underline}
+.st-reset[hidden]{display:none}
+.side__item small[data-changed-count]{margin-left:auto;padding:0 6px;border-radius:var(--r-pill);background:var(--fill-accent);color:var(--accent-soft);font-weight:700}
+
+/* the quick settings strip above every pane */
+.set-quick{
+  display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-3) var(--sp-4);
+  padding:var(--sp-3) var(--sp-5);border-bottom:1px solid var(--line-0);background:var(--fill-0);flex:0 0 auto;
+}
+.set-quick__i{display:flex;align-items:center;gap:var(--sp-2);color:var(--ink-2);font-size:var(--fs-10)}
+.set-quick__i .icon{width:14px;height:14px;color:var(--accent-soft)}
+.set-quick__i .slider{width:92px}
+.set-quick__t{
+  display:flex;align-items:center;gap:var(--sp-2);height:24px;padding:0 var(--sp-3);border-radius:var(--r-pill);
+  background:var(--fill-1);color:var(--ink-2);font-size:var(--fs-10);font-weight:600;border:1px solid transparent;
+}
+.set-quick__t .icon{width:13px;height:13px}
+.set-quick__t:hover{background:var(--fill-2);color:var(--ink-0)}
+.set-quick__t.is-on{background:var(--fill-accent);color:var(--accent-soft);border-color:rgba(var(--accent-rgb)/.35)}
+
+/* the text preview card */
+.st-textprev__page{padding:var(--sp-4) var(--sp-5) var(--sp-3)}
+.st-textprev__page h4{margin:0 0 var(--sp-2);font-size:var(--fs-15);color:var(--ink-0)}
+.st-textprev__page p{margin:0 0 var(--sp-3);font-size:var(--fs-12);line-height:1.6;color:var(--ink-1);max-width:62ch}
+.st-textprev__page p.st-textprev__muted{font-size:var(--fs-10);color:var(--ink-3)}
+.st-textprev__link{font-size:var(--fs-11);color:var(--accent-soft);text-decoration:underline}
+.st-textprev__sum{display:flex;flex-wrap:wrap;gap:var(--sp-2);padding:var(--sp-3) var(--sp-5) var(--sp-4);border-top:1px solid var(--line-0)}
+
+/* Labs: what it changes, what it sends, how to undo */
+.st-lab{display:flex;flex-direction:column;gap:3px;margin-top:var(--sp-3);font-size:var(--fs-10);color:var(--ink-2);line-height:1.5}
+.st-lab b{font-weight:640;color:var(--ink-1)}
+.st-lab > div{display:flex;align-items:flex-start;gap:var(--sp-2)}
+.st-lab .icon{width:12px;height:12px;flex:none;margin-top:2px;color:var(--ink-3)}
+
+/* setups: the name field and its suggestions; the import preview */
+.st-setupnew .st-chips{display:flex;gap:var(--sp-2);margin-top:var(--sp-2);flex-wrap:wrap}
+.st-chip{height:20px;padding:0 var(--sp-3);border-radius:var(--r-pill);background:var(--fill-1);color:var(--ink-2);font-size:var(--fs-10);font-weight:600}
+.st-chip:hover{background:var(--fill-2);color:var(--ink-0)}
+.st-import:not(:empty){
+  margin-top:var(--sp-3);padding:var(--sp-4) var(--sp-5);border-radius:var(--r-md);
+  background:var(--fill-0);border:1px solid var(--line-1);display:flex;flex-direction:column;gap:var(--sp-2);
+}
+.st-import ul{margin:0;padding-left:var(--sp-6);font-size:var(--fs-10);color:var(--ink-2);line-height:1.6}
+.st-check{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-10);color:var(--ink-2)}
+.st-lookprev__err{display:flex;gap:var(--sp-3);align-items:center;color:var(--ink-1);font-size:var(--fs-11)}

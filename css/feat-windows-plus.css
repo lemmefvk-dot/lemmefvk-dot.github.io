@@ -128,3 +128,144 @@ body.reduce-motion .hot-corner.is-on{animation:none}
   box-shadow:var(--sh-3);opacity:.92;
 }
 .dock-folder__ghost.is-out{box-shadow:var(--sh-3),0 0 0 2px var(--accent)}
+
+/* ============================================================
+   DESKTOP, DOCK AND WINDOW EXTRAS (bulk update 4.11: batch "desktop")
+   ============================================================ */
+
+/* ---- desktop icons: free placement on a grid (shell/deskicons.js) ----
+   The box covers the whole free desktop; clicks fall through it to the
+   wallpaper, and only the icons catch them. Each icon sits at the cell
+   the layer gives it, so a drag box on bare wallpaper still works. */
+.desk-icons{
+  display:block;right:var(--sp-5);pointer-events:none;
+  --ic-w:86px;--ic-h:90px;--ic-g:40px;
+}
+.desk-icons .desk-icon{
+  position:absolute;pointer-events:auto;width:calc(var(--ic-w) - 8px);min-height:calc(var(--ic-h) - 8px);
+  touch-action:none;user-select:none;-webkit-user-select:none;
+}
+.desk-icons .desk-icon .glyph{--gs:var(--ic-g)}
+.desk-icon.is-sel{background:var(--fill-accent);box-shadow:inset 0 0 0 1px var(--line-accent)}
+.desk-icon.is-sel > span{background:rgba(var(--accent-rgb)/.55);border-radius:4px;padding:0 4px}
+.desk-icon.is-dragging{z-index:5;opacity:.85;pointer-events:none;transition:none}
+.desk-icon.is-drop{background:var(--fill-accent-hi);box-shadow:inset 0 0 0 2px var(--accent)}
+.desk-snap{position:absolute;border-radius:var(--r-sm);border:1px dashed var(--line-accent);background:rgba(var(--accent-rgb)/.08);pointer-events:none}
+.desk-band{position:absolute;z-index:4;border:1px solid var(--line-accent);background:rgba(var(--accent-rgb)/.14);border-radius:2px;pointer-events:none}
+.desk-badge{
+  position:absolute;top:2px;right:6px;min-width:16px;height:16px;padding:0 4px;border-radius:var(--r-pill);
+  display:grid;place-items:center;background:linear-gradient(180deg,#ff6b81,#e0204a);font-style:normal;
+  color:#fff;font-size:calc(9px * var(--fs-k,1));font-weight:700;border:1.5px solid rgba(12,4,8,.8);box-shadow:var(--sh-1);
+}
+.desk-rename{
+  width:calc(100% + 8px);margin:0 -4px;padding:1px 3px;border-radius:4px;text-align:center;
+  font:inherit;font-size:var(--fs-10);line-height:1.25;color:var(--ink-0);background:var(--bg-2,#222);
+  border:1px solid var(--accent);outline:none;
+}
+.desk-info{width:min(380px,90vw);border-radius:var(--r-lg);padding:var(--sp-6);display:flex;flex-direction:column;gap:var(--sp-3)}
+.desk-info__row{display:flex;justify-content:space-between;gap:var(--sp-4);font-size:var(--fs-13);color:var(--ink-2)}
+.desk-info__row b{color:var(--ink-0);font-weight:600;text-align:right;overflow-wrap:anywhere}
+
+/* ---- dock: window peek, unread badge, drop target (shell/dockpeek.js) ---- */
+.dock-peek{
+  position:fixed;z-index:calc(var(--z-dock,700) + 1);display:flex;gap:var(--sp-3);padding:var(--sp-3);
+  max-width:calc(100vw - 16px);overflow-x:auto;border-radius:var(--r-lg);
+  background:var(--glass-bg,rgba(24,18,22,.86));border:1px solid var(--line-2);box-shadow:var(--sh-4);
+  backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);
+  animation:dockpeek-in var(--t-fast,140ms) var(--ease-out,ease-out);
+}
+@keyframes dockpeek-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+body.reduce-motion .dock-peek{animation:none}
+.dock-peek__win{
+  display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--sp-2);border-radius:var(--r-md);
+  background:transparent;border:1px solid transparent;color:var(--ink-1);text-align:left;cursor:pointer;flex:0 0 auto;
+}
+.dock-peek__win:hover,.dock-peek__win:focus-visible{background:var(--fill-1);border-color:var(--line-accent);outline:none}
+.dock-peek__shot{overflow:hidden;border-radius:var(--r-sm);box-shadow:var(--sh-2);background:var(--bg-1,#111);pointer-events:none}
+.dock-peek__cap{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-11);max-width:188px}
+.dock-peek__cap .icon{width:14px;height:14px;flex:0 0 auto}
+.dock.is-peeking .dock__tip{opacity:0!important}
+.dock__unread{
+  position:absolute;top:-3px;left:-3px;min-width:16px;height:16px;padding:0 4px;border-radius:var(--r-pill);
+  display:grid;place-items:center;background:var(--accent);color:#fff;
+  font-size:calc(9px * var(--fs-k,1));font-weight:700;border:1.5px solid rgba(12,4,8,.8);box-shadow:var(--sh-1);pointer-events:none;
+}
+/* the "New" mark on What's New's icon in the launcher and the dock (js/core/wnbadge.js) */
+.wn-newmark{margin-left:6px;padding:0 6px;border-radius:99px;font-size:var(--fs-10);font-weight:700;line-height:15px;color:var(--accent-ink);background:var(--accent);vertical-align:middle}
+.dock__item .wn-newmark{position:absolute;top:-3px;right:-4px;margin:0;pointer-events:none;border:1.5px solid rgba(12,4,8,.8)}
+.dock__item.is-drop{background:var(--fill-accent-hi);box-shadow:0 0 0 2px var(--accent);border-radius:var(--r-md)}
+
+/* ---- windows: see-through (wm.setOpacity, the window menu's slider) ---- */
+.win.is-see{background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
+.win.is-see > .win__bar,.win.is-see > .win__body,.win.is-see > .win-tabs{opacity:var(--win-a,1)}
+.menu__slider{display:flex;align-items:center;gap:var(--sp-3);cursor:default}
+.menu__slider input[type="range"]{flex:1 1 90px;min-width:90px;accent-color:var(--accent)}
+.menu__slider small{min-width:64px;text-align:right;color:var(--ink-3)}
+
+/* ---- overview: type to filter, close on each window (shell/overview.js) ---- */
+.overview__find{
+  position:absolute;left:50%;bottom:calc(var(--dock-h) + 52px);transform:translateX(-50%);
+  width:min(300px,70vw);padding:7px 14px;border-radius:var(--r-pill);
+  background:var(--glass-2);border:1px solid var(--line-2);color:var(--ink-0);font:inherit;font-size:var(--fs-13);
+  text-align:center;outline:none;
+}
+.overview__find:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb)/.25)}
+.overview__find::placeholder{color:var(--ink-3)}
+.overview__none{position:absolute;left:0;right:0;top:40%;text-align:center;color:var(--ink-2);font-size:var(--fs-14,14px)}
+.overview__none[hidden]{display:none}
+.overview__close{
+  position:absolute;z-index:3;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;padding:0;
+  background:rgba(12,4,8,.78);color:#fff;border:1px solid var(--line-2);opacity:0;transition:opacity var(--t-fast);cursor:pointer;
+}
+.overview__close .icon{width:13px;height:13px}
+.overview__item:hover + .overview__close,.overview__item:focus-visible + .overview__close,
+.overview__close:hover,.overview__close:focus-visible{opacity:1}
+.overview__close:hover{background:#e0204a}
+@media (hover:none){.overview__close{opacity:1}}
+.overview.is-dragging .overview__close{display:none}
+
+/* ---- tab strip: renaming a tab in place (core/wintabs.js) ---- */
+.win-tab__edit{
+  flex:1 1 auto;min-width:0;width:100%;padding:0 4px;border-radius:4px;font:inherit;font-size:inherit;
+  background:var(--bg-2,#222);color:var(--ink-0);border:1px solid var(--accent);outline:none;
+}
+
+/* ---- Snap Assist: pick a window for the space left over (shell/snapassist.js) ---- */
+.snap-assist{position:absolute;z-index:calc(var(--z-win) + 2);display:grid;place-items:center;pointer-events:none;animation:fade-in var(--t-med) var(--ease) both}
+.snap-assist__box{
+  pointer-events:auto;max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto;
+  display:flex;flex-direction:column;align-items:center;gap:var(--sp-3);padding:var(--sp-4);border-radius:var(--r-lg);
+  background:var(--glass-2);border:1px solid var(--line-2);box-shadow:var(--sh-4);
+  -webkit-backdrop-filter:var(--blur-2);backdrop-filter:var(--blur-2);
+}
+.snap-assist__title{font-size:var(--fs-12);font-weight:600;color:var(--ink-1)}
+.snap-assist__grid{display:grid;gap:var(--sp-3);justify-content:center}
+.snap-assist__win{
+  display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--sp-2);border-radius:var(--r-md);
+  background:transparent;border:1px solid transparent;color:var(--ink-1);cursor:pointer;text-align:left;
+}
+.snap-assist__win:hover,.snap-assist__win:focus-visible{background:var(--fill-1);border-color:var(--line-accent);outline:none}
+.snap-assist__shot{overflow:hidden;border-radius:var(--r-sm);box-shadow:var(--sh-2);pointer-events:none}
+.snap-assist__cap{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-11);min-width:0}
+.snap-assist__cap .icon{width:14px;height:14px;flex:0 0 auto}
+body.reduce-motion .snap-assist{animation:none}
+
+/* ---- the divider between snapped windows (shell/splitview.js) ---- */
+.split-bar{position:absolute;z-index:2000;touch-action:none;display:grid;place-items:center;outline:none}
+.split-bar.is-v{cursor:col-resize}
+.split-bar.is-h{cursor:row-resize}
+.split-bar i{display:block;border-radius:3px;background:var(--accent);opacity:0;transition:opacity var(--t-fast)}
+.split-bar.is-v i{width:4px;height:44px;max-height:60%}
+.split-bar.is-h i{height:4px;width:44px;max-width:60%}
+.split-bar:hover i,.split-bar:focus-visible i,.split-bar.is-on i{opacity:.85}
+.split-bar:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+body.is-splitting{user-select:none;-webkit-user-select:none}
+body.is-splitting .win__body{pointer-events:none}
+/* friends online on Static Social's dock icon (js/core/friends.js tells the dock) */
+.dock__online{
+  position:absolute;bottom:-3px;right:-3px;min-width:16px;height:16px;padding:0 4px;border-radius:var(--r-pill);
+  display:grid;place-items:center;background:#22a06b;color:#fff;
+  font-size:calc(9px * var(--fs-k,1));font-weight:700;border:1.5px solid rgba(12,4,8,.8);box-shadow:var(--sh-1);pointer-events:none;
+}
+.tray-btn--friends.is-on{color:var(--accent-soft)}
+.tray-btn--friends .tray-btn__val{margin-left:4px;font-size:var(--fs-11)}

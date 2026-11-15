@@ -1,0 +1,7 @@
+/* The friends list Spotify, TikTok and Static Drop show when you send something to a friend
+   (js/portal/sendfriend.js › paintMediaPanel). The same look as Static Games' list. */
+.ag-friend__list{display:flex;flex-direction:column;gap:var(--sp-2)}
+.ag-friend__row{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-11)}
+.ag-friend__dot{width:8px;height:8px;border-radius:50%;background:var(--ink-4);flex:0 0 auto}
+.ag-friend__dot.is-online{background:#22d67f}
+.ag-friend__dot.is-away,.ag-friend__dot.is-busy{background:#fcd34d}

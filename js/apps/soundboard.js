@@ -20,6 +20,16 @@
      Cut      a press first stops everything on the board
    Stop all (or Esc) silences every button.
 
+   Per button, too: Loop (press again to stop), a start and end inside the
+   sound (trim), a fade in and a fade out, and a pitch in semitones (the
+   speed follows the pitch, like a tape). Buttons can be moved, duplicated,
+   dropped in from a file dragged onto the board (or from Files), and played
+   from a MIDI keyboard or pad controller (js/core/midi.js, off until you
+   turn it on): note 36 is the first button, 37 the second, and so on.
+   A board can be exported to a file and imported again, taking the sounds
+   with it up to a size limit, and a board can be made from a Static Beats
+   pattern (each instrument it uses becomes a button, plus its loop).
+
    Loudness is the OS's own: prefs.volume is the ceiling and
    prefs.muted silences the board (read live, so Settings and
    Control Centre change it immediately). While muted, a press
@@ -33,6 +43,8 @@
 import { defineApp } from '../core/registry.js';
 import * as media from '../core/media.js';
 import * as db from '../core/db.js';
+import { createMidi, describe as describeMidi } from '../core/midi.js';
+import { encodeWav } from '../core/wavedit.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-audiotools-css')) {
   const l = document.createElement('link');
@@ -43,6 +55,8 @@ if (typeof document !== 'undefined' && !document.getElementById('feat-audiotools
 }
 
 const KEY = 'portal.soundboard';
+const PADDRAG = 'application/x-staticos-pad';
+const FXDRAG = 'application/x-staticos-fx';        /* what the Files app puts on a drag */
 export const KEYS = '123456789QWERTYUIOP'.split('');
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899', '#64748b'];
 const MODES = [
@@ -51,6 +65,10 @@ const MODES = [
   { id: 'cut', label: 'Cut others', note: 'A press stops everything else on the board first.' },
 ];
 const MAX_PADS = 24;
+const MIDI_BASE = 36;                 /* the first button answers to this MIDI note (C2) */
+const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const noteName = n => `${NOTES[n % 12]}${Math.floor(n / 12) - 1}`;
+const MAX_EMBED = 12 * 1024 * 1024;   /* bytes of sound an exported board may carry */
 const MAX_TAKE = 10;                  /* seconds of microphone */
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -72,6 +90,12 @@ function normPad(p, i = 0) {
     key: KEYS.includes(p.key) ? p.key : '',
     mode: MODES.some(m => m.id === p.mode) ? p.mode : 'overlap',
     vol: Number.isFinite(p.vol) ? clamp(Math.round(p.vol), 0, 100) : 100,
+    loop: p.loop === true,
+    trimIn: Number.isFinite(p.trimIn) ? clamp(p.trimIn, 0, 3600) : 0,
+    trimOut: Number.isFinite(p.trimOut) ? clamp(p.trimOut, 0, 3600) : 0,      /* 0 = to the end of the sound */
+    fadeIn: Number.isFinite(p.fadeIn) ? clamp(p.fadeIn, 0, 30) : 0,
+    fadeOut: Number.isFinite(p.fadeOut) ? clamp(p.fadeOut, 0, 30) : 0,
+    pitch: Number.isFinite(p.pitch) ? clamp(Math.round(p.pitch), -12, 12) : 0,
     src: normSrc(p.src),
   };
 }
@@ -184,34 +208,57 @@ defineApp({
     }
     const say = text => { S.msg = text; status.textContent = text; };
 
-    async function fire(pad) {
+    /* let one voice go: a short fade, then stop (a looping button stops this way) */
+    function release(v, fade) {
+      if (v.releasing) return;
+      v.releasing = true;
+      const t = ac.currentTime, f = Math.max(0.015, fade || 0);
+      try { v.gain.gain.cancelScheduledValues(t); v.gain.gain.setValueAtTime(v.gain.gain.value, t); v.gain.gain.linearRampToValueAtTime(0, t + f); v.src.stop(t + f + 0.01); } catch (e) { stopVoices(x => x === v); }
+      paintPlaying();
+    }
+    async function fire(pad, vel = 1) {
       const r = pads.get(pad.id);
       if (r) { r.el.classList.add('is-hit'); setTimeout(() => r.el.classList.remove('is-hit'), 140); }
       if (!pad.src) { say(`“${pad.label}” has no sound yet. Open its settings (the gear) to choose one.`); return; }
       if (!audible()) { say(sysMuted() ? 'StaticOS is muted, so nothing plays. Unmute it in Control Centre or Settings.' : 'The StaticOS volume is at zero, so nothing plays.'); return; }
+      if (pad.loop) {                       /* a looping button is a switch: press again to stop it */
+        const live = [...voices].filter(v => v.padId === pad.id && !v.releasing);
+        if (live.length) { live.forEach(v => release(v, pad.fadeOut)); say(''); return; }
+      }
       if (pad.mode === 'cut') stopVoices(v => true);
       else if (pad.mode === 'restart') stopVoices(v => v.padId === pad.id);
       let buf;
       try { buf = await bufferFor(pad.src); } catch (err) { say(`“${pad.label}” can’t play: ${err?.message || err}`); return; }
       if (S.dead || !audible()) return;
+      const from = clamp(pad.trimIn, 0, Math.max(0, buf.duration - 0.01));
+      const to = pad.trimOut > 0 ? Math.min(buf.duration, pad.trimOut) : buf.duration;
+      if (to - from < 0.005) { say(`“${pad.label}” starts at ${from.toFixed(2)} s but ends at ${to.toFixed(2)} s. Change its start or end in settings.`); return; }
       const c = context();
       const src = c.createBufferSource();
       src.buffer = buf;
+      const rate = Math.pow(2, pad.pitch / 12);
+      src.playbackRate.value = rate;
+      if (pad.loop) { src.loop = true; src.loopStart = from; src.loopEnd = to; }
       const gain = c.createGain();
       /* the OS volume is the ceiling; the button's own volume sits under it */
-      gain.gain.value = (pad.vol / 100) * sysVol();
+      const peak = (pad.vol / 100) * sysVol() * vel;
+      const t = c.currentTime, wall = (to - from) / rate;
+      const fi = Math.min(pad.fadeIn, pad.loop ? 30 : wall / 2), fo = pad.loop ? 0 : Math.min(pad.fadeOut, wall / 2);
+      gain.gain.value = fi > 0 ? 0 : peak;           /* set first: the value is what a fade starts from and what tests read */
+      if (fi > 0) { gain.gain.setValueAtTime(0, t); gain.gain.linearRampToValueAtTime(peak, t + fi); } else gain.gain.setValueAtTime(peak, t);
+      if (fo > 0) { gain.gain.setValueAtTime(peak, t + Math.max(fi, wall - fo)); gain.gain.linearRampToValueAtTime(0, t + wall); }
       src.connect(gain).connect(c.destination);
-      const v = { padId: pad.id, src, gain };
+      const v = { padId: pad.id, src, gain, vel, releasing: false };
       voices.add(v);
       src.onended = () => { voices.delete(v); try { gain.disconnect(); } catch (e) { /* gone */ } if (!S.dead) paintPlaying(); };
-      src.start();
+      if (pad.loop) src.start(t, from); else src.start(t, from, to - from);
       bus.emit('soundboard:play', { pad: pad.id });
-      say('');
+      say(pad.loop ? `“${pad.label}” loops until you press it again.` : '');
       paintPlaying();
     }
     /* the OS volume changing mid-sound changes what is playing */
     const retune = () => {
-      for (const v of voices) { const p = padOf(v.padId); if (p) v.gain.gain.value = (p.vol / 100) * sysVol(); }
+      for (const v of voices) { const p = padOf(v.padId); if (p && !v.releasing) { v.gain.gain.cancelScheduledValues(0); v.gain.gain.value = (p.vol / 100) * sysVol() * v.vel; } }
       if (!audible()) stopVoices();
       paintHead();
     };
@@ -222,12 +269,14 @@ defineApp({
     const boardMenu = h('button.btn.btn--sm.sb-boards', { type: 'button', 'aria-label': 'Board options', title: 'Board options', onclick: e => boardOptions(e) }, icon('more-horizontal'));
     const stopAll = h('button.btn.btn--sm.sb-stop', { type: 'button', title: 'Stop all sounds (Esc)', onclick: () => stopVoices() }, icon('square', { fill: true }), h('span', { text: 'Stop all' }));
     const muteChip = h('span.sb-mute', { role: 'status' }, icon('volume-x'), h('span'));
-    const bar = h('div.app__bar.sb-bar', icon('grid'), boardSel, boardMenu, h('span.grow'), muteChip, addPadBtn, stopAll);
+    const midiBtn = h('button.btn.btn--sm.sb-midi', { type: 'button', 'aria-pressed': 'false', title: 'Play the buttons from a MIDI keyboard or pad controller', onclick: () => toggleMidi() }, icon('keyboard'), h('span', { text: 'MIDI' }));
+    const bar = h('div.app__bar.sb-bar', icon('grid'), boardSel, boardMenu, h('span.grow'), muteChip, midiBtn, addPadBtn, stopAll);
     const grid = h('div.sb-grid', { role: 'group', 'aria-label': 'Sound buttons' });
     const status = h('div.sb-status', { role: 'status', 'aria-live': 'polite' });
     const side = h('aside.sb-edit', { 'aria-label': 'Button settings', hidden: true });
     const body = h('div.sb-body', h('div.sb-main', grid, status), side);
-    const app = h('div.app.sb', bar, body);
+    const dropHint = h('div.sb-drop', { hidden: true, 'aria-hidden': 'true', text: 'Drop sound files to make buttons' });
+    const app = h('div.app.sb', bar, body, dropHint);
     root.appendChild(app);
 
     function paintHead() {
@@ -246,7 +295,18 @@ defineApp({
         const key = h('kbd.sb-pad__key');
         const main = h('button.sb-pad__main', { type: 'button', onclick: () => { const q = padOf(p.id); if (q) fire(q); } }, key, name, sub);
         const gear = h('button.sb-pad__gear', { type: 'button', 'aria-label': 'Settings', onclick: () => openEditor(p.id) }, icon('settings'));
-        const el = h('div.sb-pad', { dataset: { pad: p.id } }, main, gear);
+        const el = h('div.sb-pad', { dataset: { pad: p.id }, draggable: 'true' }, main, gear);
+        el.addEventListener('dragstart', e => { try { e.dataTransfer.setData(PADDRAG, p.id); e.dataTransfer.effectAllowed = 'move'; } catch (err) { /* no drag data */ } el.classList.add('is-dragging'); });
+        el.addEventListener('dragend', () => { el.classList.remove('is-dragging'); grid.querySelectorAll('.is-over').forEach(n => n.classList.remove('is-over')); });
+        el.addEventListener('dragover', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes(PADDRAG)) { e.preventDefault(); e.stopPropagation(); el.classList.add('is-over'); } });
+        el.addEventListener('dragleave', () => el.classList.remove('is-over'));
+        el.addEventListener('drop', e => {
+          const id = e.dataTransfer && e.dataTransfer.getData(PADDRAG);
+          el.classList.remove('is-over');
+          if (!id) return;
+          e.preventDefault(); e.stopPropagation();
+          movePadTo(id, p.id);
+        });
         r = { el, main, name, sub, key, gear };
         pads.set(p.id, r);
       }
@@ -259,6 +319,10 @@ defineApp({
       r.sub.textContent = p.src ? (p.src.name || stemOf(p.src.path || '') || 'Asset Lab sound') : 'No sound yet';
       r.key.textContent = p.key || '';
       r.key.hidden = !p.key;
+      const bi = board().pads.indexOf(p);
+      r.el.dataset.midi = String(MIDI_BASE + bi);
+      r.el.title = `MIDI note ${MIDI_BASE + bi} (${noteName(MIDI_BASE + bi)})`;
+      r.el.classList.toggle('is-loop', !!p.loop);
       r.el.classList.toggle('is-empty', !p.src);
       r.el.classList.toggle('is-editing', S.editing === p.id);
       r.main.setAttribute('aria-label', `${p.label || 'Button'}${p.key ? `, key ${p.key}` : ''}${p.src ? '' : ', no sound yet'}`);
@@ -284,11 +348,216 @@ defineApp({
       paintAll();
       openEditor(p.id);
     }
+    function movePadTo(fromId, toId) {
+      const list = board().pads, i = list.findIndex(p => p.id === fromId), j = list.findIndex(p => p.id === toId);
+      if (i < 0 || j < 0 || i === j) return;
+      const [p] = list.splice(i, 1);
+      list.splice(j, 0, p);
+      save(); paintGrid(); say(`Moved “${p.label}” to place ${j + 1}.`);
+    }
+    function nudgePad(pad, d) {
+      const list = board().pads, i = list.indexOf(pad), j = i + d;
+      if (j < 0 || j >= list.length) return;
+      list.splice(i, 1); list.splice(j, 0, pad);
+      save(); paintGrid(); paintEditor(); say(`“${pad.label}” is now button ${j + 1}.`);
+    }
+    function duplicatePad(pad) {
+      const b = board();
+      if (b.pads.length >= MAX_PADS) { say(`A board holds ${MAX_PADS} buttons.`); return; }
+      const copy = normPad({ ...pad, id: uid(), key: '', label: `${pad.label} copy`.slice(0, 24) }, b.pads.length);
+      b.pads.splice(b.pads.indexOf(pad) + 1, 0, copy);
+      save(); paintAll(); openEditor(copy.id);
+      say(`Copied “${pad.label}”. The copy has no key yet; pick one in its settings.`);
+    }
+
+    /* ---- sound files dropped on the board (from the computer, or dragged out of Files) ---- */
+    const isAudioFile = f => /^audio\//.test(f.type) || media.kindOf(f.name) === 'audio';
+    async function addDropped({ files, paths }) {
+      const b = board();
+      let added = 0, skipped = 0, full = 0, bad = 0;
+      const room = () => MAX_PADS - b.pads.length;
+      const make = (src, name) => {
+        const p = normPad({ label: stemOf(name).slice(0, 24), color: COLORS[b.pads.length % COLORS.length], key: KEYS.find(k => !b.pads.some(q => q.key === k)) || '', src }, b.pads.length);
+        b.pads.push(p); added++;
+      };
+      for (const path of paths) {
+        const n = vfs.node(path);
+        if (!n || n.type !== 'file' || !(n.kind === 'audio' || media.kindOf(n.name) === 'audio')) { bad++; continue; }
+        if (!room()) { full++; continue; }
+        make({ type: 'file', path: vfs.norm(path), name: stemOf(n.name) }, n.name);
+      }
+      for (const f of files) {
+        if (!isAudioFile(f)) { bad++; continue; }
+        if (!room()) { full++; continue; }
+        try {
+          const saved = await media.save(`${vfs.HOME}/Music`, f.name, f);
+          if (saved.node && saved.node.kind !== 'audio') { saved.node.kind = 'audio'; bus.emit('fs:change', vfs.parentPath(saved.path), saved.path); }
+          make({ type: 'file', path: saved.path, name: stemOf(vfs.baseName(saved.path)) }, f.name);
+        } catch (err) { skipped++; }
+      }
+      if (S.dead) return;
+      if (added) { save(); paintAll(); }
+      say(added ? `Added ${added} button${added === 1 ? '' : 's'}${files.length ? ' (the dropped files were copied into Music)' : ''}.${full ? ` The board is full, so ${full} more did not fit.` : ''}${bad ? ` ${bad} item${bad === 1 ? ' was' : 's were'} not sound files.` : ''}` : full ? `The board is full (${MAX_PADS} buttons).` : skipped ? 'Those files could not be saved.' : 'Those are not sound files, so nothing was added.');
+    }
+    const dropTypes = e => e.dataTransfer ? [...e.dataTransfer.types] : [];
+    const dropOk = e => { const t = dropTypes(e); return t.includes('Files') || t.includes(FXDRAG); };
+    let dragDepth = 0;
+    app.addEventListener('dragenter', e => { if (dropOk(e)) { dragDepth++; dropHint.hidden = false; } });
+    app.addEventListener('dragover', e => { if (dropOk(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+    app.addEventListener('dragleave', e => { if (dropOk(e) && --dragDepth <= 0) { dragDepth = 0; dropHint.hidden = true; } });
+    app.addEventListener('drop', e => {
+      dragDepth = 0; dropHint.hidden = true;
+      if (!dropOk(e)) return;
+      e.preventDefault();
+      const files = [...(e.dataTransfer.files || [])];
+      let paths = [];
+      try { const raw = e.dataTransfer.getData(FXDRAG); if (raw) paths = (JSON.parse(raw).paths || []).filter(x => typeof x === 'string'); } catch (err) { /* not ours */ }
+      addDropped({ files, paths });
+    });
+
+    /* ---- export and import ---- */
+    const blobToDataUrl = blob => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
+    function dataUrlToBlob(url) {
+      const m = /^data:([^;,]*)(;base64)?,(.*)$/s.exec(url);
+      if (!m) throw new Error('bad data');
+      const bin = m[2] ? atob(m[3]) : decodeURIComponent(m[3]);
+      const u = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      return new Blob([u], { type: m[1] || 'application/octet-stream' });
+    }
+    async function exportBoard() {
+      const b = board();
+      say('Packing the board…');
+      const sounds = {};
+      let bytes = 0, packed = 0, left = 0;
+      for (const p of b.pads) {
+        const s = p.src;
+        if (!s) continue;
+        if (s.type !== 'file') { left++; continue; }
+        if (sounds[s.path]) { continue; }
+        try {
+          const blob = vfs.node(s.path) ? await media.blobOf(s.path) : null;
+          if (!blob || bytes + blob.size > MAX_EMBED) { left++; continue; }
+          sounds[s.path] = { name: vfs.baseName(s.path), data: await blobToDataUrl(blob) };
+          bytes += blob.size; packed++;
+        } catch (err) { left++; }
+      }
+      if (S.dead) return;
+      const doc = { format: 'staticos-soundboard', v: 1, board: { name: b.name, pads: b.pads }, sounds };
+      const blob = new Blob([JSON.stringify(doc)], { type: 'application/json' });
+      const a = h('a', { href: URL.createObjectURL(blob), download: `${b.name.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'board'}.staticboard.json` });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      say(`Exported “${b.name}”: ${b.pads.length} button${b.pads.length === 1 ? '' : 's'}, ${packed} sound${packed === 1 ? '' : 's'} inside the file (${(bytes / 1048576).toFixed(1)} MB).${left ? ` ${left} sound${left === 1 ? ' is' : 's are'} not inside it (Asset Lab sounds, missing files, or past the ${MAX_EMBED / 1048576} MB limit); those buttons keep their place and will say so when pressed.` : ''}`);
+    }
+    async function importBoardFile(file) {
+      if (!file) return;
+      if (data.boards.length >= 20) { say('There are already 20 boards. Delete one first.'); return; }
+      if (file.size > 60 * 1048576) { say('That file is too big to be a board.'); return; }
+      let doc;
+      try { doc = JSON.parse(await file.text()); } catch (err) { say('That file is not a Soundboard export.'); return; }
+      if (!doc || doc.format !== 'staticos-soundboard' || !doc.board || !Array.isArray(doc.board.pads)) { say('That file is not a Soundboard export.'); return; }
+      const nb = normBoard({ ...doc.board, id: uid(), pads: doc.board.pads.map(p => ({ ...(p || {}), id: uid() })) }, data.boards.length);
+      const sounds = doc.sounds && typeof doc.sounds === 'object' ? doc.sounds : {};
+      const map = new Map();
+      let kept = 0, missing = 0;
+      for (const p of nb.pads) {
+        const sr = p.src;
+        if (!sr || sr.type !== 'file') { if (sr) missing++; continue; }
+        const orig = (doc.board.pads.find(q => q && q.src && q.src.path === sr.path) || {}).src;
+        const entry = orig && sounds[orig.path];
+        if (!entry || typeof entry.data !== 'string') { missing++; continue; }
+        if (!map.has(orig.path)) {
+          try {
+            const blob = dataUrlToBlob(entry.data);
+            const nm = String(entry.name || 'sound').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || 'sound';
+            const saved = await media.save(`${vfs.HOME}/Music`, nm, blob);
+            if (saved.node && saved.node.kind !== 'audio') { saved.node.kind = 'audio'; bus.emit('fs:change', vfs.parentPath(saved.path), saved.path); }
+            map.set(orig.path, saved.path); kept++;
+          } catch (err) { map.set(orig.path, null); }
+        }
+        const np = map.get(orig.path);
+        if (np) p.src = { type: 'file', path: np, name: sr.name }; else missing++;
+      }
+      if (S.dead) return;
+      data.boards.push(nb); data.cur = nb.id; S.editing = null;
+      save(); paintAll();
+      say(`Imported “${nb.name}” with ${nb.pads.length} button${nb.pads.length === 1 ? '' : 's'}; ${kept} sound${kept === 1 ? ' was' : 's were'} saved into Music.${missing ? ` ${missing} button${missing === 1 ? ' has' : 's have'} no sound with it: choose one in its settings.` : ''}`);
+    }
+    const importInput = h('input', { type: 'file', accept: '.json,application/json', hidden: true, 'aria-label': 'Choose a board file', onchange: e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; importBoardFile(f); } });
+    app.appendChild(importInput);
+
+    /* ---- a board from a Static Beats pattern ---- */
+    function beatsPatterns() {
+      const d = store.get('portal.beats');
+      const list = d && Array.isArray(d.patterns) ? d.patterns.filter(p => p && typeof p.id === 'string') : [];
+      const out = list.map(p => ({ name: String(p.name || 'Pattern').slice(0, 40), pat: p }));
+      if (d && d.last && typeof d.last === 'object' && d.last.steps) out.push({ name: 'Beats, as you left it', pat: { ...d.last, id: 'last' } });
+      return out;
+    }
+    function beatsBoardMenu(e) {
+      if (data.boards.length >= 20) { say('There are already 20 boards. Delete one first.'); return; }
+      const items = beatsPatterns();
+      if (!items.length) { say('There are no Beats patterns yet. Make one in Static Beats and press Save, then come back.'); return; }
+      const r = (e && e.currentTarget && e.currentTarget.getBoundingClientRect) ? e.currentTarget.getBoundingClientRect() : boardMenu.getBoundingClientRect();
+      api.menu(items.map(it => ({ label: it.name, icon: 'grid', onClick: () => boardFromBeats(it) })), r.left, r.bottom + 4);
+    }
+    async function boardFromBeats(it) {
+      say('Drawing the sounds…');
+      try {
+        const R = await import('../core/beatsrender.js');
+        const used = await R.instrumentsOf(it.pat);
+        if (!used.length) { say(`“${it.name}” has no hits to turn into buttons.`); return; }
+        const rate = 44100, stampN = it.name.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 30) || 'Beats';
+        const save1 = async (clip, fname) => {
+          const saved = await media.save(`${vfs.HOME}/Music`, fname, new Blob([encodeWav({ rate, ch: [clip] })], { type: 'audio/wav' }));
+          if (saved.node && saved.node.kind !== 'audio') { saved.node.kind = 'audio'; bus.emit('fs:change', vfs.parentPath(saved.path), saved.path); }
+          return saved.path;
+        };
+        const nb = freshBoard(`Beats: ${it.name}`.slice(0, 40));
+        nb.pads = [];
+        const bar = await R.renderPattern(it.pat, 0.01, rate);                  /* only for its bar length, used below */
+        const loop = await R.renderPattern(it.pat, bar.barSeconds, rate);
+        nb.pads.push(normPad({ label: 'Loop', color: COLORS[0], key: KEYS[0], loop: true, mode: 'overlap', src: { type: 'file', path: await save1(loop.data, `Beats ${stampN} - loop.wav`), name: `${stampN} loop` } }, 0));
+        for (const inst of used) {
+          if (nb.pads.length >= MAX_PADS) break;
+          const k = nb.pads.length;
+          const clip = await R.renderVoice(inst.id, rate);
+          nb.pads.push(normPad({ label: inst.name, color: COLORS[k % COLORS.length], key: KEYS[k], mode: 'restart', src: { type: 'file', path: await save1(clip, `Beats ${stampN} - ${inst.name}.wav`), name: `${stampN} ${inst.name}` } }, k));
+        }
+        if (S.dead) return;
+        data.boards.push(nb); data.cur = nb.id; S.editing = null; save(); paintAll();
+        say(`Made “${nb.name}”: a Loop button (one bar at ${loop.bpm} BPM) and one button for each of ${used.length} instrument${used.length === 1 ? '' : 's'}. The sounds are WAV files in Music.`);
+      } catch (err) { say('Could not make the board: ' + (err && err.message || err)); }
+    }
+
+    /* ---- MIDI ---- */
+    let midiState = { status: 'off', inputs: [], reason: '' };
+    const midi = createMidi({
+      onEvent: ev => {
+        if (S.dead) return;
+        if (ev.type === 'on') {
+          const pad = board().pads[ev.note - MIDI_BASE];
+          if (pad) fire(pad, 0.12 + 0.88 * ev.vel);
+        } else if (ev.type === 'allOff') stopVoices();
+      },
+      onChange: st => {
+        midiState = st;
+        midiBtn.setAttribute('aria-pressed', String(st.status === 'on' || st.status === 'asking'));
+        midiBtn.classList.toggle('is-on', st.status === 'on');
+        say(describeMidi(st) + (st.status === 'on' ? ` Notes ${MIDI_BASE} to ${MIDI_BASE + board().pads.length - 1} play the buttons in order.` : ''));
+      },
+    });
+    function toggleMidi() { if (midiState.status === 'on' || midiState.status === 'asking') midi.disable(); else midi.enable(); }
+
     function boardOptions(e) {
       const r = e.currentTarget.getBoundingClientRect();
       api.menu([
         { label: 'New board', icon: 'plus', onClick: () => { const b = freshBoard(`Board ${data.boards.length + 1}`); data.boards.push(b); data.cur = b.id; S.editing = null; save(); paintAll(); } },
         { label: 'Rename board…', icon: 'edit-3', onClick: () => renameBoard() },
+        { label: 'Export board…', icon: 'download', onClick: () => exportBoard() },
+        { label: 'Import board…', icon: 'upload', onClick: () => importInput.click() },
+        { label: 'New board from a Beats pattern…', icon: 'grid', onClick: () => beatsBoardMenu({ currentTarget: boardMenu }) },
         { label: 'Delete board', icon: 'trash', danger: true, disabled: data.boards.length < 2, onClick: () => {
           const gone = board();
           stopVoices();
@@ -375,10 +644,27 @@ defineApp({
         onclick: () => { pad.mode = m.id; save(); paintEditor(); },
       }, m.label)));
       const vol = h('input.slider.sb-vol', { type: 'range', min: '0', max: '100', step: '1', value: String(pad.vol), 'aria-label': 'Button volume',
-        oninput: e => { pad.vol = Number(e.target.value); volOut.textContent = `${pad.vol}%`; for (const v of voices) if (v.padId === pad.id) v.gain.gain.value = (pad.vol / 100) * sysVol(); },
+        oninput: e => { pad.vol = Number(e.target.value); volOut.textContent = `${pad.vol}%`; for (const v of voices) if (v.padId === pad.id && !v.releasing) { v.gain.gain.cancelScheduledValues(0); v.gain.gain.value = (pad.vol / 100) * sysVol() * v.vel; } },
         onchange: () => save() });
       const volOut = h('span.sb-volout', { text: `${pad.vol}%` });
 
+      const stop = e => e.stopPropagation();
+      const secField = (label, key, max, hint) => h('label.sb-field.sb-sec', h('span', { text: label }), h('input.input', {
+        type: 'number', min: '0', max: String(max), step: '0.05', value: pad[key] ? String(pad[key]) : '', placeholder: hint, 'aria-label': label, onkeydown: stop,
+        onchange: e => { const v = Number(e.target.value); pad[key] = Number.isFinite(v) && v > 0 ? clamp(v, 0, max) : 0; e.target.value = pad[key] ? String(pad[key]) : ''; save(); } }));
+      const loopSw = h('button.switch' + (pad.loop ? '.is-on' : ''), { type: 'button', role: 'switch', 'aria-checked': String(pad.loop), 'aria-label': 'Loop', onclick: () => { pad.loop = !pad.loop; if (!pad.loop) stopVoices(v => v.padId === pad.id); save(); paintGrid(); paintEditor(); } });
+      const pitchOut = h('span.sb-volout', { text: `${pad.pitch > 0 ? '+' : ''}${pad.pitch} st` });
+      const pitch = h('input.slider.sb-pitch', { type: 'range', min: '-12', max: '12', step: '1', value: String(pad.pitch), 'aria-label': 'Pitch in semitones',
+        oninput: e => { pad.pitch = Number(e.target.value); pitchOut.textContent = `${pad.pitch > 0 ? '+' : ''}${pad.pitch} st`; for (const v of voices) if (v.padId === pad.id) v.src.playbackRate.value = Math.pow(2, pad.pitch / 12); },
+        onchange: () => save() });
+      const durOut = h('small.sb-dur');
+      if (pad.src) bufferFor(pad.src).then(b => { if (durOut.isConnected) durOut.textContent = `The sound is ${b.duration.toFixed(2)} s long.`; }).catch(() => {});
+      const shape = h('div.sb-shape', { role: 'group', 'aria-label': 'Loop, trim, fade and pitch' },
+        h('div.sb-field', h('span', { text: 'Loop' }), h('span.sb-volrow', loopSw, h('small', { text: pad.loop ? 'Press the button again to stop it.' : 'Off: plays once.' }))),
+        h('div.sb-two', secField('Start (s)', 'trimIn', 3600, '0'), secField('End (s)', 'trimOut', 3600, 'the end')),
+        h('div.sb-two', secField('Fade in (s)', 'fadeIn', 30, '0'), secField('Fade out (s)', 'fadeOut', 30, '0')),
+        durOut,
+        h('label.sb-field', h('span', { text: 'Pitch' }), h('span.sb-volrow', pitch, pitchOut), h('small', { text: 'Speed follows pitch, like a tape.' })));
       const tabs = h('div.sb-tabs', { role: 'tablist', 'aria-label': 'Where the sound comes from' }, [['file', 'folder', 'File'], ['mic', 'mic', 'Record'], ['assetlab', 'sparkles', 'Asset Lab']].map(([id, ic, name]) =>
         h('button.sb-tab', { type: 'button', role: 'tab', 'aria-selected': String(S.tab === id), dataset: { tab: id }, onclick: () => { endTake(); S.tab = id; paintEditor(); } }, icon(ic), h('span', { text: name }))));
       const pane = h('div.sb-pane', { role: 'tabpanel' });
@@ -401,7 +687,12 @@ defineApp({
         tabs, pane,
         h('div.sb-field', h('span', { text: 'When pressed' }), modeBtns, h('small', { text: MODES.find(m => m.id === pad.mode).note })),
         h('label.sb-field', h('span', { text: 'Volume' }), h('span.sb-volrow', vol, volOut)),
-        h('div.sb-edit__acts', test, h('span.grow'), del));
+        shape,
+        h('div.sb-field', h('span', { text: 'MIDI note' }), h('small', { text: `Played by note ${MIDI_BASE + board().pads.indexOf(pad)} (${noteName(MIDI_BASE + board().pads.indexOf(pad))}) when MIDI is on.` })),
+        h('div.sb-edit__acts', test, h('span.grow'), del),
+        h('div.sb-edit__acts', h('button.btn.btn--sm.sb-dup', { type: 'button', onclick: () => duplicatePad(pad) }, icon('copy'), h('span', { text: 'Duplicate' })),
+          h('button.btn.btn--sm.sb-earlier', { type: 'button', disabled: board().pads.indexOf(pad) === 0, 'aria-label': 'Move earlier', onclick: () => nudgePad(pad, -1) }, icon('chevron-left'), h('span', { text: 'Earlier' })),
+          h('button.btn.btn--sm.sb-later', { type: 'button', disabled: board().pads.indexOf(pad) === board().pads.length - 1, 'aria-label': 'Move later', onclick: () => nudgePad(pad, 1) }, h('span', { text: 'Later' }), icon('chevron-right'))));
       colors.querySelectorAll('.sb-color').forEach((b, i) => b.setAttribute('aria-checked', String(COLORS[i] === pad.color)));
     }
 
@@ -531,11 +822,27 @@ defineApp({
     paintAll();
     if (!store.get(KEY)) save();
 
+    /* another app hands a file over (Static Beats' "Send to Soundboard"): it becomes a button, once */
+    function addFromFile(path) {
+      const b = board();
+      if (typeof path !== 'string' || !vfs.node(path)) return;
+      const have = b.pads.find(p => p.src && p.src.type === 'file' && p.src.path === path);
+      if (have) { openEditor(have.id); return; }
+      if (b.pads.length >= MAX_PADS) { say('This board is full. Delete a button or start a new board first.'); return; }
+      const used = new Set(b.pads.map(p => p.key));
+      const p = normPad({ label: stemOf(vfs.baseName(path)).slice(0, 24), color: COLORS[b.pads.length % COLORS.length], key: KEYS.find(k => !used.has(k)) || '', src: { type: 'file', path, name: stemOf(vfs.baseName(path)) } }, b.pads.length);
+      b.pads.push(p);
+      save(); paintAll(); openEditor(p.id);
+    }
+    if (win.onReopen) win.onReopen(o => { if (o && o.addFile) addFromFile(o.addFile); });
+    if (ctx.opts && ctx.opts.addFile) addFromFile(ctx.opts.addFile);
+
     return () => {
       S.dead = true;
       window.removeEventListener('keydown', onKey);
       offs.forEach(off => { try { off(); } catch (e) { /* off */ } });
       endTake();
+      try { midi.disable(); } catch (e) { /* off */ }
       stopVoices();
       if (ac) { try { ac.close(); } catch (e) { /* closed */ } ac = null; }
       buffers.clear();

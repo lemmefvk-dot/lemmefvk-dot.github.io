@@ -145,3 +145,19 @@
 
 /* phones: keep the footer clear of the shell's account chip (bottom right) */
 body.is-mobile .fb__foot{padding-right:120px}
+
+/* ---------- which app, diagnostics, copy as text, the kept draft ---------- */
+.fb__select{appearance:auto;padding-right:8px}
+.fb__check{display:flex;align-items:flex-start;gap:var(--sp-3);cursor:pointer;font-size:var(--fs-12);color:var(--ink-1)}
+.fb__check input{margin-top:3px;accent-color:var(--accent)}
+.fb__check small{color:var(--ink-3);font-size:var(--fs-10)}
+.fb__hint{font-size:var(--fs-10);line-height:1.5;color:var(--ink-3)}
+.fb__diag{
+  margin:0;padding:var(--sp-3) var(--sp-4);border-radius:var(--r-sm);max-height:190px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+  font:var(--fs-11)/1.5 var(--mono,ui-monospace,monospace);color:var(--ink-1);background:var(--fill-0);border:1px solid var(--line-1);
+}
+.fb__diag[hidden]{display:none}
+.fb__copy{height:34px;padding:0 var(--sp-4);font-size:var(--fs-12);gap:6px}
+.fb__saved{font-size:var(--fs-10);color:var(--ink-3)}
+.fb__saved:empty{display:none}
+.fb__actions{flex-wrap:wrap}

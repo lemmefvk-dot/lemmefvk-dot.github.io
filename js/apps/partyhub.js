@@ -15,6 +15,9 @@
        window heartbeats on the channel, and the count is the seats
        that answered in the last few seconds, nothing invented.
 
+   Only Static Party (js/apps/party.js) reaches other devices; the app
+   says so in its footer, with a button that opens it.
+
    So it is genuine local matchmaking: pass the laptop around, or
    open a second tab, pick a different name in each, and the two
    seats see the same board and can talk. People on other machines
@@ -288,8 +291,9 @@ defineApp({
   g1: '#ff5c8a', g2: '#7c3aed',
   category: 'Games',
   keywords: ['multiplayer', 'party', 'hub', 'lobby', 'co-op', 'coop', 'versus', 'friends', 'matchmaking', 'chat', 'lan'],
-  desc: 'Find a party and talk about the multiplayer games in the catalogue',
+  desc: 'This browser only: post a party for a multiplayer game and chat across your own tabs',
   singleton: false,
+  hidden: true,       /* started from Static Party's lobby, so there is one list of parties to start from */
   win: { w: 940, h: 620, minW: 360, minH: 420 },
 
   mount(ctx) {
@@ -382,7 +386,10 @@ defineApp({
       h('div.side__group.ph__partygroup', h('div.side__label', { text: 'Your parties' }), joinedWrap),
       h('div.ph__foot',
         h('span.ph__footdot', { 'aria-hidden': 'true' }),
-        h('small', { text: 'Local to this browser — no server. Parties and chat sync live across your StaticOS tabs; other devices won’t see them.' })),
+        h('small', {},
+          h('span', { text: 'This browser only — no server. Parties and chat sync across your StaticOS tabs; other devices won’t see them. Only ' }),
+          h('button.ph__link', { type: 'button', onclick: () => api.openApp('party'), text: 'Static Party' }),
+          h('span', { text: ' reaches other devices.' }))),
     );
     nameInput.id = 'ph-name-' + seat.seatId;
 

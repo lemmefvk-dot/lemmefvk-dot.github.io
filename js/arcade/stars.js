@@ -13,6 +13,11 @@
    is fetched or sent. Size follows the weekday: 7×7 Monday and
    Tuesday, 8×8 Wednesday to Friday, 9×9 at the weekend.
 
+   LEVELS. That is Normal. Easy is 6×6 and Hard 10×10 every day,
+   each from a seed of its own ('staticos-stars:easy:<date>'), so a
+   day has three puzzles; Normal's seed is the one it always had,
+   so Normal's puzzle for a date never changed when levels came.
+
    SOLVABLE, AND ONE ANSWER. A star layout is placed first (one per
    row and column, none touching), then regions grow outward from its
    stars, so that layout is always an answer. A solver then looks
@@ -25,8 +30,12 @@
    the rules, so it can never reject a right answer.
    ============================================================ */
 const SIZE_BY_WEEKDAY = [9, 7, 7, 8, 8, 8, 9];          /* Sun … Sat */
-/* one hue per region, far apart (the game and the Arcade's home card share them) */
-export const REGION_HUES = [8, 205, 46, 280, 140, 330, 96, 232, 176];
+export const LEVELS = ['easy', 'normal', 'hard'];
+export const LEVEL_NAME = { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
+const LEVEL_SIZE = { easy: 6, hard: 10 };
+export const isLevel = l => LEVELS.includes(l);
+/* one hue per region, far apart (the game and the Arcade's home card share them); the tenth is Hard's */
+export const REGION_HUES = [8, 205, 46, 280, 140, 330, 96, 232, 176, 256];
 
 export const pad2 = n => String(n).padStart(2, '0');
 /** the local date as 'YYYY-MM-DD' */
@@ -37,7 +46,7 @@ export function parseDay(key) {
   return new Date(y, (m || 1) - 1, d || 1);
 }
 export const addDays = (key, n) => { const d = parseDay(key); d.setDate(d.getDate() + n); return dayKey(d); };
-export const sizeFor = key => SIZE_BY_WEEKDAY[parseDay(key).getDay()];
+export const sizeFor = (key, level = 'normal') => LEVEL_SIZE[level] || SIZE_BY_WEEKDAY[parseDay(key).getDay()];
 
 /* FNV-1a, then a mulberry32 stream */
 export function hashStr(s) {
@@ -167,13 +176,15 @@ function makeUnique(n, reg, stars, rnd) {
 
 const cache = new Map();
 /**
- * The puzzle for a day: { day, n, regions: Int8Array(n*n), solution: Int8Array(n), unique, tries }.
+ * The puzzle for a day at a level: { day, level, n, regions: Int8Array(n*n), solution: Int8Array(n), unique, tries }.
  * Regions are renumbered in reading order (the first cell's region is 0).
  */
-export function generate(day) {
-  if (cache.has(day)) return cache.get(day);
-  const n = sizeFor(day);
-  const rnd = rng(hashStr(`staticos-stars:${day}`));
+export function generate(day, level = 'normal') {
+  if (!isLevel(level)) level = 'normal';
+  const key = `${level}:${day}`;
+  if (cache.has(key)) return cache.get(key);
+  const n = sizeFor(day, level);
+  const rnd = rng(hashStr(level === 'normal' ? `staticos-stars:${day}` : `staticos-stars:${level}:${day}`));
   let best = null, tries = 0;
   for (; tries < 400; tries++) {
     const stars = placeStars(n, rnd);
@@ -190,9 +201,9 @@ export function generate(day) {
     if (!map.has(g)) map.set(g, map.size);
     regions[i] = map.get(g);
   }
-  const out = { day, n, regions, solution: best.stars, unique: best.ok, tries: tries + 1 };
-  if (cache.size > 8) cache.clear();
-  cache.set(day, out);
+  const out = { day, level, n, regions, solution: best.stars, unique: best.ok, tries: tries + 1 };
+  if (cache.size > 12) cache.clear();
+  cache.set(key, out);
   return out;
 }
 
@@ -220,4 +231,4 @@ export function check(n, regions, stars) {
   return { solved, count: list.length, bad };
 }
 
-export default { dayKey, addDays, sizeFor, generate, solve, check };
+export default { dayKey, addDays, sizeFor, generate, solve, check, LEVELS };

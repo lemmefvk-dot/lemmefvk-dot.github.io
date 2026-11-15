@@ -29,6 +29,13 @@
      Deal n is dealt exactly as Microsoft's FreeCell deals game n
      (its C runtime's rand(), seeded with n), so game #1 here is
      the same layout as game #1 everywhere else.
+
+   Points (Klondike only, points and nothing else — the standard
+   scoring of Windows Solitaire): +10 for a card to a foundation,
+   +5 from the waste to a column, +5 for turning a column card over,
+   −15 for a card back from a foundation; turning the waste back
+   into the stock costs 100 in Draw 1, and 20 in Draw 3 after the
+   third time. Never below 0. Undo puts the points back too.
    ============================================================ */
 
 export const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
@@ -129,7 +136,7 @@ export function newGame(kind, opt = {}, seed = 1) {
   const deal = kind === 'freecell' ? clampDeal(opt.deal) : null;
   const { P, ix } = frame(kind);
   const cards = deckFor(kind, suits);
-  const st = { kind, draw, suits, deal, seed: seed >>> 0, P, ix, cards, moves: 0, passes: 0 };
+  const st = { kind, draw, suits, deal, seed: seed >>> 0, P, ix, cards, moves: 0, passes: 0, points: 0 };
   if (kind === 'freecell') {
     const order = msDeal(deal);
     const byCode = new Map(cards.map(c => [(c.r - 1) * 4 + c.s, c]));
@@ -284,11 +291,19 @@ function flipTop(st, pi) {
 /** Move cards[idx…] of `from` onto `to`. Returns what happened, or null if not legal. */
 export function move(st, from, idx, to) {
   if (!canDrop(st, from, idx, to)) return null;
+  const a = st.P[from].t, b = st.P[to].t;
   const run = st.P[from].c.splice(idx);
   st.P[to].c.push(...run);
   const flipped = flipTop(st, from);
   const off = st.kind === 'spider' ? collectRuns(st) : [];
   st.moves++;
+  if (st.kind === 'klondike') {
+    let d = flipped ? 5 : 0;
+    if (b === 'found') d += 10;
+    else if (a === 'waste' && b === 'tab') d += 5;
+    else if (a === 'found' && b === 'tab') d -= 15;
+    st.points = Math.max(0, (st.points || 0) + d);
+  }
   return { from, to, n: run.length, cards: run, flipped, off };
 }
 
@@ -312,7 +327,9 @@ export function drawStock(st) {
     W.c = [];
     st.passes++;
     st.moves++;
-    return { redeal: true };
+    const cost = st.draw === 1 ? 100 : st.passes > 3 ? 20 : 0;
+    st.points = Math.max(0, (st.points || 0) - cost);
+    return { redeal: true, cost };
   }
   if (st.kind !== 'spider' || !S.c.length) return null;
   if (st.ix.tab.some(t => !st.P[t].c.length)) return { blocked: 'empty' };
@@ -380,7 +397,7 @@ export function liftIndex(st, from) {
 
 /* ---------------- undo ---------------- */
 export function snapshot(st) {
-  return { p: st.P.map(p => p.c.map(c => c.id * 2 + (c.up ? 1 : 0))), moves: st.moves, passes: st.passes };
+  return { p: st.P.map(p => p.c.map(c => c.id * 2 + (c.up ? 1 : 0))), moves: st.moves, passes: st.passes, pts: st.points || 0 };
 }
 export function restore(st, snap) {
   const byId = new Map(st.cards.map(c => [c.id, c]));
@@ -389,6 +406,48 @@ export function restore(st, snap) {
   });
   st.moves = snap.moves;
   st.passes = snap.passes;
+  st.points = Number.isFinite(snap.pts) ? snap.pts : 0;
+}
+
+/* ---------------- show moves ---------------- */
+/** The moves worth pointing out to someone stuck, best first: cards that
+    can go home, then moves between columns that change something (not a
+    whole column into an empty one, not a card that already sits on the
+    rank above unless Spider gains a same-suit run), then the stock.
+    [{ from, idx, to } | { draw: true }] */
+export function hints(st) {
+  const out = [], seen = new Set();
+  const add = mv => { const k = mv.draw ? 'draw' : `${mv.from}>${mv.to}`; if (!seen.has(k)) { seen.add(k); out.push(mv); } };
+  const sources = [...(st.ix.waste >= 0 ? [st.ix.waste] : []), ...st.ix.cells, ...st.ix.tab];
+  for (const a of sources) { const f = foundationFor(st, a); if (f !== null) add({ from: a, idx: st.P[a].c.length - 1, to: f }); }
+  for (const a of sources) {
+    const p = st.P[a];
+    for (let idx = 0; idx < p.c.length; idx++) {
+      if (!canPick(st, a, idx)) continue;
+      let empty = false;
+      for (const b of st.ix.tab) {
+        if (b === a || !canDrop(st, a, idx, b)) continue;
+        const dst = st.P[b];
+        if (!dst.c.length) {
+          if ((p.t === 'tab' && idx === 0) || empty) continue;
+          empty = true;
+        }
+        /* a run that already sits on the rank above gains nothing by moving
+           sideways — except in Spider, onto its own suit from another */
+        const under = p.t === 'tab' && idx > 0 ? p.c[idx - 1] : null;
+        if (under?.up && under.r === p.c[idx].r + 1) {
+          if (st.kind !== 'spider') { if (isRed(under.s) !== isRed(p.c[idx].s)) continue; }
+          else if (!(top(dst) && top(dst).s === p.c[idx].s && under.s !== p.c[idx].s)) continue;
+        }
+        add({ from: a, idx, to: b });
+      }
+    }
+  }
+  if (st.ix.stock >= 0) {
+    const stock = st.P[st.ix.stock].c.length;
+    if (st.kind === 'klondike' ? stock || st.P[st.ix.waste].c.length : stock && !st.ix.tab.some(t => !st.P[t].c.length)) add({ draw: true });
+  }
+  return out;
 }
 function clone(st) {
   const cards = st.cards.map(c => ({ ...c }));

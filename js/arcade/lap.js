@@ -20,6 +20,18 @@
    most 80 s / about 30 KB each, survive a reload, and "Clear ghosts"
    (press twice) forgets them all.
 
+   Two cups, the Arcade's modes (each with its own best): the first
+   three circuits, and a second cup of three more (./lap-track.js CUPS).
+
+   A FRIEND'S GHOST. "Ghost codes" (before a lap starts) lists a code
+   for each of your ghosts to copy and send; a friend pastes one in,
+   and once it is checked (./lap-track.js readGhostCode: a whole lap of
+   that circuit, from the line, at speeds a car can reach) the round
+   becomes one lap of that circuit against their ghost, replaying
+   exactly the lap they drove. Your own ghost on that circuit is still
+   replaced if you beat it. One lap is not a cup, so that round never
+   sets a best; the result says who was faster and by how much.
+
    Fixed 1/120 s steps (./fixed.js): the same car at any frame rate.
    Follows the module contract in ./index.js.
    ============================================================ */
@@ -28,7 +40,7 @@ import { store } from '../core/store.js';
 import { clamp, hsl, FONT, coarse, fitView, surface, sounder, looper, rr, prompt } from './kit.js';
 import { ownsKey } from './boardkit.js';
 import { fixedStepper } from './fixed.js';
-import { WORLD, HALF, GHOST_HZ, MAX_LAP_MS, TRACKS, circuit, newCar, stepCar, speedOf, autoDrive, packGhost, readGhost, ghostBytes, ghostAt, ghostProgress, ghostTimeAt } from './lap-track.js';
+import { WORLD, HALF, GHOST_HZ, MAX_LAP_MS, TRACKS, CUPS, circuit, newCar, stepCar, speedOf, autoDrive, packGhost, readGhost, ghostBytes, ghostAt, ghostProgress, ghostTimeAt, ghostCode, readGhostCode } from './lap-track.js';
 
 const KEY = 'portal.arcadeLapRush';
 const DT = 1 / 120, PER_SAMPLE = 120 / GHOST_HZ;
@@ -57,6 +69,20 @@ const CSS = `
 .lr-pad div{display:flex;gap:8px;pointer-events:auto}
 .lr-pad button{width:62px;height:62px;border-radius:16px;font:700 20px/1 var(--font,system-ui);color:#fff;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);touch-action:none}
 .lr-pad button.on{background:rgba(120,230,255,.4)}
+.lr-codes{position:absolute;inset:0;z-index:5;display:grid;place-items:center;padding:12px;background:rgba(4,6,12,.8)}
+.lr-codes[hidden]{display:none}
+.lr-card{width:min(100%,520px);max-height:100%;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:14px;background:#111622;border:1px solid rgba(255,255,255,.16);color:#e8ecf4;font:13px/1.45 var(--font,system-ui)}
+.lr-card h3{margin:0;font-size:15px}
+.lr-card p{margin:0;color:#9aa6b8;font-size:12px}
+.lr-card .is-bad{color:#ffb4bf}
+.lr-card textarea,.lr-card input{font:500 12px/1.4 var(--mono,ui-monospace,monospace);color:#e8ecf4;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:8px;width:100%;box-sizing:border-box}
+.lr-card textarea{min-height:70px;resize:vertical;word-break:break-all}
+.lr-card input{font-family:var(--font,system-ui)}
+.lr-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.lr-row b{flex:1;font-weight:600}
+.lr-card button{font:600 12px/1 var(--font,system-ui);color:#e8ecf4;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);border-radius:9px;padding:8px 11px;cursor:pointer}
+.lr-card button.is-main{background:rgba(120,230,255,.22);border-color:rgba(120,230,255,.6)}
+.lr-card button:focus-visible{outline:2px solid #7be0ff;outline-offset:2px}
 `;
 
 export default {
@@ -64,10 +90,13 @@ export default {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
     const saved = readStore();
+    /* the cup: the mode's three circuits; racing a friend's ghost it is just that one circuit */
+    const CUP = (CUPS[ctx.mode] || CUPS.cup).map(id => TRACKS.find(t => t.id === id));
+    let list = CUP;
     const S = {
       state: 'ready',                                  /* ready | count | race | lap | done */
       paused: false, over: false, time: 0,
-      ti: 0, tr: circuit(TRACKS[0].id), car: null,
+      ti: 0, tr: circuit(CUP[0].id), car: null, friend: null,
       countT: COUNT, lapT: 0, steps: 0, rec: [], results: [], total: 0,
       keys: { thr: 0, brake: 0, steer: 0 }, pad: { thr: 0, brake: 0, left: 0, right: 0 }, auto: null,
       ghosts: saved.ghosts, show: saved.show, gp: null, gpFor: '',
@@ -88,8 +117,27 @@ export default {
     } });
     const label = h('span', { text: 'Clear ghosts' });
     clearBtn.append(label);
-    const bar = h('div.lr-bar', showBtn, clearBtn);
-    const root = h('div', { style: { position: 'absolute', inset: '0' } }, h('style', { text: CSS }), stage, bar);
+    const codesBtn = h('button', { type: 'button', title: 'Send a ghost to a friend, or race one of theirs', onclick: () => openCodes() }, h('span', { text: 'Ghost codes' }));
+    const bar = h('div.lr-bar', showBtn, clearBtn, codesBtn);
+    /* the ghost codes: yours to copy, a friend's to paste */
+    const mineEl = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } });
+    const pasteEl = h('textarea', { 'aria-label': 'A friend’s ghost code', placeholder: 'Paste a friend’s code: LR1.…', spellcheck: 'false' });
+    const nameEl = h('input', { type: 'text', maxlength: '24', 'aria-label': 'Whose ghost is it?', placeholder: 'Whose ghost? (optional)' });
+    const whyEl = h('p', { role: 'status' });
+    const raceBtn = h('button.is-main', { type: 'button', text: 'Race it', onclick: () => raceFriend() });
+    const closeBtn = h('button', { type: 'button', text: 'Close', onclick: () => closeCodes() });
+    const codes = h('div.lr-codes', { hidden: true },
+      h('div.lr-card', { role: 'dialog', 'aria-label': 'Ghost codes' },
+        h('h3', { text: 'Your ghosts' }),
+        h('p', { text: 'Copy a code and send it to a friend. It holds your best lap on that circuit and nothing else.' }),
+        mineEl,
+        h('h3', { text: 'Race a friend’s ghost' }),
+        h('p', { text: 'One lap against the lap they drove. It’s checked first: a whole lap of a Lap Rush circuit, at speeds a car can reach.' }),
+        pasteEl, nameEl, whyEl,
+        h('div.lr-row', raceBtn, closeBtn)));
+    /* Escape closes the codes without pausing the Arcade */
+    codes.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCodes(); } });
+    const root = h('div', { style: { position: 'absolute', inset: '0' } }, h('style', { text: CSS }), stage, bar, codes);
     el.appendChild(root);
     let padEl = null;
     if (coarse()) {
@@ -110,8 +158,52 @@ export default {
     function persist() { writeStore(S.show, S.ghosts); }
     function say(t) { S.msg = t; S.msgT = S.time; }
 
+    /* ------------------------------ ghost codes ------------------------------ */
+    function openCodes() {
+      if (S.state !== 'ready' || S.friend) { say('Ghost codes open before a lap starts'); refocus(); return; }
+      mineEl.replaceChildren(...(TRACKS.filter(t => S.ghosts[t.id]).map(t => {
+        const code = ghostCode(t.id, S.ghosts[t.id]);
+        const box = h('textarea', { readonly: true, 'aria-label': `Your ghost code for ${t.name}`, dataset: { track: t.id }, rows: '2' });
+        box.value = code;
+        /* copy: the selected box first (it works inside the click), then the Clipboard API, which a
+           browser may leave unanswered, so it gets a moment and no more; the code stays selected either way */
+        const copy = h('button', { type: 'button', text: 'Copy code', onclick: async () => {
+          box.select();
+          let done = false;
+          try { done = document.execCommand('copy'); } catch (err) { done = false; }
+          if (!done && navigator.clipboard) {
+            try { await Promise.race([navigator.clipboard.writeText(code), new Promise((_, no) => setTimeout(() => no(new Error('no answer')), 1500))]); done = true; } catch (err) { done = false; }
+          }
+          box.select();
+          copy.textContent = done ? 'Copied' : 'Selected: copy it';
+        } });
+        return h('div', h('div.lr-row', h('b', { text: `${t.name} · ${fmt(S.ghosts[t.id].t)}` }), copy), box);
+      })));
+      if (!mineEl.childElementCount) mineEl.append(h('p', { text: 'No ghosts yet: finish a lap and it becomes your ghost on that circuit.' }));
+      whyEl.textContent = ''; whyEl.className = '';
+      codes.hidden = false;
+      pasteEl.focus({ preventScroll: true });
+    }
+    function closeCodes() { codes.hidden = true; refocus(); }
+    function raceFriend() {
+      const r = readGhostCode(pasteEl.value);
+      if (r.error) { whyEl.textContent = r.error; whyEl.className = 'is-bad'; return false; }
+      const nm = nameEl.value.replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 24) || 'Your friend';
+      S.friend = { track: r.track, g: r.g, name: nm };
+      list = [TRACKS.find(t => t.id === r.track)];
+      S.results = []; S.total = 0; S.gp = null; S.gpFor = '';
+      codes.hidden = true;
+      loadTrack(0);
+      say(`One lap against ${nm}’s ghost: ${fmt(r.g.t)}`);
+      ctx.announce?.(`Racing ${nm}’s ghost on ${S.tr.name}. Their lap: ${fmt(r.g.t)}.`);
+      refocus(); draw();
+      return true;
+    }
+    const whose = () => (S.friend ? `${S.friend.name}’s` : 'your');
+
     /* ------------------------------ rules ------------------------------ */
-    const ghost = () => S.ghosts[S.tr.id] || null;
+    /* the ghost on the road: a friend's while racing it, else your own best on this circuit */
+    const ghost = () => (S.friend && S.friend.track === S.tr.id ? S.friend.g : S.ghosts[S.tr.id] || null);
     function ghostProg() {
       const g = ghost();
       if (!g) return null;
@@ -126,7 +218,7 @@ export default {
       return tg === null ? null : S.lapT - tg;
     }
     function loadTrack(i) {
-      S.ti = i; S.tr = circuit(TRACKS[i].id); S.car = newCar(S.tr);
+      S.ti = i; S.tr = circuit(list[i].id); S.car = newCar(S.tr);
       S.state = 'ready'; S.lapT = 0; S.steps = 0; S.rec = []; S.countT = COUNT; S.lastSecond = 3;
     }
     function wake() {
@@ -139,13 +231,14 @@ export default {
       snd.blip(880, 0.3, 'square', 0.8);
     }
     function lapDone(ms, aborted) {
-      const g = ghost();
+      /* the gap is to the ghost you raced; your own ghost is replaced only by a faster lap of yours */
+      const g = ghost(), own = S.ghosts[S.tr.id] || null;
       const gap = g && !aborted ? (ms - g.t) / 1000 : null;
       let status = 'first', kept = false;
       if (aborted) status = 'slow';
-      else if (g && ms >= g.t) status = 'kept';
+      else if (own && ms >= own.t) status = 'kept';
       else {
-        status = g ? 'new' : 'first';
+        status = own ? 'new' : 'first';
         const pack = packGhost(S.rec, ms);
         const clean = readGhost(pack);
         if (clean && ghostBytes(clean) <= MAX_BYTES && ms <= MAX_LAP_MS) { S.ghosts[S.tr.id] = clean; S.gp = null; S.gpFor = ''; persist(); kept = true; }
@@ -160,13 +253,22 @@ export default {
     }
     function nextTrack() {
       if (S.state !== 'lap') return;
-      if (S.ti >= TRACKS.length - 1) { S.state = 'done'; S.endT = 0; return; }
+      if (S.ti >= list.length - 1) { S.state = 'done'; S.endT = 0; return; }
       loadTrack(S.ti + 1);
     }
     function finish() {
       if (S.over || dead) return;
       S.over = true;
       const sec = Math.round(S.total / 10) / 100;
+      if (S.friend) {
+        const ms = S.results[0], them = S.friend.g.t, d = Math.abs(ms - them) / 1000;
+        const aborted = S.last?.status === 'slow';
+        ctx.onEnd({ score: sec, won: !aborted && ms < them,
+          detail: aborted ? `${S.tr.name}: no lap in ${LAP_CAP} s, so ${S.friend.name}’s ghost (${fmt(them)}) wins.`
+            : `${S.tr.name}, one lap: you ${fmt(ms)}, ${S.friend.name}’s ghost ${fmt(them)}. ${ms < them ? `You beat it by ${d.toFixed(2)} s.` : ms > them ? `The ghost was ${d.toFixed(2)} s faster.` : 'A dead heat.'}`,
+          assisted: 'One lap against a friend’s ghost isn’t a cup, so it doesn’t change your best' });
+        return;
+      }
       ctx.onEnd({ score: sec, won: true, detail: `Three circuits in ${sec.toFixed(2)} s (${S.results.map(fmt).join(', ')}).` });
     }
 
@@ -252,12 +354,12 @@ export default {
       g.textBaseline = 'middle';
       g.fillStyle = 'rgba(8,12,20,.78)'; rr(g, 16, 14, 330, 74, 12); g.fill();
       g.textAlign = 'left'; g.fillStyle = hsl(S.tr.hue, 80, 78); g.font = `700 13px ${FONT}`;
-      g.fillText(`${S.tr.name.toUpperCase()}  ·  ${S.ti + 1} / ${TRACKS.length}`, 30, 33);
+      g.fillText(`${S.tr.name.toUpperCase()}  ·  ${S.ti + 1} / ${list.length}`, 30, 33);
       g.fillStyle = '#f4f7fb'; g.font = `800 28px ${FONT}`;
       g.fillText(fmt(Math.round(S.state === 'race' ? S.lapT * 1000 : S.state === 'lap' && S.last ? S.last.ms : 0)), 30, 63);
       const gh = ghost();
       g.font = `600 12px ${FONT}`; g.fillStyle = hsl(190, 40, 78);
-      g.fillText(gh ? `Best lap ${fmt(gh.t)}` : 'No ghost yet', 168, 40);
+      g.fillText(gh ? (S.friend ? `${S.friend.name}: ${fmt(gh.t)}` : `Best lap ${fmt(gh.t)}`) : 'No ghost yet', 168, 40, 170);
       const gap = S.show ? gapNow() : null;
       if (gap !== null) {
         g.font = `800 22px ${FONT}`; g.fillStyle = gap <= 0 ? '#7dffa0' : '#ff9a8a';
@@ -297,15 +399,15 @@ export default {
         g.strokeStyle = 'rgba(255,255,255,.2)'; rr(g, WORLD.w / 2 - 190, 150, 380, 190, 16); g.stroke();
         g.fillStyle = '#f4f7fb'; g.font = `700 20px ${FONT}`; g.fillText(`${S.tr.name}: ${fmt(L.ms)}`, WORLD.w / 2, 190);
         g.font = `600 16px ${FONT}`;
-        const line = { first: 'First lap: ghost saved', new: `New best lap! ${fmtGap(L.gap)} s: ghost replaced`, kept: `${fmtGap(L.gap)} s: your ghost stays`, slow: 'Too slow: no ghost kept', toolong: 'Lap too long to save as a ghost' }[L.status];
+        const line = S.friend ? { first: 'Your first lap here: your own ghost saved', new: 'A new best of your own: your ghost replaced', kept: 'Your own ghost on this circuit stays', slow: 'Too slow: no lap', toolong: 'Lap too long to save as a ghost' }[L.status] : { first: 'First lap: ghost saved', new: `New best lap! ${fmtGap(L.gap)} s: ghost replaced`, kept: `${fmtGap(L.gap)} s: your ghost stays`, slow: 'Too slow: no ghost kept', toolong: 'Lap too long to save as a ghost' }[L.status];
         g.fillStyle = L.status === 'new' || L.status === 'first' ? '#7dffa0' : '#ffd0a8'; g.fillText(line, WORLD.w / 2, 226);
         g.fillStyle = hsl(200, 30, 78); g.font = `500 14px ${FONT}`;
-        g.fillText(`Cup so far: ${fmt(S.total)}`, WORLD.w / 2, 262);
+        g.fillText(S.friend ? (L.gap === null ? `${S.friend.name}’s ghost: ${fmt(S.friend.g.t)}` : `${L.gap < 0 ? 'Ahead of' : L.gap > 0 ? 'Behind' : 'Level with'} ${S.friend.name}’s ghost by ${Math.abs(L.gap).toFixed(2)} s`) : `Cup so far: ${fmt(S.total)}`, WORLD.w / 2, 262);
         g.fillStyle = 'rgba(255,255,255,.6)'; g.font = `500 13px ${FONT}`;
-        g.fillText(S.ti >= TRACKS.length - 1 ? (coarse() ? 'Tap to finish' : 'Space to finish') : (coarse() ? 'Tap for the next circuit' : 'Space for the next circuit'), WORLD.w / 2, 306);
+        g.fillText(S.ti >= list.length - 1 ? (coarse() ? 'Tap to finish' : 'Space to finish') : (coarse() ? 'Tap for the next circuit' : 'Space for the next circuit'), WORLD.w / 2, 306);
       }
       g.restore();
-      if (S.state === 'ready' && !S.paused) prompt(g, sf, coarse() ? 'Tap ▲ to start the countdown' : 'Press ↑ or Space to start', ghost() ? `Beat your ghost: ${fmt(ghost().t)}` : 'Three circuits, one lap each: lowest total wins', S.tr.hue, sf.h * 0.88);
+      if (S.state === 'ready' && !S.paused) prompt(g, sf, coarse() ? 'Tap ▲ to start the countdown' : 'Press ↑ or Space to start', ghost() ? `Beat ${whose()} ghost: ${fmt(ghost().t)}` : 'Three circuits, one lap each: lowest total wins', S.tr.hue, sf.h * 0.88);
       if (S.paused) prompt(g, sf, 'Paused', null, S.tr.hue);
     }
 
@@ -321,7 +423,7 @@ export default {
       S.keys.steer = ((held.has('ArrowRight') || held.has('d')) ? 1 : 0) - ((held.has('ArrowLeft') || held.has('a')) ? 1 : 0);
     };
     const onKey = e => {
-      if (!ownsKey(el, e) || dead) return;
+      if (!ownsKey(el, e) || dead || !codes.hidden) return;          /* typing a code is not driving */
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
       if (K[k]) {
         e.preventDefault(); snd.wake();
@@ -367,7 +469,7 @@ export default {
       peek: () => {
         const g = ghost(), gap = gapNow(), gp = g && S.state === 'race' ? ghostAt(g, S.lapT) : null;
         return {
-          state: S.state, paused: S.paused, over: S.over, time: S.time, track: S.tr.id, trackName: S.tr.name, trackIndex: S.ti, tracks: TRACKS.length,
+          state: S.state, paused: S.paused, over: S.over, time: S.time, track: S.tr.id, trackName: S.tr.name, trackIndex: S.ti, tracks: list.length, cup: list.map(t => t.id), friend: S.friend ? { track: S.friend.track, name: S.friend.name, ms: S.friend.g.t } : null,
           lapT: S.lapT, steps: S.steps, results: S.results.slice(), total: S.total, count: S.countT, N: S.tr.N,
           car: { x: S.car.x, y: S.car.y, h: S.car.h, speed: speedOf(S.car), onRoad: S.car.onRoad, prog: S.car.prog },
           keys: { ...S.keys }, samples: S.rec.length,
@@ -381,7 +483,7 @@ export default {
         if (cmd === 'auto') S.auto = arg || null;
         else if (cmd === 'step') { for (let t = 0; t < arg - 1e-9; t += DT) step(DT); }
         else if (cmd === 'begin') { if (S.state === 'ready' || S.state === 'count') go(); }
-        else if (cmd === 'goto') loadTrack(clamp(arg | 0, 0, TRACKS.length - 1));
+        else if (cmd === 'goto') loadTrack(clamp(arg | 0, 0, list.length - 1));
         else if (cmd === 'next') nextTrack();
         else return false;
         draw();

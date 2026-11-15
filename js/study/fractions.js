@@ -8,12 +8,14 @@
    what you type is read by a small parser and never evaluated.
 
    Here it is only the form and the display. A fraction can be typed as
-   3/4, a mixed number as 2 3/4, a decimal as 0.75.
+   3/4, a mixed number as 2 3/4, a decimal as 0.75, a percent as 75% and
+   a ratio as 3:4. The answer has a row for each form, the percent and
+   the ratio included.
    ============================================================ */
 import * as FR from '../core/fractions.js';
 
 const OPS = [['+', 'Add  +'], ['-', 'Subtract  −'], ['*', 'Multiply  ×'], ['/', 'Divide  ÷']];
-const EXAMPLES = [['3/4', '+', '5/6'], ['2 1/2', '*', '1 1/3'], ['7/8', '-', '1/6'], ['3/5', '/', '9/10'], ['0.1', '+', '0.2'], ['18/24', '', ''], ['1/2', '/', '0']];
+const EXAMPLES = [['3/4', '+', '5/6'], ['2 1/2', '*', '1 1/3'], ['7/8', '-', '1/6'], ['3/5', '/', '9/10'], ['0.1', '+', '0.2'], ['18/24', '', ''], ['12:18', '', ''], ['15%', '*', '80'], ['1/2', '/', '0']];
 const draft = { a: '', op: '+', b: '' };
 
 export function mountFractions(host, ctx) {
@@ -40,7 +42,7 @@ export function mountFractions(host, ctx) {
   function paint() {
     out.replaceChildren();
     const r = S.res;
-    if (!r) { out.append(h('p.st-note', { text: 'Type a fraction like 3/4, a mixed number like 2 1/2, a whole number or a decimal. The answer is exact, with no rounding, and each step of the working is shown. Numbers can have up to ' + FR.MAX_DIGITS + ' digits.' })); return; }
+    if (!r) { out.append(h('p.st-note', { text: 'Type a fraction like 3/4, a mixed number like 2 1/2, a whole number, a decimal, a percent like 15% or a ratio like 12:18. The answer is exact, with no rounding, and each step of the working is shown. Numbers can have up to ' + FR.MAX_DIGITS + ' digits.' })); return; }
     if (!r.ok) { out.append(h('div.st-issue', { role: 'alert', dataset: { fk: 'fr-error' } }, icon('alert'), h('span', { text: r.error }))); return; }
     const an = r.answer;
     out.append(
@@ -48,7 +50,9 @@ export function mountFractions(host, ctx) {
         h('small', { text: 'Answer, in lowest terms' }),
         h('b', { dataset: { fk: 'fr-answer-text' }, text: an.text }),
         an.mixed !== an.text ? h('span', { dataset: { fk: 'fr-mixed' }, text: `As a mixed number: ${an.mixed}` }) : null,
-        h('span', { dataset: { fk: 'fr-decimal' }, text: an.decimal.includes('(') ? `As a decimal: ${an.decimal} (the digits in brackets repeat forever)` : `As a decimal: ${an.decimal}` })),
+        h('span', { dataset: { fk: 'fr-decimal' }, text: an.decimal.includes('(') ? `As a decimal: ${an.decimal} (the digits in brackets repeat forever)` : `As a decimal: ${an.decimal}` }),
+        h('span', { dataset: { fk: 'fr-percent' }, text: `As a percent: ${an.percent}` }),
+        an.ratio ? h('span', { dataset: { fk: 'fr-ratio' }, text: `As a ratio: ${an.ratio}` }) : null),
       h('div.side__label', { text: 'Working' }),
       h('ol.st-eq__steps', { dataset: { fk: 'fr-steps' } }, r.steps.map((s, i) => h('li', { dataset: { fk: 'fr-step', i } }, h('p', { text: s.say }), ...lines(s.math)))));
   }

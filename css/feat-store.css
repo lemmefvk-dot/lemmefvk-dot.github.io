@@ -346,3 +346,65 @@ html[data-pixelicons="on"] .st-look .glyph.glyph.glyph--art > .icon { display: i
 .st-lookprev ul { margin: 0; padding-left: 1.1em; display: grid; gap: 2px; }
 .st-lookprev__err { display: flex; gap: 6px; align-items: flex-start; color: #fca5a5; }
 .st-lookprev__err .icon { width: 13px; height: 13px; flex: 0 0 auto; margin-top: 1px; }
+
+/* ============================================================
+   Looks in slots, sent to friends, day and night, Recently changed,
+   What this changes, Hide in use, Reset to default (batch "settings";
+   js/apps/store-looks.js, js/apps/store.js)
+   ============================================================ */
+.st-bartools { display: flex; align-items: center; gap: var(--sp-4); }
+.st-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-10); color: var(--ink-2); cursor: pointer; }
+.st-toggle input { accent-color: var(--accent); }
+
+/* "What this changes" */
+.st-changes {
+  margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm);
+  background: var(--fill-0); border: 1px solid var(--line-0); font-size: var(--fs-10); color: var(--ink-2); line-height: 1.5;
+}
+.st-changes[hidden] { display: none; }
+.st-changes b { display: block; color: var(--ink-1); margin-bottom: 2px; }
+.st-changes ul { margin: 0; padding-left: 1.1em; display: grid; gap: 2px; }
+.st-wall__meta .ibtn { flex: 0 0 auto; }
+
+.st-cur { width: 32px; height: 32px; flex: 0 0 auto; padding: 6px; border-radius: 8px; background: var(--fill-1); box-sizing: content-box; }
+
+/* cards in Store › In use */
+.st-recent, .st-slots, .st-fl, .st-dn {
+  margin-bottom: var(--sp-6); padding: var(--sp-5); border-radius: var(--r-md);
+  border: 1px solid var(--line-0); background: var(--fill-0);
+}
+.st-recent__list, .st-slots__list { display: grid; gap: 4px; margin-top: var(--sp-3); }
+.st-recent__row, .st-slot, .st-fl__row {
+  display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-sm); background: var(--fill-0); border: 1px solid var(--line-0);
+}
+.st-recent__row b, .st-slot b, .st-fl__row b { display: block; font-size: var(--fs-11); color: var(--ink-0); }
+.st-recent__row small, .st-slot small, .st-fl__row small { display: block; font-size: var(--fs-10); color: var(--ink-3); }
+.st-slot.is-on { border-color: rgba(var(--accent-rgb) / .45); background: rgba(var(--accent-rgb) / .07); }
+.st-slot__dot { width: 18px; height: 18px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 0 1px rgba(255,255,255,.2) inset; }
+.st-slots__new .st-code { flex: 0 1 180px; }
+.st-chip { height: 22px; padding: 0 var(--sp-3); border-radius: var(--r-pill); background: var(--fill-1); color: var(--ink-2); font-size: var(--fs-10); font-weight: 600; }
+.st-chip:hover { background: var(--fill-2); color: var(--ink-0); }
+.st-fl__panel { padding: var(--sp-3) 0 0; }
+.st-fl__panel[hidden] { display: none; }
+.st-dn__grid { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin: var(--sp-4) 0 var(--sp-3); }
+.st-dn__f { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-10); color: var(--ink-3); }
+
+/* a look, drawn */
+.st-lp { display: flex; gap: var(--sp-5); align-items: flex-start; flex-wrap: wrap; margin-top: var(--sp-3); }
+.st-lp__stage { position: relative; width: 190px; height: 118px; border-radius: 8px; overflow: hidden; flex: 0 0 auto; box-shadow: 0 0 0 1px rgba(255,255,255,.14) inset; background: #120912; }
+.st-lp__wall { position: absolute !important; inset: 0; width: 100%; height: 100%; border-radius: 0; aspect-ratio: auto; background-size: cover; background-position: center; }
+.st-lp__win { position: absolute; left: 14px; top: 14px; width: 98px; height: 58px; border-radius: 6px; background: rgba(20,18,26,.82); border: 1px solid rgba(255,255,255,.18); padding: 6px; display: grid; gap: 4px; align-content: start; }
+.st-lp__win.is-light { background: rgba(250,250,252,.88); }
+.st-lp__win i { display: block; height: 4px; border-radius: 2px; background: rgba(128,128,140,.55); }
+.st-lp__win i.is-s { width: 60%; }
+.st-lp__win .st-lp__bar { background: var(--lp-accent, var(--accent)); width: 40%; }
+.st-lp__win .st-lp__btn { width: 28px; height: 8px; border-radius: 3px; background: var(--lp-accent, var(--accent)); margin-top: 4px; }
+.st-lp__tiles { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); display: flex; gap: 4px; padding: 3px 5px; border-radius: 8px; background: rgba(20,18,26,.55); }
+.st-lp__list { margin: 0; padding-left: 1.1em; font-size: var(--fs-10); color: var(--ink-2); display: grid; gap: 2px; line-height: 1.5; }
+
+/* bar and launcher schematics */
+.st-lay__tbar { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: rgba(255,255,255,.5); }
+.st-lay__tbar::before { content: ''; position: absolute; left: 2px; top: 1px; width: 5px; height: 4px; border-radius: 1px; background: var(--accent); }
+.st-lay__panel { position: absolute; left: 50%; bottom: 9px; width: 22px; height: 22px; transform: translateX(-50%); border-radius: 4px; background: rgba(255,255,255,.55); }
+.st-lay__startmenu { position: absolute; left: 3px; bottom: 9px; width: 34px; height: 24px; border-radius: 3px; background: linear-gradient(90deg, rgba(255,255,255,.35) 38%, rgba(255,255,255,.6) 38%); }

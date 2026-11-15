@@ -20,15 +20,35 @@
                                each second until answered
      wel   { to, n, c, g }     host lets that guest in; g = game id
      full  { to }              host already has a guest
-     st    { s, r }            host starts round r with seed s
+     st    { s, r, b, m }      host starts round r with seed s: game m
+                               of a best-of-b match (b 1, 3 or 5)
      g     { r, d }            the game's own data (an object) for
                                round r — data for any other round is
                                dropped, so a late message from the last
                                round never reaches the next one
-     png   { a } / pon { a }   round-trip time + "still here"
+     png   { a, b? } / pon { a }  round-trip time + "still here"; the
+                               host's ping also says the match length
+                               it has picked (b), for the guest's card
      again {}                  wants a rematch
+     rx    { e }               a quick reaction: one of REACTIONS, by
+                               its index — never free text
+     fr    { x:[tag] }         "are we friends?": one tag per friend of
+                               this side, made from that friendship's
+                               own secret and this room's code
+                               (core/friends.js roomTags), padded with
+                               random ones to FR_TAGS, in random order.
+                               Only the two people in one friendship
+                               make the same tag, so a match names the
+                               friend and says nothing else
      bye   {}                  leaving
-   A peer silent for QUIET_MS has left.
+
+   A DROP. A partner silent for LOST_MS is "lost", not gone: the room
+   stays open, keeps pinging, and says 'lost'. Anything heard from them
+   in the next REJOIN_MS (30 s) says 'back', and the round carries on
+   where it was — live.js resubscribes by itself when a connection
+   comes back. Only after that does the room give up ('left', quiet).
+   This covers a network drop while both Arcades stay open; closing the
+   Arcade or the tab is leaving.
 
    SAFETY — anything can arrive on a public topic, so:
      · replies made because someone else spoke (pon, full, a repeated
@@ -48,12 +68,20 @@
        GAME_MAX characters and the game's own sends at OUT_PER_SEC.
        Each game still validates its own data.
 
+     · a reaction goes out at most once per REACT_GAP, and the partner's
+       are shown at most once per REACT_SHOW (the rest are dropped).
+
      openRoom({ role:'host', game })  ·  openRoom({ role:'guest', code })
-       -> room { code, role, game, peer, phase, error,
+       -> room { code, role, game, peer, phase, error, round, seed,
+                 best, match, lost, friend,
                  on(fn) -> off      fn(type, data): 'phase' | 'peer' |
                                     'left' | 'start' | 'game' | 'again' | 'live'
+                                    | 'lost' | 'back' | 'react' {e} |
+                                    'best' b | 'friend' fp
                  start()            host: a new round with a new seed
+                 setBest(b)         host: best of 1, 3 or 5 from the next start
                  send(obj) -> bool  game data to the partner
+                 react(i) -> bool   one of REACTIONS
                  rematch()          ask for another round
                  leave()            say bye and close
                  rtt() -> ms | null live() -> live status
@@ -76,9 +104,21 @@ const OUT_PER_SEC = 40;
 const KNOCK_EVERY = 1000;
 export const JOIN_WAIT = 8000;
 const PING_EVERY = 2000;
-export const QUIET_MS = 9000;
-const TYPES = new Set(['hi', 'wel', 'full', 'st', 'g', 'png', 'pon', 'again', 'bye']);
+export const LOST_MS = 6000;       /* three pings missed: the partner is lost (maybe for a moment) */
+export const REJOIN_MS = 30000;    /* ...and has this long to come back to the same room and round */
+export const QUIET_MS = LOST_MS + REJOIN_MS;
+const TYPES = new Set(['hi', 'wel', 'full', 'st', 'g', 'png', 'pon', 'again', 'rx', 'fr', 'bye']);
 const ID_RE = /^[a-z0-9]{10}$/;
+/* the quick reactions: an index on the wire, never free text */
+export const REACTIONS = ['👍', '😂', '😮', '🎉'];
+export const REACTION_NAMES = ['Thumbs up', 'Laughing', 'Wow', 'Party'];
+const REACT_GAP = 1200;
+const REACT_SHOW = 700;
+export const BESTS = [1, 3, 5];
+const FR_TAGS = 64;
+const FR_BEATS = 3;
+const TAG_RE = /^[A-Za-z0-9_-]{22}$/;
+const randomTag = () => btoa(String.fromCharCode(...rand(16))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 const rand = n => { const a = new Uint8Array(n); crypto.getRandomValues(a); return a; };
 const sessionId = () => [...rand(10)].map(b => (b % 36).toString(36)).join('');
@@ -98,12 +138,16 @@ export function openRoom({ role, game = null, code = null }) {
     error: null,                /* 'invalid' | 'nobody' | 'full' | 'game' | null */
     round: 0, seed: 0,
     wantAgain: false, peerAgain: false,
+    best: 1, match: 1,          /* best of 1, 3 or 5 · this round is game `match` of it */
+    lost: false,                /* the partner has gone quiet, and has REJOIN_MS to come back */
+    friend: null,               /* their fingerprint, once their friend tag matched one of ours */
   };
   const myId = sessionId();
   const subs = new Set();
   const timers = new Set();
   let unsub = null, offLive = null, knockT = 0, joinT = 0, pingT = 0, quietT = 0, againT = 0;
   let rtt = null, lastHeard = 0, inWin = { at: 0, n: 0 }, peerWin = { at: 0, n: 0 }, outWin = { at: 0, n: 0 };
+  let reactOut = -1e9, reactIn = -1e9, frTags = null, frSent = 0, frTheirs = null;
   const counts = { heard: 0, dropped: 0, ignored: 0, refused: 0 };   /* for the Arcade's play-tests */
   /* replies we make because someone else spoke ('pon', 'full', a repeated 'wel') are
      rate-limited, so nobody can turn this room into an echo of their own flood */
@@ -144,17 +188,48 @@ export function openRoom({ role, game = null, code = null }) {
     setPhase('ready');
     emit('peer', peer);
     clearInterval(pingT);
-    pingT = setInterval(() => wire('png', { a: Math.round(performance.now()) }), PING_EVERY);
-    wire('png', { a: Math.round(performance.now()) });
+    const ping = () => { wire('png', { a: Math.round(performance.now()), ...(host ? { b: R.best } : {}) }); sendTags(); };
+    pingT = setInterval(ping, PING_EVERY);
+    ping();
     watchQuiet();
+    makeTags();
   }
+  /* quiet for LOST_MS: lost (the room waits); quiet for QUIET_MS: gone */
   function watchQuiet() {
     clearTimeout(quietT);
-    quietT = setTimeout(() => {
-      if (R.phase === 'closed' || !R.peer) return;
-      if (performance.now() - lastHeard >= QUIET_MS - 50) { emit('left', { reason: 'quiet', peer: R.peer }); close(false); }
-      else watchQuiet();
-    }, QUIET_MS - (performance.now() - lastHeard) + 30);
+    const quiet = performance.now() - lastHeard;
+    if (R.phase === 'closed' || !R.peer) return;
+    if (quiet >= QUIET_MS - 50) { emit('left', { reason: 'quiet', peer: R.peer }); close(false); return; }
+    if (quiet >= LOST_MS - 50 && !R.lost) { R.lost = true; emit('lost', { peer: R.peer, since: lastHeard }); }
+    quietT = setTimeout(watchQuiet, Math.max(40, (R.lost ? QUIET_MS : LOST_MS) - quiet + 30));
+  }
+  function heard() {
+    lastHeard = performance.now();
+    if (R.lost) { R.lost = false; emit('back', { peer: R.peer }); watchQuiet(); }
+  }
+
+  /* ---------- "are we friends?" (see fr above) ---------- */
+  async function makeTags() {
+    try {
+      const FR = await import('../core/friends.js');
+      frTags = typeof FR.roomTags === 'function' ? await FR.roomTags(`arcade|${R.code}`) : [];
+    } catch (err) { frTags = []; }
+    sendTags();
+    if (frTheirs) matchTags(frTheirs);
+  }
+  function sendTags() {
+    if (!frTags || !R.peer || R.phase === 'closed' || frSent >= FR_BEATS) return;
+    const t = frTags.map(x => x.tag).slice(0, FR_TAGS);
+    while (t.length < FR_TAGS) t.push(randomTag());
+    for (let k = t.length - 1; k > 0; k--) { const j = new Uint32Array(rand(4).buffer)[0] % (k + 1); [t[k], t[j]] = [t[j], t[k]]; }
+    if (wire('fr', { x: t })) frSent++;
+  }
+  function matchTags(x) {
+    if (R.friend) return;
+    if (!frTags) { frTheirs = x; return; }
+    const theirs = new Set(x);
+    const hit = frTags.find(f => theirs.has(f.tag));
+    if (hit) { R.friend = hit.fp; emit('friend', hit.fp); }
   }
 
   function onText(text) {
@@ -178,7 +253,7 @@ export function openRoom({ role, game = null, code = null }) {
       }
       if (now - peerWin.at > 1000) peerWin = { at: now, n: 0 };
       if (++peerWin.n > PEER_PER_SEC) { counts.dropped++; return; }
-      lastHeard = now;
+      heard();
       counts.heard++;
       return fromPeer(m);
     }
@@ -205,6 +280,19 @@ export function openRoom({ role, game = null, code = null }) {
         break;
       case 'png':
         if (Number.isFinite(m.a) && mayReply('pon', 250)) wire('pon', { a: m.a });
+        if (!host && BESTS.includes(m.b) && m.b !== R.best) { R.best = m.b; emit('best', m.b); }
+        break;
+      case 'rx': {
+        if (!Number.isInteger(m.e) || m.e < 0 || m.e >= REACTIONS.length) break;
+        const t = performance.now();
+        if (t - reactIn < REACT_SHOW) { counts.dropped++; break; }
+        reactIn = t;
+        emit('react', { e: m.e });
+        break;
+      }
+      case 'fr':
+        if (!Array.isArray(m.x) || !m.x.length || m.x.length > FR_TAGS || !m.x.every(x => typeof x === 'string' && TAG_RE.test(x))) break;
+        matchTags(m.x);
         break;
       case 'pon': {
         const d = performance.now() - m.a;
@@ -215,9 +303,12 @@ export function openRoom({ role, game = null, code = null }) {
         if (host) break;                           /* only the host starts rounds */
         if (!Number.isInteger(m.s) || m.s < 0 || m.s > 0xffffffff || !Number.isInteger(m.r) || m.r <= R.round || m.r > R.round + 1000) break;
         R.round = m.r; R.seed = m.s >>> 0;
+        /* an older host sends no b / m: one game at a time */
+        R.best = BESTS.includes(m.b) ? m.b : 1;
+        R.match = Number.isInteger(m.m) && m.m >= 1 && m.m <= 99 ? m.m : 1;
         R.wantAgain = R.peerAgain = false;
         clearInterval(againT);
-        emit('start', { seed: R.seed, round: R.round });
+        emit('start', { seed: R.seed, round: R.round, best: R.best, match: R.match });
         break;
       case 'g':
         if (m.r !== R.round || !m.d || typeof m.d !== 'object' || Array.isArray(m.d)) break;
@@ -227,7 +318,7 @@ export function openRoom({ role, game = null, code = null }) {
         if (R.peerAgain) break;
         R.peerAgain = true;
         emit('again', { peer: true });
-        if (host && R.wantAgain) start();
+        if (host && R.wantAgain) start(nextMatch());
         break;
       case 'bye':
         emit('left', { reason: 'bye', peer: R.peer });
@@ -237,20 +328,23 @@ export function openRoom({ role, game = null, code = null }) {
     }
   }
 
-  function start() {
+  /* match: which game of the best-of this round is (the Arcade keeps the tally and says) */
+  function start(match = 1) {
     if (!host || !R.peer || R.phase === 'closed') return false;
     R.round += 1;
     R.seed = seed32();
+    R.match = Number.isInteger(match) && match >= 1 && match <= 99 ? match : 1;
     R.wantAgain = R.peerAgain = false;
     clearInterval(againT);
-    const st = { s: R.seed, r: R.round };
+    const st = { s: R.seed, r: R.round, b: R.best, m: R.match };
     wire('st', st);
     /* QoS 0 can lose it: say it twice more (the guest ignores a round it has) */
     later(() => { if (R.round === st.r) wire('st', st); }, 350);
     later(() => { if (R.round === st.r) wire('st', st); }, 1200);
-    emit('start', { seed: R.seed, round: R.round });
+    emit('start', { seed: R.seed, round: R.round, best: R.best, match: R.match });
     return true;
   }
+  let nextMatch = () => 1;
 
   /* ---------- begin ---------- */
   if (!host && !isCode(R.code)) {
@@ -285,9 +379,29 @@ export function openRoom({ role, game = null, code = null }) {
     get seed() { return R.seed; },
     get wantAgain() { return R.wantAgain; },
     get peerAgain() { return R.peerAgain; },
+    get best() { return R.best; },
+    get match() { return R.match; },
+    get lost() { return R.lost; },
+    get friend() { return R.friend; },
     me: myId,
     on(fn) { subs.add(fn); return () => subs.delete(fn); },
     start,
+    /* the host's Arcade says which game of the match a rematch is (its tally) */
+    set nextMatch(fn) { if (typeof fn === 'function') nextMatch = fn; },
+    setBest(b) {
+      if (!host || !BESTS.includes(b) || R.phase === 'closed') return false;
+      R.best = b;
+      if (R.peer) wire('png', { a: Math.round(performance.now()), b });
+      emit('best', b);
+      return true;
+    },
+    react(i) {
+      if (!R.peer || R.phase === 'closed' || !Number.isInteger(i) || i < 0 || i >= REACTIONS.length) return false;
+      const t = performance.now();
+      if (t - reactOut < REACT_GAP) return false;
+      reactOut = t;
+      return wire('rx', { e: i });
+    },
     send(d) {
       if (!R.peer || R.phase === 'closed' || !d || typeof d !== 'object') return false;
       const now = performance.now();
@@ -306,7 +420,7 @@ export function openRoom({ role, game = null, code = null }) {
       clearInterval(againT);
       againT = setInterval(() => { if (R.wantAgain && R.phase !== 'closed') wire('again'); else clearInterval(againT); }, 2000);
       emit('again', { peer: false });
-      if (host && R.peerAgain) start();
+      if (host && R.peerAgain) start(nextMatch());
     },
     leave() { close(true); },
     rtt: () => (rtt === null ? null : Math.round(rtt)),
@@ -315,4 +429,4 @@ export function openRoom({ role, game = null, code = null }) {
   };
 }
 
-export default { openRoom, normalizeCode, isCode, onlineGame, topicOf, ALPHABET, CODE_LEN };
+export default { openRoom, normalizeCode, isCode, onlineGame, topicOf, ALPHABET, CODE_LEN, REACTIONS, BESTS };

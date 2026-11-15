@@ -31,7 +31,7 @@ const rect = (x, y, w, h) => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
 /* The nine holes. area: the outline of the fairway (the ball stays inside it); walls: extra segments;
    sand / water: [x, y, w, h]; slope: pushes with (ax, ay) px/s²; mill: four arms turning at w rad/s;
    slider: a bar that moves up and down; posts: round pegs. */
-const HOLES = [
+const CLASSIC = [
   { name: 'Straight and narrow', par: 2, tee: [110, 200], cup: [530, 200], area: rect(60, 150, 520, 100) },
   { name: 'Dogleg', par: 3, tee: [100, 110], cup: [500, 320], area: [[60, 70], [560, 70], [560, 350], [440, 350], [440, 150], [60, 150]] },
   { name: 'Crosswind', par: 3, tee: [100, 200], cup: [530, 200], area: rect(60, 110, 520, 180), slope: [{ x: 240, y: 110, w: 170, h: 180, ax: 0, ay: 210 }] },
@@ -42,7 +42,21 @@ const HOLES = [
   { name: 'The gatekeeper', par: 3, tee: [100, 200], cup: [535, 200], area: rect(60, 110, 520, 180), slider: { x: 320, y: 200, w: 14, h: 84, amp: 62, per: 3.4 } },
   { name: 'Grand finale', par: 4, tee: [100, 110], cup: [540, 295], area: rect(60, 70, 520, 260), water: [[230, 140, 150, 120]], sand: [[430, 70, 150, 70], [60, 262, 120, 68]], posts: [{ x: 460, y: 220, r: 12 }], slope: [{ x: 380, y: 140, w: 100, h: 120, ax: -120, ay: 0 }] },
 ];
-export const COURSE_PAR = HOLES.reduce((a, b) => a + b.par, 0);
+/* the second nine, the Canyon course: the same pieces, put together harder */
+const CANYON = [
+  { name: 'Bank on it', par: 3, tee: [110, 165], cup: [530, 165], area: rect(60, 115, 520, 170), walls: [[320, 115, 320, 232]] },
+  { name: 'Uphill', par: 2, tee: [100, 200], cup: [535, 200], area: rect(60, 140, 520, 120), slope: [{ x: 230, y: 140, w: 190, h: 120, ax: -170, ay: 0 }] },
+  { name: 'Twin ponds', par: 3, tee: [100, 140], cup: [540, 260], area: rect(60, 90, 520, 220), water: [[200, 90, 90, 120], [370, 190, 90, 120]] },
+  { name: 'The funnel', par: 2, tee: [105, 200], cup: [540, 200], area: [[60, 70], [580, 175], [580, 225], [60, 330]], slope: [{ x: 160, y: 70, w: 360, h: 118, ax: 0, ay: 120 }, { x: 160, y: 212, w: 360, h: 118, ax: 0, ay: -120 }] },
+  { name: 'Mill race', par: 3, tee: [100, 200], cup: [545, 200], area: rect(60, 100, 520, 200), mill: { x: 300, y: 200, len: 92, w: -1.9 }, water: [[400, 100, 70, 70], [400, 230, 70, 70]] },
+  { name: 'Switchbacks', par: 5, tee: [110, 105], cup: [535, 105], area: rect(60, 60, 520, 280), walls: [[190, 60, 190, 262], [345, 138, 345, 340], [480, 60, 480, 262]] },
+  { name: 'Two gates', par: 3, tee: [100, 200], cup: [545, 200], area: rect(60, 110, 520, 180), slider: { x: 250, y: 200, w: 14, h: 80, amp: 58, per: 2.9 }, slider2: { x: 420, y: 200, w: 14, h: 80, amp: 58, per: 4.1 } },
+  { name: 'Sand island', par: 3, tee: [100, 200], cup: [485, 200], area: rect(60, 80, 520, 240), sand: [[380, 80, 200, 85], [380, 235, 200, 85], [380, 165, 55, 70], [535, 165, 45, 70]], posts: [{ x: 300, y: 200, r: 13 }, { x: 330, y: 130, r: 10 }, { x: 330, y: 270, r: 10 }] },
+  { name: 'Canyon bridge', par: 4, tee: [100, 200], cup: [535, 200], area: rect(60, 70, 520, 260), water: [[255, 70, 95, 112], [255, 218, 95, 112]], slope: [{ x: 255, y: 182, w: 95, h: 36, ax: 0, ay: 70 }], posts: [{ x: 450, y: 165, r: 11 }, { x: 465, y: 240, r: 11 }], sand: [[60, 70, 90, 60]] },
+];
+export const COURSES = { classic: { name: 'Classic course', holes: CLASSIC }, canyon: { name: 'Canyon course', holes: CANYON } };
+const parOf = holes => holes.reduce((a, b) => a + b.par, 0);
+export const COURSE_PAR = parOf(CLASSIC);
 
 const SCORE_NAME = (strokes, par) => (strokes === 1 ? 'Hole in one!' : strokes <= par - 2 ? 'Eagle' : strokes === par - 1 ? 'Birdie' : strokes === par ? 'Par' : strokes === par + 1 ? 'Bogey' : strokes === par + 2 ? 'Double bogey' : `${strokes - par} over`);
 const inRect = (x, y, r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
@@ -51,10 +65,15 @@ export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
+    const COURSE = COURSES[ctx.mode] || COURSES.classic, HOLES = COURSE.holes, PAR = parOf(HOLES);
+    const two = ctx.players === 2;
     const S = {
       state: 'aim',                       /* aim | roll | sink | card | final */
       paused: false, time: 0,
-      hole: 0, strokes: 0, scores: [], total: 0,
+      /* each player's card (one player uses the first); who is putting; who tees off on this hole; how many have played it */
+      cards: [[], []], who: 0, first: 0, played: 0, sameHole: false, showCard: false,
+      get scores() { return this.cards[this.who]; },
+      hole: 0, strokes: 0, total: 0,
       ball: { x: 0, y: 0, vx: 0, vy: 0 }, last: { x: 0, y: 0 }, sinkT: 0,
       angle: 0, charge: 0, charging: false, chargeT: 0, drag: null, kbTurn: 0, usedKb: false,
       splashes: [], trail: [], water: 0, bounces: 0, over: false, flash: '', flashT: 0, cardT: 0,
@@ -77,10 +96,14 @@ export default {
       posts = (H.posts || []).map(p => ({ ...p }));
       movers = [];
       if (H.mill) { posts.push({ x: H.mill.x, y: H.mill.y, r: 9 }); for (let k = 0; k < 4; k++) movers.push({ kind: 'arm', k, ...H.mill }); }
-      if (H.slider) movers.push({ kind: 'slide', ...H.slider });
+      for (const sl of [H.slider, H.slider2]) if (sl) movers.push({ kind: 'slide', ...sl });
       moveMovers();
-      ctx.onScore(S.total);
+      S.showCard = false;
+      S.total = totalOf(S.who);
+      report();
     }
+    const totalOf = who => S.cards[who].reduce((a, s) => a + (s ? s.strokes : 0), 0);
+    function report() { ctx.onScore(two ? `${totalOf(0)} – ${totalOf(1)}` : totalOf(0)); }
 
     /* the moving parts at S.time: their segments and how fast each point moves */
     function moveMovers() {
@@ -186,25 +209,43 @@ export default {
       return true;
     }
 
+    /* the hole is holed (or picked up): onto the card. Two players each play a hole in turn;
+       the next hole is teed off first by whoever took fewer strokes on this one (a tie keeps the order). */
     function holeDone(pickedUp) {
       const par = H_().par, strokes = pickedUp ? MAX_STROKES : S.strokes;
       S.scores[S.hole] = { strokes, par, water: S.water, name: SCORE_NAME(strokes, par) };
-      S.total = S.scores.reduce((a, s) => a + (s ? s.strokes : 0), 0);
-      ctx.onScore(S.total);
-      S.state = S.hole === HOLES.length - 1 ? 'final' : 'card';
+      S.total = totalOf(S.who);
+      S.played++;
+      report();
+      S.sameHole = two && S.played < 2;
+      S.state = !S.sameHole && S.hole === HOLES.length - 1 ? 'final' : 'card';
       S.cardT = S.time;
       S.ball.vx = S.ball.vy = 0;
       if (S.state === 'final') {
-        const diff = S.total - COURSE_PAR;
         setTimeout(() => {
           if (S.over || dead) return;
           S.over = true;
-          ctx.onEnd({ score: S.total, detail: `Nine holes in ${S.total} strokes (par ${COURSE_PAR}, ${diff === 0 ? 'level' : diff > 0 ? diff + ' over' : -diff + ' under'}). ${S.scores.filter(s => s.strokes === 1).length ? 'With a hole in one!' : ''}`.trim() });
+          if (two) {
+            const [a, b] = [totalOf(0), totalOf(1)];
+            const winner = a === b ? 0 : a < b ? 1 : 2;
+            ctx.onEnd({ score: Math.min(a, b), won: true, winner,
+              detail: `${COURSE.name}: ${winner ? `Player ${winner} wins by ${Math.abs(a - b)} stroke${Math.abs(a - b) === 1 ? '' : 's'}, ${Math.min(a, b)} to ${Math.max(a, b)}` : `a tie, ${a} strokes each`} (par ${PAR}).` });
+            return;
+          }
+          const diff = S.total - PAR;
+          ctx.onEnd({ score: S.total, detail: `${COURSE === COURSES.classic ? 'Nine holes' : `The ${COURSE.name}`} in ${S.total} strokes (par ${PAR}, ${diff === 0 ? 'level' : diff > 0 ? diff + ' over' : -diff + ' under'}). ${S.scores.filter(s => s.strokes === 1).length ? 'With a hole in one!' : ''}`.trim() });
         }, reduced ? 400 : 1800);
       }
     }
     function nextHole() {
       if (S.state !== 'card') return;
+      if (S.sameHole) { S.who = 1 - S.who; load(S.hole); return; }
+      if (two) {
+        const a = S.cards[0][S.hole]?.strokes, b = S.cards[1][S.hole]?.strokes;
+        S.first = a < b ? 0 : b < a ? 1 : S.first;
+        S.who = S.first;
+      }
+      S.played = 0;
       load(S.hole + 1);
     }
     let dead = false;
@@ -295,7 +336,7 @@ export default {
       const b = S.ball, k = S.state === 'sink' ? Math.max(0, 1 - S.sinkT / (reduced ? 0.25 : 0.7)) : 1;
       g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(b.x + 1.5, b.y + 2.5, R * k, R * 0.7 * k, 0, 0, 7); g.fill();
       const gr = g.createRadialGradient(b.x - 1.8, b.y - 2, 0.5, b.x, b.y, R);
-      gr.addColorStop(0, '#fff'); gr.addColorStop(1, '#bfc9d4');
+      if (two && S.who) { gr.addColorStop(0, '#fff6d6'); gr.addColorStop(1, '#f2b632'); } else { gr.addColorStop(0, '#fff'); gr.addColorStop(1, '#bfc9d4'); }
       g.fillStyle = gr; g.beginPath(); g.arc(b.x, b.y, R * k, 0, 7); g.fill();
       /* the aim */
       if (S.state === 'aim' && !S.paused) {
@@ -318,33 +359,70 @@ export default {
         }
       }
     }
-    function drawCard(g) {
-      const w = Math.min(VW - 40, 560), x = (VW - w) / 2, y = 70, hh = 250;
-      g.fillStyle = 'rgba(4,10,6,.9)'; rr(g, x, y, w, hh, 14); g.fill();
+    /* the scorecard: after each hole, at the end, or any time with C (peek) */
+    const toPar = d => (d === 0 ? 'E' : (d > 0 ? '+' : '−') + Math.abs(d));
+    const pname = who => `Player ${who + 1}`;
+    function drawCard(g, peek = false) {
+      const w = Math.min(VW - 40, 580), x = (VW - w) / 2, y = 64, hh = 262;
+      g.fillStyle = 'rgba(4,10,6,.92)'; rr(g, x, y, w, hh, 14); g.fill();
       g.strokeStyle = 'rgba(120,230,150,.5)'; g.lineWidth = 1.5; rr(g, x, y, w, hh, 14); g.stroke();
       g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#f2fff3';
-      const fin = S.state === 'final', sc = S.scores[S.hole];
-      g.font = `700 22px ${FONT}`; g.fillText(fin ? 'Round complete' : `Hole ${S.hole + 1}: ${sc.name}`, VW / 2, y + 30);
+      const fin = S.state === 'final' && !peek, sc = peek ? null : S.scores[S.hole];
+      const [t0, t1] = [totalOf(0), totalOf(1)];
+      let title, sub, foot;
+      if (peek) {
+        title = 'Scorecard';
+        sub = `${COURSE.name} · hole ${S.hole + 1} of ${HOLES.length}${two ? ` · ${pname(S.who)} to play` : ''}`;
+        foot = coarse() ? 'Tap to close' : 'C or a click closes it';
+      } else if (fin) {
+        title = 'Round complete';
+        sub = two ? (t0 === t1 ? `A tie: ${t0} strokes each, par ${PAR}` : `${pname(t0 < t1 ? 0 : 1)} wins, ${Math.min(t0, t1)} to ${Math.max(t0, t1)} (par ${PAR})`) : `${S.total} strokes, par ${PAR}`;
+        foot = 'Saving your score…';
+      } else {
+        title = `${two ? `${pname(S.who)} · ` : ''}Hole ${S.hole + 1}: ${sc.name}`;
+        sub = `${HOLES[S.hole].name} · ${sc.strokes} stroke${sc.strokes === 1 ? '' : 's'} on a par ${sc.par}${sc.water ? ` · ${sc.water} in the water` : ''}`;
+        const next = S.sameHole ? `${pname(1 - S.who)} plays hole ${S.hole + 1}`
+          : `hole ${S.hole + 2}${two ? `, ${pname(S.cards[0][S.hole]?.strokes < S.cards[1][S.hole]?.strokes ? 0 : S.cards[1][S.hole]?.strokes < S.cards[0][S.hole]?.strokes ? 1 : S.first)} first` : ''}`;
+        foot = coarse() ? `Tap: ${next}` : `Press Space or click: ${next}`;
+      }
+      g.font = `700 22px ${FONT}`; g.fillText(title, VW / 2, y + 28);
       g.font = `500 14px ${FONT}`; g.fillStyle = hsl(120, 50, 78);
-      g.fillText(fin ? `${S.total} strokes, par ${COURSE_PAR}` : `${HOLES[S.hole].name} · ${sc.strokes} stroke${sc.strokes === 1 ? '' : 's'} on a par ${sc.par}${sc.water ? ` · ${sc.water} in the water` : ''}`, VW / 2, y + 56);
-      /* the scorecard: nine columns */
-      const cw = (w - 100) / 9, tx = x + 80, ty = y + 92;
-      g.font = `600 12px ${FONT}`; g.textAlign = 'right'; g.fillStyle = hsl(120, 30, 65);
-      g.fillText('Hole', tx - 10, ty); g.fillText('Par', tx - 10, ty + 30); g.fillText('You', tx - 10, ty + 60); g.fillText('+/−', tx - 10, ty + 90);
+      g.fillText(sub, VW / 2, y + 54, w - 30);
+      /* nine columns and a total */
+      const cw = (w - 110) / 10, tx = x + 86, ty = y + 88;
+      const rows = two ? [['Hole'], ['Par'], [pname(0), 0], [pname(1), 1]] : [['Hole'], ['Par'], ['You', 0], ['+/−']];
+      g.font = `600 12px ${FONT}`; g.textAlign = 'right';
+      rows.forEach(([lab, who], r) => { g.fillStyle = who === S.who && two && !fin ? '#ffe28a' : hsl(120, 30, 65); g.fillText(lab, tx - 10, ty + r * 30); });
       g.textAlign = 'center';
-      let run = 0, parRun = 0;
+      const run = [0, 0];
+      let parRun = 0;
       HOLES.forEach((Hl, i) => {
-        const cx = tx + cw * (i + 0.5), s = S.scores[i];
+        const cx = tx + cw * (i + 0.5);
+        g.font = `600 12px ${FONT}`;
         g.fillStyle = i === S.hole ? '#ffe28a' : hsl(120, 30, 78); g.fillText(String(i + 1), cx, ty);
         g.fillStyle = hsl(120, 25, 68); g.fillText(String(Hl.par), cx, ty + 30);
-        if (s) {
-          run += s.strokes; parRun += s.par;
-          g.fillStyle = s.strokes < s.par ? '#7dffa0' : s.strokes > s.par ? '#ff9a8a' : '#ffffff'; g.font = `700 14px ${FONT}`; g.fillText(String(s.strokes), cx, ty + 60);
-          g.font = `600 12px ${FONT}`; g.fillStyle = run - parRun < 0 ? '#7dffa0' : run - parRun > 0 ? '#ff9a8a' : '#ffffff'; g.fillText(run - parRun === 0 ? 'E' : (run - parRun > 0 ? '+' : '−') + Math.abs(run - parRun), cx, ty + 90);
+        parRun += Hl.par;
+        for (const who of two ? [0, 1] : [0]) {
+          const s = S.cards[who][i];
+          if (!s) continue;
+          run[who] += s.strokes;
+          g.fillStyle = s.strokes < s.par ? '#7dffa0' : s.strokes > s.par ? '#ff9a8a' : '#ffffff'; g.font = `700 14px ${FONT}`; g.fillText(String(s.strokes), cx, ty + 60 + who * 30);
+          if (!two) { const d = run[0] - parRun; g.font = `600 12px ${FONT}`; g.fillStyle = d < 0 ? '#7dffa0' : d > 0 ? '#ff9a8a' : '#ffffff'; g.fillText(toPar(d), cx, ty + 90); }
         }
       });
+      /* the total column: strokes, and against the par of the holes played */
+      const cx = tx + cw * 9.5;
+      g.font = `600 11px ${FONT}`; g.fillStyle = hsl(120, 30, 65); g.fillText('Total', cx, ty);
+      g.fillStyle = hsl(120, 25, 68); g.fillText(String(PAR), cx, ty + 30);
+      for (const who of two ? [0, 1] : [0]) {
+        const played = S.cards[who].filter(Boolean);
+        if (!played.length) continue;
+        const tot = played.reduce((a, s) => a + s.strokes, 0), par = played.reduce((a, s) => a + s.par, 0);
+        g.font = `800 14px ${FONT}`; g.fillStyle = '#ffffff'; g.fillText(String(tot), cx, ty + 60 + who * 30 - (two ? 6 : 0));
+        if (two) { g.font = `600 10px ${FONT}`; g.fillStyle = hsl(120, 30, 70); g.fillText(toPar(tot - par), cx, ty + 66 + who * 30); }
+      }
       g.fillStyle = 'rgba(255,255,255,.75)'; g.font = `500 13px ${FONT}`;
-      g.fillText(fin ? 'Saving your score…' : (coarse() ? `Tap for hole ${S.hole + 2}` : `Press Space or click for hole ${S.hole + 2}`), VW / 2, y + hh - 26);
+      g.fillText(foot, VW / 2, y + hh - 24);
     }
     function draw() {
       if (dead) return;
@@ -359,15 +437,25 @@ export default {
       g.fillStyle = '#0a1a0e'; g.fillRect(0, 0, VW, TOP);
       g.textBaseline = 'middle'; g.font = `700 14px ${FONT}`; g.textAlign = 'left'; g.fillStyle = '#e8ffe9';
       const Hh = H_();
-      g.fillText(`HOLE ${S.hole + 1}/9`, 14, TOP / 2 + 1);
-      g.font = `500 13px ${FONT}`; g.fillStyle = hsl(120, 40, 72); g.fillText(Hh.name, 108, TOP / 2 + 1);
+      let lx = 14;
+      if (two) {
+        g.fillStyle = S.who ? '#ffd166' : '#e8ffe9'; rr(g, lx - 4, 7, 30, TOP - 14, 6); g.fill();
+        g.fillStyle = '#0a1a0e'; g.font = `800 13px ${FONT}`; g.fillText(`P${S.who + 1}`, lx + 2, TOP / 2 + 1);
+        g.fillStyle = '#e8ffe9'; g.font = `700 14px ${FONT}`; lx += 36;
+      }
+      g.fillText(`HOLE ${S.hole + 1}/9`, lx, TOP / 2 + 1);
+      g.font = `500 13px ${FONT}`; g.fillStyle = hsl(120, 40, 72); g.fillText(Hh.name, lx + 94, TOP / 2 + 1, 170);
       g.textAlign = 'right'; g.font = `600 13px ${FONT}`; g.fillStyle = '#e8ffe9';
-      g.fillText(`PAR ${Hh.par}   STROKES ${S.strokes}   TOTAL ${S.total + (S.state === 'card' || S.state === 'final' ? 0 : 0)}`, VW - 14, TOP / 2 + 1);
+      g.fillText(`PAR ${Hh.par}   STROKES ${S.strokes}   TOTAL ${S.total}`, VW - 70, TOP / 2 + 1);
+      /* the scorecard, any time: this chip, or C */
+      g.fillStyle = S.showCard ? 'rgba(120,230,150,.35)' : 'rgba(255,255,255,.1)'; rr(g, VW - 62, 7, 52, TOP - 14, 7); g.fill();
+      g.fillStyle = '#e8ffe9'; g.font = `700 12px ${FONT}`; g.textAlign = 'center'; g.fillText('Card', VW - 36, TOP / 2 + 1);
       g.save(); g.translate(0, TOP);
       g.beginPath(); g.rect(0, 0, VW, VH - TOP); g.clip();
       drawCourse(g);
       if (S.flash && S.time - S.flashT < 1.6) { g.textAlign = 'center'; g.font = `700 18px ${FONT}`; g.fillStyle = `rgba(255,235,160,${clamp(1.6 - (S.time - S.flashT), 0, 1)})`; g.fillText(S.flash, VW / 2, 24); }
       if (S.state === 'card' || S.state === 'final') drawCard(g);
+      else if (S.showCard) drawCard(g, true);
       g.restore();
       g.restore();
       if (S.state === 'aim' && S.strokes === 0 && S.hole === 0 && !S.drag && !S.charging && !S.usedKb && S.time < 30) prompt(g, sf, coarse() ? 'Drag back from the ball, let go to putt' : 'Drag back to aim, let go to putt', coarse() ? 'The longer the pull, the harder the putt' : 'Or ← → to aim and hold Space to charge', 130, sf.h * 0.88);
@@ -379,12 +467,15 @@ export default {
       const r = sf.cv.getBoundingClientRect();
       return { x: (e.clientX - r.left - V.ox) / V.s, y: (e.clientY - r.top - V.oy) / V.s - TOP };
     };
+    const toggleCard = () => { if (S.state === 'aim' || S.state === 'roll' || S.showCard) { S.showCard = !S.showCard; S.drag = null; S.charging = false; if (!loop.on) draw(); } };
     const onDown = e => {
       if (e.button > 0 || S.paused) return;
       snd.wake();
       if (S.state === 'card') { nextHole(); return; }
-      if (S.state !== 'aim') return;
       const p = toCourse(e);
+      /* the Card chip in the top strip, or any click while the card is open */
+      if (S.showCard || (p.y < 0 && p.x > VW - 66)) { toggleCard(); return; }
+      if (S.state !== 'aim') return;
       S.drag = { x: p.x, y: p.y, id: e.pointerId };
       try { sf.cv.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
       if (!loop.on) draw();
@@ -413,11 +504,15 @@ export default {
         return;
       }
       if (k === ' ' || k === 'Enter') {
+        if (S.state === 'final') return;                 /* Enter then belongs to the Arcade: play again */
         e.preventDefault(); snd.wake();
         if (S.paused || e.repeat) return;
         if (S.state === 'card') { nextHole(); return; }
+        if (S.showCard) { toggleCard(); return; }
         if (S.state === 'aim' && !S.charging) { S.charging = true; S.chargeT = 0; S.charge = 0; S.usedKb = true; }
+        return;
       }
+      if ((k === 'c' || k === 'C') && !e.repeat && !S.paused) { e.preventDefault(); toggleCard(); }
     };
     const onKeyUp = e => {
       const k = e.key;
@@ -462,13 +557,18 @@ export default {
         state: S.state, paused: S.paused, time: S.time, hole: S.hole + 1, par: H_().par, name: H_().name, strokes: S.strokes, total: S.total,
         scores: S.scores.map(s => (s ? { strokes: s.strokes, par: s.par, name: s.name } : null)), water: S.water, bounces: S.bounces,
         ball: { x: S.ball.x, y: S.ball.y, vx: S.ball.vx, vy: S.ball.vy }, speed: Math.hypot(S.ball.vx, S.ball.vy), tee: H_().tee.slice(), cup: H_().cup.slice(), angle: S.angle,
-        sand: onSand(), maxSpeed: MAX_SPEED, holes: HOLES.length, coursePar: COURSE_PAR, over: S.over,
+        sand: onSand(), maxSpeed: MAX_SPEED, holes: HOLES.length, coursePar: PAR, over: S.over,
         view: { ox: V.ox, oy: V.oy, s: V.s, top: TOP }, drag: !!S.drag, charging: S.charging,
+        course: COURSE === COURSES.canyon ? 'canyon' : 'classic', two, who: S.who, played: S.played, showCard: S.showCard,
+        cards: S.cards.map(c => c.map(s => (s ? s.strokes : null))), totals: [totalOf(0), totalOf(1)],
       }),
       /* test hook — nothing in the game calls it:
-         putt({ angle, power 0..1 }) · step(seconds) · goto(hole 1..9) · place({ x, y }) · time(seconds) · next() */
+         putt({ angle, power 0..1 }) · step(seconds) · goto(hole 1..9) · place({ x, y }) · time(seconds) · next()
+         · snap() → the ball and the hole's clock · restore(snap) (for a search that tries putts) */
       hook(cmd, arg) {
         if (cmd === 'putt') return putt(arg.angle, arg.power);
+        if (cmd === 'snap') return JSON.parse(JSON.stringify({ ball: S.ball, last: S.last, strokes: S.strokes, state: S.state, time: S.time, water: S.water }));
+        if (cmd === 'restore') { Object.assign(S, { ball: { ...arg.ball }, last: { ...arg.last }, strokes: arg.strokes, state: arg.state, time: arg.time, water: arg.water, sinkT: 0 }); moveMovers(); return true; }
         if (cmd === 'step') { for (let t = 0; t < arg; t += DT) step(DT); }
         else if (cmd === 'goto') { S.scores.length = Math.max(0, Math.min(S.scores.length, arg - 1)); load(clamp(arg - 1, 0, HOLES.length - 1)); }
         else if (cmd === 'place') { S.ball.x = arg.x; S.ball.y = arg.y; S.ball.vx = S.ball.vy = 0; S.last = { x: arg.x, y: arg.y }; }

@@ -14,10 +14,16 @@
      Service    the service worker and caches, with a repair button
 
    It only ever reads, except where a button says otherwise.
+
+   Storage, Events and Apps are drawn by js/core/devviews.js, the same
+   code Static Developer uses, so a number here is the number there.
+   This room hands it its own look (the dr-* classes below).
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import * as BC from '../core/broadcast-schema.js';
 import * as profiles from '../core/profiles.js';
+import * as DL from '../core/devlog.js';
+import * as DV from '../core/devviews.js';
 import { appTile } from '../core/appart.js';
 import { earlyAccessCard } from '../core/earlyaccess.js';
 
@@ -41,14 +47,14 @@ const TABS = [
 const isDev = store => !!store.get('session.user', null)?.dev;
 const tabsFor = store => TABS.filter(t => t[0] !== 'admin' || isDev(store));
 
-const bytes = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`);
-/* localStorage holds UTF-16, so a string's footprint is ~2 bytes a char */
-const sizeOf = v => { try { return (JSON.stringify(v) || '').length * 2; } catch (e) { return 0; } };
-const short = v => {
-  let s;
-  try { s = typeof v === 'string' ? v : JSON.stringify(v); } catch (e) { s = String(v); }
-  s = String(s ?? '');
-  return s.length > 90 ? `${s.slice(0, 90)}…` : s;
+const bytes = DV.bytes;
+
+/* this room's look for the shared Storage, Events and Apps views (js/core/devviews.js) */
+const SKIN = {
+  kv: { layout: 'kv', kv: 'div.dr-kv' },
+  bars: { layout: 'bars', bar: 'div.dr-bar' },
+  event: { row: 'div.dr-ev', time: 'time', name: 'b', args: 'code' },
+  apps: { layout: 'list', wrap: 'div.dr-apps', row: 'div.dr-appr', tag: 'span.dr-tag' },
 };
 
 defineApp({
@@ -67,6 +73,7 @@ defineApp({
     const { root, win, api, opts } = ctx;
     const { h, icon, clear, store, bus } = api;
     let dead = false;
+    DL.init();          /* idempotent: boot normally did this already */
     let tab = tabsFor(api.store).some(t => t[0] === opts?.tab) ? opts.tab : 'overview';
 
     const side = h('aside.app__side.dr-side');
@@ -135,26 +142,9 @@ defineApp({
         estimate = 'loading';
         navigator.storage.estimate().then(e => { estimate = e; if (!dead && tab === 'storage') paint(); }).catch(() => { estimate = 'n/a'; });
       }
-      const rows = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        let v = '';
-        try { v = localStorage.getItem(k) || ''; } catch (e) {}
-        rows.push({ k, n: v.length * 2 });
-      }
-      rows.sort((a, b) => b.n - a.n);
-      const total = rows.reduce((a, r) => a + r.n, 0);
-
+      const ls = DV.localKeys() || { rows: [], total: 0 };
       /* the state blob, broken down by top-level root and portal.* child */
-      let state = {};
-      try { state = JSON.parse(profiles.local.getItem(profiles.key('staticos.state.v3')) || '{}'); } catch (e) {}
-      const roots = Object.entries(state).map(([k, v]) => ({ k, n: sizeOf(v) }));
-      if (state.portal && typeof state.portal === 'object') {
-        for (const [k, v] of Object.entries(state.portal)) roots.push({ k: `portal.${k}`, n: sizeOf(v) });
-      }
-      roots.sort((a, b) => b.n - a.n);
-      const max = Math.max(1, ...roots.map(r => r.n));
-      const bar = r => h('div.dr-bar', h('span', { text: r.k }), h('i', h('b', { style: { width: `${Math.max(1, r.n / max * 100)}%` } })), h('code', { text: bytes(r.n) }));
+      const roots = DV.stateRoots();
 
       const inspect = h('pre.dr-pre', { text: 'Pick a root to see its JSON.' });
       const pick = h('select.dr-select', { 'aria-label': 'State root', onchange: e => {
@@ -164,25 +154,33 @@ defineApp({
 
       body.append(h('div.dr-grid',
         card('This browser',
-          kv('localStorage', `${bytes(total)} in ${rows.length} key${rows.length === 1 ? '' : 's'}`),
+          kv('localStorage', `${bytes(ls.total)} in ${ls.rows.length} key${ls.rows.length === 1 ? '' : 's'}`),
           kv('Quota', estimate && estimate !== 'loading' && estimate !== 'n/a' ? `${bytes(estimate.usage || 0)} used of ${bytes(estimate.quota || 0)}` : estimate === 'n/a' ? 'not reported' : '…'),
-          rows.map(r => kv(r.k, bytes(r.n)))),
-        card('State by root', roots.length ? roots.map(bar) : h('div.dim', { text: 'Empty.' })),
+          DV.keyRows(h, ls.rows, SKIN.kv)),
+        card('State by root', roots.length ? DV.keyRows(h, roots, SKIN.bars) : h('div.dim', { text: 'Empty.' })),
         card('Inspector', pick, inspect)));
     }
 
-    /* ---------------- events ---------------- */
-    const log = [];
+    /* ---------------- events ----------------
+       Recorded by the shared tap in devlog.js (the same one Static Developer
+       reads); this room holds it while the window is open and not paused. */
     let paused = false;
     let showTicks = false;
     let logEl = null;
-    const offAny = bus.on('*', (evt, ...args) => {
-      if (paused || (!showTicks && /^tick:/.test(evt))) return;
-      log.push({ t: new Date(), evt, args: args.length ? short(args.length === 1 ? args[0] : args) : '' });
-      if (log.length > 200) log.shift();
-      if (logEl && tab === 'events') appendRow(log[log.length - 1]);
+    /* the recording is shared (Static Developer may be holding it too), so Pause
+       here means "don't show what happens meanwhile": those events stay out of
+       this list even though another window's recording still has them */
+    let pausedAt = 0;
+    const gaps = [];
+    const inGap = e => (pausedAt && e.t >= pausedAt) || gaps.some(([a, b]) => e.t >= a && e.t <= b);
+    const syncTap = () => DV.holdTap('devroom', !dead && !paused);
+    syncTap();
+    const offBus = DL.onBus((e, kind) => {
+      if (dead || tab !== 'events' || !logEl) return;
+      if (kind === 'clear' || kind === 'tap') { if (kind === 'clear') paint(); return; }
+      if (e && !inGap(e) && DV.passEvent(e, { beat: showTicks })) appendRow(e);
     });
-    const rowOf = e => h('div.dr-ev', h('time', { text: e.t.toLocaleTimeString([], { hour12: false }) }), h('b', { text: e.evt }), h('code', { text: e.args }));
+    const rowOf = e => DV.eventRow(h, e, SKIN.event);
     function appendRow(e) {
       if (!logEl) return;
       const stick = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 8;
@@ -191,11 +189,16 @@ defineApp({
       if (stick) logEl.scrollTop = logEl.scrollHeight;
     }
     function events() {
-      logEl = h('div.dr-log', { role: 'log', 'aria-live': 'off' }, log.map(rowOf));
+      const list = DV.eventLog({ beat: showTicks }).filter(e => !inGap(e)).slice(-200);
+      logEl = h('div.dr-log', { role: 'log', 'aria-live': 'off' }, list.map(rowOf));
       tools.append(
-        btn(paused ? 'Resume' : 'Pause', paused ? 'play' : 'pause', () => { paused = !paused; }),
+        btn(paused ? 'Resume' : 'Pause', paused ? 'play' : 'pause', () => {
+          paused = !paused;
+          if (paused) pausedAt = Date.now(); else { gaps.push([pausedAt, Date.now()]); pausedAt = 0; }
+          syncTap();
+        }),
         btn(showTicks ? 'Hide ticks' : 'Show ticks', 'clock', () => { showTicks = !showTicks; }),
-        btn('Clear', 'trash', () => { log.length = 0; }));
+        btn('Clear', 'trash', () => { DL.clearBus(); }));
       body.append(logEl.children.length ? logEl : h('div', logEl, h('div.dr-hint', { text: 'Waiting for events… open a window or change a setting.' })));
       requestAnimationFrame(() => { if (logEl) logEl.scrollTop = logEl.scrollHeight; });
     }
@@ -212,12 +215,8 @@ defineApp({
 
     /* ---------------- apps ---------------- */
     function apps() {
-      const all = api.listApps({ includeHidden: true }).sort((a, b) => a.id.localeCompare(b.id));
-      body.append(h('div.dr-apps', all.map(a => h('div.dr-appr',
-        appTile(a, { gs: '28px' }),
-        h('div.grow', h('b', { text: a.name }), h('code', { text: a.id })),
-        a.hidden ? h('span.dr-tag', { text: 'hidden' }) : null,
-        h('button.btn.btn--sm', { type: 'button', onclick: () => api.openApp(a.id) }, 'Open')))));
+      const rows = DV.appRows({ listApps: api.listApps, wm: api.wm });
+      body.append(DV.appsView(h, rows, SKIN.apps, { open: id => api.openApp(id), tile: a => appTile(a, { gs: '28px' }) }));
     }
 
     /* ---------------- service worker ---------------- */
@@ -518,6 +517,6 @@ defineApp({
     paint();
     win.onReopen?.(o => { if (o?.tab && tabsFor(store).some(t => t[0] === o.tab)) { tab = o.tab; paint(); } });
 
-    return () => { dead = true; offAny(); };
+    return () => { dead = true; offBus(); DV.holdTap('devroom', false); };
   },
 });

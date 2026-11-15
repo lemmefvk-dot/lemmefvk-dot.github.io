@@ -1,0 +1,261 @@
+/* ==================================================================
+   Static Arcade — the shell's records, options and friends (.arc-*)
+   (js/apps/arcade.js and js/arcade/{optionsui,statsview,friendsview,
+   cliptrim,touchkeys,padcursor}.js; the cabinet's own look is
+   css/feat-arcade.css, whose tokens these reuse)
+   ================================================================== */
+
+/* a screen reader hears it; nobody sees it */
+.arc-sr{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+
+/* ------------------------------ search and sort ------------------------------ */
+.arc-find{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-3);padding:0 var(--sp-6) var(--sp-3);flex:none}
+.arc-find__box{flex:1 1 220px;max-width:420px;display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:var(--r-pill);
+  background:var(--fill-0);border:1px solid var(--line-1);color:var(--ink-3)}
+.arc-find__box:focus-within{border-color:rgba(214,110,255,.6);box-shadow:0 0 0 2px rgba(214,110,255,.25)}
+.arc-find__box .icon{width:14px;height:14px;flex:none}
+.arc-find__q{flex:1;min-width:0;height:100%;background:none;border:0;outline:none;color:var(--ink-0);font:inherit;font-size:var(--fs-12)}
+.arc-find__q::placeholder{color:var(--ink-3)}
+.arc-find__sortlab{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-11);color:var(--ink-3)}
+.arc-find__sort,.arc-clips__pick,.arc-fr__pick,.arc-cupf select{height:30px;padding:0 8px;border-radius:var(--r-sm);font:inherit;font-size:var(--fs-11);color:var(--ink-0);
+  background:#120d1a;border:1px solid var(--line-2)}
+.arc-found{margin:0 0 var(--sp-3);font-size:var(--fs-11);color:var(--ink-3)}
+
+/* ------------------------------ favourites ------------------------------ */
+.arc-cab__fav{
+  position:absolute;right:8px;top:calc(100cqw * 9 / 16 - 36px);z-index:2;width:28px;height:28px;display:grid;place-items:center;border-radius:8px;cursor:pointer;
+  color:var(--ink-1);background:rgba(6,4,12,.72);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(6px);
+  opacity:.0;transition:opacity var(--t-fast),color var(--t-fast),background var(--t-fast);
+}
+.arc-cab:hover .arc-cab__fav,.arc-cab:focus-within .arc-cab__fav,.arc-cab__fav.is-on,.arc-cab__fav:focus-visible{opacity:1}
+.arc-cab__fav .icon{width:15px;height:15px}
+.arc-cab__fav.is-on{color:#ffd27a;border-color:rgba(255,210,122,.55)}
+.arc-cab__fav:hover{color:#ffd27a;background:rgba(6,4,12,.9)}
+@media (hover:none){.arc-cab__fav{opacity:1}}
+
+/* ------------------------------ recently played ------------------------------ */
+.arc-recent{margin:0 0 var(--sp-5)}
+.arc-recent__head{display:flex;align-items:center;gap:6px;margin-bottom:var(--sp-2);font-size:var(--fs-11);font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--ink-3)}
+.arc-recent__head .icon{width:13px;height:13px}
+.arc-recent__row{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:var(--sp-3)}
+.arc-recent__tile{display:flex;align-items:center;gap:10px;min-width:0;padding:8px 10px;border-radius:var(--r-md);cursor:pointer;text-align:left;font:inherit;color:inherit;
+  background:linear-gradient(180deg,hsl(var(--h) 45% 12% / .7),rgba(255,255,255,.015));border:1px solid hsl(var(--h) 90% 60% / .25);
+  transition:border-color var(--t-fast),transform var(--t-fast)}
+.arc-recent__tile:hover{border-color:hsl(var(--h) 95% 64% / .6);transform:translateY(-1px)}
+.arc-recent__tile:focus-visible{outline:2px solid hsl(var(--h) 100% 72%);outline-offset:2px}
+.arc-recent__ic{width:30px;height:30px;flex:none;display:grid;place-items:center;border-radius:9px;color:hsl(var(--h) 100% 80%);background:rgba(0,0,0,.4)}
+.arc-recent__ic .icon{width:16px;height:16px}
+.arc-recent__txt{min-width:0;display:flex;flex-direction:column;gap:1px}
+.arc-recent__txt b{font-size:var(--fs-12);color:var(--ink-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arc-recent__txt small{font-size:var(--fs-10);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ------------------------------ the week's challenge ------------------------------ */
+/* looks like Today's puzzle (.arc-daily in css/feat-arcade.css), with classes of its own */
+.arc-week{
+  width:100%;display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-4) var(--sp-5);margin:0 0 var(--sp-5);padding:var(--sp-4);
+  text-align:left;cursor:pointer;font:inherit;color:inherit;border-radius:var(--r-lg);border:1px solid hsl(var(--h) 90% 60% / .3);
+  background:radial-gradient(420px 160px at 0% 0%,hsl(var(--h) 95% 55% / .16),transparent 70%),linear-gradient(180deg,hsl(var(--h) 45% 11% / .8),rgba(255,255,255,.015));
+  box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 12px 30px -18px rgba(0,0,0,.9);
+  transition:transform var(--t-med) var(--ease-out),border-color var(--t-med),box-shadow var(--t-med);
+}
+.arc-week:hover{transform:translateY(-2px);border-color:hsl(var(--h) 95% 64% / .65);box-shadow:0 0 0 1px hsl(var(--h) 95% 60% / .25),0 16px 40px -16px hsl(var(--h) 95% 50% / .55)}
+.arc-week:active{transform:translateY(0)}
+.arc-week:focus-visible{outline:2px solid hsl(var(--h) 100% 72%);outline-offset:3px}
+.arc-week__screen{position:relative;flex:0 0 auto;width:128px;height:96px;border-radius:12px;overflow:hidden;box-shadow:0 0 0 2px #0b0810,0 8px 20px -10px rgba(0,0,0,.9)}
+.arc-week__art{display:block;width:100%;height:100%;object-fit:cover}
+.arc-week__body{flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:4px}
+.arc-week__kicker{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-11);font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:hsl(var(--h) 100% 75%)}
+.arc-week__kicker .icon{width:13px;height:13px}
+.arc-week__title{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-18);font-weight:800;color:var(--ink-0);letter-spacing:-.2px}
+.arc-week__blurb{font-size:var(--fs-11);line-height:1.45;color:var(--ink-2)}
+.arc-week__side{flex:0 0 auto;margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.arc-week__state{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:var(--r-pill);font-size:var(--fs-12);font-weight:700;color:var(--ink-0);
+  background:var(--fill-2);border:1px solid var(--line-2);white-space:nowrap}
+.arc-week__state .icon{width:14px;height:14px}
+.arc-week__state.is-played .icon{color:#ffd27a}
+.arc-week__state.is-new{color:#1b1200;background:hsl(var(--h) 100% 62%);border-color:rgba(255,255,255,.3);box-shadow:0 0 18px -4px hsl(var(--h) 100% 55% / .9)}
+body.reduce-motion .arc-week{transition:none}
+body.reduce-motion .arc-week:hover{transform:none}
+@media (prefers-reduced-motion:reduce){.arc-week{transition:none}.arc-week:hover{transform:none}}
+
+/* ------------------------------ HUD ------------------------------ */
+.arc-goal{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:var(--r-pill);white-space:nowrap;
+  font-size:var(--fs-10);font-weight:700;color:#0b0610;background:hsl(var(--h) 100% 74%);box-shadow:0 0 12px hsl(var(--h) 100% 60% / .45)}
+.arc-pad--idle{color:var(--ink-2);background:var(--fill-1);border-color:var(--line-2)}
+button.arc-recnote{font:inherit;font-size:var(--fs-10);font-weight:600;background:none;cursor:pointer}
+button.arc-recnote:hover{color:var(--ink-0);border-style:solid}
+.arc--hudbig .arc-hud__title{font-size:var(--fs-16)}
+.arc--hudbig .arc-hud__lab{font-size:calc(12px * var(--fs-k,1))}
+.arc--hudbig .arc-hud__num{font-size:calc(22px * var(--fs-k,1))}
+.arc--hudbig .arc-ib{min-width:40px;height:40px;font-size:var(--fs-13)}
+.arc--hudbig .arc-ib .icon{width:19px;height:19px}
+.arc--hudbig .arc-pad,.arc--hudbig .arc-goal{height:30px;font-size:var(--fs-12)}
+
+/* focus rings everywhere in the cabinet: the HUD, the cards and the shared buttons */
+.arc .btn:focus-visible,.arc .arc-ib:focus-visible,.arc-seg button:focus-visible,.arc-chip:focus-visible,.arc-tab:focus-visible{outline:2px solid hsl(var(--h) 100% 72%);outline-offset:2px}
+
+/* ------------------------------ the Options card ------------------------------ */
+.arc-stage__opts{position:absolute;inset:0;z-index:7;display:grid;place-items:center;padding:var(--sp-4);background:rgba(3,2,8,.62);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.arc-opts{width:min(520px,100%);max-height:100%;overflow:auto;align-items:stretch;text-align:left;animation:none}
+.arc-opts .arc-card__kicker,.arc-opts .arc-card__title,.arc-opts .arc-card__hint{text-align:center}
+.arc-opts .arc-card__row{justify-content:center}
+.arc-opts__body{display:flex;flex-direction:column;gap:var(--sp-4);margin:var(--sp-2) 0}
+.arc-opts__sec{display:flex;flex-direction:column;gap:2px}
+.arc-opts__h{margin:0 0 4px;font-size:var(--fs-10);font-weight:800;letter-spacing:1px;text-transform:uppercase;color:hsl(var(--h) 90% 78%)}
+.arc-opt{display:flex;align-items:center;gap:var(--sp-4);padding:8px 0;border-bottom:1px solid var(--line-0)}
+.arc-opt.is-elsewhere .arc-opt__lab::after{content:' · not this game';font-weight:500;color:var(--ink-3)}
+.arc-opt__txt{flex:1;min-width:0}
+.arc-opt__lab{font-size:var(--fs-12);font-weight:650;color:var(--ink-0);cursor:pointer}
+.arc-opt__note{margin-top:2px;font-size:var(--fs-11);line-height:1.45;color:var(--ink-2)}
+.arc-opt__sw{flex:none;position:relative;width:40px;height:22px;border-radius:11px;cursor:pointer;background:var(--fill-3);border:1px solid var(--line-2);transition:background var(--t-fast)}
+.arc-opt__sw::after{content:'';position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform var(--t-fast)}
+.arc-opt__sw.is-on{background:hsl(var(--h) 100% 62%);border-color:transparent}
+.arc-opt__sw.is-on::after{transform:translateX(18px)}
+.arc-opt--range{flex-wrap:wrap}
+.arc-opt__rangebox{display:flex;align-items:center;gap:8px;flex:0 1 200px}
+.arc-opt__range{flex:1;min-width:0;accent-color:hsl(var(--h) 100% 66%)}
+.arc-opt__val{min-width:44px;text-align:right;font:700 var(--fs-11)/1 var(--arc-mono);color:var(--ink-0)}
+.arc-keys{display:flex;flex-direction:column;gap:6px;padding:8px 0}
+.arc-keys__list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.arc-keys__row{display:flex;align-items:center;gap:8px;font-size:var(--fs-11);color:var(--ink-2)}
+.arc-keys__none{font-size:var(--fs-11);color:var(--ink-3)}
+.arc-keys kbd{display:inline-grid;place-items:center;min-width:28px;height:24px;padding:0 7px;border-radius:6px;font:700 var(--fs-11)/1 var(--arc-mono);color:var(--ink-0);
+  background:var(--fill-2);border:1px solid var(--line-2);box-shadow:0 2px 0 rgba(0,0,0,.4)}
+.arc-keys__status{min-height:1.3em;font-size:var(--fs-11);color:hsl(var(--h) 90% 80%)}
+
+/* ------------------------------ on-screen buttons ------------------------------ */
+.arc-tkslot{position:absolute;left:0;right:0;bottom:0;z-index:4;pointer-events:none}
+.arc-tk{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4) var(--sp-4)}
+.arc-tk__side{display:flex;gap:var(--sp-3);pointer-events:none}
+.arc-tk__side:empty{display:none}
+.arc-tk__btn{pointer-events:auto;min-width:64px;height:64px;padding:0 14px;border-radius:18px;display:grid;place-items:center;cursor:pointer;
+  font:700 var(--fs-12)/1.1 inherit;color:#fff;background:rgba(10,7,16,.55);border:2px solid hsl(var(--h) 90% 66% / .55);
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;backdrop-filter:blur(4px)}
+.arc-tk__btn .icon{width:26px;height:26px}
+.arc-tk__btn.is-down{background:hsl(var(--h) 100% 60% / .55);border-color:hsl(var(--h) 100% 80%)}
+/* a four-way cross (touchKeys at: 'dpad') */
+.arc-tk__dpad{display:grid;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(3,56px);gap:2px;pointer-events:none}
+.arc-tk__dpad .arc-tk__btn{min-width:0;width:56px;height:56px;padding:0;border-radius:14px}
+.arc-tk__dpad [data-dir="up"]{grid-area:1/2}
+.arc-tk__dpad [data-dir="left"]{grid-area:2/1}
+.arc-tk__dpad [data-dir="right"]{grid-area:2/3}
+.arc-tk__dpad [data-dir="down"]{grid-area:3/2}
+
+/* ------------------------------ modes and a game's own settings (js/arcade/modes.js) ------------------------------ */
+.arc-modesel{height:28px;max-width:170px;padding:0 24px 0 8px;border-radius:var(--r-sm);font:700 calc(11px * var(--fs-k,1))/1 var(--arc-mono);color:var(--ink-0);
+  background:rgba(0,0,0,.35);border:1px solid var(--line-1);cursor:pointer;text-overflow:ellipsis}
+.arc-modesel:disabled{opacity:.6;cursor:default}
+.arc-modesel:focus-visible,.arc-opt__sel:focus-visible{outline:2px solid hsl(var(--h) 100% 72%);outline-offset:2px}
+.arc-modesel option,.arc-opt__sel option{color:#111;background:#fff}
+.arc--hudbig .arc-modesel{height:34px;font-size:var(--fs-13)}
+.arc-opt__sel{flex:none;max-width:180px;height:30px;padding:0 8px;border-radius:var(--r-sm);font:600 var(--fs-12)/1 inherit;color:var(--ink-0);background:var(--fill-2);border:1px solid var(--line-2)}
+.arc-stats__modes{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:2px}
+.arc-stats__modes li{display:flex;gap:6px;align-items:baseline}
+.arc-stats__modes b{font-family:var(--arc-mono);color:var(--ink-0)}
+.arc-stats__modes small{font-size:var(--fs-10);color:var(--ink-3)}
+
+/* ------------------------------ the controller cursor ------------------------------ */
+.arc-pcur{position:absolute;left:0;top:0;z-index:8;width:22px;height:22px;margin:-3px 0 0 -3px;pointer-events:none;
+  background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 2l15 9-6.5 1.6L16 20l-3 1.4-3.5-7.4L4 18z' fill='%23fff' stroke='%23111' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E");
+  filter:drop-shadow(0 0 6px hsl(var(--h) 100% 60%))}
+.arc-pcur.is-down{transform-origin:3px 3px;scale:.85}
+
+/* ------------------------------ the result card ------------------------------ */
+.arc-res__vs{list-style:none;margin:var(--sp-2) 0 0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:var(--fs-12);color:var(--ink-1)}
+.arc-res__beat{display:flex;flex-direction:column;gap:2px;margin-top:var(--sp-3);padding:8px 14px;border-radius:var(--r-md);background:var(--fill-1);border:1px solid var(--line-2)}
+.arc-res__beat b{font-size:var(--fs-13);color:var(--ink-0)}
+.arc-res__beat span{font-size:var(--fs-11);color:var(--ink-2)}
+.arc-res__beat.is-won{border-color:hsl(140 80% 55% / .6);background:hsl(140 80% 40% / .15)}
+.arc-res__more{flex-wrap:wrap;margin-top:2px}
+.arc-offer .arc-card__text{max-width:330px}
+
+/* ------------------------------ Stats ------------------------------ */
+.arc-stats__sum{display:flex;flex-wrap:wrap;gap:var(--sp-3);margin:0 0 var(--sp-4)}
+.arc-stats__tot{display:flex;flex-direction:column;gap:2px;min-width:130px;padding:10px 14px;border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-1)}
+.arc-stats__tot b{font:800 calc(20px * var(--fs-k,1))/1.1 var(--arc-mono);color:var(--ink-0)}
+.arc-stats__tot span{font-size:var(--fs-11);color:var(--ink-3)}
+.arc-stats__wrap{overflow-x:auto}
+.arc-stats__t{width:100%;border-collapse:collapse;font-size:var(--fs-12)}
+.arc-stats__t th,.arc-stats__t td{padding:8px 10px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line-0)}
+.arc-stats__t thead th{font-size:var(--fs-10);font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--ink-3)}
+.arc-stats__t td{color:var(--ink-1);font-variant-numeric:tabular-nums;white-space:nowrap}
+.arc-stats__game{display:inline-flex;align-items:center;gap:8px;padding:2px 4px;margin:-2px -4px;border-radius:6px;font:inherit;font-weight:650;color:var(--ink-0);background:none;border:0;cursor:pointer;text-align:left}
+.arc-stats__game:hover{color:hsl(var(--h) 100% 80%)}
+.arc-stats__ic{width:24px;height:24px;flex:none;display:grid;place-items:center;border-radius:7px;color:hsl(var(--h) 100% 80%);background:hsl(var(--h) 80% 40% / .2)}
+.arc-stats__ic .icon{width:14px;height:14px}
+.arc-stats__tops{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:2px}
+.arc-stats__tops b{font-family:var(--arc-mono);color:var(--ink-0);margin-right:6px}
+.arc-stats__tops small,.arc-stats__none{font-size:var(--fs-10);color:var(--ink-3)}
+.arc-stats__note{margin-top:var(--sp-4);font-size:var(--fs-11);line-height:1.5;color:var(--ink-3);max-width:720px}
+
+/* ------------------------------ Friends ------------------------------ */
+.arc-fr{display:flex;flex-direction:column;gap:var(--sp-5)}
+.arc-fr__sec{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4);border-radius:var(--r-lg);background:var(--fill-0);border:1px solid var(--line-1)}
+.arc-fr__secrow{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3)}
+.arc-fr__boardhead{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-3)}
+.arc-fr__lab{font-size:var(--fs-11);color:var(--ink-3)}
+.arc-fr__rows{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.arc-fr__row{display:grid;grid-template-columns:28px minmax(0,1fr) auto auto;align-items:center;gap:var(--sp-3);padding:6px 10px;border-radius:var(--r-sm);background:rgba(0,0,0,.2)}
+.arc-fr__row.is-me{background:hsl(290 80% 40% / .18);box-shadow:inset 0 0 0 1px rgba(214,110,255,.35)}
+.arc-fr__rank{font:800 var(--fs-12)/1 var(--arc-mono);color:var(--ink-3);text-align:center}
+.arc-fr__who{font-weight:650;color:var(--ink-0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arc-fr__score{font-family:var(--arc-mono);color:var(--ink-0)}
+.arc-fr__when{font-size:var(--fs-10);color:var(--ink-3);white-space:nowrap}
+.arc-fr__fine{font-size:var(--fs-11);line-height:1.5;color:var(--ink-3)}
+.arc-fr__status{min-height:1.2em;font-size:var(--fs-11);color:var(--ink-2)}
+.arc-fr__status.is-err{color:#ffd27a}
+.arc-empty--sm{padding:var(--sp-4) 0}
+.arc-cup{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);background:rgba(0,0,0,.22);border:1px solid hsl(var(--h) 90% 60% / .28)}
+.arc-cup__head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:var(--sp-2)}
+.arc-cup__head > div{display:flex;flex-direction:column;gap:2px}
+.arc-cup__title{font-size:var(--fs-13);color:var(--ink-0)}
+.arc-cup__head small{font-size:var(--fs-11);color:var(--ink-3)}
+.arc-cup__state{font-size:var(--fs-11);font-weight:700;padding:3px 10px;border-radius:var(--r-pill);color:var(--ink-1);background:var(--fill-1)}
+.arc-cup__state[data-state="play"],.arc-cup__state[data-state="won"]{color:#0b0610;background:hsl(var(--h) 100% 72%)}
+.arc-cup__bracket{display:flex;gap:var(--sp-4);overflow-x:auto;padding-bottom:4px}
+.arc-cup__round{display:flex;flex-direction:column;justify-content:space-around;gap:var(--sp-3);min-width:170px}
+.arc-cup__rname{font-size:var(--fs-10);font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--ink-3)}
+.arc-cup__match{position:relative;display:flex;flex-direction:column;border-radius:var(--r-sm);overflow:hidden;border:1px solid var(--line-2);background:#0e0a15}
+.arc-cup__side{display:flex;justify-content:space-between;gap:8px;padding:5px 9px;font-size:var(--fs-11);color:var(--ink-2)}
+.arc-cup__side + .arc-cup__side{border-top:1px solid var(--line-1)}
+.arc-cup__side b{font-family:var(--arc-mono);color:var(--ink-1)}
+.arc-cup__side.is-won{color:var(--ink-0);background:hsl(var(--h) 80% 45% / .22)}
+.arc-cup__side.is-won b{color:hsl(var(--h) 100% 82%)}
+.arc-cup__side.is-me span{font-weight:700}
+.arc-cup__wo{position:absolute;right:2px;top:50%;margin-top:-11px;width:22px;height:22px;display:grid;place-items:center;border-radius:6px;cursor:pointer;color:var(--ink-3);background:none;border:0}
+.arc-cup__wo:hover{color:var(--ink-0);background:var(--fill-2)}
+.arc-cup__wo .icon{width:13px;height:13px}
+.arc-cup__acts{justify-content:flex-start;flex-wrap:wrap}
+.arc-cupf{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-3);border-radius:var(--r-md);background:rgba(0,0,0,.25);border:1px dashed var(--line-2)}
+.arc-cupf__row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-3)}
+.arc-cupf__picks{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px}
+.arc-cupf__pick{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--r-sm);cursor:pointer;font-size:var(--fs-12);color:var(--ink-1);background:var(--fill-0)}
+.arc-cupf__pick small{margin-left:auto;font-size:var(--fs-10);color:var(--ink-3)}
+.arc-cupf__count{font-size:var(--fs-11);color:var(--ink-2)}
+
+/* ------------------------------ Clips: filter, storage, trim ------------------------------ */
+.arc-clips__bar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-4);margin:0 0 var(--sp-4)}
+.arc-clips__store{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-11);color:var(--ink-2)}
+.arc-clips__store .icon{width:13px;height:13px}
+.arc-clips__store small{color:var(--ink-3)}
+.arc-trim{display:flex;flex-direction:column;gap:var(--sp-3);max-width:720px}
+.arc-trim__frame{border-radius:var(--r-md);overflow:hidden;background:#000;aspect-ratio:16/9}
+.arc-trim__video{display:block;width:100%;height:100%;object-fit:contain}
+.arc-trim__ctl{display:flex;flex-direction:column;gap:var(--sp-2)}
+.arc-trim__row{display:grid;grid-template-columns:48px minmax(0,1fr) 64px;align-items:center;gap:var(--sp-3);font-size:var(--fs-12);color:var(--ink-1)}
+.arc-trim__at{font:700 var(--fs-11)/1 var(--arc-mono);color:var(--ink-0);text-align:right}
+.arc-trim__len{font-size:var(--fs-11);color:var(--ink-2)}
+.arc-trim__rep{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-12);color:var(--ink-1)}
+.arc-trim__bar{height:8px;border-radius:var(--r-pill);overflow:hidden;background:var(--fill-2)}
+.arc-trim__bar i{display:block;height:100%;width:0;background:hsl(var(--h) 90% 66%);transition:width .12s linear}
+.arc-trim__msg{min-height:1.2em;font-size:var(--fs-11);color:var(--ink-2)}
+.arc-trim .arc-card__row{justify-content:flex-start}
+
+@media (prefers-reduced-motion:reduce){.arc-recent__tile,.arc-opt__sw,.arc-opt__sw::after,.arc-trim__bar i{transition:none}.arc-recent__tile:hover{transform:none}}
+body.reduce-motion .arc-recent__tile:hover{transform:none}
+@container arcapp (max-width:560px){
+  .arc-find{padding:0 var(--sp-4) var(--sp-3)}
+  .arc-week__screen{width:96px}
+  .arc-stats__t th:nth-child(4),.arc-stats__t td:nth-child(4){display:none}
+  .arc-tk__btn{min-width:56px;height:56px}
+}

@@ -3,9 +3,18 @@
 
    Join each pair of matching dots with a pipe. Pipes can't cross
    and can't run through another colour's dots, and together they
-   must fill every square. Five board sizes (5×5 to 9×9), twenty
-   levels each; every level has a full-board solution (see
-   pipes-logic.js — the test suite solves all of them).
+   must fill every square. Five level packs, one per board size
+   (Starter 5×5 to Grand 9×9), twenty levels each; every level has a
+   full-board solution (see pipes-logic.js — the test suite solves all
+   of them). Levels opens the pack's list: cleared ones carry a tick,
+   ones finished in par a star.
+
+   Moves and par. A move is picking up a pipe of another colour than
+   the last one you drew (going back to the same pipe is the same
+   move). Every pipe needs at least one move and a full-board solution
+   exists, so the fewest moves any level can take is exactly its number
+   of pairs: that is its par, worked out, not guessed. Finishing in par
+   is a perfect level.
 
    Controls
      mouse / touch  press a dot (or a pipe) and drag; crossing
@@ -15,19 +24,38 @@
                     arrows then draw it, Space / Enter puts it down
                     · R starts the level again · N / P next / previous
    Score = seconds to link the level, lower is better. The level you
-   were on and the levels you have cleared (with best times) are kept
-   on this device (portal.arcadePuzzles.pipelink).
+   were on, the levels you have cleared (with best times) and the
+   fewest moves on each are kept on this device
+   (portal.arcadePuzzles.pipelink).
+   With the Arcade's colour-blind colours on (ctx.palette 'cb') the
+   pipes take the Okabe–Ito colours (PALETTE_CB, and a grey for the
+   ninth), each pipe carries its own dash pattern, and the letters on
+   the dots stay as they are — so no pair depends on colour alone.
+
+   ONLINE RACE (ctx.online.kit, js/arcade/race.js): a 6×6 level from the
+   Easy pack, picked by the room's seed, so both screens get the same
+   one; packs, levels and Restart are off, nothing is saved, and the
+   clock runs from the start. Fewest moves wins, then the faster.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { ownsKey, sounder } from './kit.js';
 import { CSS as BASE, load, save, reducedMotion, bag, clock, fmtTime } from './puzzlekit.js';
+import { PALETTE_CB } from './index.js';
 import { SIZES, LEVELS_PER_SIZE, makeLevel, createBoard, ownerMap, begin, walkTo, connectedCount, filled, isSolved, shift } from './pipes-logic.js';
 
 const GAME = 'pipelink';
 const NS = 'http://www.w3.org/2000/svg';
 const COLORS = ['#ff4d6d', '#3b9cff', '#2fd36b', '#ffd23f', '#ff8a2a', '#27d7e6', '#e06bff', '#e8ecf3', '#b9803b'];
 const LETTERS = 'ABCDEFGHI';
+/* the colour-blind set: the eight Okabe–Ito colours, then a mid grey; light ones get dark letters */
+const CB = [PALETTE_CB[5], PALETTE_CB[4], PALETTE_CB[2], PALETTE_CB[3], PALETTE_CB[0], PALETTE_CB[1], PALETTE_CB[6], PALETTE_CB[7], '#8d8f96'];
+const CB_DARK = [false, true, false, false, false, false, false, false, false];  /* white letters on the blue */
+const CB_DASH = ['', '0.5 0.18', '0.12 0.16', '0.6 0.14 0.12 0.14', '0.28 0.28', '0.05 0.22', '0.9 0.2', '0.2 0.1 0.04 0.1', '0.4 0.12 0.4 0.4'];
+/* the level packs: one per board size */
+export const PACKS = { 5: 'Starter', 6: 'Easy', 7: 'Regular', 8: 'Tricky', 9: 'Grand' };
+/* the fewest moves a level can take: one per pipe (see the header) */
+export const parOf = level => level.ends.length;
 
 const CSS = `${BASE}
 .pz-pl__bw{position:relative;flex:1 1 auto;min-width:0;min-height:0;width:100%;container-type:size;display:grid;place-items:center}
@@ -37,6 +65,17 @@ const CSS = `${BASE}
 .pz-pl__card b{display:block;font-size:22px;margin-bottom:6px;color:#fff}
 .pz-pl__card span{font-size:13px;color:var(--ink-2,#bbb)}
 .pz-pl__sizes .is-done::after{content:" ✓";font-size:10px}
+.pz__read.is-over{color:#ffb46b}
+.pz-pl__packs{position:absolute;inset:0;z-index:5;overflow:auto;padding:14px;background:rgba(12,9,18,.96);border-radius:12px}
+.pz-pl__packs h4{margin:0 0 4px;font:700 13px/1.2 var(--font,system-ui);color:#fff}
+.pz-pl__packs p{margin:0 0 10px;font-size:12px;color:var(--ink-2,#bbb)}
+.pz-pl__lv{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;margin-bottom:12px}
+.pz-pl__lv button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;border-radius:9px;border:1px solid var(--line-1,rgba(255,255,255,.1));background:var(--fill-1,rgba(255,255,255,.06));color:var(--ink-0,#fff);font:700 14px/1 var(--font,system-ui);cursor:pointer}
+.pz-pl__lv button small{font:600 10px/1 var(--font,system-ui);color:var(--ink-3,#999)}
+.pz-pl__lv button.is-done{border-color:color-mix(in srgb,#2fd36b 55%,transparent)}
+.pz-pl__lv button.is-par small{color:#ffd23f}
+.pz-pl__lv button.is-cur{box-shadow:0 0 0 2px var(--ga)}
+.pz-pl__lv button:focus-visible{outline:2px solid var(--ga)}
 `;
 
 const svgEl = (tag, attrs = {}) => {
@@ -53,14 +92,19 @@ export default {
     const L = bag();
     const snd = sounder(ctx);
     let dead = false, paused = false;
-    const sv = load(GAME);
+    /* an online race: the shell's race kit, the room's seed */
+    const RACE = ctx.online?.kit && Number.isInteger(ctx.online.seed) ? ctx.online : null;
+    const sv = RACE ? {} : load(GAME);
     const cleared = {};                                  /* "size-index" -> best seconds */
     for (const [k, v] of Object.entries(sv.cleared || {})) if (Number.isFinite(v)) cleared[k] = v;
+    const fewest = {};                                   /* "size-index" -> fewest moves */
+    for (const [k, v] of Object.entries(sv.moves || {})) if (Number.isInteger(v) && v > 0) fewest[k] = v;
     const cur = {};                                      /* size -> level index last on */
     for (const s of SIZES) cur[s] = Math.max(0, Math.min(LEVELS_PER_SIZE - 1, Number(sv.cur?.[s]) || 0));
-    let size = SIZES.includes(Number(sv.size)) ? Number(sv.size) : 5;
-    let index = cur[size];
+    let size = RACE ? 6 : SIZES.includes(Number(sv.size)) ? Number(sv.size) : 5;
+    let index = RACE ? (RACE.seed >>> 0) % LEVELS_PER_SIZE : cur[size];
     let level = null, board = null, done = false, drawing = -1, last = -1, cursor = 0, kbd = false, msg = '', strokes = 0;
+    let moves = 0, moveColor = -1;
 
     const clk = clock(t => { timeV.textContent = fmtTime(t); });
     const timeV = h('span', { text: '0:00' });
@@ -69,14 +113,17 @@ export default {
     const pipesRead = h('div.pz__read', { title: 'Pipes linked', 'aria-label': 'Pipes linked' }, icon('link'), pipesV);
     const fillV = h('small', { text: '' });
     const bestV = h('small', { text: '' });
-    const sizeBtns = SIZES.map(s => h('button', { type: 'button', dataset: { size: s }, 'aria-pressed': 'false', title: `${s} by ${s} board`, text: `${s}×${s}` }));
-    const seg = h('div.pz__seg.pz-pl__sizes', { role: 'group', 'aria-label': 'Board size' }, ...sizeBtns);
+    const sizeBtns = SIZES.map(s => h('button', { type: 'button', dataset: { size: s }, 'aria-pressed': 'false', title: `${PACKS[s]} pack: ${s} by ${s} boards`, text: `${s}×${s}` }));
+    const seg = h('div.pz__seg.pz-pl__sizes', { role: 'group', 'aria-label': 'Level pack' }, ...sizeBtns);
+    const movesV = h('span', { text: '0' });
+    const movesRead = h('div.pz__read', { title: 'Moves (par: the fewest possible)', 'aria-label': 'Moves' }, icon('activity'), movesV, h('small', { text: '' }));
+    const packsBtn = h('button.pz__btn', { type: 'button', dataset: { act: 'levels' }, title: 'The levels of this pack' }, icon('grid-9'), h('span.pz__long', { text: 'Levels' }));
     const prevBtn = h('button.pz__btn', { type: 'button', title: 'Previous level' }, icon('chevron-left'));
     const nextBtn = h('button.pz__btn', { type: 'button', title: 'Next level' }, icon('chevron-right'));
     const levelV = h('span', { text: '' });
     const levelRead = h('div.pz__read', { title: 'Level', 'aria-label': 'Level' }, icon('layers'), levelV);
     const resetBtn = h('button.pz__btn', { type: 'button', title: 'Start this level again (R)' }, icon('refresh'), h('span.pz__long', { text: 'Restart' }));
-    const top = h('div.pz__top', seg, prevBtn, levelRead, nextBtn, pipesRead, timeRead, fillV, bestV, resetBtn);
+    const top = h('div.pz__top', seg, packsBtn, prevBtn, levelRead, nextBtn, pipesRead, movesRead, timeRead, fillV, bestV, resetBtn);
     const svg = svgEl('svg', { class: 'pz-pl__board', tabindex: '0', role: 'application', 'aria-label': 'Pipe Link board', preserveAspectRatio: 'xMidYMid meet' });
     const bw = h('div.pz-pl__bw', svg);
     const foot = h('div.pz__foot');
@@ -84,46 +131,56 @@ export default {
     const root = h('div.pz' + (reduced ? '.is-reduced' : ''), { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } },
       h('style', { text: CSS }), top, bw, foot, live);
     el.appendChild(root);
+    if (RACE) for (const b of [seg, packsBtn, prevBtn, nextBtn, resetBtn, bestV]) b.hidden = true;
+    /* half for the squares filled, half for the pipes linked: the friend's progress bar */
+    const share = () => (board ? 0.5 * filled(board) / (size * size) + 0.5 * connectedCount(board) / board.ends.length : 0);
 
     const say = m => { msg = m; live.textContent = ''; live.textContent = m; paintFoot(); };
     const paintFoot = () => foot.replaceChildren(msg ? h('span', { text: msg })
-      : h('span.pz__hint', { html: 'drag from a dot to its partner · fill every square · <kbd>←↑↓→</kbd> + <kbd>Space</kbd> to draw · <kbd>R</kbd> restarts' }));
+      : h('span.pz__hint', { html: `drag from a dot to its partner · fill every square · <kbd>←↑↓→</kbd> + <kbd>Space</kbd> to draw${RACE ? '' : ' · <kbd>R</kbd> restarts'}` }));
 
     const cellCenter = c => [(c % size) + 0.5, Math.floor(c / size) + 0.5];
     const ownersOf = () => ownerMap(board);
+    const cb = () => ctx.palette === 'cb';
+    const colorOf = c => (cb() ? CB[c] : COLORS[c]);
     function paint() {
       svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
       svg.replaceChildren();
-      const own = ownersOf();
+      const own = ownersOf(), flat = cb();
       for (let c = 0; c < size * size; c++) {
         const x = c % size, y = Math.floor(c / size);
-        svg.appendChild(svgEl('rect', { x: x + 0.03, y: y + 0.03, width: 0.94, height: 0.94, rx: 0.12, fill: own[c] >= 0 ? COLORS[own[c]] : '#181b27', 'fill-opacity': own[c] >= 0 ? 0.2 : 1 }));
+        svg.appendChild(svgEl('rect', { x: x + 0.03, y: y + 0.03, width: 0.94, height: 0.94, rx: 0.12, fill: own[c] >= 0 ? colorOf(own[c]) : '#181b27', 'fill-opacity': own[c] >= 0 ? 0.2 : 1 }));
       }
       board.paths.forEach((p, c) => {
         if (p.length < 2) return;
         const pts = p.map(cell => cellCenter(cell).join(',')).join(' ');
-        svg.appendChild(svgEl('polyline', { points: pts, fill: 'none', stroke: COLORS[c], 'stroke-width': 0.44, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'data-color': c }));
+        svg.appendChild(svgEl('polyline', { points: pts, fill: 'none', stroke: colorOf(c), 'stroke-width': 0.44, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'data-color': c }));
+        /* each pipe's own pattern along its middle, so it can be followed without its colour */
+        if (flat && CB_DASH[c]) svg.appendChild(svgEl('polyline', { points: pts, fill: 'none', stroke: CB_DARK[c] ? '#ffffff' : '#0d0f16', 'stroke-opacity': 0.7, 'stroke-width': 0.1, 'stroke-dasharray': CB_DASH[c], 'stroke-linejoin': 'round', 'pointer-events': 'none' }));
       });
       board.ends.forEach((e, c) => {
         for (const cell of [e.a, e.b]) {
           const [cx, cy] = cellCenter(cell);
-          svg.appendChild(svgEl('circle', { cx, cy, r: 0.34, fill: COLORS[c], stroke: '#0d0f16', 'stroke-width': 0.05 }));
-          const t = svgEl('text', { x: cx, y: cy + 0.01, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 0.34, 'font-weight': 800, fill: '#0d0f16', 'font-family': 'Inter,system-ui,sans-serif', 'pointer-events': 'none' });
+          svg.appendChild(svgEl('circle', { cx, cy, r: 0.34, fill: colorOf(c), stroke: '#0d0f16', 'stroke-width': 0.05, 'data-end': c }));
+          const t = svgEl('text', { x: cx, y: cy + 0.01, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 0.34, 'font-weight': 800, fill: flat && CB_DARK[c] ? '#ffffff' : '#0d0f16', 'font-family': 'Inter,system-ui,sans-serif', 'pointer-events': 'none' });
           t.textContent = LETTERS[c];
           svg.appendChild(t);
         }
       });
       if (kbd && !done) {
         const [cx, cy] = cellCenter(cursor);
-        svg.appendChild(svgEl('rect', { x: cx - 0.46, y: cy - 0.46, width: 0.92, height: 0.92, rx: 0.14, fill: 'none', stroke: drawing >= 0 ? COLORS[drawing] : '#ffffff', 'stroke-width': 0.07, 'stroke-dasharray': drawing >= 0 ? '' : '0.18 0.12' }));
+        svg.appendChild(svgEl('rect', { x: cx - 0.46, y: cy - 0.46, width: 0.92, height: 0.92, rx: 0.14, fill: 'none', stroke: drawing >= 0 ? colorOf(drawing) : '#ffffff', 'stroke-width': 0.07, 'stroke-dasharray': drawing >= 0 ? '' : '0.18 0.12' }));
       }
       const n = board.ends.length, k = connectedCount(board), f = filled(board);
       pipesV.textContent = `${k}/${n}`;
       fillV.textContent = `${Math.round(100 * f / (size * size))}% filled`;
       svg.setAttribute('aria-label', `Pipe Link board, ${size} by ${size}. ${k} of ${n} pipes linked, ${f} of ${size * size} squares filled.`);
-      const key = `${size}-${index}`;
-      bestV.textContent = cleared[key] != null ? `Best: ${fmtTime(cleared[key])}` : '';
-      levelV.textContent = `${index + 1}/${LEVELS_PER_SIZE}`;
+      const key = `${size}-${index}`, par = parOf(level);
+      bestV.textContent = cleared[key] != null ? `Best: ${fmtTime(cleared[key])}${fewest[key] ? ` · ${fewest[key]} moves${fewest[key] <= par ? ' ★' : ''}` : ''}` : '';
+      levelV.textContent = `${PACKS[size]} ${index + 1}/${LEVELS_PER_SIZE}`;
+      movesV.textContent = String(moves);
+      movesRead.lastChild.textContent = `par ${par}`;
+      movesRead.classList.toggle('is-over', moves > par);
       sizeBtns.forEach(b => {
         const s = Number(b.dataset.size);
         b.setAttribute('aria-pressed', String(s === size));
@@ -133,22 +190,49 @@ export default {
       nextBtn.disabled = index >= LEVELS_PER_SIZE - 1;
     }
 
-    function persist() { save(GAME, { size, cur: { ...cur }, cleared: { ...cleared } }); }
+    function persist() { if (!RACE) save(GAME, { size, cur: { ...cur }, cleared: { ...cleared }, moves: { ...fewest } }); }
     function start(s = size, i = index) {
       size = s; index = Math.max(0, Math.min(LEVELS_PER_SIZE - 1, i)); cur[size] = index;
       level = makeLevel(size, index);
       board = createBoard(level);
-      done = false; drawing = -1; last = -1; cursor = 0; strokes = 0; paused = false; msg = '';
+      done = false; drawing = -1; last = -1; cursor = 0; strokes = 0; moves = 0; moveColor = -1; paused = false; msg = '';
       clk.stop(); clk.secs = 0; timeV.textContent = '0:00';
-      bw.querySelector('.pz__cover')?.remove(); bw.querySelector('.pz-pl__card')?.remove();
+      bw.querySelector('.pz__cover')?.remove(); bw.querySelector('.pz-pl__card')?.remove(); bw.querySelector('.pz-pl__packs')?.remove();
       persist(); paint();
-      say(`${size} by ${size}, level ${index + 1}: link ${board.ends.length} pairs and fill every square.`);
+      say(RACE ? `A race: the same ${size}×${size} level as ${RACE.peer?.name || 'your friend'}. Link ${board.ends.length} pairs and fill every square; fewest moves wins (par ${parOf(level)}).`
+        : `${PACKS[size]} pack, level ${index + 1} (${size} by ${size}): link ${board.ends.length} pairs and fill every square. Par is ${parOf(level)} moves.`);
       onScore(0);
+      /* in a race the clock runs from the start, the same for both */
+      if (RACE) { clk.start(); RACE.progress(share()); }
+    }
+    /* the pack's levels: cleared ones ticked, ones finished in par starred */
+    function showPack() {
+      if (bw.querySelector('.pz-pl__packs')) { bw.querySelector('.pz-pl__packs').remove(); return; }
+      const list = SIZES.map(s => {
+        const keys = Array.from({ length: LEVELS_PER_SIZE }, (_, i) => `${s}-${i}`);
+        const nDone = keys.filter(k => cleared[k] != null).length;
+        const nPar = keys.filter((k, i) => fewest[k] && fewest[k] <= parOf(makeLevel(s, i))).length;
+        return [
+          h('h4', { text: `${PACKS[s]} · ${s}×${s}` }),
+          h('p', { text: `${nDone} of ${LEVELS_PER_SIZE} cleared · ${nPar} in par` }),
+          h('div.pz-pl__lv', { role: 'group', 'aria-label': `${PACKS[s]} levels` }, keys.map((k, i) => {
+            const par = parOf(makeLevel(s, i)), m = fewest[k], ok = cleared[k] != null, inPar = !!m && m <= par;
+            return h('button', {
+              type: 'button', dataset: { size: s, index: i }, class: `${ok ? 'is-done ' : ''}${inPar ? 'is-par ' : ''}${s === size && i === index ? 'is-cur' : ''}`,
+              title: `${PACKS[s]} level ${i + 1}: par ${par}${ok ? `, cleared in ${fmtTime(cleared[k])}${m ? `, ${m} moves` : ''}` : ''}`,
+              onclick: () => { if (!dead) start(s, i); },
+            }, String(i + 1), h('small', { text: inPar ? '★ par' : ok ? '✓' : `par ${par}` }));
+          })),
+        ];
+      });
+      bw.appendChild(h('div.pz-pl__packs', { role: 'dialog', 'aria-label': 'Level packs' }, list));
+      bw.querySelector(`.pz-pl__lv button.is-cur`)?.focus({ preventScroll: true });
     }
     const can = () => !dead && !paused && !done;
 
     function afterChange(prevLinked) {
       paint();
+      RACE?.progress(share());
       const k = connectedCount(board);
       if (k > prevLinked) { snd.wake(); snd.blip(330 + 60 * k, 0.09, 'triangle', 0.7); }
       if (isSolved(board)) win();
@@ -159,6 +243,8 @@ export default {
       if (c < 0) return -1;
       if (!clk.running) clk.start();
       drawing = c; last = cell; strokes++;
+      /* a move: picking up a pipe of another colour than the last one drawn */
+      if (c !== moveColor) { moves++; moveColor = c; }
       snd.wake(); snd.blip(520, 0.04, 'sine', 0.4);
       paint();
       return c;
@@ -177,19 +263,32 @@ export default {
     }
     function win() {
       done = true; drawing = -1; clk.stop();
+      if (RACE) {
+        const par = parOf(level);
+        paint();
+        bw.appendChild(h('div.pz-pl__card', h('div', h('b', { text: 'Linked!' }), h('span', { text: `${moves} moves (par ${par}) in ${fmtTime(clk.secs)}.` }))));
+        say(`Linked in ${moves} moves, ${fmtTime(clk.secs)}.`);
+        snd.blip(523, 0.1, 'triangle', 0.8); setTimeout(() => !dead && snd.blip(784, 0.16, 'triangle', 0.8), 140);
+        onScore(moves);
+        onEnd({ score: moves, won: true, detail: `${size}×${size} · ${moves} moves, par ${par}`, race: { done: true, ms: Math.round(clk.secs * 1000), mv: moves, p: 1 } });
+        return;
+      }
       const secs = Math.round(clk.secs * 10) / 10, key = `${size}-${index}`;
       const prev = cleared[key], fresh = prev == null || secs < prev;
       if (fresh) cleared[key] = secs;
+      const par = parOf(level), perfect = moves <= par;
+      if (!fewest[key] || moves < fewest[key]) fewest[key] = moves;
       const next = Math.min(LEVELS_PER_SIZE - 1, index + 1);
       cur[size] = next;
       persist(); paint();
       const lastOne = index === LEVELS_PER_SIZE - 1;
-      bw.appendChild(h('div.pz-pl__card', h('div', h('b', { text: 'Linked!' }),
-        h('span', { text: `${size}×${size} level ${index + 1} in ${fmtTime(secs)}${fresh && prev != null ? ' — a new best' : ''}. ${lastOne ? `That was the last ${size}×${size} level: try another size.` : `Play again for level ${index + 2}.`}` }))));
-      say(`Level ${index + 1} linked in ${fmtTime(secs)}.`);
+      const moveLine = perfect ? `Perfect: ${moves} moves, par ${par}.` : `${moves} moves; par is ${par}, one for each pipe.`;
+      bw.appendChild(h('div.pz-pl__card', h('div', h('b', { text: perfect ? 'Linked in par!' : 'Linked!' }),
+        h('span', { text: `${PACKS[size]} level ${index + 1} in ${fmtTime(secs)}${fresh && prev != null ? ' — a new best' : ''}. ${moveLine} ${lastOne ? `That was the last ${PACKS[size]} level: try another pack.` : `Play again for level ${index + 2}.`}` }))));
+      say(`Level ${index + 1} linked in ${fmtTime(secs)}. ${moveLine}`);
       snd.blip(523, 0.1, 'triangle', 0.8); setTimeout(() => !dead && snd.blip(659, 0.1, 'triangle', 0.8), 110); setTimeout(() => !dead && snd.blip(784, 0.16, 'triangle', 0.8), 220);
       onScore(secs);
-      onEnd({ score: secs, won: true, detail: `${size}×${size} · level ${index + 1}` });
+      onEnd({ score: secs, won: true, detail: `${PACKS[size]} ${size}×${size} · level ${index + 1} · ${moves} moves, par ${par}${perfect ? ' (perfect)' : ''}` });
     }
 
     /* ----- pointer ----- */
@@ -233,12 +332,14 @@ export default {
           const c = grab(cursor);
           say(c >= 0 ? `Drawing pipe ${LETTERS[c]}. Arrow keys draw it, Space puts it down.` : 'Nothing to pick up here: move to a dot or the end of a pipe.');
         }
-      } else if (k === 'r' || k === 'R') { e.preventDefault(); start(size, index); }
+      } else if (RACE) return;
+      else if (k === 'r' || k === 'R') { e.preventDefault(); start(size, index); }
       else if (k === 'n' || k === 'N') { e.preventDefault(); if (index < LEVELS_PER_SIZE - 1) start(size, index + 1); }
       else if (k === 'p' || k === 'P') { e.preventDefault(); if (index > 0) start(size, index - 1); }
     });
     sizeBtns.forEach(b => L.on(b, 'click', () => { if (!dead) start(Number(b.dataset.size), cur[Number(b.dataset.size)]); }));
     L.on(resetBtn, 'click', () => { if (!dead) start(size, index); });
+    L.on(packsBtn, 'click', () => { if (!dead) showPack(); });
     L.on(prevBtn, 'click', () => { if (!dead && index > 0) start(size, index - 1); });
     L.on(nextBtn, 'click', () => { if (!dead && index < LEVELS_PER_SIZE - 1) start(size, index + 1); });
 
@@ -254,9 +355,10 @@ export default {
         return {
           size, index, level: index + 1, levels: LEVELS_PER_SIZE, colors: board.ends.length, ends: board.ends.map(e => ({ ...e })),
           paths: board.paths.map(p => p.slice()), linked: connectedCount(board), filled: filled(board), cells: size * size,
-          solved: isSolved(board), done, paused, drawing, cursor, seconds: clk.secs, running: clk.running, strokes,
-          cleared: { ...cleared }, cur: { ...cur },
+          solved: isSolved(board), done, paused, drawing, cursor, seconds: clk.secs, running: clk.running, strokes, moves, par: parOf(level), fewest: { ...fewest }, pack: PACKS[size],
+          cleared: { ...cleared }, cur: { ...cur }, palette: cb() ? 'cb' : 'standard', swatches: (cb() ? CB : COLORS).slice(0, board.ends.length),
           geom: { x: r.left, y: r.top, w: r.width, h: r.height },
+          race: RACE ? { seed: RACE.seed, progress: share() } : null,
         };
       },
       /* test hook — nothing in the game calls it: level(size, index) */

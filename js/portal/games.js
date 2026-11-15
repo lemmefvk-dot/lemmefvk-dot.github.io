@@ -32,8 +32,18 @@
 
 import { BRAND } from './brand.js';
 import * as catalogue from './games.data.js';
-import * as UV from './uv.js';
+import { t } from '../core/i18n.js';
 import * as plays from '../core/plays.js';
+import { useArtButton } from './useart.js';
+import { paintFriendPanel } from './sendfriend.js';
+
+if (typeof document !== 'undefined' && !document.getElementById('gamesportal-css')) {
+  const link = document.createElement('link');
+  link.id = 'gamesportal-css';
+  link.rel = 'stylesheet';
+  link.href = 'css/gamesportal.css';
+  document.head.appendChild(link);
+}
 
 const LIB = 'static://games';
 const urlFor = id => `${LIB}/${id}`;
@@ -66,9 +76,26 @@ const K_FAV    = 'portal.games.favs';
 const K_RECENT = 'portal.games.recent';
 const K_PLAYS  = 'portal.games.playlog';
 
+/* Launches ever, on this device: id -> count. Behind "Your most played" and
+   "Not played yet". Never a number from anyone else. */
+const K_LAUNCH = 'portal.games.launches';
+/* Games this person hid: [{ id, at, why }], why 'skip' (not interested) or
+   'broken' (reported as not loading). They come back from the Hidden list. */
+const K_HIDDEN = 'portal.games.hidden';
+const K_QUEUE  = 'portal.games.queue';       // ids, next first
+const K_MINE   = 'portal.games.mine';        // id -> { note, best }, typed by this person
+const K_TODAY  = 'portal.games.today';       // { day, ms }: time on the play stage today
+const K_REMIND = 'portal.games.remindMin';   // 0 = off, else minutes of play today
+const K_HINT   = 'portal.games.hintSeen';
+const K_AUTO   = 'portal.games.autoplay';    // one-shot: start this game when its page opens
+
 const WEEK = 7 * 86400000;
 const MAX_FAV = 400;
 const MAX_RECENT = 60;
+const MAX_HIDDEN = 500;
+const MAX_QUEUE = 30;
+const MAX_MINE = 300;
+const MAX_LAUNCH = 1500;
 
 const arrOf = v => (Array.isArray(v) ? v : []);
 
@@ -110,7 +137,88 @@ function notePlay(api, id) {
   }
   next[id] = [...(next[id] || []), now].slice(-40);
   api.store.set(K_PLAYS, next);
+  noteLaunch(api, id);
 }
+
+function launchLog(api) {
+  const v = api.store.get(K_LAUNCH, {});
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+function noteLaunch(api, id) {
+  const cur = { ...launchLog(api) };
+  cur[id] = (Number(cur[id]) || 0) + 1;
+  const keys = Object.keys(cur);
+  if (keys.length > MAX_LAUNCH) {
+    for (const k of keys.sort((a, b) => cur[a] - cur[b]).slice(0, keys.length - MAX_LAUNCH)) delete cur[k];
+  }
+  api.store.set(K_LAUNCH, cur);
+}
+/** [id, launches] busiest first — only games launched at least once on this device. */
+const mostPlayed = (api, n) => Object.entries(launchLog(api))
+  .filter(([, c]) => Number(c) > 0)
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, n);
+const hasPlayed = (api, id) => (Number(launchLog(api)[id]) || 0) > 0 || recentRows(api).some(r => r.id === id);
+
+const hiddenRows = api => arrOf(api.store.get(K_HIDDEN, [])).filter(r => r && typeof r.id === 'string');
+const hiddenIds = api => new Set(hiddenRows(api).map(r => r.id));
+function hideGame(api, id, why = 'skip') {
+  const cur = hiddenRows(api).filter(r => r.id !== id);
+  api.store.set(K_HIDDEN, [{ id, at: Date.now(), why: why === 'broken' ? 'broken' : 'skip' }, ...cur].slice(0, MAX_HIDDEN));
+  /* a game you hid should not also wait in the queue */
+  const q = queueIds(api);
+  if (q.includes(id)) api.store.set(K_QUEUE, q.filter(x => x !== id));
+}
+const unhideGame = (api, id) => api.store.set(K_HIDDEN, hiddenRows(api).filter(r => r.id !== id));
+/** Rows minus anything this person hid. */
+const shown = (api, rows) => { const hid = hiddenIds(api); return hid.size ? rows.filter(g => !hid.has(g.id)) : rows; };
+/** `exclude` for catalogue.query(): the caller's own, plus the hidden games. */
+const without = (api, extra) => { const s = hiddenIds(api); for (const x of extra || []) s.add(x); return s; };
+
+const queueIds = api => arrOf(api.store.get(K_QUEUE, [])).filter(x => typeof x === 'string');
+const inQueue = (api, id) => queueIds(api).includes(id);
+function toggleQueue(api, id) {
+  const cur = queueIds(api);
+  const on = !cur.includes(id);
+  api.store.set(K_QUEUE, on ? [...cur, id].slice(0, MAX_QUEUE) : cur.filter(x => x !== id));
+  return on;
+}
+
+function mineMap(api) {
+  const v = api.store.get(K_MINE, {});
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+const mineOf = (api, id) => { const m = mineMap(api)[id]; return m && typeof m === 'object' ? m : { note: '', best: '' }; };
+function saveMine(api, id, patch) {
+  const all = { ...mineMap(api) };
+  const next = { note: '', best: '', ...mineOf(api, id), ...patch };
+  next.note = String(next.note || '').slice(0, 500);
+  next.best = String(next.best || '').slice(0, 24);
+  if (!next.note.trim() && !next.best.trim()) delete all[id];
+  else all[id] = { note: next.note, best: next.best, at: Date.now() };
+  const keys = Object.keys(all);
+  if (keys.length > MAX_MINE) for (const k of keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, keys.length - MAX_MINE)) delete all[k];
+  api.store.set(K_MINE, all);
+}
+
+const dayKey = (t = Date.now()) => { const d = new Date(t); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+/* Time on the play stage today: { day, ms, told } — told is the reminder level
+   already announced today, so it is said once. */
+function todayRec(api) {
+  const v = api.store.get(K_TODAY, null);
+  return v && v.day === dayKey() ? { day: v.day, ms: Math.max(0, Number(v.ms) || 0), told: Number(v.told) || 0 } : { day: dayKey(), ms: 0, told: 0 };
+}
+const playedToday = api => todayRec(api).ms;
+function addPlayedToday(api, ms) {
+  const cur = todayRec(api);
+  api.store.set(K_TODAY, { ...cur, ms: cur.ms + Math.max(0, ms) });
+}
+const remindLevel = api => { const m = Number(api.store.get(K_REMIND, 0)); return [30, 60, 120].includes(m) ? m : 0; };
+/** "42 min", "1 h 05 min" — measured time, rounded down to the minute. */
+const minText = ms => {
+  const m = Math.floor(ms / 60000);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+};
 
 /** Ids this device has launched most in the past week, busiest first. */
 function trendingIds(api, n) {
@@ -485,7 +593,15 @@ function gameCard(ctx, g, opts = {}) {
   if (!g.art) art.appendChild(h('div.cx-card__mono', { text: g.title }));
   art.appendChild(h('div.cx-card__play', h('i', icon('play', { fill: true }))));
 
-  const meta = h('div.cx-card__m', icon('gamepad'), h('span', { text: g.studio }));
+  /* which site the game is from, plainly — and a game that only runs on its
+     own site says so before you click */
+  const theirs = catalogue.opensOnTheirSite(g);
+  const meta = h('div.cx-card__m', { title: theirs ? t('From {studio}. Opens on {studio}, in a new tab.', { studio: g.studio }) : `From ${g.studio}` },
+    icon(theirs ? 'external-link' : 'globe'), h('span.ag-from', { text: g.studio }));
+  if (opts.launches) {
+    meta.append(h('span.ag-dot', { text: '·' }),
+      h('span.ag-nowrap', { text: `${num(opts.launches)} launch${opts.launches === 1 ? '' : 'es'} here` }));
+  }
   if (g.hasStats) {
     meta.append(h('span.ag-dot', { text: '·' }),
       h('span.ag-nowrap', { text: `${playsText(providers, g.plays)} plays` }));
@@ -498,14 +614,42 @@ function gameCard(ctx, g, opts = {}) {
   const go = h('button.ag-card__go', {
     type: 'button', 'aria-label': label,
     onclick: () => navigate(urlFor(g.id)),
-    oncontextmenu: e => cardMenu(ctx, g, e),
   });
 
-  return h('div.ag-card.cx-card',
+  const card = h('div.ag-card.cx-card',
     art,
     h('div.cx-card__b', h('div.cx-card__t', { text: g.title }), meta),
     go,
     favButton(ctx, g, opts.onFav));
+  /* after a hide, a queue change or similar: the page repaints, or the card just goes */
+  const changed = () => { if (typeof opts.onChange === 'function') opts.onChange(); else card.remove(); };
+  go.oncontextmenu = e => cardMenu(ctx, g, e, changed);
+  card.appendChild(hideButton(ctx, g, changed));
+  return card;
+}
+
+/** A small "not interested" cross, shown on hover and focus like the heart. */
+function hideButton(ctx, g, changed) {
+  const { api } = ctx;
+  return api.h('button.ag-card__hide.tip', {
+    type: 'button', 'aria-label': `Not interested in ${g.title}`, 'data-tip': 'Not interested',
+    onclick: e => { e.preventDefault(); e.stopPropagation(); notInterested(ctx, g, changed); },
+  }, api.icon('eye-off'));
+}
+
+/** Hide a game for this person, with an Undo while the toast is up. */
+function notInterested(ctx, g, changed, why = 'skip') {
+  const { api } = ctx;
+  hideGame(api, g.id, why);
+  api.notify({
+    app: BRAND.name, icon: 'eye-off', timeout: 7000,
+    title: why === 'broken' ? `Reported, and hidden: ${g.title}` : `Hidden: ${g.title}`,
+    message: why === 'broken'
+      ? 'Hidden for you on this device. The report is not sent to anyone. Bring it back from Hidden games in Browse all.'
+      : 'It stays out of your lists. You can bring it back from Hidden games in Browse all.',
+    actions: [{ label: 'Undo', onClick: () => { unhideGame(api, g.id); if (typeof changed === 'function') changed(); } }],
+  });
+  if (typeof changed === 'function') changed();
 }
 
 function favButton(ctx, g, onFav) {
@@ -530,16 +674,19 @@ function favButton(ctx, g, onFav) {
   return btn;
 }
 
-function cardMenu(ctx, g, e) {
+function cardMenu(ctx, g, e, changed) {
   e.preventDefault();
   e.stopPropagation();
   const { api } = ctx;
   const link = urlFor(g.id);
   const fav = isFav(api, g.id);
+  const queued = inQueue(api, g.id);
   api.menu([
     { label: 'Play', icon: 'play', onClick: () => ctx.navigate(link) },
     { label: fav ? 'Remove from favourites' : 'Add to favourites', icon: 'heart',
       onClick: () => toggleFav(api, g.id) },
+    { label: queued ? 'Remove from play queue' : 'Add to play queue', icon: 'list',
+      onClick: () => { toggleQueue(api, g.id); if (typeof changed === 'function' && queued) changed(); } },
     '-',
     { label: 'Copy link', icon: 'copy', hint: link, onClick: () => copyLink(ctx, link) },
     { label: 'Add to Desktop', icon: 'monitor', onClick: () => addToDesktop(ctx, g) },
@@ -554,6 +701,8 @@ function cardMenu(ctx, g, e) {
           .catch(() => api.notify({ app: BRAND.name, icon: 'alert', title: 'Collections could not load',
             message: 'Reload StaticOS and try again.' }));
       } },
+    '-',
+    { label: 'Not interested', icon: 'eye-off', onClick: () => notInterested(ctx, g, changed) },
   ], e.clientX, e.clientY);
 }
 
@@ -573,10 +722,11 @@ async function copyLink(ctx, link) {
 
 function addToDesktop(ctx, g) {
   const { api } = ctx;
-  /* A real launcher, not a note: the desktop renders .aethergame files with
-     the game's own title card and opens them straight into the play stage. */
-  const file = `${safeName(g.title)}.aethergame`;
-  const path = `${api.vfs.HOME}/Desktop/${file}`;
+  /* A real launcher, not a note: the desktop renders .staticgame files (and
+     older .aethergame ones) with the game's own title card and opens them
+     straight into the play stage. */
+  const oldPath = `${api.vfs.HOME}/Desktop/${safeName(g.title)}.aethergame`;
+  const path = api.vfs.node(oldPath) ? oldPath : `${api.vfs.HOME}/Desktop/${safeName(g.title)}.staticgame`;
   const already = !!api.vfs.node(path);
   const body = JSON.stringify({
     id: g.id, title: g.title, art: g.art || null, open: g.open,
@@ -593,7 +743,7 @@ function addToDesktop(ctx, g) {
   api.notify({
     app: BRAND.name, icon: already ? 'check' : 'monitor',
     title: already ? 'Already on your Desktop' : 'Added to Desktop',
-    message: file,
+    message: path.split('/').pop(),
     actions: [{ label: 'Show', onClick: () => api.openApp('files', { path: `${api.vfs.HOME}/Desktop` }) }],
   });
 }
@@ -654,7 +804,7 @@ function shelf(ctx, watch, spec) {
     try { items = spec.get() || []; } catch (err) { items = []; }
     if (!items.length) { sec.remove(); return; }
     countEl.textContent = spec.count ? spec.count(items) : num(items.length);
-    api.render(rail, ...items.map(g => gameCard(ctx, g)));
+    api.render(rail, ...items.map(g => gameCard(ctx, g, spec.card ? spec.card(g) : {})));
     requestAnimationFrame(syncNav);
   });
 
@@ -688,9 +838,13 @@ export function buildGames(ctx) {
     sort: p.sort || 'popular',
     source: p.src || '',
     page: Math.max(1, parseInt(p.page, 10) || 1),
-    shelf: '',                 // 'favs' | 'recent' when browsing a personal list
+    shelf: '',                 // 'favs' | 'recent' | 'queue' | 'most' | 'hidden' when browsing a personal list
+    tags: (p.tags || '').split(',').map(t => t.trim().toLowerCase()).filter(Boolean).slice(0, 6),
+    two: p.two === '1',        // only games that say they are two-player
+    fresh: false,              // only games not launched on this device yet
+    fit: false,                // only games whose own size fits this window
   };
-  if (p.q || p.cat || p.src) S.view = 'browse';
+  if (p.q || p.cat || p.src || p.tags || p.two) S.view = 'browse';
 
   /* The detail page hands a category over through the store, because
      the games route matches no query string. One-shot: read it, drop it. */
@@ -765,11 +919,38 @@ export function buildGames(ctx) {
     else paintHome();
   }
 
+  /* Surprise me follows what Browse all is showing: its category, host, tags
+     and chips. From Home, or on a personal list, it picks from everything
+     that is not hidden. */
   function surprise() {
     if (!catalogue.isLoaded()) return;
-    const rows = catalogue.all();
-    if (!rows.length) return;
+    const narrowed = S.view === 'browse' && !S.shelf && (S.cat !== 'all' || S.source || S.tags.length || S.two || S.fresh || S.fit);
+    const rows = narrowed
+      ? catalogue.query({ ...filterOpts(), perPage: 1e6 }).items
+      : catalogue.query({ exclude: without(api), perPage: 1e6 }).items;
+    if (!rows.length) {
+      api.notify({ app: BRAND.name, icon: 'shuffle', title: 'Nothing to pick from',
+        message: 'No game matches the filters you have on. Reset them to be surprised.' });
+      return;
+    }
     navigate(urlFor(rows[Math.floor(Math.random() * rows.length)].id));
+  }
+
+  /* the part of a query every Browse view shares: filters, chips and hidden games */
+  function filterOpts() {
+    const skip = S.fresh ? new Set([...Object.keys(launchLog(api)), ...recentRows(api).map(r => r.id)]) : null;
+    return {
+      category: S.cat, source: S.source, tags: S.tags, twoPlayer: S.two,
+      fit: S.fit ? fitBox() : null, exclude: without(api, skip),
+    };
+  }
+
+  /* The room a game gets in this window: the stage is the window's visible
+     area, less its frame. Games state their own size; this is the box that
+     size is compared with. */
+  function fitBox() {
+    const sc = scrollParent(root);
+    return { w: Math.max(320, (sc ? sc.clientWidth : 900) - 40), h: Math.max(240, (sc ? sc.clientHeight : 600) - 70) };
   }
 
   /* ================================================================ *
@@ -778,8 +959,8 @@ export function buildGames(ctx) {
   function paintHome() {
     api.clear(body);
 
-    const heroPool = catalogue.query({ category: 'featured', sort: 'popular', perPage: 8 }).items;
-    const hero = heroPool.length ? heroPool : catalogue.query({ sort: 'popular', perPage: 8 }).items;
+    const heroPool = catalogue.query({ category: 'featured', sort: 'popular', perPage: 8, exclude: without(api) }).items;
+    const hero = heroPool.length ? heroPool : catalogue.query({ sort: 'popular', perPage: 8, exclude: without(api) }).items;
     if (hero.length) body.appendChild(heroBlock(hero));
 
     for (const spec of homeShelves()) body.appendChild(shelf(ctx, watch, spec));
@@ -815,7 +996,7 @@ export function buildGames(ctx) {
       sub.textContent = g.desc
         ? g.desc.slice(0, 190) + (g.desc.length > 190 ? '…' : '')
         : `${tags ? `${tags} · ` : ''}hosted by ${g.studio}. ${catalogue.opensOnTheirSite(g)
-          ? 'Opens on their own site, in a new tab.'
+          ? t('Opens on {studio}, in a new tab.', { studio: g.studio })
           : 'Plays right here in the page — nothing to download.'}`;
 
       api.clear(meta);
@@ -872,15 +1053,39 @@ export function buildGames(ctx) {
 
   function homeShelves() {
     const out = [];
-    const featured = catalogue.query({ category: 'featured', sort: 'popular', perPage: ROW_N }).items;
+    const hid = without(api);
+    const featured = catalogue.query({ category: 'featured', sort: 'popular', perPage: ROW_N, exclude: hid }).items;
     const featuredIds = new Set(featured.map(g => g.id));
+
+    const queue = queueIds(api);
+    if (queue.length) {
+      out.push({
+        key: 'queue', icon: 'list', title: 'Play queue',
+        sub: 'your next games, in order',
+        get: () => shown(api, catalogue.byIds(queue.slice(0, ROW_N))),
+        seeAll: queue.length > ROW_N ? { label: 'See all', onClick: () => openShelf('queue') } : null,
+      });
+    }
+
+    /* counted from launches on THIS device, and it says so */
+    const most = mostPlayed(api, ROW_N);
+    if (most.length) {
+      const counts = new Map(most);
+      out.push({
+        key: 'most', icon: 'activity', title: 'Your most played',
+        sub: 'launches on this device',
+        get: () => shown(api, catalogue.byIds(most.map(([id]) => id))),
+        card: g => ({ launches: counts.get(g.id) }),
+        seeAll: { label: 'See all', onClick: () => openShelf('most') },
+      });
+    }
 
     const trend = trendingIds(api, ROW_N);
     if (trend.length >= 3) {
       out.push({
         key: 'trending', icon: 'trending-up', title: 'Trending',
         sub: 'most played on this device this week',
-        get: () => catalogue.byIds(trend),
+        get: () => shown(api, catalogue.byIds(trend)),
       });
     }
 
@@ -888,7 +1093,7 @@ export function buildGames(ctx) {
     if (recent.length) {
       out.push({
         key: 'recent', icon: 'clock', title: 'Recently played',
-        get: () => catalogue.byIds(recent.slice(0, ROW_N).map(r => r.id)),
+        get: () => shown(api, catalogue.byIds(recent.slice(0, ROW_N).map(r => r.id))),
         seeAll: recent.length > ROW_N
           ? { label: 'See all', onClick: () => openShelf('recent') } : null,
       });
@@ -898,7 +1103,7 @@ export function buildGames(ctx) {
     if (favs.length) {
       out.push({
         key: 'favs', icon: 'heart', title: 'Favourites',
-        get: () => catalogue.byIds(favs.slice(0, ROW_N)),
+        get: () => shown(api, catalogue.byIds(favs.slice(0, ROW_N))),
         seeAll: favs.length > ROW_N ? { label: 'See all', onClick: () => openShelf('favs') } : null,
       });
     }
@@ -917,7 +1122,7 @@ export function buildGames(ctx) {
     const seed = catalogue.byIds(recent.slice(0, 1).map(r => r.id))[0];
     if (seed) {
       const skip = new Set([seed.id, ...recent.map(r => r.id)]);
-      const picks = catalogue.related(seed, ROW_N + 10).filter(g => !skip.has(g.id)).slice(0, ROW_N);
+      const picks = shown(api, catalogue.related(seed, ROW_N + 30)).filter(g => !skip.has(g.id)).slice(0, ROW_N);
       if (picks.length >= 6) {
         out.push({
           key: 'foryou', icon: 'compass', title: `Because you played ${seed.title}`,
@@ -929,14 +1134,14 @@ export function buildGames(ctx) {
     out.push({
       key: 'popular', icon: 'flame', title: 'Popular',
       sub: 'highest play counts reported by the game hosts',
-      get: () => catalogue.query({ sort: 'popular', statsOnly: true, perPage: ROW_N, exclude: featuredIds }).items,
+      get: () => catalogue.query({ sort: 'popular', statsOnly: true, perPage: ROW_N, exclude: without(api, featuredIds) }).items,
       seeAll: { label: 'See all', onClick: () => openBrowse({ sort: 'popular' }) },
     });
 
     out.push({
       key: 'rated', icon: 'star', title: 'Top rated',
       sub: 'from the hosts that publish a rating',
-      get: () => catalogue.query({ sort: 'rating', statsOnly: true, perPage: ROW_N, exclude: featuredIds }).items,
+      get: () => catalogue.query({ sort: 'rating', statsOnly: true, perPage: ROW_N, exclude: without(api, featuredIds) }).items,
       seeAll: { label: 'See all', onClick: () => openBrowse({ sort: 'rating' }) },
     });
 
@@ -945,7 +1150,7 @@ export function buildGames(ctx) {
     if (catalogue.hasAdded()) {
       out.push({
         key: 'new', icon: 'plus-circle', title: 'Recently added',
-        get: () => catalogue.query({ sort: 'newest', perPage: ROW_N }).items,
+        get: () => catalogue.query({ sort: 'newest', perPage: ROW_N, exclude: hid }).items,
         seeAll: { label: 'See all', onClick: () => openBrowse({ sort: 'newest' }) },
       });
     }
@@ -954,7 +1159,7 @@ export function buildGames(ctx) {
       out.push({
         key: `cat-${c.id}`, icon: c.icon, title: c.name,
         count: () => `${num(c.count)} in the catalogue`,
-        get: () => catalogue.query({ category: c.id, sort: 'popular', perPage: ROW_N }).items,
+        get: () => catalogue.query({ category: c.id, sort: 'popular', perPage: ROW_N, exclude: hid }).items,
         seeAll: { label: 'See all', onClick: () => openBrowse({ cat: c.id }) },
       });
     }
@@ -1018,21 +1223,26 @@ export function buildGames(ctx) {
         h('option', { value: id, text: `${id} (${num(n)})` })));
     E.source.value = S.source;
 
+    /* "Most played" and "Top rated" rank by measured numbers; until some game has
+       them every order would just be alphabetical, so the two are not offered. */
+    const measured = catalogue.stats().withStats > 0;
     const sortOpts = [
-      ['popular', 'Most played'],
-      ['rating', 'Top rated'],
+      ...(measured ? [['popular', 'Most played'], ['rating', 'Top rated']] : []),
       ['az', 'A – Z'],
       ['za', 'Z – A'],
     ];
-    if (catalogue.hasAdded()) sortOpts.splice(2, 0, ['newest', 'Recently added']);
+    if (catalogue.hasAdded()) sortOpts.splice(measured ? 2 : 0, 0, ['newest', 'Recently added']);
     E.sort = h('select.select', {
       'aria-label': 'Sort games',
       onchange: e => { S.sort = e.target.value; S.page = 1; paintGrid(); },
     }, sortOpts.map(([v, t]) => h('option', { value: v, text: t })));
-    E.sort.value = sortOpts.some(o => o[0] === S.sort) ? S.sort : 'popular';
+    E.sort.value = sortOpts.some(o => o[0] === S.sort) ? S.sort : sortOpts[0][0];
     S.sort = E.sort.value;
 
-    E.bar = h('div.cx__bar.ag-bar', E.cats, h('div.ag-bar__tools', E.filter, E.source, E.sort));
+    E.more = h('div.ag-bar__more', { role: 'group', 'aria-label': 'More filters' });
+    E.tagPanel = h('div.ag-tagpanel.hidden', { role: 'group', 'aria-label': 'Pick tags' });
+    E.bar = h('div.cx__bar.ag-bar', E.cats, h('div.ag-bar__tools', E.filter, E.source, E.sort), E.more, E.tagPanel);
+    paintChips();
 
     E.secT = h('div.cx__sec-t');
     E.secN = h('div.cx__sec-n', { text: 'loading…' });
@@ -1048,8 +1258,79 @@ export function buildGames(ctx) {
     life.add(watchStuck(E.bar, E.sentinel, strip));
   }
 
+  /* ---- the extra filters: chips, several tags, and the personal lists ---- */
+  const toggleChip = (key, label, ic, title) => {
+    const on = !!S[key];
+    return h(on ? 'button.chip.ag-flt.is-on' : 'button.chip.ag-flt', {
+      type: 'button', 'aria-pressed': String(on), dataset: { flt: key }, title,
+      onclick: () => {
+        S[key] = !S[key];
+        if (S.shelf === 'hidden') S.shelf = '';
+        S.page = 1;
+        paintChips(); syncChrome(); paintGrid();
+      },
+    }, icon(ic, { size: 12 }), h('span', { text: label }));
+  };
+
+  function paintChips() {
+    if (!E.more) return;
+    const nQ = queueIds(api).length, nH = hiddenRows(api).length;
+    const box = fitBox();
+    api.clear(E.more);
+    E.more.append(...[
+      toggleChip('two', '2 player', 'users', 'Only games that say they are for two players'),
+      toggleChip('fresh', 'Not played yet', 'sparkles', 'Hides games you have launched on this device'),
+      toggleChip('fit', 'Fits my window', 'expand',
+        `Only games whose own size is at most ${box.w} × ${box.h}. Games that state no size are left out.`),
+      h(S.tags.length || !E.tagPanel.classList.contains('hidden') ? 'button.chip.ag-flt.is-on' : 'button.chip.ag-flt', {
+        type: 'button', dataset: { flt: 'tags' }, 'aria-expanded': String(!E.tagPanel.classList.contains('hidden')),
+        onclick: () => { E.tagPanel.classList.toggle('hidden'); if (!E.tagPanel.classList.contains('hidden')) paintTagPanel(); paintChips(); },
+      }, icon('tag', { size: 12 }), h('span', { text: S.tags.length ? `Tags (${S.tags.length})` : 'Tags' })),
+      ...S.tags.map(t => h('button.chip.ag-flt.is-on.ag-flt--tag', {
+        type: 'button', dataset: { tag: t }, 'aria-label': `Remove the tag ${t}`,
+        onclick: () => { S.tags = S.tags.filter(x => x !== t); S.page = 1; paintChips(); paintTagPanel(); syncChrome(); paintGrid(); },
+      }, h('span', { text: t }), icon('x', { size: 10 }))),
+      h('div.grow'),
+      nQ ? h('button.chip.ag-flt', { type: 'button', dataset: { flt: 'queue' }, onclick: () => openShelf('queue') },
+        icon('list', { size: 12 }), h('span', { text: `Play queue (${nQ})` })) : null,
+      nH ? h('button.chip.ag-flt', { type: 'button', dataset: { flt: 'hidden' }, onclick: () => openShelf('hidden') },
+        icon('eye-off', { size: 12 }), h('span', { text: `Hidden games (${nH})` })) : null].filter(Boolean));
+  }
+
+  /* Tags are whatever the hosts attach to a game; the panel lists the ones
+     people search by, with how many games carry each, and a box to find the rest. */
+  function paintTagPanel() {
+    if (!E.tagPanel || E.tagPanel.classList.contains('hidden')) return;
+    const find = E.tagFind || (E.tagFind = h('input', {
+      type: 'search', placeholder: 'Find a tag…', spellcheck: 'false', 'aria-label': 'Find a tag',
+      oninput: () => paintTagPanel(),
+    }));
+    const low = find.value.trim().toLowerCase();
+    const list = catalogue.tagCounts().filter(t => !low || t.tag.includes(low)).slice(0, 48);
+    const grid = h('div.ag-tagpanel__list');
+    for (const t of list) {
+      const on = S.tags.includes(t.tag);
+      grid.appendChild(h(on ? 'button.chip.is-on' : 'button.chip', {
+        type: 'button', 'aria-pressed': String(on), dataset: { tag: t.tag },
+        onclick: () => {
+          S.tags = on ? S.tags.filter(x => x !== t.tag) : [...S.tags, t.tag].slice(-6);
+          S.page = 1;
+          if (S.shelf === 'hidden') S.shelf = '';
+          paintChips(); paintTagPanel(); syncChrome(); paintGrid();
+        },
+      }, h('span', { text: t.tag }), h('u.ag-cat__n', { text: num(t.n) })));
+    }
+    if (!list.length) grid.appendChild(h('small.dim', { text: `No tag contains “${low}”.` }));
+    api.render(E.tagPanel,
+      h('div.ag-tagpanel__top', find, h('small.dim', { text: S.tags.length > 1 ? 'A game has to carry every tag you pick.' : 'Pick several: a game has to carry every one.' })),
+      grid);
+  }
+
   function headline() {
     if (S.shelf === 'favs') return 'Your favourites';
+    if (S.shelf === 'queue') return 'Play queue';
+    if (S.shelf === 'most') return 'Your most played';
+    if (S.shelf === 'hidden') return 'Hidden games';
     if (S.shelf === 'recent') return 'Recently played';
     if (S.q) return `Matches for “${S.q}”`;
     if (S.cat === 'featured') return 'Featured games';
@@ -1057,7 +1338,7 @@ export function buildGames(ctx) {
     return `${catalogue.catMeta(S.cat).name} games`;
   }
 
-  const filtered = () => !!(S.q || S.source || S.cat !== 'all');
+  const filtered = () => !!(S.q || S.source || S.cat !== 'all' || S.tags.length || S.two || S.fresh || S.fit);
 
   function syncChrome() {
     if (E.filterX) E.filterX.classList.toggle('hidden', !S.q);
@@ -1094,6 +1375,8 @@ export function buildGames(ctx) {
     S.q = '';
     S.cat = 'all';
     S.source = '';
+    S.tags = [];
+    S.two = S.fresh = S.fit = false;
     S.page = 1;
     S.shelf = '';
     paintBrowse();
@@ -1116,21 +1399,57 @@ export function buildGames(ctx) {
     requestAnimationFrame(() => { if (!life.dead) paintGrid(); });
   }
 
+  /* Personal lists keep their own order (the caller knows it); the chips, the
+     search box and the hidden games still apply to them. */
+  function listQuery(ids) {
+    return catalogue.query({ ...filterOpts(), category: 'all', source: '', ids, q: S.q, page: S.page, perPage: PER_PAGE });
+  }
+
   function currentQuery() {
-    if (S.shelf === 'favs') {
-      return catalogue.query({ ids: favIds(api), q: S.q, page: S.page, perPage: PER_PAGE });
-    }
-    if (S.shelf === 'recent') {
-      return catalogue.query({ ids: recentRows(api).map(r => r.id), q: S.q, page: S.page, perPage: PER_PAGE });
-    }
+    if (S.shelf === 'favs') return listQuery(favIds(api));
+    if (S.shelf === 'recent') return listQuery(recentRows(api).map(r => r.id));
+    if (S.shelf === 'queue') return listQuery(queueIds(api));
+    if (S.shelf === 'most') return listQuery(mostPlayed(api, 200).map(([id]) => id));
     return catalogue.query({
-      category: S.cat, q: S.q, sort: S.sort, source: S.source,
-      page: S.page, perPage: PER_PAGE,
+      ...filterOpts(), q: S.q, sort: S.sort, page: S.page, perPage: PER_PAGE,
     });
+  }
+
+  /** The Hidden games list: each one with the reason, and a way back. */
+  function paintHidden() {
+    const rows = hiddenRows(api);
+    E.secN.textContent = plural(rows.length, 'game');
+    if (!rows.length) {
+      api.render(E.hold, emptyBlock(api, {
+        iconName: 'eye-off', title: 'Nothing is hidden',
+        detail: 'Use the cross on a card, or “Not interested” in its menu, to keep a game out of your lists.',
+        actions: [h('button.btn', { type: 'button', onclick: () => { S.shelf = ''; paintGrid(); } }, icon('grid-9', { size: 14 }), 'Back to all games')],
+      }));
+      paintChips();
+      return;
+    }
+    const list = h('div.ag-hidden', { role: 'list', 'aria-label': 'Hidden games' });
+    for (const r of rows) {
+      const g = catalogue.byId(r.id);
+      list.appendChild(h('div.ag-hidden__row', { role: 'listitem', dataset: { id: r.id } },
+        h('div.ag-hidden__t',
+          h('b', { text: g ? g.title : r.id }),
+          h('small.dim', { text: `${r.why === 'broken' ? 'You reported it as not loading' : 'Not interested'} · ${new Date(r.at).toLocaleDateString()}` })),
+        g ? h('button.btn.btn--ghost.btn--sm', { type: 'button', onclick: () => navigate(urlFor(g.id)) }, 'Open') : null,
+        h('button.btn.btn--sm', {
+          type: 'button', 'aria-label': `Bring back ${g ? g.title : r.id}`,
+          onclick: () => { unhideGame(api, r.id); paintChips(); paintGrid(); },
+        }, icon('undo', { size: 13 }), 'Bring back')));
+    }
+    api.render(E.hold, h('div.ag-hidden__intro', { text: 'These stay out of every shelf, search and pick. They are kept on this device only.' }), list,
+      h('div.ag-hidden__foot', h('button.btn.btn--ghost.btn--sm', {
+        type: 'button', onclick: () => { api.store.set(K_HIDDEN, []); paintChips(); paintGrid(); },
+      }, icon('undo', { size: 13 }), 'Bring all back')));
   }
 
   function paintGrid() {
     syncChrome();
+    if (S.shelf === 'hidden') { paintHidden(); return; }
     let res;
     try {
       res = currentQuery();
@@ -1147,14 +1466,22 @@ export function buildGames(ctx) {
 
     if (!res.items.length) { api.render(E.hold, browseEmpty()); return; }
 
+    const counts = S.shelf === 'most' ? new Map(mostPlayed(api, 200)) : null;
     const grid = h('div.cx__grid');
     for (const g of res.items) {
       grid.appendChild(gameCard(ctx, g, {
         onFav: S.shelf === 'favs' ? () => paintGrid() : null,
+        launches: counts ? counts.get(g.id) : 0,
+        onChange: () => { paintChips(); paintGrid(); },
       }));
     }
     const pager = pagerRow(res.page, res.pages);
-    api.render(E.hold, grid, ...(pager ? [pager] : []));
+    const extra = S.shelf === 'queue'
+      ? [h('div.ag-hidden__foot', h('button.btn.btn--ghost.btn--sm', {
+          type: 'button', onclick: () => { api.store.set(K_QUEUE, []); paintChips(); paintGrid(); },
+        }, icon('x', { size: 13 }), 'Clear the queue'))]
+      : [];
+    api.render(E.hold, grid, ...(pager ? [pager] : []), ...extra);
   }
 
   /** Empty states that name the exact combination that emptied the grid. */
@@ -1182,9 +1509,28 @@ export function buildGames(ctx) {
       });
     }
 
+    if (S.shelf === 'queue') {
+      return emptyBlock(api, {
+        iconName: 'list', title: S.q ? `Nothing in the queue matches “${S.q}”` : 'The play queue is empty',
+        detail: 'Add a game with “Add to play queue” in its menu or on its page. When a game closes, the next one is offered.',
+        actions: [h('button.btn', { type: 'button', onclick: () => setView('home') }, icon('sparkles', { size: 14 }), 'Back to home')],
+      });
+    }
+    if (S.shelf === 'most') {
+      return emptyBlock(api, {
+        iconName: 'activity', title: 'No launches counted yet',
+        detail: 'This list counts the games you start on this device, so it fills as you play.',
+        actions: [h('button.btn', { type: 'button', onclick: () => setView('home') }, icon('sparkles', { size: 14 }), 'Back to home')],
+      });
+    }
+
     const bits = [];
     if (S.cat !== 'all') bits.push(`the ${catalogue.catMeta(S.cat).name} category`);
     if (S.source) bits.push(`host ${S.source}`);
+    if (S.tags.length) bits.push(`the tag${S.tags.length > 1 ? 's' : ''} ${S.tags.join(' + ')}`);
+    if (S.two) bits.push('2 player');
+    if (S.fresh) bits.push('not played yet');
+    if (S.fit) bits.push('fits my window');
     if (S.q) bits.push(`“${S.q}”`);
 
     if (S.q) acts.push(h('button.btn', { type: 'button', onclick: () => clearFilter(true) },
@@ -1195,6 +1541,10 @@ export function buildGames(ctx) {
       type: 'button',
       onclick: () => { S.source = ''; E.source.value = ''; S.page = 1; paintGrid(); },
     }, icon('globe', { size: 14 }), 'All hosts'));
+    if (S.tags.length || S.two || S.fresh || S.fit) acts.push(h('button.btn', {
+      type: 'button',
+      onclick: () => { S.tags = []; S.two = S.fresh = S.fit = false; S.page = 1; paintChips(); paintGrid(); },
+    }, icon('x', { size: 14 }), 'Clear chips and tags'));
     if (acts.length > 1) acts.push(h('button.btn.btn--primary', { type: 'button', onclick: resetFilters },
       icon('refresh', { size: 14 }), 'Reset everything'));
 
@@ -1291,9 +1641,8 @@ export function buildGameDetail(ctx) {
   function notFound() {
     return emptyBlock(api, {
       iconName: 'gamepad',
-      title: 'That game is not in the catalogue',
-      detail: `Nothing is on file for “${params || 'this address'}”. `
-        + `Static holds ${plural(catalogue.stats().total, 'game')} — it may have been renamed.`,
+      title: t("This game isn't in Static Games any more."),
+      detail: t('Nothing is on file for “{id}”. It may have been renamed, or taken off the list.', { id: params || t('this address') }),
       actions: [h('button.btn', { type: 'button', onclick: () => navigate(LIB) },
         icon('chevron-left', { size: 14 }), 'Back to games')],
     });
@@ -1316,24 +1665,25 @@ export function buildGameDetail(ctx) {
     life.add(() => notePlaying(false));
 
     /* ---- servers --------------------------------------------------
-       Every network that publishes this game is a server, and each is
-       offered again through the tunnel — which gets past a network filter
-       that blocks the game host itself. Choosing the tunnel once makes it
-       the default for later games (portal.gameVia). */
-    /* MadKidGames now runs a script inside its embed page that blanks the
-       game unless the page around it is one of MadKidGames' own, so its copy
-       is left out here rather than shown as a frame that goes empty. A game
-       with no other copy opens on madkidgames.com, in a new tab. */
+       Every network that publishes this game is a server. The one you
+       picked last is the default for later games (portal.gameVia). */
+    /* A few hosts (catalog.js OWN_SITE_HOSTS: Kodub, and MadKidGames, which blanks
+       its games inside other pages) only run on their own site, so their copy is
+       left out here rather than shown as a frame that fails. A game with no other
+       copy opens on that site, in a new tab. */
     const theirsOnly = catalogue.theirSiteOnly;
+    const theirLabel = catalogue.theirSiteLabel(game);
     const hosts = [{ source: game.source, embed: game.embed }, ...(game.alts || [])]
       .filter((x, i, arr) => x.embed && arr.findIndex(y => y.embed === x.embed) === i)
       .filter(x => !theirsOnly(x.embed));
     const external = !hosts.length && theirsOnly(game.embed) ? (game.open || game.embed) : null;
     const SERVERS = hosts.map(x => ({ url: x.embed, host: hostOf(x.embed), via: 'direct', primary: x.embed === game.embed }));
-    if (UV.isSupported().ok) for (const x of hosts) SERVERS.push({ url: x.embed, host: hostOf(x.embed), via: 'tunnel', primary: false });
     SERVERS.forEach((x, i) => { x.n = i + 1; });
-    let cur = api.store.get('portal.gameVia') === 'tunnel' ? Math.max(0, SERVERS.findIndex(x => x.via === 'tunnel')) : 0;
-    const serverLabel = x => `${x.host}${x.via === 'tunnel' ? ' · through the tunnel' : ''}`;
+    /* an older build could save 'tunnel' here; that choice is gone, so it
+       reads as the first server */
+    if (api.store.get('portal.gameVia') === 'tunnel') api.store.set('portal.gameVia', 'direct');
+    let cur = 0;
+    const serverLabel = x => x.host;
 
     /* ---- frame bookkeeping -------------------------------------- */
     const F = { el: null, url: '', timer: 0, playing: false };
@@ -1352,14 +1702,14 @@ export function buildGameDetail(ctx) {
     const bigPlay = external
       ? h('a.ag-stage__start', {
           href: external, target: '_blank', rel: 'noopener noreferrer',
-          'aria-label': `Play ${game.title} on MadKidGames, in a new tab`,
-          onclick: () => { noteRecent(api, game.id); plays.record({ kind: 'web', id: game.id, title: game.title, art: game.art, cats: game.cats }); },
-        }, h('i', icon('external-link')), h('span', { text: 'Play on MadKidGames' }))
+          'aria-label': t('Play {title} on {studio}, in a new tab', { title: game.title, studio: theirLabel }),
+          onclick: () => { noteRecent(api, game.id); notePlay(api, game.id); plays.record({ kind: 'web', id: game.id, title: game.title, art: game.art, cats: game.cats }); },
+        }, h('i', icon('external-link')), h('span', { text: t('Play on {studio}', { studio: theirLabel }) }))
       : h('button.ag-stage__start', {
           type: 'button', 'aria-label': `Play ${game.title}`, onclick: () => play(),
         }, h('i', icon('play', { fill: true })), h('span', { text: 'Play' }));
     if (external) poster.appendChild(h('small.ag-stage__note', {
-      text: 'MadKidGames only lets its games run on its own site, so this opens there in a new tab.',
+      text: t('{studio} only lets {title} run on its own site, so it opens there in a new tab.', { studio: theirLabel, title: game.title }),
     }));
     poster.appendChild(bigPlay);
 
@@ -1372,6 +1722,10 @@ export function buildGameDetail(ctx) {
       type: 'button', 'data-tip': 'Restart the game', 'aria-label': 'Restart the game',
       onclick: () => play(),
     }, icon('refresh'));
+    const btnReport = h('button.ibtn.tip', {
+      type: 'button', 'data-tip': 'Won\u2019t load? Report and hide it', 'aria-label': 'Report that this game will not load, and hide it',
+      onclick: () => reportBroken(),
+    }, icon('alert'));
     const btnStop = h('button.btn.btn--ghost.btn--sm', {
       type: 'button', onclick: () => stopPlaying(),
     }, icon('chevron-left'), 'Back to details');
@@ -1384,10 +1738,12 @@ export function buildGameDetail(ctx) {
       h('div.ag-stage__t', { text: game.title }),
       h('div.ag-servers', { role: 'group', 'aria-label': 'Servers' }),
       h('div.grow'),
-      btnStop, btnReload, btnFull);
+      btnStop, btnReport, btnReload, btnFull);
 
+    /* under the bar while playing: what the keys do, and today's time */
+    const sub = h('div.ag-stage__sub.hidden');
     const screen = h('div.ag-stage__screen', poster);
-    stage.append(bar, screen);
+    stage.append(bar, sub, screen);
 
     const serversEl = bar.querySelector('.ag-servers');
     function paintServers() {
@@ -1395,7 +1751,7 @@ export function buildGameDetail(ctx) {
         type: 'button', 'data-tip': serverLabel(x), 'aria-label': `Server ${x.n}: ${serverLabel(x)}`,
         'aria-pressed': String(i === cur), class: i === cur ? 'is-on' : '',
         onclick: () => useServer(i),
-      }, x.via === 'tunnel' ? icon('shield', { size: 12 }) : null, h('span', { text: `Server ${x.n}` }))));
+      }, h('span', { text: `Server ${x.n}` }))));
     }
     function useServer(i) {
       if (!SERVERS[i]) return;
@@ -1405,6 +1761,49 @@ export function buildGameDetail(ctx) {
       play();
     }
     paintServers();
+
+    /* ---- the strip under the bar: what the keys do, and today's time ----
+       The controls are the game's own, so this says what is usually true and
+       how to get the keys into the frame; it names no game-specific key.
+       The time is measured here: seconds this stage was open and visible. */
+    const timeEl = h('span.ag-time', { role: 'status', title: 'Counted on this device, only while a game is open in Static Games' });
+    const remindSel = h('select.select.ag-remind', {
+      'aria-label': 'Remind me when I have played for',
+      onchange: e => api.store.set(K_REMIND, Number(e.target.value) || 0),
+    }, [[0, 'No reminder'], [30, 'Remind me at 30 min'], [60, 'Remind me at 1 hour'], [120, 'Remind me at 2 hours']]
+      .map(([v, t]) => h('option', { value: String(v), text: t })));
+    remindSel.value = String(remindLevel(api));
+    const paintTime = () => { timeEl.textContent = `You've played ${minText(playedToday(api))} today`; };
+    const hintEl = api.store.get(K_HINT, false) ? null : h('div.ag-hint',
+      icon('keyboard', { size: 14 }),
+      h('span', { text: 'Controls come from the game: most use the arrow keys or WASD, or the mouse. Click inside the game once so it gets your keys. Esc leaves the game.' }),
+      h('button.ibtn.tip', {
+        type: 'button', 'data-tip': 'Got it', 'aria-label': 'Hide this hint',
+        onclick: () => { api.store.set(K_HINT, true); hintEl.remove(); },
+      }, icon('x', { size: 11 })));
+    sub.append(...(hintEl ? [hintEl] : []), h('div.ag-stage__subr', timeEl, remindSel));
+
+    let tickAt = 0, tickT = 0;
+    const accrue = () => {
+      const now = Date.now();
+      if (tickAt && document.visibilityState !== 'hidden') addPlayedToday(api, Math.min(now - tickAt, 15000));
+      tickAt = now;
+      paintTime();
+    };
+    const tick = () => {
+      if (life.dead) return;
+      accrue();
+      const lvl = remindLevel(api), rec = todayRec(api);
+      if (lvl && rec.ms >= lvl * 60000 && rec.told < lvl) {
+        api.store.set(K_TODAY, { ...rec, told: lvl });
+        api.notify({ app: BRAND.name, icon: 'clock', title: `You've played ${minText(rec.ms)} today`,
+          message: 'A reminder you asked for. Your game keeps running.', timeout: 9000 });
+      }
+    };
+    const startClock = () => { if (tickT) return; tickAt = Date.now(); paintTime(); tickT = setInterval(tick, 5000); };
+    const stopClock = () => { if (!tickT) return; accrue(); clearInterval(tickT); tickT = 0; tickAt = 0; };
+    life.add(stopClock);
+    paintTime();
 
     /* ---- the information panel ---------------------------------- */
     detail.append(infoPanel(game, partial, () => play()));
@@ -1417,10 +1816,16 @@ export function buildGameDetail(ctx) {
 
     api.render(hold, top, relSec, h('div', { style: { height: 'var(--sp-7)' } }));
 
+    /* "Play it" from the queue's offer: this page opens and starts the game */
+    if (api.store.get(K_AUTO, '') === game.id) {
+      api.store.set(K_AUTO, '');
+      if (!external) requestAnimationFrame(() => { if (!life.dead) play(); });
+    }
+
     /* related is below the fold on every window size — fill it lazily */
     api.render(relHold, skelGrid(h, 6, true));
     watch(relSec, () => {
-      const picks = catalogue.related(game, 14);
+      const picks = shown(api, catalogue.related(game, 40)).slice(0, 14);
       if (!picks.length) {
         relN.textContent = 'none';
         api.render(relHold, emptyBlock(api, {
@@ -1461,7 +1866,9 @@ export function buildGameDetail(ctx) {
             ? h('button.btn.btn--primary', { type: 'button', onclick: () => useServer(cur + 1) }, icon('refresh'), `Try Server ${SERVERS[cur + 1].n}`)
             : null,
           h('button.btn' + (SERVERS[cur + 1] ? '' : '.btn--primary'), { type: 'button', onclick: () => play() }, icon('refresh'), 'Try again'),
-          h('button.btn', { type: 'button', onclick: () => stopPlaying() }, icon('chevron-left'), 'Back to details')));
+          h('button.btn', { type: 'button', onclick: () => stopPlaying() }, icon('chevron-left'), 'Back to details'),
+          h('button.btn.btn--ghost', { type: 'button', dataset: { act: 'report' }, onclick: () => reportBroken() },
+            icon('alert'), 'Report and hide this game')));
     }
 
     /**
@@ -1486,8 +1893,9 @@ export function buildGameDetail(ctx) {
       stage.classList.toggle('is-playing', on);
       top.classList.toggle('is-playing', on);
       bar.classList.toggle('hidden', !on);
-      if (on) fitStage();
-      else stage.style.removeProperty('--stage-h');
+      sub.classList.toggle('hidden', !on);
+      if (on) { fitStage(); startClock(); }
+      else { stopClock(); stage.style.removeProperty('--stage-h'); }
     }
 
     /** Give the stage the visible height of the window, so the game IS the page. */
@@ -1496,7 +1904,7 @@ export function buildGameDetail(ctx) {
         if (life.dead || !F.playing) return;
         const sc = scrollParent(stage);
         if (!sc) return;
-        const used = bar.getBoundingClientRect().height || 0;
+        const used = (bar.getBoundingClientRect().height || 0) + (sub.getBoundingClientRect().height || 0);
         const space = Math.round(sc.clientHeight - used - 8);
         if (space > 320) stage.style.setProperty('--stage-h', `${space}px`);
       };
@@ -1517,6 +1925,7 @@ export function buildGameDetail(ctx) {
       api.render(screen, loadingBlock());
       notePlay(api, game.id);
       noteRecent(api, game.id);
+      if (inQueue(api, game.id)) toggleQueue(api, game.id);      // played: it is no longer waiting
       /* the shared history behind Static Play, Quick Play and achievements */
       plays.record({ kind: 'web', id: game.id, title: game.title, art: game.art, cats: game.cats });
 
@@ -1538,17 +1947,6 @@ export function buildGameDetail(ctx) {
         }
         url = res.url;
       }
-      if (server.via === 'tunnel') {
-        const up = await UV.boot();
-        if (life.dead) return;
-        if (!up) {
-          const st = UV.status();
-          api.render(screen, frameError(`The tunnel did not start (${st.error ? String(st.error.message || st.error) : st.phase}).`));
-          return;
-        }
-        url = UV.encode(url);
-      }
-
       F.url = url;
       const frame = h('iframe.ag-stage__frame', {
         src: url,
@@ -1572,6 +1970,41 @@ export function buildGameDetail(ctx) {
       setPlaying(false);
       api.render(screen, poster);
       bigPlay.focus();
+      offerNext();
+    }
+
+    /* When a game closes, the next one in the play queue is offered — never
+       started on its own. "Play it" opens that game's page and starts it. */
+    function offerNext() {
+      poster.querySelector('.ag-upnext')?.remove();
+      const hid = hiddenIds(api);
+      const next = catalogue.byIds(queueIds(api).filter(id => id !== game.id)).find(g => !hid.has(g.id));
+      if (!next) return;
+      const box = h('div.ag-upnext', { role: 'group', 'aria-label': 'Up next in your play queue' },
+        h('small', { text: 'Up next in your play queue' }),
+        h('b', { text: next.title }),
+        h('div.ag-upnext__acts',
+          h('button.btn.btn--primary.btn--sm', {
+            type: 'button',
+            onclick: () => {
+              toggleQueue(api, next.id);
+              if (!catalogue.opensOnTheirSite(next)) api.store.set(K_AUTO, next.id);
+              navigate(urlFor(next.id));
+            },
+          }, icon('play', { size: 13, fill: true }), 'Play it'),
+          h('button.btn.btn--sm', { type: 'button', onclick: () => box.remove() }, 'Not now'),
+          h('button.btn.btn--ghost.btn--sm', {
+            type: 'button', onclick: () => { toggleQueue(api, next.id); offerNext(); },
+          }, 'Take it off the queue')));
+      poster.appendChild(box);
+    }
+
+    /* A game that will not load: hide it for this person and say plainly that
+       the report stays on this device. */
+    function reportBroken() {
+      stopPlaying();
+      notInterested(ctx, game, null, 'broken');
+      navigate(LIB);
     }
 
     function toggleFull() {
@@ -1644,6 +2077,47 @@ export function buildGameDetail(ctx) {
     favBtn.onclick = () => { toggleFav(api, game.id); paintFav(); };
     paintFav();
 
+    /* ---- queue, hide, and sending the page to a friend ---- */
+    const queueBtn = h('button.btn', { type: 'button' });
+    const paintQueue = () => {
+      const on = inQueue(api, game.id);
+      queueBtn.setAttribute('aria-pressed', String(on));
+      queueBtn.classList.toggle('is-on', on);
+      api.render(queueBtn, icon(on ? 'check' : 'list'), h('span', { text: on ? 'In play queue' : 'Add to play queue' }));
+    };
+    queueBtn.onclick = () => { toggleQueue(api, game.id); paintQueue(); };
+    paintQueue();
+
+    const friendHold = h('div.ag-friend.hidden', { role: 'group', 'aria-label': 'Send to a friend' });
+    const friendBtn = h('button.btn', {
+      type: 'button', 'aria-expanded': 'false',
+      onclick: () => {
+        const open = friendHold.classList.toggle('hidden') === false;
+        friendBtn.setAttribute('aria-expanded', String(open));
+        if (open) paintFriendPanel(ctx, friendHold, { kind: 'game', id: game.id, title: game.title }, () => !life.dead);
+      },
+    }, icon('users'), 'Play with a friend');
+
+    /* the descriptions come after the list (games.data.js): until they are in, say so */
+    function descNode(g) {
+      const none = 'This host publishes no description for this game.';
+      if (g.desc) return h('p.ag-detail__desc', { text: g.desc });
+      if (catalogue.descriptionsLoaded()) return h('p.ag-detail__desc.is-missing', { text: none });
+      const p = h('p.ag-detail__desc.is-missing', { text: 'Loading the description…', 'aria-busy': 'true' });
+      catalogue.loadDescriptions().then(() => {
+        if (!p.isConnected) return;
+        p.removeAttribute('aria-busy');
+        p.classList.toggle('is-missing', !g.desc);
+        p.textContent = g.desc || none;
+      });
+      return p;
+    }
+
+    const hideBtn = h('button.btn.btn--ghost', {
+      type: 'button',
+      onclick: () => { notInterested(ctx, game, null); navigate(LIB); },
+    }, icon('eye-off'), 'Not interested');
+
     return h('div.ag-detail__in',
       h('div.ag-detail__head',
         h('button.ibtn.tip', {
@@ -1652,9 +2126,7 @@ export function buildGameDetail(ctx) {
         }, icon('chevron-left')),
         h('h1.ag-detail__t', { text: game.title })),
       chips.children.length ? chips : null,
-      game.desc
-        ? h('p.ag-detail__desc', { text: game.desc })
-        : h('p.ag-detail__desc.is-missing', { text: 'This host publishes no description for this game.' }),
+      descNode(game),
       facts,
       h('div.ag-detail__acts',
         h('button.btn.btn--primary', { type: 'button', onclick: onPlay },
@@ -1663,11 +2135,41 @@ export function buildGameDetail(ctx) {
         h('button.btn', { type: 'button', onclick: () => addToDesktop(ctx, game) },
           icon('monitor'), 'Add to Desktop'),
         h('button.btn.btn--ghost', { type: 'button', onclick: () => copyLink(ctx, urlFor(game.id)) },
-          icon('copy'), 'Copy link')),
+          icon('copy'), 'Copy link'),
+        useArtButton(api, { title: game.title, url: game.art })),
+      h('div.ag-detail__acts', queueBtn, friendBtn, hideBtn),
+      friendHold,
+      minePanel(game),
       partial
         ? h('div.ag-detail__warn', icon('alert'),
             h('small', { text: 'The full catalogue file could not be read, so this is the curated shelf only.' }))
         : null);
+
+    /* This person's own words about a game, and a score they type in. Kept
+       on this device; nothing here is measured or checked. */
+    function minePanel(g) {
+      const mine = mineOf(api, g.id);
+      const saved = h('small.dim.ag-mine__saved', { text: '' });
+      const note = h('textarea.ag-mine__note', {
+        rows: 3, maxlength: '500', placeholder: 'Tips, codes, where you got stuck…', 'aria-label': `Your notes on ${g.title}`,
+      });
+      note.value = mine.note || '';
+      const best = h('input.ag-mine__best', {
+        type: 'text', maxlength: '24', placeholder: 'e.g. 12,450 or 2:31', 'aria-label': `Your best score in ${g.title}`, value: mine.best || '',
+      });
+      let t = 0;
+      const save = () => {
+        clearTimeout(t);
+        t = setTimeout(() => { saveMine(api, g.id, { note: note.value, best: best.value }); saved.textContent = 'Saved on this device'; }, 350);
+      };
+      note.addEventListener('input', save);
+      best.addEventListener('input', save);
+      life.add(() => { if (t) { clearTimeout(t); saveMine(api, g.id, { note: note.value, best: best.value }); } });
+      return h('section.ag-mine', { 'aria-label': 'Your notes and best score' },
+        h('div.ag-mine__h', icon('file-text', { size: 14 }), h('b', { text: 'Your notes' }), saved),
+        h('label.ag-mine__l', h('span', { text: 'Your best score' }), best),
+        note);
+    }
 
     function fact(ic, label, value) {
       return h('div.ag-fact', icon(ic),

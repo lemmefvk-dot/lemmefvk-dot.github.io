@@ -116,7 +116,9 @@ body.is-mobile .light{width:44px;height:44px}
 body.is-mobile .light::before{left:14px;top:14px;width:16px;height:16px}
 body.is-mobile .light .icon{inset:17px;width:10px;height:10px;opacity:1}
 body.is-mobile .win__title{flex:1 1 120px;min-width:0;font-size:var(--fs-13)}
-body.is-mobile .win__tools{margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+/* the tools can shrink to the screen, so a long row wraps onto a second
+   line instead of running off the right edge */
+body.is-mobile .win__tools{margin-left:auto;flex-wrap:wrap;justify-content:flex-end;flex-shrink:1;min-width:0;max-width:100%}
 body.is-mobile .win__lead{flex-wrap:wrap}
 
 /* ============================================================
@@ -458,3 +460,65 @@ body.is-mobile .overview__hint{display:none}
 }
 :root[data-motion="reduced"] body.is-mobile .noti.noti--shade,
 :root[data-motion="reduced"] .mob-switch{animation:none}
+
+/* ============================================================
+   Home screen options: library tabs, Customise, favourites,
+   pull-to-search, one-handed mode, larger tap targets
+   ============================================================ */
+.mob-home{transform:translateY(var(--pull,0));transition:transform var(--t-med) var(--ease-out)}
+.mob-home.is-pulling{transition:none}
+.mob-search.is-armed{outline:2px solid var(--accent);outline-offset:2px;background:var(--glass-3)}
+.mob-home__bar{display:flex;align-items:center;gap:var(--sp-3);max-width:520px;margin:calc(-1 * var(--sp-3)) auto var(--sp-5);width:100%}
+body.is-mobile .mob-home__bar{max-width:calc(100% - 64px);margin-left:0}
+.mob-lib{display:flex;flex:1 1 auto;min-width:0;border-radius:var(--r-pill);background:var(--fill-0);border:1px solid var(--line-1);overflow:hidden}
+.mob-lib__b{flex:1 1 0;min-height:44px;padding:var(--sp-1) var(--sp-3);background:none;border:0;color:var(--ink-2);font-size:var(--fs-12);cursor:pointer;white-space:normal;line-height:1.15}
+.mob-lib__b.is-on{background:var(--accent);color:var(--accent-ink);font-weight:620}
+.mob-lib__opts{display:inline-flex;align-items:center;gap:var(--sp-2);min-height:44px;min-width:44px;padding:0 var(--sp-4);border-radius:var(--r-pill);background:var(--fill-0);border:1px solid var(--line-1);color:var(--ink-1);font-size:var(--fs-12);cursor:pointer;flex:0 0 auto}
+.mob-lib__opts .icon{width:16px;height:16px}
+.mob-lib__b:focus-visible,.mob-lib__opts:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* by category */
+.mob-home__grid--cat{display:block}
+.mob-cat{margin-bottom:var(--sp-6)}
+.mob-cat__h{margin:0 0 var(--sp-3);padding:0 var(--sp-2);font-size:var(--fs-11);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8)}
+.mob-cat__grid{display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:var(--sp-5) var(--sp-2)}
+@media (min-width:600px){ .mob-cat__grid{grid-template-columns:repeat(5, minmax(0, 1fr))} }
+@media (max-height:500px){ .mob-cat__grid{grid-template-columns:repeat(auto-fill, minmax(84px, 1fr))} }
+
+/* the Customise sheet and the edit bar */
+.mob-opts{position:absolute;left:0;right:0;bottom:0;z-index:calc(var(--z-overlay) - 5);display:flex;flex-direction:column;gap:var(--sp-2);
+  padding:var(--sp-5) calc(var(--sp-5) + var(--mob-r)) calc(var(--sp-6) + var(--mob-gest)) calc(var(--sp-5) + var(--mob-l));
+  border-radius:var(--r-2xl) var(--r-2xl) 0 0;background:var(--glass-3);-webkit-backdrop-filter:var(--blur-3);backdrop-filter:var(--blur-3);
+  border:1px solid var(--line-1);box-shadow:var(--sh-4);animation:pop-in var(--t-med) var(--ease-out) both;transform-origin:bottom center}
+.mob-opts__head{display:flex;align-items:center;justify-content:space-between;font-size:var(--fs-15);color:var(--ink-0);margin-bottom:var(--sp-2)}
+.mob-opts__row{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-4);min-height:52px}
+.mob-opts__t{display:flex;flex-direction:column;min-width:0}
+.mob-opts__t b{font-size:var(--fs-13);color:var(--ink-0);font-weight:600}
+.mob-opts__t small{font-size:var(--fs-11);color:var(--ink-2)}
+.mob-opts .btn,.mob-opts .switch{min-height:44px}
+.mob-editbar{position:absolute;left:calc(var(--sp-4) + var(--mob-l));right:calc(var(--sp-4) + var(--mob-r));top:calc(var(--mob-top) + var(--sp-3));z-index:calc(var(--z-rail) + 2);
+  display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);border-radius:var(--r-lg);
+  background:var(--glass-3);border:1px solid var(--line-accent);box-shadow:var(--sh-3);font-size:var(--fs-12);color:var(--ink-0)}
+.mob-editbar .btn{min-height:44px}
+body.mob-editdock .mob-lib,body.mob-editdock .mob-lib__opts,body.mob-editdock .mob-search{visibility:hidden}
+body.mob-editdock .mob-home{padding-top:calc(var(--sp-5) + 60px)}
+.mob-app.is-fav .glyph{outline:3px solid var(--accent);outline-offset:3px;border-radius:var(--r-lg)}
+
+/* one-handed: the whole home screen (search, tabs, apps) starts a third of the way down, in thumb reach */
+body.mob-onehand .mob-home{top:calc(var(--mob-top) + 34vh)}
+body.mob-onehand.mob-editdock .mob-home{top:var(--mob-top)}
+
+/* larger tap targets */
+body.mob-bigtap .mob-app{min-width:64px;min-height:72px}
+body.mob-bigtap .mob-app .glyph{--gs:68px}
+body.mob-bigtap .mob-app--dock .glyph{--gs:64px}
+body.mob-bigtap .mob-app__name{font-size:var(--fs-13)}
+body.mob-bigtap .mob-home__grid{gap:var(--sp-6) var(--sp-2)}
+body.mob-bigtap .mob-search,body.mob-bigtap .mob-lib__b,body.mob-bigtap .mob-lib__opts{min-height:56px}
+body.mob-bigtap .mob-nav__btn,body.mob-bigtap .mob-nav__home{min-width:56px;min-height:56px}
+body.mob-bigtap .btn,body.mob-bigtap .ibtn,body.mob-bigtap .tabs button,body.mob-bigtap .chip,body.mob-bigtap .switch,
+body.mob-bigtap .menu__item,body.mob-bigtap .list__item,body.mob-bigtap select,body.mob-bigtap input:not([type=checkbox]):not([type=radio]):not([type=range]){min-height:48px}
+body.mob-bigtap .ibtn{min-width:48px}
+
+/* Spanish titles are longer: on a phone the window title gets the room the subtitle used (the page shows where you are below it anyway) */
+html:lang(es) body.is-mobile .win__sub{display:none}

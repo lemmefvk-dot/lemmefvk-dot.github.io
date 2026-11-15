@@ -518,8 +518,9 @@ export function tasks(body, w, ctx) {
     const l = listOf(data);
     const t = l && l.tasks.find(x => x.id === id);
     if (!t) return;
-    t.done = !t.done;
-    t.updated = Date.now();
+    /* a repeating task moves on to its next due day, as it does in Static Tasks */
+    if (!t.done && TASKS.nextDue(t)) TASKS.completeTask(t);
+    else { t.done = !t.done; t.updated = Date.now(); }
     save(data);
     paint();
     requestAnimationFrame(() => ul.querySelector(`[data-id="${CSS.escape(id)}"] .dw-todo__ck`)?.focus({ preventScroll: true }));
@@ -650,7 +651,7 @@ export function upnext(body) {
         h('i.dw-up__dot', { style: { background: `var(${o.tone})` } }),
         h('span.dw-up__t', h('b', { text: o.title }), h('small', { text: when })),
         tag ? h('small.dw-up__tag', { text: tag }) : null,
-        o.repeat === 'weekly' ? h('span.dw-up__ic', { title: 'Every week' }, icon('repeat')) : null));
+        o.repeat && o.repeat !== 'none' ? h('span.dw-up__ic', { title: CAL.repeatText(o) }, icon('repeat')) : null));
     }
     body.replaceChildren(h('div.dw-up__list', out));
   };

@@ -1,11 +1,10 @@
 /* ============================================================
    deskterm.js — the Linux wallpaper terminal.
 
-   StaticOS has exactly one terminal, and it lives on the desktop of
-   the Linux drive. There is no Terminal window any more: the app is
-   registered hidden (js/apps/terminal.js) purely so its engine — the
-   whole staticsh shell over the vfs — can be mounted here, into the
-   wallpaper, through a stand-in for the window object.
+   On the Linux drive the desktop has its own terminal. It is the same
+   engine as the Terminal app (js/apps/terminal.js) — the whole staticsh
+   shell over the vfs — mounted into the wallpaper through a stand-in
+   for the window object. Every other drive opens a Terminal window.
 
    Where it sits: a layer appended LAST inside .desktop (above the
    wallpaper, the Linux skin and the icons; below widgets, windows,
@@ -16,8 +15,9 @@
 
    Opening "terminal" from anywhere (a menu, a command, Spotlight,
    Staticum) goes through wm.open, which is redirected here: on Linux
-   it focuses this terminal and applies cwd/run; elsewhere it says
-   where the terminal lives and opens nothing.
+   it focuses this terminal and applies cwd/run; elsewhere, or when a
+   window is asked for ({ window: true }), it falls through and the
+   Terminal opens as a normal window.
 
    Keyboard: while you type here no window is active (wm.blur), and
    keys stop at this layer so window shortcuts (⌘W) and app handlers
@@ -52,7 +52,6 @@ let off = null;          /* the engine's teardown while mounted */
 let shim = null;         /* the stand-in window the engine talks to */
 let respawnTimer = 0;
 let iconsObs = null;
-let lastNotice = 0;
 let atBottom = true;     /* was the scrollback pinned to the prompt? */
 
 const isMobile = () => document.body.classList.contains('is-mobile');
@@ -133,13 +132,17 @@ function place() {
     .map(el => el.getBoundingClientRect())
     .find(r => r.width > 0 && r.height > 0);
   const right = rail ? Math.round(d.right - rail.left) + 24 : 24;
-  const wantLeft = ir && ir.width ? Math.round(ir.right - d.left) + 28 : 124;
+  /* the icons sit anywhere on the desktop now (shell/deskicons.js): clear of the right-most one */
+  const reach = Number(icons?.dataset.reach);
+  const wantLeft = reach > 0 ? Math.round(reach) + 28 : ir && ir.width ? Math.round(ir.right - d.left) + 28 : 124;
   const left = Math.max(16, Math.min(wantLeft, Math.round(d.width - right - MIN_W)));
   host.style.setProperty('--dt-left', `${left}px`);
   host.style.setProperty('--dt-right', `${right}px`);
 }
 
+let offIcons = null;
 function track() {
+  if (!offIcons) offIcons = bus.on('desk:icons', () => place());     /* the icons were laid out again */
   iconsObs?.disconnect();
   if (typeof ResizeObserver !== 'function') { place(); return; }
   iconsObs = new ResizeObserver(() => {
@@ -257,18 +260,9 @@ function call() {
 
 /* ---------- every open('terminal') lands here ------------------------ */
 wm.redirectApp('terminal', opts => {
-  if (!off || !shim) {
-    if (Date.now() - lastNotice < 5000) return null;   /* one notice, not a stack */
-    lastNotice = Date.now();
-    bus.emit('noti:push', {
-      app: 'Terminal', icon: 'terminal', timeout: 5000,
-      title: 'The terminal lives on Linux',
-      message: isMobile() && wanted
-        ? 'It is part of the Linux desktop, which a phone-sized screen does not show.'
-        : 'Boot the Linux drive (Settings › Desktop › Startup) — it is right on the wallpaper.',
-    });
-    return null;
-  }
+  /* a window was asked for, or there is no wallpaper terminal (any drive but
+     Linux, or a phone-sized screen): fall through to a normal window */
+  if (!off || !shim || opts?.window) return undefined;
   raise();      /* never focus a shell the person cannot see */
   shim.hooks.reopen.forEach(fn => { try { fn(opts || {}); } catch (err) { console.error(err); } });
   call();

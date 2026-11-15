@@ -16,19 +16,49 @@
    next player has ball in hand: click (or move with the arrows and
    press Space) to place the cue ball anywhere free.
 
+   The Arcade's modes (ctx.mode) are the game played: 8-ball (the
+   usual one, and the only one online), 9-ball and straight pool
+   (rules in ./pool-rules.js). Two settings (ctx.settings) only change
+   how it looks and feels, never make it easier than usual: the aim
+   guide (full to the first ball with that ball's line, a short stub,
+   or off) and a shot clock for local games (off, 30 or 60 s for each
+   shot a person takes; when it runs out it is a foul and the other
+   side has ball in hand). Online games have no shot clock: both
+   screens would have to agree on the moment it ran out.
+
    Simplified: no spin, no called pockets, ball in hand anywhere;
-   see pool-rules.js for the full list. Online play is not offered.
+   see pool-rules.js for the full list.
    The world advances in fixed 1/480 s steps (./fixed.js).
    Score = your shots in a win against the computer (fewer is
    better). Follows the module contract in ./index.js.
+
+   ONLINE (ctx.online, a friend on another device through the
+   Arcade's room). Only the shots travel: { t:'mv', n, u, p, z, h? }
+   — shot n's direction as two whole numbers u (pool-sim strikeDir),
+   its power p (0–10000), where the cue ball was placed h (1/100 px,
+   only with ball in hand) and z, a fingerprint of the table BEFORE
+   the shot (pool-rules stateHash). Both screens run the same physics
+   to rest from it — fixed steps, nothing random, nothing timed — and
+   judge it with the same rules, so both tables end the same. The
+   receiver checks first: a shot when it isn't the sender's turn, junk
+   numbers or a placement the rules refuse are counted in `rejected`
+   and ignored; a fingerprint that doesn't match its own table means
+   the two have drifted apart, and the game ends with no result rather
+   than going on with two different tables. A shot that arrives while
+   the last one is still rolling here waits for it. Lost messages are
+   mended as in the board games (boardkit.js duelLink: need / beat),
+   and { t:'am', a, w, x?, y? } a few times a second shows the cue as
+   the friend aims (drawing only — it can't move a ball). The host
+   breaks in odd rounds and the guest in even ones, so the break
+   swaps every rematch. Your side is always "You" at the bottom.
    ============================================================ */
 import { h } from '../core/dom.js';
 import { store } from '../core/store.js';
 import { clamp, hsl, FONT, coarse, fitView, surface, sounder, looper, rr, prompt, rng, randomSeed } from './kit.js';
-import { KIT_CSS, ownsKey, playerStrip, segment } from './boardkit.js';
+import { KIT_CSS, ownsKey, playerStrip, segment, confirmButton, duelLink } from './boardkit.js';
 import { fixedStepper } from './fixed.js';
-import { W as TW, H as TH, R, DT, POCKETS, SEGS, MAXV, createSim, strike, canPlace } from './pool-sim.js';
-import { newGame, judgeShot, targets, remaining, nearestFree } from './pool-rules.js';
+import { W as TW, H as TH, R, DT, POCKETS, SEGS, MAXV, DIR_SCALE, createSim, strike, strikeDir, canPlace, groupOf } from './pool-sim.js';
+import { newGame, judgeShot, targets, remaining, nearestFree, stateHash, timeFoul, lowest, KINDS, STRAIGHT_TO } from './pool-rules.js';
 import { chooseShot, LEVELS } from './pool-ai.js';
 
 const PREF = 'portal.arcadePool';
@@ -41,56 +71,102 @@ const colorOf = id => BALL[id <= 8 ? id : id - 8];
 const readLevel = () => { let p = null; try { p = store.get(PREF, null); } catch (err) { p = null; } return LEVELS[p?.level] ? p.level : 'medium'; };
 const writeLevel = level => { try { store.set(PREF, { level }); } catch (err) { /* a convenience */ } };
 const NAMES = { solid: 'Solids', stripe: 'Stripes' };
+const SHORT_GUIDE = 90;                       /* px: the short aim guide */
+const AIM_GAP = 0.12;                         /* seconds between the aim updates sent to a friend */
+const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+/* a shot from the wire, checked: { u:[ux,uy], p, z, h:[x,y]|null } or null */
+function cleanShot(d) {
+  if (!Array.isArray(d.u) || d.u.length !== 2 || !d.u.every(v => isInt(v, -1.2e6, 1.2e6))) return null;
+  const l = Math.sqrt(d.u[0] * d.u[0] + d.u[1] * d.u[1]);
+  if (!(l > 0.9 * DIR_SCALE && l < 1.1 * DIR_SCALE)) return null;
+  if (!isInt(d.p, 300, 10000) || !isInt(d.z, 0, 0xffffffff)) return null;
+  let hh = null;
+  if (d.h !== undefined && d.h !== null) {
+    if (!Array.isArray(d.h) || d.h.length !== 2 || !isInt(d.h[0], 0, TW * 100) || !isInt(d.h[1], 0, TH * 100)) return null;
+    hh = [d.h[0], d.h[1]];
+  }
+  return { u: [d.u[0], d.u[1]], p: d.p, z: d.z, h: hh };
+}
 
 export default {
   mount(el, ctx) {
-    const mode = ctx.players === 2 ? '2p' : 'cpu';
+    const NET = ctx.online && typeof ctx.online.send === 'function' ? ctx.online : null;
+    const mode = NET ? 'net' : ctx.players === 2 ? '2p' : 'cpu';
+    /* the game: 8-ball online, else the Arcade's mode */
+    const KIND = !NET && (ctx.mode === '9ball' || ctx.mode === 'straight') ? ctx.mode : '8ball';
+    /* how it looks and feels (ctx.settings): the aim guide's length, and a shot clock for local games */
+    const SET = () => ctx.settings || {};
+    const clockSecs = () => (NET ? 0 : Number(SET().clock) || 0);
+    /* seats: 0 is the host online (you against the computer); ME is this screen's player */
+    const host = NET ? NET.role === 'host' : true;
+    const ME = host ? 0 : 1, OPP = 1 - ME;
+    const peerName = NET?.peer?.name || 'Your friend';
+    const netRound = Number.isInteger(NET?.round) ? NET.round : 1;
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
     let dead = false;
     const S = {
-      game: newGame(), state: 'aim',                  /* aim | place | roll | cpu | over */
+      game: newGame(KIND), state: 'aim',              /* aim | place | roll | cpu | over */
       paused: false, over: false, time: 0,
       level: readLevel(), rnd: rng(randomSeed()),
       aim: { angle: Math.PI, power: 0 }, drag: null, kx: 0, fine: false, charging: false, chargeT: 0, charge: 0,
       hand: { x: 200, y: TH / 2 }, sim: null, pot: [], last: null, msg: '', msgT: -9, myShots: 0,
       cpuT: 0, plan: null, endT: 0, usedInput: false, lastSnd: 0, shake: 0,
+      /* online: every shot in order, the one waiting for this table to settle, what was refused */
+      net: NET ? { log: [], pending: null, rejected: 0, voided: false, placed: null, aimAt: -9, aimSent: '' } : null,
     };
-    const name = who => (mode === '2p' ? `Player ${who + 1}` : who === 0 ? 'You' : 'The computer');
+    /* the break: the host's in odd rounds, the guest's in even ones */
+    if (NET) S.game.turn = netRound % 2 === 1 ? 0 : 1;
+    const name = who => (mode === '2p' ? `Player ${who + 1}` : mode === 'net' ? (who === ME ? 'You' : peerName) : who === 0 ? 'You' : 'The computer');
+    const isYou = who => mode !== '2p' && who === ME;
 
     /* ------------------------------ the page ------------------------------ */
     const boardEl = h('div.arx-bg__board');
     const statusEl = h('div.arx-bg__status', { role: 'status' });
-    const topStrip = playerStrip('#e8e8e8', name(1), '');
-    const botStrip = playerStrip('#e8e8e8', name(0), '');
+    const topStrip = playerStrip('#e8e8e8', name(OPP), '');
+    const botStrip = playerStrip('#e8e8e8', name(ME), '');
     const levelSeg = mode === 'cpu' ? segment('Level', Object.values(LEVELS).map(l => ({ id: l.id, label: l.name })), S.level, id => { S.level = id; writeLevel(id); levelSeg.set(id); say(`The computer now plays at ${LEVELS[id].name}`); refocus(); }) : null;
-    const note = h('div.arx-bg__note', { text: mode === '2p' ? 'Two players on this screen: take turns. Aim with the mouse, press and drag back to shoot, or ← → and hold Space.' : 'Aim with the mouse, press and drag back to shoot — or ← → and hold Space. The level can be changed any time.' });
-    const side = h('div.arx-bg__side', topStrip.el, statusEl, levelSeg?.el, note, botStrip.el);
+    const note = h('div.arx-bg__note', { text: mode === '2p' ? 'Two players on this screen: take turns. Aim with the mouse, press and drag back to shoot, or ← → and hold Space.'
+      : mode === 'net' ? `Online against ${peerName}: take turns. Aim with the mouse, press and drag back to shoot — or ← → and hold Space. You see their cue as they aim.`
+        : 'Aim with the mouse, press and drag back to shoot — or ← → and hold Space. The level can be changed any time.' });
+    const resignBtn = NET ? confirmButton('Resign', 'Resign? Click again', 'x', () => { resign(); refocus(); }) : null;
+    const side = h('div.arx-bg__side', topStrip.el, statusEl, levelSeg?.el, resignBtn ? h('div.arx-bg__row', resignBtn) : null, note, botStrip.el);
     const root = h('div.arx-bgc', h('style', { text: KIT_CSS }), h('div.arx-bg', boardEl, side));
     el.appendChild(root);
-    const sf = surface(boardEl, '8-ball pool table', () => draw());
+    const sf = surface(boardEl, `${KINDS[KIND]} pool table`, () => draw());
     let V = fitView(sf, VW, VH, 4);
     const refocus = () => el.closest('[tabindex]')?.focus({ preventScroll: true });
     ctx.onScore(0);
 
     function say(t) { S.msg = t; S.msgT = S.time; }
     const cue = () => S.game.balls[0];
-    const myTurn = () => mode === '2p' || S.game.turn === 0;
+    const myTurn = () => mode === '2p' || S.game.turn === ME;
 
     /* ------------------------------ the match ------------------------------ */
     function paint() {
       const g = S.game;
       const strip = (who, st) => {
+        if (KIND === '9ball') {
+          const on = g.balls.some(b => b.in && b.id !== 0);
+          st.set({ turn: !g.over && g.turn === who, color: '#f2c230', note: on ? `Lowest ball: ${lowest(g)}` : '9-ball' });
+          return;
+        }
+        if (KIND === 'straight') {
+          st.set({ turn: !g.over && g.turn === who, color: '#b9c0c8', note: `${g.points[who]} of ${STRAIGHT_TO} points` });
+          return;
+        }
         const grp = g.groups[who];
         st.set({ turn: !g.over && g.turn === who, color: grp === 'solid' ? '#f2c230' : grp === 'stripe' ? '#f4f4ee' : '#b9c0c8',
           note: grp ? `${NAMES[grp]} · ${remaining(g, grp) ? `${remaining(g, grp)} left` : 'now the 8'}` : 'Table open' });
       };
-      strip(1, topStrip); strip(0, botStrip);
+      strip(OPP, topStrip); strip(ME, botStrip);
       let t;
-      if (g.over) t = `${name(g.over.winner)} win${mode === 'cpu' && g.over.winner === 0 ? '' : 's'}: ${g.over.reason}`;
-      else if (S.state === 'place') t = `${name(g.turn)}: ball in hand, place the cue ball`;
+      if (S.net?.voided) t = 'The two tables stopped matching: no result';
+      else if (g.over) t = `${name(g.over.winner)} win${isYou(g.over.winner) ? '' : 's'}: ${g.over.reason}`;
+      else if (S.state === 'place') t = mode === 'net' && g.turn === OPP ? `${peerName} has ball in hand` : `${name(g.turn)}: ball in hand, place the cue ball`;
       else if (S.state === 'cpu') t = 'The computer is lining up a shot…';
-      else t = mode === 'cpu' && g.turn === 0 ? 'Your turn' : `${name(g.turn)}${mode === '2p' ? '’s turn' : ' is shooting'}`;
+      else if (S.state === 'roll' && mode === 'net') t = g.turn === ME ? 'Your shot is rolling…' : `${peerName}’s shot is rolling…`;
+      else t = mode !== '2p' && g.turn === ME ? 'Your turn' : `${name(g.turn)}${mode === '2p' ? '’s turn' : mode === 'net' ? ' is aiming' : ' is shooting'}`;
       statusEl.textContent = t;
       statusEl.classList.toggle('is-done', !!g.over);
       statusEl.classList.toggle('is-alert', !g.over && !!S.last?.foul && S.time - S.msgT < 3);
@@ -98,6 +174,11 @@ export default {
     function startTurn() {
       const g = S.game;
       S.drag = null; S.charging = false; S.charge = 0; S.aim.power = 0;
+      /* the shot clock starts again for every shot a person takes (never the computer's, never online) */
+      S.clock = mode === 'cpu' && g.turn === 1 ? 0 : clockSecs();
+      S.tick = Math.ceil(S.clock);
+      /* online: the table as the turn begins, before any placing — what a shot's fingerprint is of */
+      if (S.net) { S.net.turnHash = stateHash(g); S.net.placed = null; }
       if (g.over) { S.state = 'over'; S.endT = 0; paint(); return; }
       if (mode === 'cpu' && g.turn === 1) { S.state = 'cpu'; S.cpuT = 0; S.plan = null; }
       else if (g.inHand) { S.state = 'place'; const c = nearestFree(g, cue().x, cue().y); S.hand = { x: c.x, y: c.y }; }
@@ -110,9 +191,13 @@ export default {
       }
       paint();
     }
-    function placeCue(x, y) {
+    /* remote: the friend's placement, arriving with their shot (online) */
+    function placeCue(x, y, remote = false) {
       const g = S.game;
+      /* online, a spot is kept to 1/100 px: what is sent is exactly what is played */
+      if (NET) { x = Math.round(x * 100) / 100; y = Math.round(y * 100) / 100; }
       if (!g.inHand || !canPlace(g.balls, x, y)) return false;
+      if (NET && !remote) S.net.placed = [Math.round(x * 100), Math.round(y * 100)];
       const c = cue(); c.x = x; c.y = y; c.vx = c.vy = 0; c.in = true;
       g.inHand = false;
       S.state = 'aim';
@@ -126,7 +211,25 @@ export default {
     function shoot(angle, power) {
       if (S.state !== 'aim' && S.state !== 'cpu' || S.paused || S.over) return false;
       if (!Number.isFinite(angle) || !(power > 0.03)) return false;
-      strike(S.game.balls, angle, power);
+      if (NET) {
+        /* online: my shot as whole numbers, played here exactly as the friend's screen will play it */
+        if (S.game.turn !== ME || S.net.voided || S.net.pending) return false;
+        const u = [Math.round(Math.cos(angle) * DIR_SCALE), Math.round(Math.sin(angle) * DIR_SCALE)];
+        const p = Math.round(clamp(power, 0, 1) * 1e4);
+        if (p < 300) return false;
+        const shot = { by: ME, u, p, z: S.net.turnHash, h: S.net.placed };
+        S.net.placed = null;
+        S.net.log.push(shot);
+        roll(() => strikeDir(S.game.balls, u[0], u[1], p / 1e4));
+        link.sendMove(S.net.log.length - 1);
+        return true;
+      }
+      roll(() => strike(S.game.balls, angle, power));
+      return true;
+    }
+    /* set the balls rolling: hit() strikes the cue ball */
+    function roll(hit) {
+      hit();
       S.sim = createSim(S.game.balls);
       S.sim.sound = (kind, v) => {
         const now = S.time;
@@ -138,36 +241,146 @@ export default {
       };
       S.pot = [];
       S.state = 'roll';
-      if (S.game.turn === 0) S.myShots++;
+      if (S.game.turn === ME) S.myShots++;
       S.aim.power = 0;
-      return true;
+      if (NET) paint();
     }
+
+    /* ------------------------------ online ------------------------------ */
+    /* balls of a player's group pocketed so far, and the 8 for whoever sank it to win */
+    function ballsOf(who) {
+      const g = S.game, grp = g.groups[who];
+      if (!grp) return 0;
+      let n = g.balls.filter(b => !b.in && b.id !== 0 && groupOf(b.id) === grp).length;
+      if (g.over && g.over.winner === who && !g.balls[8].in && g.log.length && g.log[g.log.length - 1].by === who) n++;
+      return n;
+    }
+    function scores() { if (!NET) return; ctx.onScore(ballsOf(ME)); NET.peerScore?.(ballsOf(OPP)); }
+    /* the friend's shot, once this table is still: checked, then played.
+       (A shot is applied at most once: take() holds one and drops repeats of it.) */
+    function tryPending() {
+      const P = S.net?.pending;
+      if (!P || S.over || dead || (S.state !== 'aim' && S.state !== 'place')) return;
+      S.net.pending = null;
+      const g = S.game;
+      if (P.n !== S.net.log.length || g.turn !== OPP || g.over) { S.net.rejected++; return; }
+      if (P.z !== stateHash(g)) { voidGame(); return; }
+      if (!!P.h !== !!g.inHand) { S.net.rejected++; return; }
+      if (P.h && !placeCue(P.h[0] / 100, P.h[1] / 100, true)) { S.net.rejected++; return; }
+      S.net.log.push({ by: OPP, u: P.u, p: P.p, z: P.z, h: P.h });
+      roll(() => strikeDir(g.balls, P.u[0], P.u[1], P.p / 1e4));
+    }
+    /* told: the friend's screen found the tables apart (their 'vd'), so mine stops too */
+    function voidGame(told = false) {
+      if (S.over || S.net.voided) return;
+      S.net.voided = true;
+      S.sim = null;
+      if (!told) { NET.send({ t: 'vd' }); setTimeout(() => { if (!dead) NET.send({ t: 'vd' }); }, 700); }
+      S.state = 'over'; S.endT = 0;
+      say('The two tables stopped matching, so this game has no result');
+      paint();
+    }
+    function resign() {
+      if (!NET || S.over || S.state === 'over' || dead) return;
+      S.game.over = { winner: OPP, reason: 'You resigned' };
+      S.sim = null;
+      link.resign();
+      S.state = 'over'; S.endT = 0;
+      say('You resigned');
+      paint();
+    }
+    /* while I aim, the friend's screen shows my cue (a few times a second, only when it moved) */
+    function sendAim() {
+      if (!NET || S.game.turn !== ME || (S.state !== 'aim' && S.state !== 'place') || S.time - S.net.aimAt < AIM_GAP) return;
+      const m = S.state === 'place'
+        ? { t: 'am', a: 0, w: 0, x: Math.round(S.hand.x * 10), y: Math.round(S.hand.y * 10) }
+        : { t: 'am', a: Math.round(Math.atan2(Math.sin(S.aim.angle), Math.cos(S.aim.angle)) * 1e4), w: Math.round(S.aim.power * 100) };
+      const k = JSON.stringify(m);
+      if (k === S.net.aimSent) return;
+      S.net.aimAt = S.time; S.net.aimSent = k;
+      NET.send(m);
+    }
+    function onAim(d) {
+      if (dead || !d) return;
+      if (d.t === 'vd') { voidGame(true); return; }
+      if (d.t !== 'am' || S.game.turn !== OPP || S.net.pending) return;
+      if (S.state === 'aim' && isInt(d.a, -70000, 70000) && isInt(d.w, 0, 100)) { S.aim.angle = d.a / 1e4; S.aim.power = d.w / 100; }
+      else if (S.state === 'place' && isInt(d.x, 0, TW * 10) && isInt(d.y, 0, TH * 10)) S.hand = { x: clamp(d.x / 10, R, TW - R), y: clamp(d.y / 10, R, TH - R) };
+    }
+    const link = NET ? duelLink(NET, {
+      plies: () => S.net.log.length,
+      mine: i => S.net.log[i]?.by === ME,
+      wire: i => { const x = S.net.log[i]; return { u: x.u, p: x.p, z: x.z, ...(x.h ? { h: x.h } : {}) }; },
+      /* checked now for its shape; played once this table is still (tryPending) */
+      take: d => {
+        if (S.over || S.net.voided) return false;
+        if (S.net.pending) return S.net.pending.n === d.n;
+        const shot = cleanShot(d);
+        if (!shot) return false;
+        S.net.pending = { ...shot, n: d.n };
+        tryPending();
+        return true;
+      },
+      reject: () => { S.net.rejected++; },
+      resigned: () => {
+        if (S.over || S.state === 'over' || S.game.over) return;
+        S.game.over = { winner: ME, reason: `${peerName} resigned` };
+        S.sim = null;
+        S.state = 'over'; S.endT = 0;
+        say(`${peerName} resigned`);
+        ctx.announce?.(`${peerName} resigned.`);
+        paint();
+      },
+      dead: () => dead,
+    }) : null;
+    const offAim = NET ? NET.on?.(onAim) : null;
     function settle() {
       const g = S.game, ev = S.sim.ev, who = g.turn;
       S.sim = null;
       const res = judgeShot(g, ev);
       S.last = { ...res, by: who };
       const names = ev.pocketed.map(id => (id === 0 ? 'cue' : id));
+      const pts = KIND === 'straight' && res.scored ? ` (${res.scored > 0 ? '+' : '−'}${Math.abs(res.scored)})` : '';
       if (res.spotted8) say('The 8 went in on the break: it is spotted again');
       else if (g.over) say(g.over.reason);
-      else if (res.foul) say(`Foul by ${name(who)}: ${res.foul}. Ball in hand for ${name(1 - who)}.`);
-      else if (res.assigned) say(`${name(who)} ${mode === 'cpu' && who === 0 ? 'are' : 'is'} ${NAMES[res.assigned]}`);
-      else if (res.continues) say(`${name(who)} pocketed ${names.filter(n => n !== 'cue').join(', ')} and shoots again`);
+      else if (res.foul) say(`Foul by ${name(who)}: ${res.foul}${pts}. Ball in hand for ${name(1 - who)}.${res.spotted9 ? ' The 9 is spotted again.' : ''}`);
+      else if (res.assigned) say(`${name(who)} ${isYou(who) ? 'are' : 'is'} ${NAMES[res.assigned]}`);
+      else if (res.continues) say(`${name(who)} pocketed ${names.filter(n => n !== 'cue').join(', ')}${pts} and shoot${isYou(who) ? '' : 's'} again`);
       else say(`${name(who)} missed`);
+      if (res.reracked) say(`${S.msg}. The balls are racked again.`);
       snd.blip(res.foul ? 130 : 480, 0.12, res.foul ? 'sawtooth' : 'triangle', 0.5);
+      if (NET) { scores(); if (!g.over && g.turn === ME) ctx.announce?.(`Your turn. ${S.msg}`); }
       startTurn();
     }
     function finish() {
       if (S.over || dead) return;
       S.over = true;
-      const g = S.game, w = g.over.winner;
+      const g = S.game, w = g.over?.winner;
       const shots = S.myShots;
-      if (mode === '2p') ctx.onEnd({ score: null, detail: `${name(w)} wins: ${g.over.reason}. ${g.shots} shots in the game.` });
-      else if (w === 0) ctx.onEnd({ score: shots, won: true, detail: `You won against the computer (${LEVELS[S.level].name}) in ${shots} shots: ${g.over.reason}.` });
-      else ctx.onEnd({ score: null, won: false, detail: `The computer (${LEVELS[S.level].name}) won: ${g.over.reason}.` });
+      if (mode === 'net') {
+        const me = ballsOf(ME), them = ballsOf(OPP);
+        if (S.net.voided) ctx.onEnd({ score: null, won: null, void: true, versus: { me, them }, detail: 'A shot left a different table on each screen, so this game can’t be scored.' });
+        else ctx.onEnd({ score: me, won: w === ME, versus: { me, them }, detail: `${w === ME ? 'You' : peerName} won: ${g.over.reason}. ${g.shots} shot${g.shots === 1 ? '' : 's'} in the game.` });
+        return;
+      }
+      const kind = KIND === '8ball' ? '' : `${KINDS[KIND]}: `;
+      const pts = KIND === 'straight' ? ` ${g.points[0]}–${g.points[1]}.` : '';
+      if (mode === '2p') ctx.onEnd({ score: null, detail: `${kind}${name(w)} wins: ${g.over.reason}. ${g.shots} shots in the game.${pts}` });
+      else if (w === 0) ctx.onEnd({ score: shots, won: true, detail: `${kind}You won against the computer (${LEVELS[S.level].name}) in ${shots} shots: ${g.over.reason}.${pts}` });
+      else ctx.onEnd({ score: null, won: false, detail: `${kind}The computer (${LEVELS[S.level].name}) won: ${g.over.reason}.${pts}` });
+    }
+    /* the shot clock ran out: a foul, ball in hand for the other side */
+    function outOfTime() {
+      const g = S.game, who = g.turn;
+      S.drag = null; S.charging = false; S.charge = 0; S.aim.power = 0;
+      const res = timeFoul(g);
+      S.last = { ...res, by: who };
+      say(`${name(who)} ran out of time${KIND === 'straight' ? ' (−1)' : ''}: a foul. Ball in hand for ${name(1 - who)}.`);
+      snd.blip(130, 0.2, 'sawtooth', 0.6);
+      startTurn();
     }
     function newMatch() {
-      S.game = newGame(); S.sim = null; S.last = null; S.myShots = 0; S.msg = ''; S.pot = [];
+      S.game = newGame(KIND); S.sim = null; S.last = null; S.myShots = 0; S.msg = ''; S.pot = [];
       ctx.onScore(0);
       startTurn();
     }
@@ -175,15 +388,23 @@ export default {
     /* ------------------------------ one fixed step ------------------------------ */
     function step(dt) {
       S.time += dt;
+      if (NET && (S.state === 'aim' || S.state === 'place')) { tryPending(); sendAim(); }
       if (S.state === 'roll') {
         S.sim.step();
         for (const id of S.sim.ev.pocketed) if (!S.pot.some(p => p.id === id)) { const b = S.game.balls[id]; S.pot.push({ id, x: POCKETS[b.pocket].x, y: POCKETS[b.pocket].y, t: S.time }); }
         if (!S.sim.anyMoving()) settle();
-      } else if (S.state === 'aim') {
-        if (S.kx) { S.aim.angle += S.kx * (S.fine ? 0.12 : 0.9) * dt; S.usedInput = true; }
-        if (S.charging) { S.chargeT += dt; const ph = (S.chargeT / 1.4) % 2; S.charge = ph < 1 ? ph : 2 - ph; S.aim.power = S.charge; }
-      } else if (S.state === 'place') {
-        /* nothing moves on its own */
+      } else if (S.state === 'aim' || S.state === 'place') {
+        if (S.state === 'aim') {
+          if (S.kx && myTurn()) { S.aim.angle += S.kx * (S.fine ? 0.12 : 0.9) * dt; S.usedInput = true; }
+          if (S.charging) { S.chargeT += dt; const ph = (S.chargeT / 1.4) % 2; S.charge = ph < 1 ? ph : 2 - ph; S.aim.power = S.charge; }
+        }
+        /* the shot clock: the last five seconds tick */
+        if (S.clock > 0) {
+          S.clock -= dt;
+          const sec = Math.ceil(S.clock);
+          if (sec < S.tick) { S.tick = sec; if (sec <= 5 && sec > 0) snd.blip(sec <= 2 ? 880 : 660, 0.05, 'square', 0.4); }
+          if (S.clock <= 0) { S.clock = 0; outOfTime(); }
+        }
       } else if (S.state === 'cpu') {
         S.cpuT += dt;
         if (!S.plan && S.cpuT > 0.05) S.plan = chooseShot(S.game, S.level, S.rnd);
@@ -299,13 +520,21 @@ export default {
       if ((S.state === 'aim' || (S.state === 'cpu' && c.in)) && !S.paused && c.in) {
         const ang = S.aim.angle;
         const r = ray(c.x, c.y, ang);
+        /* the aim guide (a setting): full — to the first contact, with the object ball's line; short — a stub; off */
+        const guide = SET().guide || 'full';
         g.setLineDash([6, 6]); g.strokeStyle = 'rgba(255,255,255,.65)'; g.lineWidth = 1.5;
-        g.beginPath(); g.moveTo(tx(c.x), ty(c.y)); g.lineTo(tx(r.gx), ty(r.gy)); g.stroke(); g.setLineDash([]);
-        g.strokeStyle = 'rgba(255,255,255,.8)'; g.beginPath(); g.arc(tx(r.gx), ty(r.gy), R, 0, 7); g.stroke();
-        if (r.ball) {
-          const nx = r.ball.x - r.gx, ny = r.ball.y - r.gy, l = Math.hypot(nx, ny) || 1;
-          g.strokeStyle = 'rgba(255,230,140,.7)'; g.beginPath(); g.moveTo(tx(r.ball.x), ty(r.ball.y)); g.lineTo(tx(r.ball.x + (nx / l) * 46), ty(r.ball.y + (ny / l) * 46)); g.stroke();
+        if (guide === 'full') {
+          g.beginPath(); g.moveTo(tx(c.x), ty(c.y)); g.lineTo(tx(r.gx), ty(r.gy)); g.stroke(); g.setLineDash([]);
+          g.strokeStyle = 'rgba(255,255,255,.8)'; g.beginPath(); g.arc(tx(r.gx), ty(r.gy), R, 0, 7); g.stroke();
+          if (r.ball) {
+            const nx = r.ball.x - r.gx, ny = r.ball.y - r.gy, l = Math.hypot(nx, ny) || 1;
+            g.strokeStyle = 'rgba(255,230,140,.7)'; g.beginPath(); g.moveTo(tx(r.ball.x), ty(r.ball.y)); g.lineTo(tx(r.ball.x + (nx / l) * 46), ty(r.ball.y + (ny / l) * 46)); g.stroke();
+          }
+        } else if (guide === 'short') {
+          const len = Math.min(SHORT_GUIDE, r.t);
+          g.beginPath(); g.moveTo(tx(c.x), ty(c.y)); g.lineTo(tx(c.x + Math.cos(ang) * len), ty(c.y + Math.sin(ang) * len)); g.stroke();
         }
+        g.setLineDash([]);
         drawCueStick(g, c, ang, S.aim.power);
       }
       if (S.state === 'place') {
@@ -323,6 +552,13 @@ export default {
       g.fillStyle = 'rgba(0,0,0,.4)'; rr(g, px, py, 200, 12, 6); g.fill();
       if (S.aim.power > 0) { g.fillStyle = hsl(120 - S.aim.power * 120, 85, 55); rr(g, px + 1.5, py + 1.5, Math.max(4, 197 * S.aim.power), 9, 4.5); g.fill(); }
       g.fillStyle = 'rgba(255,255,255,.55)'; g.font = `600 10px ${FONT}`; g.textAlign = 'right'; g.textBaseline = 'middle'; g.fillText('POWER', px - 8, py + 6);
+      /* the shot clock, while a person is at the table */
+      if (S.clock > 0 && (S.state === 'aim' || S.state === 'place')) {
+        const sec = Math.ceil(S.clock), low = sec <= 10;
+        g.textAlign = 'center'; g.font = `800 15px ${FONT}`;
+        g.fillStyle = low ? '#ff8a7a' : 'rgba(255,255,255,.8)';
+        g.fillText(`SHOT CLOCK ${sec}`, px - 150, py + 6);
+      }
       /* the last message */
       if (S.msg && S.time - S.msgT < 3.2) {
         g.textAlign = 'center'; g.font = `700 15px ${FONT}`; const a = clamp(3.2 - (S.time - S.msgT), 0, 1);
@@ -330,7 +566,7 @@ export default {
         g.fillStyle = S.last?.foul ? `rgba(255,170,150,${a})` : `rgba(255,255,255,${a})`; g.fillText(S.msg, VW / 2, OY + TH / 2, VW - 60);
       }
       g.restore();
-      if (S.state === 'aim' && !S.usedInput && S.game.shots === 0 && !S.paused && myTurn()) prompt(g, sf, coarse() ? 'Touch to aim, drag back to shoot' : 'Aim with the mouse, press and drag back to shoot', 'Or ← → to aim and hold Space', HUE, sf.h * 0.9);
+      if (S.state === 'aim' && !S.usedInput && S.game.shots === 0 && !S.paused && myTurn() && !S.net?.pending) prompt(g, sf, coarse() ? 'Touch to aim, drag back to shoot' : 'Aim with the mouse, press and drag back to shoot', 'Or ← → to aim and hold Space', HUE, sf.h * 0.9);
       if (S.paused) prompt(g, sf, 'Paused', null, HUE);
     }
 
@@ -430,6 +666,8 @@ export default {
       stop() {
         dead = true;
         loop.stop();
+        link?.stop();
+        try { offAim?.(); } catch (err) { /* already off */ }
         window.removeEventListener('keydown', onKey);
         window.removeEventListener('keyup', onKeyUp);
         window.removeEventListener('blur', onBlur);
@@ -441,17 +679,23 @@ export default {
         sf.destroy();
         root.remove();
       },
-      pause() { S.paused = true; S.kx = 0; S.charging = false; S.drag = null; S.aim.power = 0; loop.stop(); draw(); },
-      resume() { S.paused = false; stepper.reset(); if (!S.over) loop.start(); },
+      /* an online game has no pause: the friend's table would go on without you */
+      ...(NET ? {} : {
+        pause() { S.paused = true; S.kx = 0; S.charging = false; S.drag = null; S.aim.power = 0; loop.stop(); draw(); },
+        resume() { S.paused = false; stepper.reset(); if (!S.over) loop.start(); },
+      }),
       peek: () => {
         const g = S.game;
         return {
-          mode, level: S.level, state: S.state, paused: S.paused, over: S.over, time: S.time, turn: g.turn, groups: g.groups.slice(), inHand: g.inHand,
+          mode, kind: KIND, points: (g.points || [0, 0]).slice(), clock: S.clock || 0, guide: SET().guide || 'full', level: S.level, state: S.state, paused: S.paused, over: S.over, time: S.time, turn: g.turn, groups: g.groups.slice(), inHand: g.inHand,
           breaking: g.breaking, shots: g.shots, myShots: S.myShots, fouls: g.fouls.slice(), winner: g.over ? g.over.winner : null, reason: g.over ? g.over.reason : '',
           balls: g.balls.map(b => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy, in: b.in })), targets: targets(g), msg: S.msg, last: S.last,
           aim: { angle: S.aim.angle, power: S.aim.power }, hand: { ...S.hand }, rolling: !!S.sim, status: statusEl.textContent,
           left: { solid: remaining(g, 'solid'), stripe: remaining(g, 'stripe') },
           view: { ox: V.ox, oy: V.oy, s: V.s, tx: OX, ty: OY, w: TW, h: TH },
+          online: !!NET, me: ME, hash: stateHash(g),
+          net: S.net ? { shots: S.net.log.length, rejected: S.net.rejected, voided: S.net.voided, pending: !!S.net.pending, by: S.net.log.map(x => x.by) } : null,
+          score: NET ? { me: ballsOf(ME), them: ballsOf(OPP) } : null,
         };
       },
       /* test hook — nothing in the game calls it:

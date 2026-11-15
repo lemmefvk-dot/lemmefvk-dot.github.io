@@ -85,7 +85,7 @@ export function lines(game, cx, cy) {
 function tryShot(game, angle, power, place, dt = 1 / 240) {
   const balls = cloneBalls(game.balls);
   if (place) { balls[0].x = place.x; balls[0].y = place.y; balls[0].in = true; }
-  const g2 = { ...game, balls, groups: game.groups.slice(), fouls: game.fouls.slice(), log: [], over: null };
+  const g2 = { ...game, balls, groups: game.groups.slice(), fouls: game.fouls.slice(), points: (game.points || [0, 0]).slice(), log: [], over: null };
   strike(balls, angle, power);
   const sim = createSim(balls, dt);
   const ev = sim.run(20);
@@ -95,8 +95,9 @@ function tryShot(game, angle, power, place, dt = 1 / 240) {
   let s = 0;
   if (g2.over) s = g2.over.winner === me ? 10000 : -10000;
   else {
-    const own = ev.pocketed.filter(id => id !== 0 && id !== 8 && (grp ? (id < 8 ? 'solid' : 'stripe') === grp : true)).length;
-    const theirs = ev.pocketed.filter(id => id !== 0 && id !== 8).length - own;
+    /* 8-ball: my group only; 9-ball and straight pool: any ball pocketed is mine */
+    const own = ev.pocketed.filter(id => id !== 0 && (game.kind === '9ball' || game.kind === 'straight' ? true : id !== 8 && (grp ? (id < 8 ? 'solid' : 'stripe') === grp : true))).length;
+    const theirs = game.kind === '9ball' || game.kind === 'straight' ? 0 : ev.pocketed.filter(id => id !== 0 && id !== 8).length - own;
     s += own * 100 - theirs * 40;
     if (res.continues) s += 30;
     if (res.foul) s -= 260;

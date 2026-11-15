@@ -31,6 +31,7 @@ import api from '../core/api.js?v=ps5-cloud-proxy-v11';
 import { getApp, listApps } from '../core/registry.js';
 import { roving } from '../core/roving.js';
 import { appTile } from '../core/appart.js';
+import { t } from '../core/i18n.js';
 
 const { h, icon } = api;
 
@@ -237,14 +238,14 @@ export function mountFolders({ dock, host, itemStyle, draggable, launching }) {
   function folderMenu(e, f) {
     e.preventDefault();
     api.menu([
-      { label: 'Open', icon: 'folder-open', onClick: () => openFolder(f.id) },
-      { label: 'Rename…', icon: 'edit-3', onClick: () => {
+      { label: t('Open'), icon: 'folder-open', onClick: () => openFolder(f.id) },
+      { label: t('Rename…'), icon: 'edit-3', onClick: () => {
         openFolder(f.id, { focus: false });
         const input = pop && pop.el.querySelector('.dock-folder__name');
         if (input) { input.focus(); input.select(); }
       } },
       '-',
-      { label: 'Ungroup Folder', icon: 'grid', onClick: () => { close(); dissolve(f.id); say(`${labelOf(f)} folder ungrouped`); } },
+      { label: t('Ungroup Folder'), icon: 'grid', onClick: () => { close(); dissolve(f.id); say(`${labelOf(f)} folder ungrouped`); } },
     ], e.clientX, e.clientY);
   }
 
@@ -259,7 +260,7 @@ export function mountFolders({ dock, host, itemStyle, draggable, launching }) {
       const a = getApp(k);
       return { label: a.name, icon: a.icon, onClick: () => { const f = make(k, appId); if (f) say(`New folder ${labelOf(f)}`); } };
     });
-    return items.length ? { label: 'Put in a Folder With', icon: 'folder', items } : null;
+    return items.length ? { label: t('Put in a Folder With'), icon: 'folder', items } : null;
   }
 
   /* ---------------- the grid ---------------- */
@@ -273,8 +274,8 @@ export function mountFolders({ dock, host, itemStyle, draggable, launching }) {
         e.preventDefault();
         e.stopPropagation();
         api.menu([
-          { label: running ? 'Show' : 'Open', icon: 'external-link', onClick: () => { close(); wm.toggleApp(appId); } },
-          { label: 'Take Out of Folder', icon: 'folder-open', onClick: () => { close(); takeOut(appId); say(`${a.name} taken out of the folder`); } },
+          { label: running ? t('Show') : t('Open'), icon: 'external-link', onClick: () => { close(); wm.toggleApp(appId); } },
+          { label: t('Take Out of Folder'), icon: 'folder-open', onClick: () => { close(); takeOut(appId); say(`${a.name} taken out of the folder`); } },
         ], e.clientX, e.clientY);
       },
     },
@@ -303,7 +304,7 @@ export function mountFolders({ dock, host, itemStyle, draggable, launching }) {
     const tile = tileOf(id);
     if (!f || !tile) return;
     const name = labelOf(f);
-    const input = h('input.dock-folder__name', { value: name, 'aria-label': 'Folder name', maxlength: String(NAME_MAX), spellcheck: 'false' });
+    const input = h('input.dock-folder__name', { value: name, 'aria-label': t('Folder name'), maxlength: String(NAME_MAX), spellcheck: 'false' });
     input.addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
@@ -312,9 +313,9 @@ export function mountFolders({ dock, host, itemStyle, draggable, launching }) {
     });
     input.addEventListener('change', () => rename(id, input.value));
     const cols = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(f.apps.length))));
-    const grid = h('div.dock-folder__grid', { role: 'group', 'aria-label': `Apps in ${name}`, style: { gridTemplateColumns: `repeat(${cols}, 1fr)` } },
+    const grid = h('div.dock-folder__grid', { role: 'group', 'aria-label': t('Apps in {name}', { name }), style: { gridTemplateColumns: `repeat(${cols}, 1fr)` } },
       f.apps.map(folderApp));
-    const el = h('div.dock-folder', { role: 'dialog', 'aria-label': `${name} folder` }, input, grid);
+    const el = h('div.dock-folder', { role: 'dialog', 'aria-label': t('{name} folder', { name }) }, input, grid);
     host.appendChild(el);
     place(el, tile);
     const offRove = roving(grid, { items: '.dock-folder__app', orientation: 'grid', columns: () => cols });

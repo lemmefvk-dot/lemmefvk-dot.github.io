@@ -98,4 +98,22 @@ export function tally(P) {
   return { counts, pct, who, voters, total: counts.reduce((a, b) => a + b, 0) };
 }
 
-export default { LIMITS, parsePoll, parseVote, parseClose, newPoll, isOpen, applyVote, applyClose, tally };
+/** Starting points for the new-poll form: a question and its options, nothing more. */
+export const TEMPLATES = [
+  { name: 'Which game tonight?', q: 'Which game tonight?', opts: ['Roblox', 'Minecraft', 'Something from Static Games'] },
+  { name: 'Movie or anime night?', q: 'Movie or anime night?', opts: ['Movie', 'Anime', 'Neither, let us play'] },
+  { name: 'What time?', q: 'What time works?', opts: ['6 pm', '7 pm', '8 pm'] },
+  { name: 'Yes or no', q: 'Are you in?', opts: ['Yes', 'No', 'Maybe'] },
+  { name: 'This or that', q: 'Which one?', opts: ['This', 'That'] },
+];
+
+/** The results as plain text, to paste somewhere. Counted only from votes this device received. */
+export function resultsText(P, now = Date.now()) {
+  const t = tally(P);
+  const lines = [P.q, ''];
+  P.opts.forEach((o, i) => lines.push(`${o}: ${t.counts[i]} (${t.pct[i]}%)`));
+  lines.push('', `${t.voters} ${t.voters === 1 ? 'person' : 'people'} voted · ${isOpen(P, now) ? 'still open' : 'closed'}`);
+  return lines.join('\n');
+}
+
+export default { LIMITS, TEMPLATES, resultsText, parsePoll, parseVote, parseClose, newPoll, isOpen, applyVote, applyClose, tally };

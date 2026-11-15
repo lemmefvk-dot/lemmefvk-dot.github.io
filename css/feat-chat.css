@@ -1,0 +1,76 @@
+/* Static Chat: shared spaces, direct messages, voice, stickers, pins (js/apps/chat.js).
+   The base chat styles are in apps.css; poll cards come from feat-social.css. */
+.ch__topic .btn,.ch__topic .ibtn{flex:0 0 auto}
+.ch__topic .ibtn.is-on{color:var(--accent-soft)}
+.ch-chan.is-muted{color:var(--ink-2)}   /* muted, not faded: opacity would drop it under AA contrast */
+.ch-chan .icon{width:11px;height:11px}
+.ch-space .glyph{flex:0 0 auto}
+
+/* pinned line */
+.ch__pins{display:flex;align-items:center;gap:var(--sp-3);flex:0 0 auto;padding:var(--sp-2) var(--sp-5);border-bottom:1px solid var(--line-0);background:var(--fill-0);font-size:var(--fs-11);color:var(--ink-2)}
+.ch__pins.hidden{display:none}
+.ch__pins .icon{width:13px;height:13px;color:var(--accent-soft);flex:0 0 auto}
+.ch-pinned{flex:1 1 auto;min-width:0;text-align:left;color:var(--ink-2)}
+.ch-pinned b{color:var(--ink-1);font-weight:600}
+.ch-pinned:hover{color:var(--ink-0)}
+.ch-msg.is-pinned{box-shadow:inset 2px 0 0 var(--accent-soft)}
+.ch-msg__pin .icon{width:10px;height:10px;color:var(--accent-soft)}
+.ch-msg.is-flash{animation:ch-flash 1.6s var(--ease)}
+@keyframes ch-flash{0%,60%{background:rgba(var(--accent-rgb)/.22)}100%{background:transparent}}
+
+/* the unread line */
+.ch-new{display:flex;align-items:center;gap:var(--sp-4);margin:var(--sp-3) 0}
+.ch-new::before,.ch-new::after{content:"";height:1px;background:rgba(var(--accent-rgb)/.5);flex:1}
+.ch-new span{padding:1px 6px;border-radius:var(--r-xs);background:var(--accent);color:var(--accent-ink);font-size:calc(9px * var(--fs-k,1));font-weight:750;letter-spacing:.08em;text-transform:uppercase}
+
+/* mentions */
+.ch-mention{padding:0 3px;border-radius:4px;background:rgba(var(--accent-rgb)/.16);color:var(--accent-soft);font-weight:600}
+.ch-mention.is-me{background:rgba(var(--accent-rgb)/.34);color:var(--ink-0)}
+.ch-msg.is-mention{box-shadow:inset 2px 0 0 #fcd34d;background:linear-gradient(90deg,rgba(252,211,77,.08),transparent 60%)}
+
+/* what happened to a message you sent */
+.ch-msg__sent{font-size:calc(9px * var(--fs-k,1));color:var(--ink-4)}
+.ch-msg__sent.is-local{color:#ffb86b}
+
+/* message bodies that are not text */
+.ch-sticker{width:96px;height:96px;display:block;user-select:none}
+.ch-card{display:flex;align-items:center;gap:var(--sp-4);max-width:420px;padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);background:var(--fill-1);border:1px solid var(--line-1);font-size:var(--fs-11)}
+.ch-card>.icon{width:18px;height:18px;flex:0 0 auto;color:var(--accent-soft)}
+.ch-card .col{min-width:0;gap:1px}
+.ch-card b{color:var(--ink-0);overflow-wrap:anywhere}
+.ch-voice{display:flex;align-items:center;gap:var(--sp-3)}
+.ch-voice audio{height:32px;max-width:260px}
+.ch-voice>.icon{width:14px;height:14px;color:var(--accent-soft)}
+.ch-lone{display:block;margin-top:var(--sp-2)}
+
+/* the composer: tools, popovers, mentions, recording */
+.ch__tools{display:flex;align-items:center;gap:1px;flex:0 0 auto}
+.ch__tool{width:28px;height:28px}
+.ch__tool .icon{width:15px;height:15px}
+.ch__tool.is-off{opacity:.5}
+.ch__box.hidden,.ch-rec.hidden{display:none}
+.ch__composer{position:relative}
+.ch__state{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) var(--sp-4) 0;font-size:calc(10px * var(--fs-k,1));color:var(--ink-3)}
+.ch__state .icon{width:11px;height:11px;flex:0 0 auto}
+.ch__state.is-live{color:#66e39a}
+.ch__state.hidden{display:none}
+.ch-pop{position:absolute;left:var(--sp-6);right:var(--sp-6);bottom:calc(100% - var(--sp-3));z-index:5;max-height:min(70vh,420px);overflow:auto;border-radius:var(--r-lg);background:var(--glass-3,var(--fill-2));border:1px solid var(--line-2);box-shadow:var(--sh-4,var(--sh-3));backdrop-filter:blur(18px)}
+.ch-pop.hidden{display:none}
+.ch-pop__in{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-5);max-width:420px}
+.ch-pop__or{font-size:var(--fs-10);color:var(--ink-3);text-align:center}
+.ch-pop .so-pf{width:100%;max-width:100%}
+.ch-stk{display:grid;grid-template-columns:repeat(auto-fill,minmax(54px,1fr));gap:var(--sp-2)}
+.ch-stk__b{display:grid;place-items:center;padding:4px;border-radius:var(--r-sm);background:var(--fill-0)}
+.ch-stk__b:hover,.ch-stk__b:focus-visible{background:var(--fill-2)}
+.ch-pick__list{display:flex;flex-direction:column;gap:2px;max-height:220px;overflow:auto}
+.ch-pick__i{text-align:left}
+.ch-ment{position:absolute;left:var(--sp-6);bottom:calc(100% - var(--sp-3));z-index:6;display:flex;flex-direction:column;min-width:180px;padding:var(--sp-2);border-radius:var(--r-md);background:var(--glass-3,var(--fill-2));border:1px solid var(--line-2);box-shadow:var(--sh-3)}
+.ch-ment.hidden{display:none}
+.ch-ment__i{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) var(--sp-3);border-radius:var(--r-sm);font-size:var(--fs-11);text-align:left}
+.ch-ment__i:hover,.ch-ment__i:first-child{background:var(--fill-1)}
+.ch-ment__i .ch-avatar{width:20px;height:20px;border-radius:7px;font-size:var(--fs-10)}
+.ch-rec{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-3) var(--sp-5);border-radius:var(--r-xl);background:var(--glass-2);border:1px solid var(--line-accent)}
+.ch-rec audio{height:32px;max-width:280px}
+.ch-rec__dot{width:9px;height:9px;border-radius:50%;background:#ff4d6a;animation:pulse 1.1s var(--ease) infinite}
+.ch-rec__t{font-variant-numeric:tabular-nums;font-size:var(--fs-11);color:var(--ink-2)}
+@media (prefers-reduced-motion:reduce){.ch-rec__dot,.ch-msg.is-flash{animation:none}}

@@ -10,6 +10,12 @@
    earlier Store faked all four, and the brief is explicit that
    nothing on screen should be made up.
 
+   Looks are kept in slots ("Study", "Gaming", "Night"), switched in one
+   click, sent to a friend who previews them first, and can switch by
+   themselves between a day look and a night look (js/apps/store-looks.js).
+   Everything changed here is remembered for a one-tap Undo, every item can
+   say what it changes, and a section can be put back to its default.
+
    Community creations are the games published on this device.
    Other people's games need a server, which StaticOS does not
    have; the section says so instead of inventing any.
@@ -21,6 +27,10 @@ import sfx from '../core/sfx.js';
 import { ARCADE } from '../arcade/index.js';
 import { WIDGET_CATALOG, widgetHidden, setWidgetHidden } from '../shell/widgets.js?v=ps5-cloud-proxy-v12';
 import { appTile } from '../core/appart.js';
+import * as LC from '../core/lookcode.js';
+import * as HW from '../core/halloween.js';
+import { LABS } from '../core/labs.js';
+import * as SL from './store-looks.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-store-css')) {
   const l = document.createElement('link');
@@ -40,6 +50,7 @@ const SECTIONS = [
   { id: 'Themes', icon: 'palette', group: 'Make it yours' },
   { id: 'Wallpapers', icon: 'wallpaper', group: 'Make it yours' },
   { id: 'Icons', icon: 'diamond', group: 'Make it yours' },
+  { id: 'Cursors', icon: 'mouse-pointer', group: 'Make it yours' },
   { id: 'Widgets', icon: 'layers', group: 'Make it yours' },
   { id: 'Sounds', icon: 'volume-2', group: 'Make it yours' },
   { id: 'Layouts', icon: 'desktop', group: 'Make it yours' },
@@ -60,6 +71,7 @@ const ICON_STYLES = [
   { id: 'flat', name: 'Flat', note: 'No light, no bevel: just the colour.' },
   { id: 'outline', name: 'Outline', note: 'Hollow tiles, drawn in each app’s colour.' },
   { id: 'tinted', name: 'Tinted', note: 'Every tile in the accent colour, so the whole set matches your theme.' },
+  { id: 'clay', name: 'Clay', note: 'Soft, puffy tiles with a pressed-out look, as if modelled in clay.' },
 ];
 
 const LAYOUTS = [
@@ -78,61 +90,24 @@ const LAYOUTS = [
     prefs: { desktopIcons: false, widgetsVisible: false, desktopClock: false, dockMagnify: false } },
 ];
 
+/* the bar along the bottom (prefs.shellLayout) and the launcher (prefs.launcherStyle): js/shell/dock.js, launcher.js */
+const SHELLS = [
+  { id: 'dock', name: 'Dock', note: 'A floating bar in the middle of the bottom edge, with icons that swell as you point at them. The default.' },
+  { id: 'taskbar', name: 'Taskbar', note: 'A bar along the whole bottom edge: a Start button on the left, a name beside each open app, the Trash on the right.' },
+];
+const LAUNCHERS = [
+  { id: 'panel', name: 'Launcher panel', note: 'A panel of pinned apps, with an All apps list one click away. The default.' },
+  { id: 'start', name: 'Start menu', note: 'Every app in a list down the left, the pinned ones and recent files on the right.' },
+];
+
 const hueArt = hue => ({ '--g1': `hsl(${hue} 85% 64%)`, '--g2': `hsl(${hue} 70% 26%)` });
 
-/* ---------- look codes --------------------------------------------- *
+/* ---------- look codes ---------------------------------------------- *
  * StaticOS has no server, so "share your setup" is a code you copy and
- * send: your accent, light/dark, wallpaper, icon style, sound pack and
- * desktop layout, packed as base64url JSON behind a prefix. Pasting one
- * shows exactly what it will change and can be undone. Decoding is
- * strict — every field is checked against what this build knows, and a
- * custom wallpaper is only accepted as an https image/video URL.
+ * send: see js/core/lookcode.js, which also keeps looks in slots and sends
+ * them to friends. Pasting a code shows exactly what it will change and can
+ * be undone. ICON_STYLES above is the list of icon styles that code knows.
  * ------------------------------------------------------------------- */
-const LOOK_PREFIX = 'SLOOK1.';
-const LOOK_BOOLS = ['desktopIcons', 'widgetsVisible', 'desktopClock', 'dockMagnify'];
-const b64u = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const unb64u = s => decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4))));
-
-function encodeLook(store) {
-  const p = store.get('prefs', {}) || {};
-  const w = WP.active(store);
-  const look = {
-    a: THEMES.canonId(p.accent),
-    m: p.theme === 'light' ? 'light' : 'dark',
-    i: ICON_STYLES.some(s => s.id === p.iconStyle) ? p.iconStyle : 'glass',
-    s: sfx.PACKS.some(x => x.id === p.soundPack) ? p.soundPack : 'glass',
-    d: Object.fromEntries(LOOK_BOOLS.map(k => [k, p[k] !== false])),
-  };
-  if (w?.built) look.w = { id: w.id };
-  else if (w && /^https:\/\//i.test(w.url || '')) look.w = { url: w.url, name: String(w.name || 'Wallpaper').slice(0, 40), kind: w.kind };
-  return LOOK_PREFIX + b64u(JSON.stringify(look));
-}
-
-/** -> { look, notes[] } or throws with a plain-language reason */
-function decodeLook(code) {
-  const raw = String(code || '').trim();
-  if (!raw.startsWith(LOOK_PREFIX)) throw new Error('That isn’t a StaticOS look code (they start with SLOOK1.).');
-  let o;
-  try { o = JSON.parse(unb64u(raw.slice(LOOK_PREFIX.length))); } catch (e) { throw new Error('That code is damaged — it may have been cut off when it was copied.'); }
-  if (!o || typeof o !== 'object') throw new Error('That code is empty.');
-  const look = {};
-  if (THEMES.isTheme(o.a) || THEMES.isHex(o.a)) look.accent = THEMES.canonId(o.a);
-  if (o.m === 'light' || o.m === 'dark') look.theme = o.m;
-  if (ICON_STYLES.some(s => s.id === o.i)) look.iconStyle = o.i;
-  if (sfx.PACKS.some(x => x.id === o.s)) look.soundPack = o.s;
-  if (o.d && typeof o.d === 'object') {
-    look.prefs = {};
-    for (const k of LOOK_BOOLS) if (typeof o.d[k] === 'boolean') look.prefs[k] = o.d[k];
-  }
-  if (o.w && typeof o.w === 'object') {
-    if (typeof o.w.id === 'string' && WP.BUILT_IN.some(w => w.id === o.w.id)) look.wallpaper = { id: o.w.id };
-    else if (typeof o.w.url === 'string' && /^https:\/\/[^\s"'<>]+$/i.test(o.w.url) && o.w.url.length < 600) {
-      look.wallpaper = { url: o.w.url, name: String(o.w.name || 'Shared wallpaper').replace(/[<>]/g, '').slice(0, 40), kind: ['image', 'gif', 'video'].includes(o.w.kind) ? o.w.kind : undefined };
-    }
-  }
-  if (!Object.keys(look).length) throw new Error('That code doesn’t contain anything this version of StaticOS understands.');
-  return look;
-}
 
 defineApp({
   id: 'store',
@@ -161,6 +136,17 @@ defineApp({
     const setPrefs = patch => store.set('prefs', { ...prefs(), ...patch });
     const note = n => api.notify({ app: 'Static Store', icon: 'shopping-bag', timeout: 3500, ...n });
     const has = id => !!api.getApp(id);
+    let AM = null, friendsMod = null, offFriends = null;
+    import('../core/automations.js').then(m => { AM = m; if (!dead && S.sec === 'In use') paint(); }).catch(() => {});
+    import('../core/friends.js').then(m => {
+      friendsMod = m;
+      if (dead) return;
+      try { offFriends = m.onChange(() => { if (S.sec === 'In use') soon(); }); } catch (e) { /* no friends here */ }
+      if (S.sec === 'In use') paint();
+    }).catch(() => {});
+    /* one tap to put back what a change replaced (js/apps/store-looks.js) */
+    const track = SL.track;
+    const dflt = k => store.defaults?.prefs?.[k];
 
     /* ---------------- chrome --------------- */
     const btnBack = h('button.ibtn.tip', { 'data-tip': 'Back', 'aria-label': 'Back', onclick: () => goBack() }, icon('chevron-left'));
@@ -177,7 +163,8 @@ defineApp({
     const side = h('aside.app__side.st-side');
     const secTitle = h('div.app__title');
     const secCount = h('span.dim');
-    const bar = h('div.app__bar', secTitle, secCount, h('div.grow'));
+    const barTools = h('div.st-bartools');
+    const bar = h('div.app__bar', secTitle, secCount, h('div.grow'), barTools);
     const content = h('div.app__content.st');
     root.appendChild(h('div.app', side, h('div.app__main', bar, content)));
 
@@ -198,16 +185,34 @@ defineApp({
     const tag = (text, ic, accent) => h(`span.st-tag${accent ? '.st-tag--on' : ''}`, ic ? icon(ic) : null, h('span', { text }));
 
     /** The standard catalogue row. */
-    const row = ({ art, name, sub, tags = [], actions = [], on, key, menu }) => h(`div.store__item.st-item${on ? '.is-on' : ''}`, {
-      dataset: { item: key || name },
-      oncontextmenu: menu ? e => { e.preventDefault(); api.menu(menu(), e.clientX, e.clientY); } : null,
-    },
-      art,
-      h('div.grow.st-item__body',
-        h('b', { text: name }),
-        sub ? h('small', { text: sub }) : null,
-        tags.filter(Boolean).length ? h('div.st-tags', tags.filter(Boolean)) : null),
-      actions.filter(Boolean).length ? h('div.st-item__acts', actions.filter(Boolean)) : null);
+    /** "What this changes": a button and a panel listing exactly what turning an item on does. */
+    const changesUI = (name, changes) => {
+      if (!changes || !changes.length) return { btn: null, panel: null };
+      const panel = h('div.st-changes', { hidden: true },
+        h('b', { text: 'What this changes' }),
+        h('ul', changes.map(t => h('li', { text: t }))));
+      const btn = h('button.ibtn.tip', {
+        type: 'button', 'data-tip': 'What this changes', 'aria-label': `What ${name} changes`, 'aria-expanded': 'false', 'data-changes': '',
+        onclick: e => { e.stopPropagation(); panel.hidden = !panel.hidden; btn.setAttribute('aria-expanded', String(!panel.hidden)); },
+      }, icon('info'));
+      return { btn, panel };
+    };
+
+    const row = ({ art, name, sub, tags = [], actions = [], on, key, menu, changes }) => {
+      const ch = changesUI(name, changes);
+      const acts = [ch.btn, ...actions].filter(Boolean);
+      return h(`div.store__item.st-item${on ? '.is-on' : ''}`, {
+        dataset: { item: key || name },
+        oncontextmenu: menu ? e => { e.preventDefault(); api.menu(menu(), e.clientX, e.clientY); } : null,
+      },
+        art,
+        h('div.grow.st-item__body',
+          h('b', { text: name }),
+          sub ? h('small', { text: sub }) : null,
+          tags.filter(Boolean).length ? h('div.st-tags', tags.filter(Boolean)) : null,
+          ch.panel),
+        acts.length ? h('div.st-item__acts', acts) : null);
+    };
 
     const grid = (items, cls = 'grid2') => h(`div.${cls}`, items);
     const shelf = (label, items, more) => (items.length ? h('section.st-shelf',
@@ -253,6 +258,7 @@ defineApp({
       const list = (store.get('dock') || []).filter(x => x !== id);
       store.set('dock', dockHas(id) ? list : [...list, id]);
     }
+    /* the Dock is its own saved list, so a Dock change gets its own one-tap undo */
 
     function appRow(app, sub) {
       const inDock = dockHas(app.id);
@@ -262,9 +268,10 @@ defineApp({
         name: app.name,
         sub: sub || app.desc || '',
         tags: [tag(app.category || 'App', 'tag'), inDock ? tag('In the Dock', 'check', true) : null],
+        changes: inDock ? [`Removes ${app.name} from the Dock (or the taskbar). The app itself stays installed.`] : [`Adds ${app.name} to the Dock (or the taskbar), at the end.`, 'Nothing else changes.'],
         actions: [
           act({ label: 'Open', ic: 'external-link', primary: true, run: () => api.openApp(app.id) }),
-          act({ label: inDock ? 'Unpin' : 'Pin', ic: inDock ? 'minus' : 'pin', tip: inDock ? `Remove ${app.name} from the Dock` : `Keep ${app.name} in the Dock`, run: () => toggleDock(app.id) }),
+          act({ label: inDock ? 'Remove from Dock' : 'Add to Dock', ic: inDock ? 'minus' : 'pin', tip: inDock ? `Remove ${app.name} from the Dock` : `Keep ${app.name} in the Dock`, run: () => track(`${inDock ? 'Removed' : 'Added'} ${app.name} ${inDock ? 'from' : 'to'} the Dock`, () => toggleDock(app.id)) }),
         ],
       });
     }
@@ -287,7 +294,8 @@ defineApp({
         name: t.name,
         sub: t.note,
         tags: [cur === t.id ? tag('In use', 'check', true) : null],
-        actions: [cur === t.id ? null : act({ label: 'Use', ic: 'palette', primary: true, run: () => { setPrefs({ accent: t.id }); } })],
+        changes: [`The accent colour becomes ${t.name}: buttons, highlights, glows and active states.`, 'Light or dark, your wallpaper and your icons stay as they are.'],
+        actions: [cur === t.id ? null : act({ label: 'Use', ic: 'palette', primary: true, run: () => track(`Theme ${t.name}`, () => setPrefs({ accent: t.id })) })],
       }));
       /* a custom hex accent is real too — show it so "In use" is never blank */
       if (THEMES.isHex(prefs().accent)) {
@@ -304,7 +312,7 @@ defineApp({
     function modeSwitch() {
       const cur = prefs().theme === 'light' ? 'light' : 'dark';
       const b = (id, label, ic) => h(`button.st-seg__b${cur === id ? '.is-on' : ''}`, {
-        type: 'button', 'aria-pressed': String(cur === id), onclick: () => { setPrefs({ theme: id }); paint(); },
+        type: 'button', 'aria-pressed': String(cur === id), onclick: () => { track(`${id === 'light' ? 'Light' : 'Dark'} mode`, () => setPrefs({ theme: id, themeAuto: false, themeSun: false })); paint(); },
       }, icon(ic), h('span', { text: label }));
       return h('div.st-modebar', h('span', { text: 'Appearance' }), h('div.st-seg', b('dark', 'Dark', 'moon'), b('light', 'Light', 'sun')),
         h('div.grow'), act({ label: 'Pick any colour', ic: 'sliders', run: () => api.openApp('settings', { section: 'themes' }) }));
@@ -325,15 +333,18 @@ defineApp({
       return WP.list(store).map(w => {
         const on = cur === w.id;
         const theme = w.theme ? THEMES.themeById(w.theme) : null;
+        const ch = changesUI(w.name, [`Your desktop wallpaper becomes ${w.name}.`, theme ? `It is paired with ${theme.name}, so your accent colour changes too.` : 'Your accent colour stays as it is.', 'Seasonal wallpapers that stand in for yours are switched off.'].filter(Boolean));
         return h(`div.st-wall${on ? '.is-on' : ''}`, { dataset: { item: `wp:${w.id}` } },
           wallPreview(w),
           h('div.st-wall__meta',
             h('div.grow',
               h('b', { text: w.name }),
               h('small', { text: w.blurb || (w.built ? 'Built in.' : w.code ? 'Unlocked with a code.' : 'Added by you.') }),
-              theme ? h('div.st-tags', tag(`Brings ${theme.name}`, 'palette')) : null),
+              theme ? h('div.st-tags', tag(`Brings ${theme.name}`, 'palette')) : null,
+              ch.panel),
+            ch.btn,
             on ? tag('In use', 'check', true)
-              : act({ label: 'Use', ic: 'wallpaper', primary: true, run: () => { WP.setActive(store, w.id); } })));
+              : act({ label: 'Use', ic: 'wallpaper', primary: true, run: () => track(`Wallpaper ${w.name}`, () => { WP.setActive(store, w.id); }) })));
       });
     }
 
@@ -364,8 +375,36 @@ defineApp({
         name: s.name,
         sub: s.note,
         tags: [cur === s.id ? tag('In use', 'check', true) : null],
-        actions: [cur === s.id ? null : act({ label: 'Use', ic: 'diamond', primary: true, run: () => setPrefs({ iconStyle: s.id }) })],
+        changes: [`Every app tile (the Dock, the launcher, this Store) is drawn in the ${s.name} style.`, 'The pictures inside the tiles and all your settings stay the same.'],
+        actions: [cur === s.id ? null : act({ label: 'Use', ic: 'diamond', primary: true, run: () => track(`Icons ${s.name}`, () => setPrefs({ iconStyle: s.id })) })],
       }));
+    }
+
+    /* ---- pointers ---- */
+    function cursorItems() {
+      const cur = prefs().cursorSkin;
+      const wearing = cur && cur !== 'none' && HW.owns('cursor', cur) ? cur : 'none';
+      const out = [row({
+        key: 'cursor:none', on: wearing === 'none',
+        art: glyph('mouse-pointer', { '--g1': 'var(--ink-3)', '--g2': 'var(--bg-2, #111)' }),
+        name: 'Standard pointer', sub: 'The usual arrow. Large pointer in Settings › Accessibility works with it.',
+        tags: [wearing === 'none' ? tag('In use', 'check', true) : null],
+        changes: ['The pointer goes back to the usual arrow, hand and text cursor.'],
+        actions: [wearing === 'none' ? null : act({ label: 'Use', ic: 'mouse-pointer', primary: true, run: () => track('Standard pointer', () => HW.setCursor('none')) })],
+      })];
+      for (const c of HW.allCursors()) {
+        const mine = HW.owns('cursor', c.id), year = HW.isYearCursor(c.id);
+        out.push(row({
+          key: `cursor:${c.id}`, on: wearing === c.id,
+          art: h('img.st-cur', { src: HW.artUrl('cursor', c.id), alt: '', width: 32, height: 32 }),
+          name: c.name,
+          sub: c.note || (mine ? 'Earned, so it is yours to wear any time of year.' : /^(frost|candy-cane|gingerbread|evergreen)/.test(c.id) ? 'Opens in the advent calendar, in December.' : 'Comes from trick-or-treating at the dock pumpkin, 24 October to 1 November.'),
+          tags: [wearing === c.id ? tag('In use', 'check', true) : null, year ? tag('Any time of year', 'calendar') : mine ? tag('Earned', 'star') : tag('Not earned yet', 'lock')],
+          changes: mine ? ['The pointer over the desktop, windows and buttons becomes this one.', 'While one is worn, Large pointer (Accessibility) doesn’t resize it.'] : null,
+          actions: [mine && wearing !== c.id ? act({ label: 'Wear', ic: 'mouse-pointer', primary: true, run: () => track(`Pointer ${c.name}`, () => HW.setCursor(c.id)) }) : null],
+        }));
+      }
+      return out;
     }
 
     function widgetItems() {
@@ -378,12 +417,13 @@ defineApp({
           name: w.name,
           sub: w.desc,
           tags: [on ? tag('In the rail', 'check', true) : null],
+          changes: on ? [`Takes the ${w.name} widget out of the right-hand rail.`] : [`Puts the ${w.name} widget in the right-hand rail.`, prefs().widgetsVisible ? null : 'Shows the rail too, as it is hidden now.'].filter(Boolean),
           actions: [act({
             label: on ? 'Remove' : 'Add', ic: on ? 'minus' : 'plus', primary: !on,
-            run: () => {
+            run: () => track(`${on ? 'Removed' : 'Added'} ${w.name} widget`, () => {
               setWidgetHidden(store, w.id, on);
               if (!on && !prefs().widgetsVisible) setPrefs({ widgetsVisible: true });
-            },
+            }),
           })],
         });
       });
@@ -418,9 +458,10 @@ defineApp({
         name: p.name,
         sub: p.note,
         tags: [cur === p.id ? tag('In use', 'check', true) : null],
+        changes: [`Window, menu and notification sounds are in the ${p.name} voice.`, 'Interface sounds are switched on if they were off.', 'Volume and Mute stay as they are.'],
         actions: [
           act({ label: 'Listen', ic: 'play', tip: `Hear ${p.name}`, run: () => { if (!sfx.preview(p.id)) note({ icon: 'volume-x', title: 'Nothing to hear', message: 'Sound is muted or this browser has no audio.' }); } }),
-          cur === p.id ? null : act({ label: 'Use', ic: 'check', primary: true, run: () => setPrefs({ soundPack: p.id, uiSounds: true }) }),
+          cur === p.id ? null : act({ label: 'Use', ic: 'check', primary: true, run: () => track(`Sounds ${p.name}`, () => setPrefs({ soundPack: p.id, uiSounds: true })) }),
         ],
       }));
     }
@@ -448,13 +489,16 @@ defineApp({
     }
 
     function applyLayout(L) {
+      track(`${L.name} layout`, () => applyLayoutNow(L));
+    }
+    function applyLayoutNow(L) {
       setPrefs(L.prefs);
       if (L.widgets) {
         L.widgets.forEach(id => setWidgetHidden(store, id, false));
         /* ...and first in the rail: layout() appends any id missing from `order` */
         const raw = store.get('prefs.widgetLayout') || {};
         const order = Array.isArray(raw.order) ? raw.order.filter(id => !L.widgets.includes(id)) : [];
-        store.set('prefs.widgetLayout', { order: [...L.widgets, ...order], hidden: [...(raw.hidden || [])], h: { ...(raw.h || {}) } });
+        store.set('prefs.widgetLayout', { order: [...L.widgets, ...order], hidden: [...(raw.hidden || [])], h: { ...(raw.h || {}) }, seen: raw.seen });
       }
       note({ icon: 'desktop', title: `${L.name} layout`, message: 'Your desktop has been rearranged. Settings › Desktop has every switch.' });
     }
@@ -467,16 +511,46 @@ defineApp({
           art: layoutArt(L),
           name: L.name, sub: L.note,
           tags: [on ? tag('In use', 'check', true) : null, L.prefs.gameModeAuto ? tag('Auto Game Mode', 'gamepad') : null],
+          changes: [
+            `Desktop icons ${L.prefs.desktopIcons ? 'on' : 'off'}, widget rail ${L.prefs.widgetsVisible ? 'open' : 'hidden'}, clock ${L.prefs.desktopClock ? 'showing' : 'hidden'}.`,
+            L.prefs.dockMagnify === undefined ? null : `Dock magnification ${L.prefs.dockMagnify ? 'on' : 'off'}.`,
+            L.prefs.gameModeAuto ? 'Game Mode turns on by itself when a game opens.' : null,
+            L.widgets ? 'The Games and Game Mode widgets move to the top of the rail.' : null,
+          ].filter(Boolean),
           actions: [on ? null : act({ label: 'Use', ic: 'desktop', primary: true, run: () => applyLayout(L) })],
         });
       });
     }
 
-    const LABS = [
-      { key: 'labStaticumAI', name: 'Staticum answers anything', icon: 'sparkles', note: 'Questions no skill covers go to the free AI model instead of a shrug.' },
-      { key: 'labFps', name: 'Frame-rate counter', icon: 'gauge', note: 'A small, measured fps reading in the corner of the screen.' },
-      { key: 'labCompact', name: 'Compact title bars', icon: 'window', note: 'Thinner window title bars, for more room on small screens.' },
-    ];
+    const shellOf = () => (prefs().shellLayout === 'taskbar' ? 'taskbar' : 'dock');
+    const launcherOf = () => (prefs().launcherStyle === 'start' ? 'start' : 'panel');
+    const shellArt = (kind, which) => {
+      const taskbar = (kind === 'bar' ? which : shellOf()) === 'taskbar';
+      return h('div.st-lay', { 'aria-hidden': 'true' },
+        kind === 'launcher' ? h(`div.st-lay__${which === 'start' ? 'startmenu' : 'panel'}`) : null,
+        h(`div.st-lay__${taskbar ? 'tbar' : 'dock'}`));
+    };
+    function shellItems() {
+      return [
+        ...SHELLS.map(x => row({
+          key: `shell:${x.id}`, on: shellOf() === x.id, art: shellArt('bar', x.id), name: x.name, sub: x.note,
+          tags: [shellOf() === x.id ? tag('In use', 'check', true) : null],
+          changes: x.id === 'taskbar'
+            ? ['The bar runs along the whole bottom edge with a Start button.', 'Dock position, size and magnification stop applying while it is on.', 'Your pinned apps and their order stay the same.', 'Windows get a little more height back.']
+            : ['The bar floats in the middle of the bottom edge again, with your Dock settings.', 'Your pinned apps and their order stay the same.'],
+          actions: [shellOf() === x.id ? null : act({ label: 'Use', ic: 'monitor', primary: true, run: () => track(`${x.name} bar`, () => setPrefs({ shellLayout: x.id })) })],
+        })),
+        ...LAUNCHERS.map(x => row({
+          key: `launcher:${x.id}`, on: launcherOf() === x.id, art: shellArt('launcher', x.id), name: x.name, sub: x.note,
+          tags: [launcherOf() === x.id ? tag('In use', 'check', true) : null],
+          changes: x.id === 'start'
+            ? ['The launcher opens from the bottom-left corner as a Start menu.', 'Every app is listed on the left, in order; the pinned apps and recent files are on the right.', 'Search, keys and right-click menus work the same.']
+            : ['The launcher is the panel of pinned apps again.'],
+          actions: [launcherOf() === x.id ? null : act({ label: 'Use', ic: 'grid-9', primary: true, run: () => track(x.name, () => setPrefs({ launcherStyle: x.id })) })],
+        })),
+      ];
+    }
+
     function labItems() {
       return LABS.map(l => {
         const on = !!prefs()[l.key];
@@ -484,8 +558,9 @@ defineApp({
           key: `lab:${l.key}`, on,
           art: glyph(l.icon, { '--g1': '#fde68a', '--g2': '#78350f' }),
           name: l.name, sub: l.note,
-          tags: [tag('Experimental', 'zap'), on ? tag('On', 'check', true) : null],
-          actions: [act({ label: on ? 'Turn off' : 'Try it', primary: !on, run: () => setPrefs({ [l.key]: !on }) })],
+          tags: [tag('Experimental', 'zap'), on ? tag('On', 'check', true) : null, tag(l.sends ? 'Sends your question out' : 'Stays on this computer', l.sends ? 'globe' : 'lock')],
+          changes: [...l.changes, l.sends || 'Nothing is sent off this computer.', l.undo],
+          actions: [act({ label: on ? 'Turn off' : 'Try it', primary: !on, run: () => track(`${l.name} ${on ? 'off' : 'on'}`, () => setPrefs({ [l.key]: !on })) })],
         });
       });
     }
@@ -609,8 +684,16 @@ defineApp({
         tile('Icons', ic.name, 'Icons', glyph('diamond', { '--g1': '#c4b5fd', '--g2': '#4c1d95' }, 30)),
         tile('Sounds', p.uiSounds === false ? `${sp.name} · off` : sp.name, 'Sounds', glyph('volume-2', { '--g1': '#f0abfc', '--g2': '#701a75' }, 30)),
         tile('Layout', L ? L.name : 'Your own', 'Layouts', glyph('desktop', { '--g1': '#86efac', '--g2': '#14532d' }, 30)),
+        tile('Bar', `${shellOf() === 'taskbar' ? 'Taskbar' : 'Dock'} · ${launcherOf() === 'start' ? 'Start menu' : 'Panel'}`, 'Layouts', glyph('monitor', { '--g1': '#7dd3fc', '--g2': '#0c4a6e' }, 30)),
+        tile('Pointer', (() => { const c = prefs().cursorSkin; const f = c && c !== 'none' && HW.owns('cursor', c) ? HW.find('cursor', c) : null; return f ? f.name : 'Standard'; })(), 'Cursors', glyph('mouse-pointer', { '--g1': '#fda4af', '--g2': '#881337' }, 30)),
         tile('Labs', `${LABS.filter(l => p[l.key]).length} on`, 'Labs', glyph('zap', { '--g1': '#fde68a', '--g2': '#78350f' }, 30))));
 
+      content.appendChild(SL.recentCard(KX()));
+      const fl = SL.friendLooksCard(KX());
+      if (fl) content.appendChild(fl);
+      content.appendChild(SL.slotsCard(KX()));
+      const dn = SL.dayNightCard(KX());
+      if (dn) content.appendChild(dn);
       content.appendChild(shareCard());
 
       const dock = appsFor(store.get('dock') || []);
@@ -623,42 +706,16 @@ defineApp({
     }
 
     /* ---------------- share your look ---------------- */
-    function describeLook(L) {
-      const out = [];
-      if (L.accent) out.push(`Theme: ${THEMES.themeById(L.accent).name}${THEMES.isHex(L.accent) ? ` (${L.accent})` : ''}`);
-      if (L.theme) out.push(`Appearance: ${L.theme === 'light' ? 'Light' : 'Dark'}`);
-      if (L.wallpaper) out.push(`Wallpaper: ${L.wallpaper.id ? (WP.byId(store, L.wallpaper.id)?.name || L.wallpaper.id) : `${L.wallpaper.name} (from ${new URL(L.wallpaper.url).hostname})`}`);
-      if (L.iconStyle) out.push(`Icons: ${ICON_STYLES.find(s => s.id === L.iconStyle).name}`);
-      if (L.soundPack) out.push(`Sounds: ${sfx.PACKS.find(x => x.id === L.soundPack).name}`);
-      if (L.prefs && Object.keys(L.prefs).length) {
-        const on = k => (L.prefs[k] === false ? 'off' : 'on');
-        out.push(`Desktop: icons ${on('desktopIcons')}, widgets ${on('widgetsVisible')}, clock ${on('desktopClock')}`);
-      }
-      return out;
-    }
+    const describeLook = L => LC.describeLook(L, store);
 
     function applyLook(L) {
-      const before = { prefs: { ...prefs() }, wallpaper: store.get('wallpaper') };
-      const patch = { ...(L.prefs || {}) };
-      if (L.accent) patch.accent = L.accent;
-      if (L.theme) patch.theme = L.theme;
-      if (L.iconStyle) patch.iconStyle = L.iconStyle;
-      if (L.soundPack) patch.soundPack = L.soundPack;
-      setPrefs(patch);
-      if (L.wallpaper?.id) WP.setActive(store, L.wallpaper.id);
-      else if (L.wallpaper?.url) {
-        const existing = WP.custom(store).find(w => w.url === L.wallpaper.url);
-        const w = existing || WP.add(store, { name: L.wallpaper.name, url: L.wallpaper.url, kind: L.wallpaper.kind, by: 'look code' });
-        WP.setActive(store, w.id);
-      }
-      /* the accent of a paired wallpaper must not override the code's own accent */
-      if (L.accent) setPrefs({ accent: L.accent });
+      const undo = track('Look from a code', () => LC.applyLook(L, store));
       note({ icon: 'sparkles', title: 'Look applied', message: describeLook(L).join(' · '), timeout: 8000,
-        actions: [{ label: 'Undo', onClick: () => { store.set('prefs', before.prefs); if (before.wallpaper) store.set('wallpaper', before.wallpaper); } }] });
+        actions: [{ label: 'Undo', onClick: () => undo() }] });
     }
 
     function shareCard() {
-      const mine = encodeLook(store);
+      const mine = LC.encodeLook(store);
       const out = h('input.st-code', { type: 'text', readonly: true, value: mine, 'aria-label': 'Your look code', onfocus: e => e.target.select() });
       const paste = h('input.st-code', { type: 'text', placeholder: 'Paste a look code (SLOOK1.…)', spellcheck: 'false', 'aria-label': 'A look code to try' });
       const preview = h('div.st-lookprev', { 'aria-live': 'polite' });
@@ -668,9 +725,10 @@ defineApp({
         const v = paste.value.trim();
         if (!v) return;
         try {
-          pending = decodeLook(v);
+          pending = LC.decodeLook(v);
           preview.append(h('div.st-lookprev__h', { text: 'This code will change:' }),
             h('ul', describeLook(pending).map(t => h('li', { text: t }))),
+            SL.lookPreview(KX(), pending),
             h('div.row', { style: { gap: '6px', marginTop: '8px' } },
               h('button.btn.btn--sm.btn--primary', { type: 'button', onclick: () => { const L = pending; S.paste = ''; paste.value = ''; clear(preview); applyLook(L); } }, icon('check'), 'Apply'),
               h('button.btn.btn--sm', { type: 'button', onclick: () => { S.paste = ''; paste.value = ''; clear(preview); } }, 'Cancel')));
@@ -701,7 +759,7 @@ defineApp({
     function searchable() {
       return [
         ...gameItems(), ...communityItems(), ...appItems(), ...creatorItems(), ...labItems(),
-        ...themeItems(), ...wallItems(), ...iconItems(), ...widgetItems(), ...soundItems(), ...layoutItems(),
+        ...themeItems(), ...wallItems(), ...iconItems(), ...cursorItems(), ...widgetItems(), ...soundItems(), ...layoutItems(), ...shellItems(),
       ];
     }
 
@@ -712,9 +770,10 @@ defineApp({
       Themes: () => `${THEMES.THEMES.length} themes`,
       Wallpapers: () => `${WP.list(store).length} wallpapers`,
       Icons: () => `${ICON_STYLES.length} styles`,
+      Cursors: () => `${HW.allCursors().filter(c => HW.owns('cursor', c.id)).length} of ${HW.allCursors().length} to wear`,
       Widgets: () => `${WIDGET_CATALOG.filter(w => !widgetHidden(store, w.id)).length} of ${WIDGET_CATALOG.length} in the rail`,
       Sounds: () => `${sfx.PACKS.length} sound packs`,
-      Layouts: () => `${LAYOUTS.length} layouts`,
+      Layouts: () => `${LAYOUTS.length} desktop layouts, ${SHELLS.length} bars, ${LAUNCHERS.length} launchers`,
       Labs: () => `${LABS.filter(l => prefs()[l.key]).length} of ${LABS.length} on`,
       Community: () => (community ? `${community.length} published here` : ''),
     };
@@ -730,7 +789,7 @@ defineApp({
           return content.append(items.length ? grid(items) : empty('wrench', 'No creator tools yet', 'They arrive with the next StaticOS update.'));
         }
         case 'Labs':
-          content.appendChild(banner('zap', 'Experiments that work but aren’t the default yet. Every one is a single switch — turn it off again any time.'));
+          content.appendChild(banner('zap', 'Experiments that work but aren’t the default yet. Each one says what it changes and whether turning it off puts everything back.'));
           return content.appendChild(grid(labItems()));
         case 'Themes':
           content.appendChild(modeSwitch());
@@ -739,6 +798,9 @@ defineApp({
           content.appendChild(redeemBox());
           return content.appendChild(h('div.st-walls', wallItems()));
         case 'Icons': return content.appendChild(grid(iconItems()));
+        case 'Cursors':
+          content.appendChild(banner('mouse-pointer', 'Pointers that are yours all year. The ones from trick-or-treating and the advent calendar show here too, once you have earned them.'));
+          return content.appendChild(grid(cursorItems()));
         case 'Widgets':
           if (!store.get('session.user')) {
             content.appendChild(banner('user', 'Widgets show on the desktop once you’re signed in.',
@@ -755,11 +817,66 @@ defineApp({
           if (prefs().muted) content.appendChild(banner('volume-x', 'Sound is muted, so you won’t hear the previews.'));
           else if (prefs().uiSounds === false) content.appendChild(banner('volume-x', 'Interface sounds are off. Choosing a pack turns them back on.'));
           return content.appendChild(grid(soundItems()));
-        case 'Layouts': return content.appendChild(grid(layoutItems()));
+        case 'Layouts':
+          content.appendChild(h('div.label', { text: 'The desktop', style: { margin: '0 0 var(--sp-3)' } }));
+          content.appendChild(grid(layoutItems()));
+          content.appendChild(h('div.label', { text: 'The bar and the launcher', style: { margin: 'var(--sp-6) 0 var(--sp-3)' } }));
+          return content.appendChild(grid(shellItems()));
         case 'Updates': return paintUpdates();
         case 'In use': return paintInUse();
         default: return null;
       }
+    }
+
+    /* ---------------- reset a section, hide what is in use ---------------- */
+    const KX = () => ({ api, act, tag, note, paint, wallPreview, appGlyph, AM, friendsMod });
+    const SECTION_RESET = {
+      Themes: { is: () => THEMES.canonId(prefs().accent) === THEMES.canonId(dflt('accent')) && prefs().theme !== 'light',
+        run: () => setPrefs({ accent: dflt('accent'), theme: 'dark', themeAuto: false, themeSun: false }) },
+      Wallpapers: { is: () => WP.active(store)?.id === store.defaults?.wallpaper, run: () => { WP.setActive(store, store.defaults?.wallpaper || 'canopy'); } },
+      Icons: { is: () => (prefs().iconStyle || 'glass') === 'glass', run: () => setPrefs({ iconStyle: 'glass' }) },
+      Cursors: { is: () => !prefs().cursorSkin || prefs().cursorSkin === 'none', run: () => HW.setCursor('none') },
+      Widgets: { is: () => { const w = prefs().widgetLayout; return !w || (!(w.hidden || []).length && !(w.order || []).length); },
+        run: () => { const w = prefs().widgetLayout || {}; store.set('prefs.widgetLayout', { order: [], hidden: [], h: {}, seen: w.seen }); } },
+      Sounds: { is: () => (prefs().soundPack || 'glass') === 'glass' && prefs().uiSounds !== false, run: () => setPrefs({ soundPack: 'glass', uiSounds: true }) },
+      Layouts: { is: () => layoutOn(LAYOUTS[0]) && shellOf() === 'dock' && launcherOf() === 'panel',
+        run: () => { setPrefs({ ...LAYOUTS[0].prefs, shellLayout: 'dock', launcherStyle: 'panel' }); } },
+      Labs: { is: () => !LABS.some(l => prefs()[l.key]), run: () => setPrefs(Object.fromEntries(LABS.map(l => [l.key, false]))) },
+    };
+    const HIDE_SECS = new Set(['Themes', 'Wallpapers', 'Icons', 'Cursors', 'Sounds', 'Layouts', 'Labs']);
+    const hideOn = () => prefs().storeHideInUse === true;
+
+    function paintBarTools() {
+      clear(barTools);
+      if (S.q) return;
+      if (HIDE_SECS.has(S.sec)) {
+        barTools.appendChild(h('label.st-toggle', { title: 'Hide the items you already use' },
+          h('input', { type: 'checkbox', checked: hideOn(), 'data-hide-in-use': '', 'aria-label': 'Hide items already in use',
+            onchange: e => { setPrefs({ storeHideInUse: e.target.checked }); paint(); } }),
+          h('span', { text: 'Hide in use' })));
+      }
+      const R = SECTION_RESET[S.sec];
+      if (R) {
+        const def = R.is();
+        barTools.appendChild(h('button.btn.btn--sm.btn--ghost', {
+          type: 'button', 'data-reset-section': S.sec, disabled: def, title: def ? `${S.sec} are already at their default` : `Put ${S.sec} back to the StaticOS default`,
+          onclick: () => {
+            const sec = S.sec;
+            track(`Reset ${sec}`, () => R.run());
+            note({ icon: 'rotate-ccw', title: `${sec} reset`, message: 'Back to the StaticOS default. Undo is in Recently changed.', timeout: 7000,
+              actions: [{ label: 'Undo', onClick: () => { const e = SL.recentList().find(x => x.label === `Reset ${sec}`); if (e) SL.undoChange(e.id); } }] });
+            paint();
+          },
+        }, icon('rotate-ccw'), 'Reset to default'));
+      }
+    }
+
+    /** Take the items already in use out of what was just painted. */
+    function hideInUse(root) {
+      if (!hideOn()) return 0;
+      const gone = [...root.querySelectorAll('.st-item.is-on, .st-wall.is-on')];
+      gone.forEach(el => el.remove());
+      return gone.length;
     }
 
     /* ---------------- nav ------------------ */
@@ -817,7 +934,13 @@ defineApp({
         secTitle.textContent = S.sec;
         secCount.textContent = COUNT[S.sec]?.() || '';
         paintSection();
+        if (HIDE_SECS.has(S.sec)) {
+          const n = hideInUse(content);
+          if (n) content.insertBefore(banner('eye', `${n} in use ${n === 1 ? 'is' : 'are'} hidden.`,
+            h('button.btn.btn--sm', { type: 'button', onclick: () => { setPrefs({ storeHideInUse: false }); paint(); } }, 'Show them')), content.firstChild);
+        }
       }
+      paintBarTools();
       btnBack.disabled = !S.back.length;
       btnFwd.disabled = !S.fwd.length;
       content.scrollTop = keep;
@@ -840,7 +963,8 @@ defineApp({
        log is written on every notification), so only a change to a pref
        the Store displays repaints it */
     const SHOWN = ['accent', 'theme', 'iconStyle', 'soundPack', 'uiSounds', 'muted', 'desktopIcons', 'widgetsVisible',
-      'desktopClock', 'dockMagnify', 'gameModeAuto', 'widgetLayout', 'labStaticumAI', 'labFps', 'labCompact'];
+      'desktopClock', 'dockMagnify', 'gameModeAuto', 'widgetLayout', 'labStaticumAI', 'labFps', 'labCompact',
+      'shellLayout', 'launcherStyle', 'cursorSkin', 'lookSlots', 'lookTimer', 'storeRecent', 'storeHideInUse'];
     const sig = () => { const p = prefs(); return JSON.stringify(SHOWN.map(k => p[k])); };
     let lastSig = sig();
     const onPrefs = () => { const n = sig(); if (n !== lastSig) { lastSig = n; soon(); } };
@@ -853,6 +977,7 @@ defineApp({
     return () => {
       dead = true;
       cancelAnimationFrame(queued);
+      try { offFriends?.(); } catch (e) { /* gone */ }
       offs.forEach(f => { try { f?.(); } catch (e) {} });
     };
   },

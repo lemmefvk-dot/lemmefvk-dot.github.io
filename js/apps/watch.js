@@ -46,6 +46,18 @@
    next visit can show them without the 8 MB download. Until then an
    uncached title says plainly that it is waiting on the catalogue.
    Nothing on screen is invented: no counts, no dates, no "trending".
+
+   Your own shelves, all kept in portal.watch beside the history:
+     Next up    an ordered queue of anime, free films and your videos
+     Lists      lists you name, mixing the same three
+     Finished   anime you marked through the last episode, free films you
+                watched to the end, videos you played to the end
+     Stats      counted from those same records and from the positions kept;
+                a line appears only when its number is real and above zero
+   History can be paused, and a title can be hidden from it for good. The
+   watchlist, history, lists and Next up export to a file and import back
+   (your own videos stay on the device: their ids mean nothing elsewhere).
+   Marking an anime keeps the `seen` list Static Anime writes ("2,7-9").
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import * as media from '../core/media.js';
@@ -66,6 +78,10 @@ const WL_KEY = 'portal.watchlist';
 const PROG_KEY = 'portal.anime.progress';
 const RESUME_KEY = 'portal.anime.resume';
 const HIST_MAX = 80;
+const LIST_MAX = 20;
+const LIST_ITEMS = 200;
+const QUEUE_MAX = 50;
+const AIRING = 'Currently Airing';   /* the catalogue's own status word, see anime.data.js LIVE_STATUS */
 const VID_MAX = 60;
 const META_MAX = 160;
 const MIN_LEN = 20;             /* seconds — anything shorter has nothing to resume */
@@ -84,14 +100,18 @@ const SECTIONS = [
   { id: 'home', label: 'Home', icon: 'home', group: 'Watch' },
   { id: 'continue', label: 'Continue Watching', icon: 'play', group: 'Watch' },
   { id: 'watchlist', label: 'Watchlist', icon: 'bookmark', group: 'Watch' },
+  { id: 'nextup', label: 'Next up', icon: 'skip-forward', group: 'Watch' },
+  { id: 'finished', label: 'Finished', icon: 'check-circle', group: 'Watch' },
+  { id: 'lists', label: 'Lists', icon: 'list', group: 'Watch' },
   { id: 'history', label: 'History', icon: 'clock', group: 'Watch' },
+  { id: 'stats', label: 'Stats', icon: 'bar-chart', group: 'Watch' },
   { id: 'movies', label: 'Movies', icon: 'film', group: 'Browse' },
   { id: 'shows', label: 'Shows', icon: 'monitor', group: 'Browse' },
   { id: 'films', label: 'Free films', icon: 'film', group: 'Browse' },
   { id: 'anime', label: 'Anime', icon: 'star', group: 'Browse' },
   { id: 'videos', label: 'Saved Videos', icon: 'folder', group: 'Browse' },
 ];
-const ALIAS = { 'continue-watching': 'continue', continuewatching: 'continue', saved: 'videos', 'saved-videos': 'videos', tv: 'shows', series: 'shows', films: 'movies', 'free-films': 'films', archive: 'films', library: 'films' };
+const ALIAS = { 'continue-watching': 'continue', continuewatching: 'continue', saved: 'videos', 'saved-videos': 'videos', tv: 'shows', series: 'shows', films: 'movies', 'free-films': 'films', archive: 'films', library: 'films', queue: 'nextup', 'next-up': 'nextup', done: 'finished', statistics: 'stats' };
 const canonSec = s => {
   const k = String(s || '').toLowerCase();
   return SECTIONS.some(x => x.id === k) ? k : (ALIAS[k] || null);
@@ -143,6 +163,11 @@ function placeNote(w) {
   if (w.how === 'opened') return 'StaticOS knows which episode you opened, not how far into it you got — the player didn’t report that.';
   return `Episode ${nf(w.ep - 1)} is ${w.marked >= w.ep - 1 ? 'marked watched' : 'finished'}.`;
 }
+/** The catalogue has no air dates, so when a title is still airing and you are caught up, say what is and isn't known. */
+function airNote(info, w) {
+  if (!info || info.status !== AIRING || !w || w.how !== 'next') return '';
+  return `${info.title} is still airing, and the catalogue has no air dates, so episode ${nf(w.ep)} may not be out yet.`;
+}
 function placeAction(w) {
   if (w.how === 'player') return `Resume ep ${nf(w.ep)} at ${fmtTime(w.t)}`;
   if (w.how === 'opened') return `Continue ep ${nf(w.ep)}`;
@@ -150,6 +175,42 @@ function placeAction(w) {
 }
 /** how far along, for the little bars: inside the episode when the player said, else through the series */
 const placeFrac = w => (w.how === 'player' && w.d ? w.t / w.d : w.of ? (w.ep - 1) / w.of : 0);
+
+/** "2,7-9" -> Set{2,7,8,9}. Bad pieces are skipped; a range is capped at `cap` (or 5000). */
+export function parseSeen(s, cap = 0) {
+  const out = new Set();
+  const lim = cap > 0 ? cap : 5000;
+  for (const part of String(s || '').split(',')) {
+    const m = /^\s*(\d{1,5})(?:\s*-\s*(\d{1,5}))?\s*$/.exec(part);
+    if (!m) continue;
+    const a = +m[1], b = m[2] ? +m[2] : a;
+    for (let n = Math.max(1, a); n <= Math.min(b, lim); n++) out.add(n);
+  }
+  return out;
+}
+/** The episodes an anime progress entry counts as ticked, by Static Anime's own rule:
+    its `seen` list when that ends at `ep`, else every episode from 1 to `ep`. */
+export function epSet(p) {
+  const top = Math.min(20000, Math.floor(Number(p?.ep) || 0));
+  if (!(top > 0)) return new Set();
+  if (typeof p.seen === 'string') {
+    const set = parseSeen(p.seen);
+    if (set.size && Math.max(...set) === top) return set;
+  }
+  return new Set(Array.from({ length: top }, (_, i) => i + 1));
+}
+/** Set{2,7,8,9} -> "2,7-9" */
+export function fmtSeen(set) {
+  const n = [...set].filter(x => x >= 1).sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i < n.length;) {
+    let j = i;
+    while (j + 1 < n.length && n[j + 1] === n[j] + 1) j++;
+    out.push(j > i ? `${n[i]}-${n[j]}` : String(n[i]));
+    i = j + 1;
+  }
+  return out.join(',');
+}
 
 /** 83.4 -> "1:23", 3723 -> "1:02:03" (cut, not rounded, like a player clock) */
 function fmtTime(t) {
@@ -224,10 +285,23 @@ function readData(raw) {
       type: String(m.type || '').slice(0, 24), score: typeof m.score === 'number' ? m.score : null,
       genres: arr(m.genres).filter(g => typeof g === 'string').slice(0, 3),
       syn: typeof m.syn === 'string' ? m.syn.slice(0, 300) : '',
+      status: typeof m.status === 'string' ? m.status.slice(0, 40) : '',
     };
   }
-  return { v: 1, history, videos, meta };
+  const lists = arr(d.lists)
+    .filter(l => l && typeof l === 'object' && typeof l.id === 'string' && l.id && typeof l.name === 'string' && l.name.trim())
+    .slice(0, LIST_MAX)
+    .map(l => ({ id: l.id.slice(0, 24), name: l.name.trim().slice(0, 60), items: arr(l.items).map(cleanRef).filter(Boolean).slice(0, LIST_ITEMS) }));
+  const queue = arr(d.queue).map(cleanRef).filter(Boolean).slice(0, QUEUE_MAX);
+  const hideHist = arr(d.hideHist).filter(x => typeof x === 'string' && /^(anime|movie|video|film):./.test(x)).map(x => x.slice(0, 620)).slice(0, 200);
+  return { v: 1, history, videos, meta, lists, queue, hideHist, pause: d.pause === true };
 }
+/** one saved reference to something watchable: anime, a free film or one of your videos */
+function cleanRef(r) {
+  if (!r || typeof r !== 'object' || !['anime', 'film', 'video'].includes(r.k) || typeof r.id !== 'string' || !r.id) return null;
+  return { k: r.k, id: r.id.slice(0, 600), title: String(r.title || '').slice(0, 200), ...(r.k === 'video' && typeof r.path === 'string' ? { path: r.path.slice(0, 600) } : {}) };
+}
+const refKey = r => `${r.k}:${r.id}`;
 
 /** Why a catalogue did not load, in words a person can act on. The browser's
     own message is kept on the end rather than shown on its own. */
@@ -516,7 +590,7 @@ defineApp({
   icon: 'play',
   g1: '#ff8566', g2: '#df3e33',
   category: 'Media',
-  keywords: ['watch', 'continue watching', 'up next', 'watchlist', 'history', 'tv', 'shows', 'series', 'movies', 'films', 'anime', 'videos', 'resume', 'queue', 'streaming'],
+  keywords: ['watch', 'continue watching', 'up next', 'watchlist', 'history', 'tv', 'shows', 'series', 'movies', 'films', 'anime', 'videos', 'resume', 'queue', 'streaming', 'finished', 'lists', 'stats', 'free films'],
   desc: 'Continue watching, your watchlist, shows, movies, anime and your videos',
   singleton: true,
   win: { w: 1040, h: 680, minW: 380, minH: 420 },
@@ -541,6 +615,8 @@ defineApp({
       mv: { sort: 'rating', genre: '' },
       sh: { sort: 'rating', genre: '' },
       an: { genre: '', sort: 'score', shown: GRID_STEP },
+      listId: '',
+      pendingAdd: null,         /* a title waiting for a new list's name */
     };
     const A = { state: 'idle', err: '' };                    /* the anime catalogue */
     const M = { state: movies ? 'ready' : 'idle', err: '' }; /* the film catalogue  */
@@ -594,7 +670,11 @@ defineApp({
     }
 
     /* ---------------- anime progress (Static Anime's own shape) ---------------- */
-    function setAnimeProgress(id, ep, of) {
+    /* An entry is {ep, of, at, seen?}. `seen` is Static Anime's list of ticked
+       episodes ("2,7-9"); every write here keeps the fields it doesn't own and
+       keeps `seen` in step: marking an episode adds it, marking the season sets
+       "1-<of>", and a reset drops the whole entry (so `seen` goes too). */
+    function setAnimeProgress(id, ep, of, { season = false } = {}) {
       const all = progAll();
       const key = `anime:${id}`;
       if (!ep) {
@@ -604,7 +684,15 @@ defineApp({
         selfSet(PROG_KEY, next);
         return;
       }
-      selfSet(PROG_KEY, { ...all, [key]: { ep, of: of || 0, at: Date.now() } });
+      const old = obj(all[key]);
+      const total = of || Number(old.of) || 0;
+      const set = season && total ? new Set(Array.from({ length: total }, (_, i) => i + 1)) : new Set([...epSet(old), ep]);
+      const top = Math.max(...set);
+      const entry = { ...old, ep: top, of: total, at: Date.now() };
+      const text = fmtSeen(set);
+      /* Static Anime leaves `seen` out when the ticks are just 1..ep; a whole season is written out */
+      if (season || !/^1-\d+$|^1$/.test(text)) entry.seen = text; else delete entry.seen;
+      selfSet(PROG_KEY, { ...all, [key]: entry });
     }
     const placeOf = id => whereLeftOff(store, 'anime', String(id));
     /** "Next episode": the one you are on counts as watched, and the next opens in Static Anime's player */
@@ -626,7 +714,7 @@ defineApp({
     async function forgetAnime(id, title) {
       const w = placeOf(id);
       const what = !w ? 'your place' : w.how === 'next' ? `that you finished episode ${nf(w.ep - 1)}` : `that you were on episode ${nf(w.ep)}`;
-      const ok = await api.confirm({ title: 'Forget your place?', message: `Static Anime will no longer remember ${what} of “${title}”, or which episodes you marked watched. This can’t be undone.`, ok: 'Forget', danger: true });
+      const ok = await api.confirm({ title: 'Reset progress?', message: `Static Anime will no longer remember ${what} of “${title}”, or which episodes you marked watched. This can’t be undone.`, ok: 'Reset', danger: true });
       if (!ok || S.dead) return;
       setAnimeProgress(id, 0);
       const res = obj(store.get(RESUME_KEY, {}));
@@ -647,15 +735,111 @@ defineApp({
       paint();
     }
 
+    /* ---------------- Next up and your lists (portal.watch.queue / .lists) ---------------- */
+    const D0 = () => readData(store.get(KEY));
+    const inNext = ref => D0().queue.some(r => refKey(r) === refKey(ref));
+    function toggleNext(ref) {
+      const D = D0();
+      const had = D.queue.some(r => refKey(r) === refKey(ref));
+      commit({ ...D, queue: had ? D.queue.filter(r => refKey(r) !== refKey(ref)) : [...D.queue, ref].slice(0, QUEUE_MAX) });
+      note({ icon: had ? 'x' : 'skip-forward', title: had ? 'Taken out of Next up' : 'Added to Next up', message: ref.title });
+      paint();
+    }
+    function moveNext(ref, dir) {
+      const D = D0();
+      const q = D.queue.slice();
+      const i = q.findIndex(r => refKey(r) === refKey(ref)), j = i + dir;
+      if (i < 0 || j < 0 || j >= q.length) return;
+      [q[i], q[j]] = [q[j], q[i]];
+      commit({ ...D, queue: q });
+      paint();
+    }
+    function toggleInList(listId, ref) {
+      const D = D0();
+      let msg = '';
+      const lists = D.lists.map(l => {
+        if (l.id !== listId) return l;
+        const had = l.items.some(r => refKey(r) === refKey(ref));
+        msg = `${had ? 'Removed from' : 'Added to'} “${l.name}”`;
+        return { ...l, items: had ? l.items.filter(r => refKey(r) !== refKey(ref)) : [...l.items, ref].slice(0, LIST_ITEMS) };
+      });
+      commit({ ...D, lists });
+      note({ icon: 'list', title: msg || 'List not found', message: ref.title });
+      paint();
+    }
+    function newList(name, ref) {
+      const D = D0();
+      const nm = String(name || '').trim().slice(0, 60);
+      if (!nm) return false;
+      if (D.lists.length >= LIST_MAX) { note({ icon: 'alert', title: 'That’s the most lists', message: `Delete one to make another (${LIST_MAX} at most).` }); return false; }
+      if (D.lists.some(l => l.name.toLowerCase() === nm.toLowerCase())) { note({ icon: 'alert', title: 'You already have a list with that name', message: nm }); return false; }
+      commit({ ...D, lists: [...D.lists, { id: `l${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`, name: nm, items: ref ? [ref] : [] }] });
+      return true;
+    }
+    async function deleteList(l) {
+      const ok = await api.confirm({ title: `Delete “${l.name}”?`, message: `The list goes away. The ${plural(l.items.length, 'title')} in it stay where they are — only the list is deleted.`, ok: 'Delete', danger: true });
+      if (!ok || S.dead) return;
+      const D = D0();
+      commit({ ...D, lists: D.lists.filter(x => x.id !== l.id) });
+      if (S.listId === l.id) S.listId = '';
+      paint();
+    }
+    /** the two menu items every title gets: Next up, and a list submenu */
+    function collectMenu(ref) {
+      const D = D0();
+      const inList = l => l.items.some(r => refKey(r) === refKey(ref));
+      return [
+        { label: inNext(ref) ? 'Take out of Next up' : 'Add to Next up', icon: 'skip-forward', onClick: () => toggleNext(ref) },
+        { label: 'Add to a list', icon: 'list', items: [
+          ...D.lists.map(l => ({ label: l.name, icon: inList(l) ? 'check' : 'plus', onClick: () => toggleInList(l.id, ref) })),
+          D.lists.length ? '-' : null,
+          { label: 'New list…', icon: 'plus', onClick: () => { S.pendingAdd = ref; go('lists'); } },
+        ].filter(Boolean) },
+      ];
+    }
+    /** a saved copy of a free film in ~/Videos, if there is one */
+    function filmCopyPath(id) {
+      const sv = obj(obj(store.get(FILMS_KEY, {})).saved)[id];
+      const n = sv && typeof sv.path === 'string' ? vfs.node(sv.path) : null;
+      return n && n.type === 'file' ? sv.path : '';
+    }
+    const withFriend = path => api.openApp('watch-together', { path });
+
+    /** mark every episode of an anime watched; reset is forgetAnime */
+    function markSeason(id, title, total) {
+      if (!(total > 0)) return;
+      setAnimeProgress(id, total, total, { season: true });
+      note({ icon: 'check-circle', title: `Finished ${title}`, message: `All ${nf(total)} episodes marked watched, here and in Static Anime.` });
+      paint();
+    }
+
     /* ---------------- history (only what was opened here) ---------------- */
     function remember(entry) {
       const D = readData(store.get(KEY));
+      if (D.pause || D.hideHist.includes(`${entry.k}:${entry.id}`)) return;
       const rest = D.history.filter(r => !(r.k === entry.k && r.id === entry.id));
       commit({ ...D, history: [{ ...entry, at: Date.now() }, ...rest].slice(0, HIST_MAX) });
     }
     function forgetHistory(r) {
       const D = readData(store.get(KEY));
       commit({ ...D, history: D.history.filter(x => !(x.k === r.k && x.id === r.id)) });
+      paint();
+    }
+    /** hide a title from history for good: it is removed now and not recorded again */
+    function hideFromHistory(r) {
+      const D = readData(store.get(KEY));
+      commit({ ...D, history: D.history.filter(x => !(x.k === r.k && x.id === r.id)), hideHist: [...new Set([...D.hideHist, `${r.k}:${r.id}`])].slice(-200) });
+      note({ icon: 'eye-off', title: 'Hidden from history', message: `${r.title || 'It'} won’t be recorded here again.` });
+      paint();
+    }
+    function showHiddenAgain() {
+      commit({ ...readData(store.get(KEY)), hideHist: [] });
+      paint();
+    }
+    function togglePause() {
+      const D = readData(store.get(KEY));
+      commit({ ...D, pause: !D.pause });
+      note({ icon: D.pause ? 'play' : 'clock', title: D.pause ? 'History is recording again' : 'History paused', message: D.pause ? 'What you open from Watch is listed again.' : 'What you open from Watch won’t be listed until you resume.' });
       paint();
     }
     async function clearHistory() {
@@ -750,6 +934,7 @@ defineApp({
           type: String(rec.mediaType || '').slice(0, 24), score: typeof rec.score === 'number' ? rec.score : null,
           genres: arr(rec.genres).slice(0, 3),
           syn: placeOf(rec.id) ? excerpt(rec.synopsis, 240) : '',
+          status: String(rec.status || '').slice(0, 40),
         };
       }
       const sorted = Object.fromEntries(Object.keys(meta).sort().map(k => [k, meta[k]]));
@@ -762,12 +947,12 @@ defineApp({
     function animeInfo(id, V) {
       if (animeReady()) {
         const r = animeMod.byId(id, 'anime');
-        if (r) return { title: r.title, image: httpsUrl(r.image), episodes: r.episodes, year: r.year, type: r.mediaType, score: r.score, genres: arr(r.genres).slice(0, 3), syn: r.synopsis || '' };
+        if (r) return { title: r.title, image: httpsUrl(r.image), episodes: r.episodes, year: r.year, type: r.mediaType, score: r.score, genres: arr(r.genres).slice(0, 3), syn: r.synopsis || '', status: r.status || '' };
         return null;
       }
       return V.D.meta[`anime:${id}`] || null;
     }
-    const infoOfRec = r => ({ title: r.title, image: httpsUrl(r.image), episodes: r.episodes, year: r.year, type: r.mediaType, score: r.score, genres: arr(r.genres).slice(0, 3), syn: r.synopsis || '' });
+    const infoOfRec = r => ({ title: r.title, image: httpsUrl(r.image), episodes: r.episodes, year: r.year, type: r.mediaType, score: r.score, genres: arr(r.genres).slice(0, 3), syn: r.synopsis || '', status: r.status || '' });
 
     /* ---------------- the film catalogue (providers.js, like the Movies page) ---------------- */
     function startMoviesLoad() {
@@ -823,7 +1008,8 @@ defineApp({
     /* ---------------- one snapshot per paint ---------------- */
     function snapshot() {
       const D = readData(store.get(KEY));
-      const V = { D, films: Object.fromEntries(filmContinue(store).map(i => [i.id, i.p])), prog: progAll(), res: obj(store.get(RESUME_KEY, {})), files: videoFiles(), refs: refIndex() };
+      const FD = obj(store.get(FILMS_KEY, {}));
+      const V = { D, filmDone: Object.entries(obj(FD.done)).filter(([, x]) => x && Number(x.at) > 0), films: Object.fromEntries(filmContinue(store).map(i => [i.id, i.p])), prog: progAll(), res: obj(store.get(RESUME_KEY, {})), files: videoFiles(), refs: refIndex() };
       V.cont = continueItems(V);
       V.wl = watchItems(V);
       return V;
@@ -885,7 +1071,8 @@ defineApp({
     const content = h('div.app__content.app__content--flush.wt-content', { tabindex: '-1' });
     const mainEl = h('div.app__main.wt-main', tabsEl, barEl, content);
     const fileIn = h('input', { type: 'file', accept: 'video/*,.mp4,.webm,.mov,.m4v,.ogv,.mkv', multiple: true, hidden: true, 'aria-hidden': 'true', tabindex: '-1' });
-    const appEl = h('div.app.wt', sideEl, mainEl, fileIn);
+    const impIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, 'aria-hidden': 'true', tabindex: '-1', dataset: { fk: 'imp:file' } });
+    const appEl = h('div.app.wt', sideEl, mainEl, fileIn, impIn);
     root.appendChild(appEl);
 
     /* search lives in the window toolbar, like the Store's */
@@ -974,7 +1161,7 @@ defineApp({
     function dAnime(id, info, w, { shape = 'poster' } = {}) {
       const title = info ? info.title : `MyAnimeList #${id}`;
       const epLine = w ? placeLine(w) : '';
-      const facts = info ? [info.year, info.episodes ? (info.episodes === 1 ? (info.type || '1 episode') : `${nf(info.episodes)} eps`) : info.type].filter(Boolean).join(' · ') : '';
+      const facts = info ? ['Anime', info.year, info.episodes ? (info.episodes === 1 ? (info.type || '1 episode') : `${nf(info.episodes)} eps`) : info.type].filter(Boolean).join(' · ') : '';
       const sub = epLine || facts || (info ? 'Anime' : 'Waiting on the anime catalogue');
       const box = artBox(`wt-art--${shape}`, { bg: artFallback(`anime:${id}`), img: info?.image, mono: title, pos: shape === 'land' ? '50% 22%' : null });
       if (shape === 'poster' && typeof info?.score === 'number') tagsOf(box).append(badge(info.score.toFixed(2)));
@@ -992,12 +1179,17 @@ defineApp({
     function animeMenu(id, info, w) {
       const title = info?.title || `MyAnimeList #${id}`;
       const saved = wlHas('anime', id);
+      const total = (w && w.of) || Number(info?.episodes) || 0;
+      const hasProg = `anime:${id}` in progAll() || `anime:${id}` in obj(store.get(RESUME_KEY, {}));
       return [
         w ? { label: placeAction(w).replace(/\bep\b/, 'episode'), icon: 'play', onClick: () => openAnime(id, info?.title, w.ep) } : null,
         { label: w ? 'Open its page in Static Anime' : 'Open in Static Anime', icon: 'external-link', onClick: () => openAnime(id, info?.title) },
         canNext(w) ? { label: `Next episode (${nf(w.ep + 1)})`, icon: 'skip-forward', onClick: () => nextEpisode(id, title) } : null,
         w && w.how !== 'next' && !(w.marked >= w.ep) ? { label: `Mark episode ${nf(w.ep)} watched`, icon: 'check', onClick: () => markEpisode(id, title) } : null,
-        w ? { label: 'Forget my place…', icon: 'rotate-ccw', onClick: () => forgetAnime(id, title) } : null,
+        total > 1 ? { label: `Mark all ${nf(total)} episodes watched`, icon: 'check-circle', onClick: () => markSeason(id, title, total) } : null,
+        hasProg ? { label: 'Reset progress…', icon: 'rotate-ccw', onClick: () => forgetAnime(id, title) } : null,
+        '-',
+        ...collectMenu({ k: 'anime', id: String(id), title }),
         '-',
         { label: saved ? 'Remove from Watchlist' : 'Add to Watchlist', icon: saved ? 'x' : 'bookmark', onClick: () => toggleWatchlist('anime', id, title) },
       ];
@@ -1007,7 +1199,7 @@ defineApp({
       const show = isShow(m);
       const g = arr(m.genres);
       const rating = Number(m.rating) || 0;
-      const sub = show ? ['Series', m.year].filter(Boolean).join(' · ') : [m.year, g[0]].filter(Boolean).join(' · ');
+      const sub = show ? ['Show', m.year].filter(Boolean).join(' · ') : ['Movie', m.year, g[0]].filter(Boolean).join(' · ');
       const box = artBox(`wt-art--${shape}`, { bg: movieArt(m), mono: m.title });
       box.classList.add('wt-art--made');
       if (rating && shape === 'poster') tagsOf(box).append(badge(rating.toFixed(1)));
@@ -1016,7 +1208,7 @@ defineApp({
       box.append(hoverMark('external-link'));
       return {
         key: `movie:${m.id}`, title: m.title, sub, art: box,
-        aria: `${m.title}, ${show ? 'series' : 'film'}${m.year ? `, ${m.year}` : ''}${g.length ? `, ${g.join(' and ')}` : ''}${rating ? `, rated ${rating.toFixed(1)} out of 10` : ''}${saved ? ', on your watchlist' : ''}. Opens its page in the Browser.`,
+        aria: `${m.title}, ${show ? 'show' : 'movie'}${m.year ? `, ${m.year}` : ''}${g.length ? `, ${g.join(' and ')}` : ''}${rating ? `, rated ${rating.toFixed(1)} out of 10` : ''}${saved ? ', on your watchlist' : ''}. Opens its page in the Browser.`,
         open: () => openMovie(m),
         menu: () => movieMenu(m),
       };
@@ -1063,7 +1255,12 @@ defineApp({
         open: () => openFilm(it.id, it.title),
         menu: () => [
           { label: going ? `Resume at ${fmtTime(it.p.t)}` : 'Open', icon: 'play', onClick: () => openFilm(it.id, it.title) },
+          filmCopyPath(it.id)
+            ? { label: 'Watch with a friend', icon: 'users', onClick: () => withFriend(filmCopyPath(it.id)) }
+            : { label: 'Watch with a friend (save it to Videos first)', icon: 'users', onClick: () => { note({ icon: 'info', title: 'Save the film to Videos first', message: 'Watch Together shares a file from your device. Open the film and press Save to Videos.' }); openFilm(it.id, it.title); } },
           { label: 'On archive.org', icon: 'external-link', onClick: () => window.open(`https://archive.org/details/${encodeURIComponent(it.id)}`, '_blank', 'noopener,noreferrer') },
+          '-',
+          ...collectMenu({ k: 'film', id: it.id, title: it.title }),
           going ? '-' : null,
           going ? { label: 'Forget position', icon: 'x', onClick: () => { forgetFilmPos(store, it.id); paint(); } } : null,
         ],
@@ -1078,7 +1275,10 @@ defineApp({
       return [
         { label: going ? `Resume at ${fmtTime(p.t)}` : 'Play in Videos', icon: 'play', onClick: () => openVideo(path, { resume: going }) },
         going ? { label: 'Play from the start', icon: 'rotate-ccw', onClick: () => openVideo(path) } : null,
+        { label: 'Watch with a friend', icon: 'users', onClick: () => withFriend(path) },
         { label: 'Show in Files', icon: 'folder-open', onClick: () => showInFiles(path) },
+        '-',
+        ...collectMenu({ k: 'video', id: n.content, title: stemOf(n.name), path }),
         p ? '-' : null,
         p ? { label: 'Forget position', icon: 'x', onClick: () => forgetVideo(n.content, n.name) } : null,
       ];
@@ -1166,6 +1366,7 @@ defineApp({
                   h('i', { style: { width: `${Math.max(3, Math.round(clamp01(frac) * 100))}%` } })) : null,
                 h('span', { text: `${epLine} · ${fmt.fmtAgo(it.at)}` })),
               h('p.wt-hero__note', { text: placeNote(it) }),
+              airNote(info, it) ? h('p.wt-hero__note.wt-air', { text: airNote(info, it) }) : null,
               h('div.wt-hero__acts',
                 h('button.btn.btn--primary', { type: 'button', dataset: { fk: 'hero:go' }, onclick: () => openAnime(it.id, info?.title, it.ep) },
                   icon('play', { fill: true }), h('span', { text: placeAction(it) })),
@@ -1231,7 +1432,7 @@ defineApp({
       if (movies) {
         const shows = movies.items.filter(isShow).length;
         if (shows) bits.push(plural(shows, 'show'));
-        if (movies.items.length - shows) bits.push(plural(movies.items.length - shows, 'film'));
+        if (movies.items.length - shows) bits.push(plural(movies.items.length - shows, 'movie'));
       }
       if (animeReady()) bits.push(`${nf(animeMod.peek('anime').length)} anime`);
       return h('section.wt-hero.wt-hero--welcome', { 'aria-label': 'Static Watch' },
@@ -1248,6 +1449,46 @@ defineApp({
               V.files.length ? h('button.btn', { type: 'button', dataset: { fk: 'hero:videos' }, onclick: () => go('videos') }, icon('folder'), h('span', { text: 'Your videos' })) : null,
               h('button.btn', { type: 'button', dataset: { fk: 'hero:anime' }, onclick: () => go('anime') }, icon('star'), h('span', { text: animeReady() ? 'Browse anime' : 'Load anime' }))))));
     }
+
+    /** a saved reference as a card description, or null if it can't be shown (a video that is gone) */
+    function descOfRef(ref, V, shape = 'land') {
+      if (ref.k === 'anime') return dAnime(ref.id, animeInfo(ref.id, V) || (ref.title ? { title: ref.title } : null), animeProgOf(V, ref.id), { shape });
+      if (ref.k === 'film') return dFilm({ id: ref.id, title: ref.title || ref.id, p: V.films[ref.id] }, { shape });
+      const hit = V.refs.get(ref.id);
+      return hit ? dVideo(hit.path, hit.node, V.D.videos[ref.id], { shape: shape === 'land' ? 'video' : shape }) : null;
+    }
+    function openRef(ref, V) {
+      if (ref.k === 'anime') { const w = placeOf(ref.id); openAnime(ref.id, animeInfo(ref.id, V)?.title || ref.title, w ? w.ep : 0); }
+      else if (ref.k === 'film') openFilm(ref.id, ref.title);
+      else { const hit = V.refs.get(ref.id); if (hit) openVideo(hit.path, { resume: vidInProgress(V.D.videos[ref.id]) }); }
+    }
+    const kindWord = k => (k === 'anime' ? 'Anime' : k === 'film' ? 'Free film' : 'Your video');
+    const refTitle = (ref, V) => (ref.k === 'anime' ? animeInfo(ref.id, V)?.title : ref.k === 'video' ? V.refs.get(ref.id)?.node.name : '') || ref.title || ref.id;
+    const airingItems = V => V.wl.items.filter(it => it.kind === 'anime' && it.info && it.info.status === AIRING);
+    const watched = p => !!p && p.d >= MIN_LEN && p.t >= p.d - Math.max(3, p.d * 0.04);
+    /** how many episodes of an anime are marked: Static Anime's `seen` list if it has one, else "through episode N" */
+    function epsMarked(v) {
+      return epSet(v).size;
+    }
+    /** what has been finished: only things whose records say so */
+    function finishedItems(V) {
+      const out = [];
+      for (const [k, v] of Object.entries(V.prog)) {
+        if (!k.startsWith('anime:') || !v) continue;
+        const of = Number(v.of) || 0;
+        if (!of) continue;
+        if (epSet(v).size >= of) out.push({ kind: 'anime', id: k.slice(6), at: Number(v.at) || 0, info: animeInfo(k.slice(6), V) });
+      }
+      for (const [id, x] of V.filmDone) out.push({ kind: 'film', id, title: String(x.title || id), at: Number(x.at) || 0, p: null });
+      for (const [ref, p] of Object.entries(V.D.videos)) {
+        if (!watched(p)) continue;
+        const hit = V.refs.get(ref);
+        if (hit) out.push({ kind: 'video', ref, path: hit.path, node: hit.node, p, at: p.at });
+      }
+      return out.sort((a, b) => b.at - a.at);
+    }
+    const finDesc = (it, shape) => (it.kind === 'anime' ? dAnime(it.id, it.info || null, null, { shape }) : it.kind === 'film' ? dFilm(it, { shape }) : dVideo(it.path, it.node, it.p, { shape: shape === 'land' ? 'video' : shape }));
+    const fmtSpan = secs => { const m = Math.round(secs / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${m} min`; };
 
     /* ================================================================
        sections
@@ -1267,6 +1508,14 @@ defineApp({
         put(body, row({ key: 'wl', title: 'Your watchlist', ic: 'bookmark', count: plural(wl.items.length, 'title'), more: 'watchlist',
           cards: wl.items.slice(0, RAIL_LEN).map(it => card('poster', it.kind === 'anime' ? dAnime(it.id, it.info, null) : dMovie(it.m), 'wl')) }));
       }
+      if (V.D.queue.length) {
+        const cards = V.D.queue.map(r => { const d = descOfRef(r, V, 'land'); return d ? card('land', d, 'next') : null; }).filter(Boolean);
+        put(body, row({ key: 'next', title: 'Next up', ic: 'skip-forward', count: plural(V.D.queue.length, 'title'), more: 'nextup', shape: 'land', cards: cards.slice(0, RAIL_LEN) }));
+      }
+      const airing = airingItems(V);
+      if (airing.length) put(body, row({ key: 'airing', title: 'Currently airing', ic: 'activity', note: 'from your watchlist, per the catalogue', more: 'watchlist', cards: airing.slice(0, RAIL_LEN).map(it => card('poster', dAnime(it.id, it.info, animeProgOf(V, it.id)), 'airing')) }));
+      const fin = finishedItems(V);
+      if (fin.length) put(body, row({ key: 'fin', title: 'Finished', ic: 'check-circle', count: plural(fin.length, 'title'), more: 'finished', shape: 'land', cards: fin.slice(0, RAIL_LEN).map(it => card('land', finDesc(it, 'land'), 'fin')) }));
       const recent = historyCards(V, 12);
       if (recent.length) put(body, row({ key: 'hist', title: 'Opened here recently', ic: 'clock', more: 'history', shape: 'land', cards: recent }));
 
@@ -1278,8 +1527,8 @@ defineApp({
       if (movies) {
         const shows = movies.items.filter(isShow);
         const films = movies.items.filter(m => !isShow(m));
-        if (shows.length) put(body, row({ key: 'shows', title: 'Shows', ic: 'monitor', count: plural(shows.length, 'series', 'series'), note: 'by rating', more: 'shows', cards: shows.slice(0, RAIL_LEN).map(m => card('poster', dMovie(m), 'shows')) }));
-        if (films.length) put(body, row({ key: 'films', title: 'Movies', ic: 'film', count: plural(films.length, 'film'), note: 'by rating', more: 'movies', cards: films.slice(0, RAIL_LEN).map(m => card('poster', dMovie(m), 'films')) }));
+        if (shows.length) put(body, row({ key: 'shows', title: 'Shows', ic: 'monitor', count: plural(shows.length, 'show'), note: 'by rating', more: 'shows', cards: shows.slice(0, RAIL_LEN).map(m => card('poster', dMovie(m), 'shows')) }));
+        if (films.length) put(body, row({ key: 'films', title: 'Movies', ic: 'film', count: plural(films.length, 'movie'), note: 'by rating', more: 'movies', cards: films.slice(0, RAIL_LEN).map(m => card('poster', dMovie(m), 'films')) }));
       } else if (M.state === 'error') {
         body.append(errorState('The film catalogue didn’t answer', M.err, () => { M.state = 'idle'; startMoviesLoad(); paint(); }));
       } else {
@@ -1348,7 +1597,7 @@ defineApp({
         d = dAnime(it.id, it.info, it, { shape: 'land' });
         kindLabel = 'Anime'; kindIc = 'star';
         line = `${placeLine(it)} · ${fmt.fmtAgo(it.at)}`;
-        honest = placeNote(it);
+        honest = [placeNote(it), airNote(it.info, it)].filter(Boolean).join(' ');
         frac = placeFrac(it);
         primary = btn(placeAction(it), 'play', () => openAnime(it.id, it.info?.title, it.ep), '.btn--primary', { dataset: { fk: `cr:go:${d.key}` } });
         if (canNext(it)) secondary = btn('Next episode', 'skip-forward', () => nextEpisode(it.id, d.title), '.btn--ghost', { dataset: { fk: `cr:next:${d.key}` } });
@@ -1402,6 +1651,8 @@ defineApp({
         chip('all', 'All'), counts.anime ? chip('anime', 'Anime') : null, counts.movie ? chip('movie', 'Movies') : null, counts.show ? chip('show', 'Shows') : null));
       if (wl.items.some(it => it.kind === 'anime' && !it.info) && !animeReady()) pad.append(animeLoadCard('wl'));
       if (wl.pending) pad.append(loadingState('Reading the film catalogue…'));
+      const airing = airingItems(V);
+      if (airing.length && (S.wlFilter === 'all' || S.wlFilter === 'anime')) put(pad, row({ key: 'wlair', title: 'Currently airing', ic: 'activity', note: 'on your watchlist, per the catalogue', cards: airing.map(it => card('poster', dAnime(it.id, it.info, animeProgOf(V, it.id)), 'wlair')) }));
       const shown = wl.items.filter(it => S.wlFilter === 'all' || it.kind === S.wlFilter);
       if (shown.length) pad.append(grid('poster', shown.map(it => card('poster', it.kind === 'anime' ? dAnime(it.id, it.info, null) : dMovie(it.m), 'wlg')), 'Your watchlist'));
       const notes = [];
@@ -1417,6 +1668,8 @@ defineApp({
       const pad = h('div.wt-pad');
       content.append(pad);
       const rows = V.D.history;
+      if (V.D.pause) pad.append(banner('clock', 'History is paused: what you open from Watch isn’t listed.', btn('Resume history', 'play', togglePause, '', { dataset: { fk: 'hist:resume' } })));
+      if (V.D.hideHist.length) pad.append(banner('eye-off', `${plural(V.D.hideHist.length, 'title')} hidden from history — they aren’t recorded when you open them.`, btn('Show them again', 'eye', showHiddenAgain, '', { dataset: { fk: 'hist:unhide' } })));
       if (!rows.length) {
         pad.append(empty('clock', 'Nothing opened here yet', 'Titles and videos you open from Static Watch are listed here, newest first. The list stays on this device.'));
         return;
@@ -1444,7 +1697,7 @@ defineApp({
       } else if (r.k === 'movie') {
         const m = movieById(r.id) || { id: r.id, title: r.title || r.id };
         title = m.title;
-        sub = movies && movieById(r.id) ? (isShow(m) ? 'Show' : 'Film') : 'Film or show';
+        sub = movies && movieById(r.id) ? (isShow(m) ? 'Show' : 'Movie') : 'Movie or show';
         art = artBox('wt-art--thumb.wt-art--made', { bg: movieArt(m), mono: title });
         open = () => openMovie(m);
       } else if (r.k === 'film') {
@@ -1465,6 +1718,7 @@ defineApp({
           type: 'button', disabled: !open, onclick: open,
           'aria-label': `${title}, ${sub}, opened ${clockOf(r.at)}`, dataset: { fk: `h:${r.k}:${r.id}` },
         }, art, h('span.wt-hrow__text', h('b', { text: title }), h('small', { text: sub })), h('span.wt-hrow__time', { text: clockOf(r.at) })),
+        h('button.ibtn', { type: 'button', 'aria-label': `Hide ${title} from history for good`, title: 'Hide for good', dataset: { fk: `hh:${r.k}:${r.id}` }, onclick: () => hideFromHistory({ ...r, title }) }, icon('eye-off')),
         h('button.ibtn', { type: 'button', 'aria-label': `Remove ${title} from history`, dataset: { fk: `hx:${r.k}:${r.id}` }, onclick: () => forgetHistory(r) }, icon('x')));
     }
 
@@ -1482,8 +1736,8 @@ defineApp({
       const st = shows ? S.sh : S.mv;
       const all = movies.items.filter(m => isShow(m) === shows);
       if (!all.length) {
-        pad.append(empty(shows ? 'monitor' : 'film', shows ? 'No shows in this catalogue' : 'No films in this catalogue',
-          shows ? 'The catalogue StaticOS carries has no series or TV entries right now. Anime series are under Anime.' : 'The catalogue StaticOS carries has no films right now.'));
+        pad.append(empty(shows ? 'monitor' : 'film', shows ? 'No shows in this catalogue' : 'No movies in this catalogue',
+          shows ? 'The catalogue StaticOS carries has no shows right now. Anime is under Anime.' : 'The catalogue StaticOS carries has no movies right now.'));
         return;
       }
       pad.append(banner('info', moviesSourceNote()));
@@ -1501,7 +1755,7 @@ defineApp({
       };
       const list = all.filter(m => !st.genre || arr(m.genres).includes(st.genre)).sort(by[st.sort] || by.rating);
       pad.append(grid('poster', list.map(m => card('poster', dMovie(m), which)), shows ? 'Shows' : 'Movies'));
-      if (shows) pad.append(h('p.wt-foot', { text: 'Anime series live under Anime, with the rest of the anime catalogue.' }));
+      if (shows) pad.append(h('p.wt-foot', { text: 'Anime is its own section, with the rest of the anime catalogue. These are shows from the movie and show catalogue.' }));
     }
 
     /* ---------- Anime ---------- */
@@ -1554,6 +1808,186 @@ defineApp({
       }
     }
     const animeProgOf = (V, id) => ((`anime:${id}` in V.prog || `anime:${id}` in V.res) ? placeOf(id) : null);
+
+    /* ---------- Next up ---------- */
+    function paintNextUp(V) {
+      const pad = h('div.wt-pad');
+      content.append(pad);
+      pad.append(h('p.wt-lede', { text: 'What you lined up to watch, in order. Add anything from its “…” menu with “Add to Next up”. Playing one takes it off the queue.' }));
+      const q = V.D.queue;
+      if (!q.length) {
+        pad.append(empty('skip-forward', 'Nothing lined up', 'Open the “…” menu on an anime, a free film or one of your videos and choose “Add to Next up”.'));
+        return;
+      }
+      pad.append(h('div.wt-list', { role: 'list', 'aria-label': 'Next up' }, q.map((ref, i) => {
+        const d = descOfRef(ref, V, 'land');
+        const title = refTitle(ref, V);
+        const play = () => { commit({ ...D0(), queue: D0().queue.filter(r => refKey(r) !== refKey(ref)) }); openRef(ref, V); };
+        return h('article.wt-crow', { role: 'listitem', 'aria-label': title, dataset: { next: refKey(ref) } },
+          d ? h('button.wt-crow__art', { type: 'button', tabindex: '-1', 'aria-hidden': 'true', onclick: play }, d.art) : h('div.wt-crow__art', h('div.wt-art.wt-art--land', h('span.wt-art__ph', icon('film')))),
+          h('div.wt-crow__body',
+            h('div.wt-crow__k', icon(ref.k === 'anime' ? 'star' : ref.k === 'film' ? 'film' : 'folder'), h('span', { text: `${i + 1}. ${kindWord(ref.k)}` })),
+            h('h3.wt-crow__t', { text: title }),
+            d ? h('div.wt-crow__m', { text: d.sub }) : h('div.wt-crow__m', { text: 'No longer in your files' }),
+            h('div.wt-crow__acts',
+              d ? btn('Play', 'play', play, '.btn--primary', { dataset: { fk: `nx:play:${refKey(ref)}` } }) : null,
+              h('button.ibtn', { type: 'button', 'aria-label': `Move ${title} up`, disabled: i === 0, dataset: { fk: `nx:up:${refKey(ref)}` }, onclick: () => moveNext(ref, -1) }, icon('chevron-up')),
+              h('button.ibtn', { type: 'button', 'aria-label': `Move ${title} down`, disabled: i === q.length - 1, dataset: { fk: `nx:down:${refKey(ref)}` }, onclick: () => moveNext(ref, 1) }, icon('chevron-down')),
+              h('button.ibtn', { type: 'button', 'aria-label': `Take ${title} out of Next up`, dataset: { fk: `nx:rm:${refKey(ref)}` }, onclick: () => toggleNext(ref) }, icon('x')))));
+      })));
+    }
+
+    /* ---------- Finished ---------- */
+    function paintFinished(V) {
+      const pad = h('div.wt-pad');
+      content.append(pad);
+      pad.append(h('p.wt-lede', { text: 'Anime you marked through the last episode, free films you watched to the end, and your own videos you played to the end. Newest first.' }));
+      const fin = finishedItems(V);
+      if (!fin.length) {
+        pad.append(empty('check-circle', 'Nothing finished yet', 'When you mark the last episode of an anime, or watch a film or one of your videos to the end, it shows up here.'));
+        return;
+      }
+      if (fin.some(it => it.kind === 'anime' && !it.info) && !animeReady()) pad.append(animeLoadCard('fin'));
+      pad.append(grid('land', fin.map(it => card('land', finDesc(it, 'land'), 'fing')), 'Finished'));
+    }
+
+    /* ---------- Lists ---------- */
+    function paintLists(V) {
+      const pad = h('div.wt-pad');
+      content.append(pad);
+      pad.append(h('p.wt-lede', { text: 'Your own lists. Put anime, free films and your videos in the same list from any title’s “…” menu.' }));
+      const pend = S.pendingAdd;
+      const nameIn = h('input', { type: 'text', maxlength: '60', placeholder: 'Name a new list…', 'aria-label': 'New list name', dataset: { fk: 'ls:name' } });
+      const create = () => {
+        const ok = newList(nameIn.value, pend);
+        if (!ok) return;
+        const made = D0().lists.find(l => l.name.toLowerCase() === nameIn.value.trim().toLowerCase());
+        S.pendingAdd = null;
+        S.listId = made ? made.id : S.listId;
+        paint();
+      };
+      nameIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); create(); } });
+      if (pend) pad.append(banner('list', `Name a new list to put “${pend.title}” in it.`, btn('Never mind', 'x', () => { S.pendingAdd = null; paint(); }, '', { dataset: { fk: 'ls:cancel' } })));
+      pad.append(h('div.wt-newlist', h('div.field', nameIn), btn('Create list', 'plus', create, '.btn--primary', { dataset: { fk: 'ls:create' } })));
+      const lists = V.D.lists;
+      if (!lists.length) { pad.append(empty('list', 'No lists yet', 'Name one above, then add titles from their “…” menus.')); return; }
+      if (!lists.some(l => l.id === S.listId)) S.listId = lists[0].id;
+      pad.append(h('div.wt-chips', { role: 'group', 'aria-label': 'Your lists' }, lists.map(l => h('button.wt-chip', {
+        type: 'button', 'aria-pressed': String(l.id === S.listId), class: l.id === S.listId ? 'is-on' : null, dataset: { fk: `ls:pick:${l.id}` },
+        onclick: () => { S.listId = l.id; paint(); },
+      }, h('span', { text: l.name }), h('small', { text: nf(l.items.length) })))));
+      const cur = lists.find(l => l.id === S.listId);
+      pad.append(h('div.wt-listhead', h('h3.wt-row__t', { text: cur.name }), h('span.wt-row__n', { text: plural(cur.items.length, 'title') }), h('div.grow'),
+        btn('Delete list', 'trash', () => deleteList(cur), '.btn--ghost', { dataset: { fk: 'ls:delete' } })));
+      if (!cur.items.length) { pad.append(empty('list', 'This list is empty', 'Open the “…” menu on a title and choose “Add to a list”.')); return; }
+      const cards = [];
+      for (const ref of cur.items) {
+        const d = descOfRef(ref, V, 'land');
+        if (!d) { cards.push(h('div.wt-card.wt-card--land.is-gone', { role: 'listitem' }, h('span.wt-card__t', { text: ref.title || 'A video' }), h('small', { text: 'No longer in your files' }),
+          btn('Remove', 'x', () => toggleInList(cur.id, ref), '', { dataset: { fk: `ls:rm:${refKey(ref)}` } }))); continue; }
+        const base = d.menu;
+        d.menu = () => [...base(), '-', { label: `Remove from “${cur.name}”`, icon: 'x', onClick: () => toggleInList(cur.id, ref) }];
+        cards.push(card('land', d, 'lsc'));
+      }
+      pad.append(grid('land', cards, cur.name));
+    }
+
+    /* ---------- Stats: counted from records, nothing else ---------- */
+    function paintStats(V) {
+      const pad = h('div.wt-pad');
+      content.append(pad);
+      const titles = [];
+      for (const [k, v] of Object.entries(V.prog)) {
+        if (!k.startsWith('anime:') || !v) continue;
+        const n = epsMarked(v);
+        if (n > 0) titles.push({ id: k.slice(6), n, of: Number(v.of) || 0 });
+      }
+      titles.sort((a, b) => b.n - a.n);
+      const eps = titles.reduce((a, t) => a + t.n, 0);
+      const filmsDone = V.filmDone.length;
+      const vids = Object.entries(V.D.videos).filter(([ref]) => V.refs.has(ref));
+      const vidsDone = vids.filter(([, p]) => watched(p)).length;
+      const vidsGoing = vids.filter(([, p]) => vidInProgress(p)).length;
+      const fpos = obj(obj(store.get(FILMS_KEY, {})).pos);
+      let secs = vids.reduce((a, [, p]) => a + Math.min(p.t, p.d), 0);
+      for (const p of Object.values(fpos)) if (p && p.t > 0) secs += Math.min(p.t, p.d || p.t);
+      for (const [id, x] of V.filmDone) if (!fpos[id] && Number(x.d) > 0) secs += Number(x.d);
+      const tiles = [
+        eps > 0 ? ['Episodes marked watched', nf(eps), `across ${plural(titles.length, 'anime title')}`] : null,
+        filmsDone > 0 ? ['Free films finished', nf(filmsDone), ''] : null,
+        vidsDone > 0 ? ['Your videos played to the end', nf(vidsDone), ''] : null,
+        vidsGoing > 0 ? ['Videos partway through', nf(vidsGoing), ''] : null,
+        secs >= 60 ? ['Time in videos and films', fmtSpan(secs), 'from the places StaticOS kept'] : null,
+      ].filter(Boolean);
+      if (!tiles.length) {
+        pad.append(empty('bar-chart', 'Nothing to count yet', 'Mark an anime episode watched, finish a free film, or stop one of your videos partway through, and the numbers appear here.'));
+        return;
+      }
+      pad.append(h('p.wt-lede', { text: 'Counted from what StaticOS actually kept: episodes you marked, films and videos you played, and where you stopped. Anime watched in Static Anime’s player isn’t timed, so it counts as episodes, not minutes.' }));
+      pad.append(h('div.wt-stats', { role: 'list', 'aria-label': 'Watch stats' }, tiles.map(([k, v, d]) => h('div.wt-stat', { role: 'listitem' }, h('div.wt-stat__v', { text: v }), h('div.wt-stat__k', { text: k }), d ? h('div.wt-stat__d', { text: d }) : null))));
+      if (titles.length) {
+        pad.append(h('h3.wt-row__t.wt-statsh', { text: 'Episodes watched, per title' }));
+        pad.append(h('div.wt-stlist', { role: 'list', 'aria-label': 'Episodes per title' }, titles.map(t => {
+          const info = animeInfo(t.id, V);
+          const title = info?.title || `MyAnimeList #${t.id}`;
+          return h('button.wt-strow', { type: 'button', role: 'listitem', dataset: { fk: `st:${t.id}`, id: t.id }, onclick: () => openAnime(t.id, info?.title) },
+            h('span.wt-strow__t', { text: title }),
+            h('span.wt-strow__n', { text: t.of ? `${nf(t.n)} of ${nf(t.of)} episodes` : `${plural(t.n, 'episode')}` }),
+            t.of ? h('span.wt-meter.wt-meter--sm', { 'aria-hidden': 'true' }, h('i', { style: { width: `${Math.max(3, Math.round(clamp01(t.n / t.of) * 100))}%` } })) : null);
+        })));
+        if (!animeReady() && titles.some(t => !animeInfo(t.id, V))) pad.append(animeLoadCard('stats'));
+      }
+    }
+
+    /* ---------- export and import: watchlist, history, lists, Next up ---------- */
+    const wlToken = row => (typeof row === 'string' ? (row.includes(':') ? row : `movie:${row}`) : row && typeof row === 'object' && row.kind === 'movie' && row.id ? `movie:${row.id}` : '');
+    function exportWatch() {
+      const D = D0();
+      const keep = a => a.filter(r => r.k !== 'video');
+      const body = {
+        app: 'staticos-watch', v: 1, at: Date.now(),
+        watchlist: [...new Set(wlAll().map(wlToken).filter(t => /^[a-z]+:\S{1,200}$/.test(t)))],
+        history: keep(D.history).map(r => ({ k: r.k, id: r.id, title: r.title, at: r.at })),
+        lists: D.lists.map(l => ({ id: l.id, name: l.name, items: keep(l.items).map(r => ({ k: r.k, id: r.id, title: r.title })) })),
+        nextup: keep(D.queue).map(r => ({ k: r.k, id: r.id, title: r.title })),
+      };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = 'static-watch.json'; a.hidden = true;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      note({ icon: 'download', title: 'Watch list exported', message: `${plural(body.watchlist.length, 'watchlist title')}, ${plural(body.history.length, 'history entry', 'history entries')}, ${plural(body.lists.length, 'list')}. Your own videos stay on this device.` });
+    }
+    impIn.addEventListener('change', async () => {
+      const f = impIn.files?.[0];
+      impIn.value = '';
+      if (!f) return;
+      let body = null;
+      try { if (f.size > 2e6) throw new Error('big'); body = JSON.parse(await f.text()); } catch (e) { body = null; }
+      if (!body || body.app !== 'staticos-watch' || body.v !== 1) { note({ icon: 'alert', title: 'That isn’t a Static Watch export', message: 'Pick a static-watch.json file made by Export.' }); return; }
+      const D = D0();
+      const have = new Set(wlAll().map(wlToken));
+      const fresh = arr(body.watchlist).filter(t => typeof t === 'string' && /^(anime|movie|manga):\S{1,200}$/.test(t) && !have.has(t));
+      if (fresh.length) selfSet(WL_KEY, [...wlAll(), ...[...new Set(fresh)]]);
+      const inc = readData({ history: arr(body.history).filter(r => r && r.k !== 'video'), lists: body.lists, queue: body.nextup });
+      const seenH = new Set(D.history.map(r => `${r.k}:${r.id}`));
+      const newH = inc.history.filter(r => !seenH.has(`${r.k}:${r.id}`) && !D.hideHist.includes(`${r.k}:${r.id}`));
+      const history = [...D.history, ...newH].sort((a, b) => b.at - a.at).slice(0, HIST_MAX);
+      const lists = D.lists.map(l => ({ ...l, items: [...l.items] }));
+      let addedItems = 0, addedLists = 0;
+      for (const il of inc.lists) {
+        const items = il.items.filter(r => r.k !== 'video');
+        let tgt = lists.find(l => l.name.toLowerCase() === il.name.toLowerCase());
+        if (!tgt) { if (lists.length >= LIST_MAX) continue; tgt = { id: `l${Date.now().toString(36)}${lists.length}`, name: il.name, items: [] }; lists.push(tgt); addedLists++; }
+        for (const r of items) if (!tgt.items.some(x => refKey(x) === refKey(r)) && tgt.items.length < LIST_ITEMS) { tgt.items.push(r); addedItems++; }
+      }
+      const queue = [...D.queue];
+      let addedQ = 0;
+      for (const r of inc.queue) if (r.k !== 'video' && !queue.some(x => refKey(x) === refKey(r)) && queue.length < QUEUE_MAX) { queue.push(r); addedQ++; }
+      commit({ ...D, history, lists, queue });
+      note({ icon: 'check-circle', title: 'Imported', message: `${plural(fresh.length, 'watchlist title')}, ${plural(newH.length, 'history entry', 'history entries')}, ${plural(addedLists, 'new list')} (${plural(addedItems, 'list item')}), ${plural(addedQ, 'Next up title')} added. What you already had was kept.` });
+      paint();
+    });
 
     /* ---------- Saved Videos ---------- */
     function paintVideos(V) {
@@ -1628,6 +2062,9 @@ defineApp({
         case 'watchlist': return V.wl.items.length || '';
         case 'history': return V.D.history.length || '';
         case 'movies': return movies ? movies.items.filter(m => !isShow(m)).length || '' : '';
+        case 'nextup': return V.D.queue.length || '';
+        case 'lists': return V.D.lists.length || '';
+        case 'finished': return finishedItems(V).length || '';
         case 'shows': return movies ? movies.items.filter(isShow).length || '' : '';
         case 'anime': return animeReady() ? animeMod.peek('anime').length : '';
         case 'videos': return V.files.length || '';
@@ -1697,17 +2134,26 @@ defineApp({
       if (S.q) count = `for “${S.q}”`;
       else switch (S.sec) {
         case 'continue': count = V.cont.length ? `${nf(V.cont.length)} in progress` : ''; break;
-        case 'watchlist': count = V.wl.items.length ? `${plural(V.wl.items.length, 'title')} saved` : ''; break;
+        case 'watchlist':
+          count = V.wl.items.length ? `${plural(V.wl.items.length, 'title')} saved` : '';
+          tools.push(btn('Export', 'download', exportWatch, '.btn--ghost', { dataset: { fk: 'bar:export' } }), btn('Import…', 'upload', () => impIn.click(), '.btn--ghost', { dataset: { fk: 'bar:import-wl' } }));
+          break;
         case 'history': {
           count = V.D.history.length ? `${nf(V.D.history.length)} opened here` : '';
-          tools.push(btn('Clear history', 'trash', clearHistory, '.btn--ghost', { disabled: !V.D.history.length, dataset: { fk: 'bar:clear' } }));
+          tools.push(btn(V.D.pause ? 'Resume history' : 'Pause history', V.D.pause ? 'play' : 'clock', togglePause, '.btn--ghost', { dataset: { fk: 'bar:pause' }, 'aria-pressed': String(!!V.D.pause) }),
+            btn('Export', 'download', exportWatch, '.btn--ghost', { dataset: { fk: 'bar:export-h' } }),
+            btn('Import…', 'upload', () => impIn.click(), '.btn--ghost', { dataset: { fk: 'bar:import' } }),
+            btn('Clear history', 'trash', clearHistory, '.btn--ghost', { disabled: !V.D.history.length, dataset: { fk: 'bar:clear' } }));
           break;
         }
+        case 'nextup': count = V.D.queue.length ? `${plural(V.D.queue.length, 'title')} lined up` : ''; break;
+        case 'finished': { const n = finishedItems(V).length; count = n ? `${plural(n, 'title')}` : ''; break; }
+        case 'lists': count = V.D.lists.length ? plural(V.D.lists.length, 'list') : ''; break;
         case 'movies': case 'shows': {
           const shows = S.sec === 'shows';
           if (movies) {
             const n = movies.items.filter(m => isShow(m) === shows).length;
-            count = n ? `${plural(n, shows ? 'series' : 'film', shows ? 'series' : 'films')} · details only` : '';
+            count = n ? `${plural(n, shows ? 'show' : 'movie')} · details only` : '';
             if (n) {
               const st = shows ? S.sh : S.mv;
               tools.push(sortSelect(st.sort, [['rating', 'Top rated'], ['newest', 'Newest'], ['az', 'A–Z']], v => { st.sort = v; paint(); }, `Sort ${shows ? 'shows' : 'movies'}`));
@@ -1764,6 +2210,10 @@ defineApp({
         case 'continue': paintContinue(V); break;
         case 'watchlist': paintWatchlist(V); break;
         case 'history': paintHistory(V); break;
+        case 'nextup': paintNextUp(V); break;
+        case 'finished': paintFinished(V); break;
+        case 'lists': paintLists(V); break;
+        case 'stats': paintStats(V); break;
         case 'movies': paintCatalog('movies'); break;
         case 'shows': paintCatalog('shows'); break;
         case 'films': {

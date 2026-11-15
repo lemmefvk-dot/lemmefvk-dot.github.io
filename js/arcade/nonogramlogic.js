@@ -121,5 +121,29 @@ export function countSolutions(rows, cols, limit = 2) {
   return n;
 }
 
+/* Up to `limit` solutions, with a cap on the work: { solutions: [grid…], complete }.
+   complete is false when the search stopped at `budget` line-logic passes
+   before it could say for sure (a picture drawn by hand can be a hard one). */
+export function solutionsWithin(rows, cols, limit = 2, budget = 4000) {
+  const out = [];
+  let calls = 0, gaveUp = false;
+  const go = grid => {
+    if (++calls > budget) { gaveUp = true; return true; }
+    const r = solveGrid(rows, cols, grid);
+    if (r.contradiction) return false;
+    let at = null;
+    outer: for (let y = 0; y < r.grid.length; y++) for (let x = 0; x < r.grid[y].length; x++) if (r.grid[y][x] === -1) { at = [y, x]; break outer; }
+    if (!at) { out.push(r.grid); return out.length >= limit; }
+    for (const v of [1, 0]) {
+      const g = r.grid.map(row => row.slice());
+      g[at[0]][at[1]] = v;
+      if (go(g)) return true;
+    }
+    return false;
+  };
+  go(null);
+  return { solutions: out, complete: !gaveUp };
+}
+
 /* the picture as a grid of 0/1 */
 export const gridOf = pic => pic.map(r => [...r].map(ch => (ch === '#' ? 1 : 0)));

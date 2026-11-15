@@ -535,6 +535,7 @@ body.reduce-motion .toast--ach .glyph{animation:none}
   background:rgba(6,2,4,.5);-webkit-backdrop-filter:var(--blur-3) saturate(1.1);backdrop-filter:var(--blur-3) saturate(1.1);
   animation:lock-in var(--t-slow) var(--ease) both;
 }
+.lock[data-mode="off"]{background:#000;-webkit-backdrop-filter:none;backdrop-filter:none}
 .lock__inner{display:flex;flex-direction:column;align-items:center;gap:var(--sp-4);
   width:min(360px,92vw);max-height:96vh;padding:var(--sp-5) 0;transform-origin:center;overflow-y:auto;overflow-x:hidden}
 .lock__inner::-webkit-scrollbar{width:0}
@@ -655,3 +656,12 @@ body.reduce-motion .desktop .desk-drop{animation:none}
 @media (prefers-reduced-motion:reduce){
   .dock__item.is-launching .glyph{animation:none}
 }
+
+/* achievements: progress list, per-game rounds, sharing a badge */
+.ach-progress__t{margin-left:auto}
+.ach-games{display:flex;flex-direction:column;gap:2px;padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);background:var(--fill-0);border:1px solid var(--line-0)}
+.ach-games small{font-size:var(--fs-10);color:var(--ink-3)}
+.ach-games__r{display:flex;justify-content:space-between;gap:var(--sp-3);font-size:var(--fs-11);color:var(--ink-2)}
+.ach-games__r b{color:var(--ink-0);font-variant-numeric:tabular-nums}
+.ach-row__share{margin-top:var(--sp-2)}
+.ach-share{display:flex;align-items:flex-start;gap:var(--sp-3);font-size:var(--fs-10);color:var(--ink-2);line-height:1.4;padding:var(--sp-3) var(--sp-2)}

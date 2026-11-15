@@ -1,0 +1,102 @@
+/* ==================================================================
+   The rest of the year's seasons (js/core/season.js, drawn by
+   js/shell/seasons-more.js, switched in Settings › Celebrations):
+
+     html[data-autumn="on"]     November 2–30        a warm amber accent
+     html[data-lunar="on"]      New Year's Eve (lunar) to the Lantern Festival
+     html[data-stpatrick="on"]  March 10–17          clover green
+     html[data-piday="on"]      March 14
+     html[data-earth="on"]      April 20–22          blue-green
+     html[data-summer="on"]     June 1 – August 14   sea glass
+     html[data-school="on"]     August 15 – September 14   pencil yellow
+     html[data-firstsnow="on"]  the day it snows where you live (no accent)
+
+   Same rules as the other seasons: !important because the inline accent
+   from themes.js would otherwise win, and prefs.accent is never rewritten.
+   This file loads after feat-celebrate.css so, on the days these overlap
+   spring (March and April), the more particular one wins.
+   Without the attributes none of the accents apply; what is left are the
+   classes of things that only exist in season.
+   ================================================================== */
+:root[data-autumn="on"]{--accent:#ec8a3c !important;--accent-soft:#f8c58c !important;--accent-rgb:236 138 60 !important;--accent-ink:#2a1204 !important}
+:root[data-autumn="on"][data-theme="light"]{--accent-soft:#9c470c !important}
+:root[data-lunar="on"]{--accent:#f04a3c !important;--accent-soft:#ffd27a !important;--accent-rgb:240 74 60 !important;--accent-ink:#2b0806 !important}
+:root[data-lunar="on"][data-theme="light"]{--accent-soft:#9a6200 !important}
+:root[data-stpatrick="on"]{--accent:#2fcf6b !important;--accent-soft:#a7f0c0 !important;--accent-rgb:47 207 107 !important;--accent-ink:#04210f !important}
+:root[data-stpatrick="on"][data-theme="light"]{--accent-soft:#17803f !important}
+:root[data-piday="on"]{--accent:#6ea8ff !important;--accent-soft:#bcd7ff !important;--accent-rgb:110 168 255 !important;--accent-ink:#061630 !important}
+:root[data-piday="on"][data-theme="light"]{--accent-soft:#1f55b8 !important}
+:root[data-earth="on"]{--accent:#2fb4c8 !important;--accent-soft:#a6e6f0 !important;--accent-rgb:47 180 200 !important;--accent-ink:#031f26 !important}
+:root[data-earth="on"][data-theme="light"]{--accent-soft:#137a8c !important}
+:root[data-summer="on"]{--accent:#1fc8c0 !important;--accent-soft:#ffe08a !important;--accent-rgb:31 200 192 !important;--accent-ink:#02262a !important}
+:root[data-summer="on"][data-theme="light"]{--accent-soft:#a86a00 !important}
+:root[data-school="on"]{--accent:#f2c230 !important;--accent-soft:#ffe58a !important;--accent-rgb:242 194 48 !important;--accent-ink:#2a2000 !important}
+:root[data-school="on"][data-theme="light"]{--accent-soft:#8a6500 !important}
+
+/* ---- the canvas and the reduced-motion stills ---- */
+.sm-fx,.sm-still{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+:root[data-gamemode="on"] .sm-fx,
+:root[data-gamemode="on"] .sm-still,
+body.is-mobile .sm-fx,
+body.is-mobile .sm-still{display:none}
+
+/* ---- the hunt: clovers lying on the desktop ---- */
+.clover-hunt{position:absolute;inset:0;pointer-events:none}
+.clover{
+  position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;padding:0;border:0;border-radius:50%;
+  background:transparent;pointer-events:auto;cursor:pointer;opacity:.82;
+  transition:transform 160ms ease,opacity 160ms ease;
+}
+.clover svg{display:block;width:100%;height:100%;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
+.clover:hover,.clover:focus-visible{transform:scale(1.18);opacity:1}
+.clover.is-found{pointer-events:none;opacity:0;transform:scale(1.7) rotate(40deg);transition:transform 320ms ease,opacity 320ms ease}
+body.reduce-motion .clover,body.reduce-motion .clover.is-found{transition:none}
+@media (prefers-reduced-motion:reduce){.clover,.clover.is-found{transition:none}}
+
+/* ---- the pill at the top (the clover count, the tries) ---- */
+.sm-pill{
+  position:absolute;left:50%;top:52px;transform:translateX(-50%);z-index:var(--z-toast);
+  display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;pointer-events:none;
+  background:rgba(14,18,26,.8);border:1px solid rgba(var(--accent-rgb)/.5);color:#fff;font-size:calc(12px * var(--fs-k,1));
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);box-shadow:0 8px 28px rgba(0,0,0,.35);
+}
+.sm-pill b{font-variant-numeric:tabular-nums;color:var(--accent-soft)}
+.sm-pill--try{pointer-events:auto;top:auto;bottom:calc(var(--dock-h,74px) + 22px);gap:10px}
+.sm-pill--try button{pointer-events:auto}
+
+/* ---- the card, once a year ---- */
+.sm-card{
+  position:absolute;right:var(--sp-5);bottom:calc(var(--sp-3) + 64px);z-index:var(--z-toast);width:min(360px,calc(100vw - 32px));
+  display:grid;grid-template-columns:auto 1fr;gap:var(--sp-3);align-items:center;padding:var(--sp-4);
+  border-radius:16px;background:#1b1d2b;border:1px solid rgba(var(--accent-rgb)/.5);
+  box-shadow:0 14px 40px rgba(0,0,0,.4);color:#fff;animation:bday-in 360ms cubic-bezier(.22,1,.36,1) both;
+}
+.sm-card__art{width:44px;height:44px;display:grid;place-items:center;color:var(--accent-soft)}
+.sm-card__t{display:flex;flex-direction:column;gap:3px;min-width:0}
+.sm-card__t small{opacity:.78;line-height:1.35}
+.sm-card__b{grid-column:1 / -1;display:flex;gap:var(--sp-2);justify-content:flex-end}
+@media (prefers-reduced-motion:reduce){.sm-card{animation:none}}
+body.reduce-motion .sm-card{animation:none}
+
+/* ---- the dialog (gratitude list, Pi Day, planner kit) ---- */
+.sm-dialog{position:absolute;inset:0;z-index:var(--z-overlay);display:grid;place-items:center;background:rgba(5,6,10,.55)}
+.sm-dialog__box{
+  width:min(480px,calc(100vw - 32px));max-height:min(620px,calc(100vh - 80px));overflow:auto;display:flex;flex-direction:column;gap:var(--sp-3);
+  padding:var(--sp-4);border-radius:16px;background:#171925;border:1px solid var(--line-1);box-shadow:0 20px 60px rgba(0,0,0,.5);color:var(--ink-0);
+}
+:root[data-theme="light"] .sm-dialog__box{background:#fff}
+.sm-dialog__h{display:flex;align-items:center;gap:var(--sp-2)}
+.sm-dialog__h b{flex:1;font-size:calc(15px * var(--fs-k,1))}
+.sm-dialog__box p,.sm-dialog__box small{color:var(--ink-2);line-height:1.4;margin:0}
+.sm-row{display:flex;gap:var(--sp-2);align-items:center}
+.sm-row .field{flex:1}
+.sm-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.sm-list li{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:10px;background:var(--fill-1)}
+.sm-list li span{flex:1;min-width:0;overflow-wrap:anywhere}
+.sm-list li.is-done span{text-decoration:line-through;color:var(--ink-3)}
+.sm-digits{font-family:var(--mono);font-size:calc(15px * var(--fs-k,1));letter-spacing:.08em;line-height:1.6;overflow-wrap:anywhere}
+.sm-digits .ok{color:#66e39a}
+.sm-digits .bad{color:#ff6b81;text-decoration:underline}
+.sm-q{display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:10px;background:var(--fill-1)}
+.sm-q.is-right{outline:1px solid #66e39a}
+.sm-q.is-wrong{outline:1px solid #ff6b81}

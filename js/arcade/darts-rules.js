@@ -88,6 +88,87 @@ export function checkout(left, darts = 3) {
   return null;
 }
 
+/* ------------------------------ Cricket ------------------------------
+   The numbers 15 to 20 and the bull. A single is one mark, a double
+   two, a treble three (the outer bull one, the bull two). Three marks
+   close a number. Marks past three on a number you have closed and an
+   opponent has not score its value (25 for the bull). You win once
+   every number is closed and your points are at least the others'.
+   Alone there is nobody to score against: close all seven, fewest
+   darts wins. */
+export const CRICKET = [20, 19, 18, 17, 16, 15, 25];
+export const newCricket = (players = 1) => ({
+  players, marks: Array.from({ length: players }, () => Object.fromEntries(CRICKET.map(n => [n, 0]))),
+  points: Array(players).fill(0), over: null,
+});
+/* what a dart is worth in Cricket: the number and its marks (0 for anything else) */
+export function cricketMarks(d) {
+  if (d.bull) return { n: 25, marks: d.points === 50 ? 2 : 1 };
+  if (!CRICKET.includes(d.n)) return { n: d.n, marks: 0 };
+  return { n: d.n, marks: d.ring === 'treble' ? 3 : d.ring === 'double' ? 2 : 1 };
+}
+export const closedAll = (c, who) => CRICKET.every(n => c.marks[who][n] >= 3);
+/* One dart by `who`. Returns { c, n, marks, scored, closed, win }. */
+export function applyCricket(c, who, d) {
+  if (c.over) return { c, n: 0, marks: 0, scored: 0, closed: false, win: false };
+  const { n, marks } = cricketMarks(d);
+  const next = { ...c, marks: c.marks.map(m => ({ ...m })), points: c.points.slice() };
+  if (!marks) return { c: next, n, marks: 0, scored: 0, closed: false, win: false };
+  const had = next.marks[who][n], now = Math.min(3, had + marks), extra = had + marks - now;
+  next.marks[who][n] = now;
+  const othersOpen = next.marks.some((m, i) => i !== who && m[n] < 3);
+  const scored = extra && othersOpen ? extra * n : 0;
+  next.points[who] += scored;
+  const win = closedAll(next, who) && next.points.every((p, i) => i === who || next.points[who] >= p);
+  if (win) next.over = { winner: who };
+  return { c: next, n, marks, scored, closed: had < 3 && now === 3, win };
+}
+
+/* ------------------------- aiming (the computer) ------------------------- */
+/* the middle of a bed on the board, in mm: { x, y } for a label like T20, D16, 7, Bull, 25 */
+export function spotOf(label) {
+  if (label === 'Bull') return { x: 0, y: 0 };
+  if (label === '25') return { x: 0, y: -(RAD.bull + RAD.outer) / 2 };
+  const m = /^([TD]?)(\d+)$/.exec(label);
+  if (!m) return { x: 0, y: 0 };
+  const n = Number(m[2]), i = ORDER.indexOf(n);
+  const r = m[1] === 'T' ? (RAD.trebleIn + RAD.trebleOut) / 2 : m[1] === 'D' ? (RAD.doubleIn + RAD.doubleOut) / 2 : (RAD.trebleOut + RAD.doubleIn) / 2;
+  const a = (i * 18 * Math.PI) / 180;
+  return { x: r * Math.sin(a), y: -r * Math.cos(a) };
+}
+/* The computer's levels: how widely its darts land around the spot it aims at (mm, one standard deviation). */
+export const CPU = {
+  easy: { id: 'easy', name: 'Easy', spread: 30 },
+  medium: { id: 'medium', name: 'Medium', spread: 17 },
+  hard: { id: 'hard', name: 'Hard', spread: 8 },
+};
+/* What the computer aims at. 501: once a finish is in reach it follows checkout() — the same route the
+   game suggests to you — dart by dart; before that the treble 20 (the 19 when the 20 would leave no
+   sensible finish). Cricket: the highest number it hasn't closed (the bull last), or, once all are closed
+   but it is behind on points, a number it can still score on. */
+export function cpuTarget(game, state, who, dartsLeft) {
+  if (game === '501') {
+    const left = state.remaining;
+    const route = checkout(left, dartsLeft);
+    if (route) return route[0];
+    if (left <= 60 && left > 1) {
+      /* no finish this turn: set one up, a single that leaves an even number with a clean double */
+      for (const n of [20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]) {
+        const rest = left - n;
+        if (rest >= 2 && rest <= 40 && rest % 2 === 0) return String(n);
+      }
+      return '1';
+    }
+    return left - 60 === 1 || left - 60 < 0 ? 'T19' : 'T20';
+  }
+  const mine = state.marks[who];
+  const open = CRICKET.filter(n => mine[n] < 3);
+  const bed = n => (n === 25 ? 'Bull' : `T${n}`);
+  if (open.length) return bed(open.filter(n => n !== 25)[0] ?? 25);
+  const scoring = CRICKET.filter(n => state.marks.some((m, i) => i !== who && m[n] < 3));
+  return bed(scoring.filter(n => n !== 25)[0] ?? 25);
+}
+
 /* ------------------------- Around the Clock ------------------------- */
 export const CLOCK_TARGETS = 21;                       /* 1..20, then the bull */
 export const newClock = () => ({ target: 1, thrown: 0, over: false });

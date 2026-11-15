@@ -12,17 +12,32 @@
    so a solution is a set of cells) and marks the cells to press,
    choosing the shortest of the four solutions a 5×5 board allows.
 
+   Par is the fewest presses that clear the level, worked out by the
+   same solver (the smallest of the board's solutions, every one of
+   them tried), not guessed. Clearing a level in par marks it with a
+   star.
+
    Controls
      mouse / touch  press a light
      keyboard       arrows move · Space / Enter presses · H solution
    Score = moves taken to clear the level, lower is better. The
    fewest moves per level and the level you reached are kept on this
    device (portal.arcadePuzzles.lightsout).
+   With the Arcade's colour-blind colours on (ctx.palette 'cb') a lit
+   cell is flat yellow (PALETTE_CB) with a dark ring in it and an
+   unlit one stays dark and plain, so on and off differ in brightness
+   and in shape, not only in colour; the solution dots turn blue.
+
+   ONLINE RACE (ctx.online.kit, js/arcade/race.js): one of levels 4 to
+   15, picked by the room's seed, so both screens get the same board;
+   no solution, restart or other levels, nothing saved. Fewest presses
+   wins, then the faster (the clock runs from the start).
    ============================================================ */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { ownsKey, rng } from './kit.js';
 import { CSS as BASE, load, save, reducedMotion, bag } from './puzzlekit.js';
+import { PALETTE_CB } from './index.js';
 
 const GAME = 'lightsout';
 const N = 5, CELLS = N * N;
@@ -80,6 +95,8 @@ export function solve(board) {
   }
   return best;
 }
+/** the fewest presses that clear `board` (its par), or null when it can't be cleared */
+export const parOf = board => { const s = solve(board); return s === null ? null : pop(s); };
 export const applyPress = (board, i) => board ^ PRESS[i];
 export const applyPresses = (board, set) => { for (let i = 0; i < CELLS; i++) if (set >> i & 1) board ^= PRESS[i]; return board; };
 
@@ -106,6 +123,10 @@ const CSS = `${BASE}
 .pz-lo__c.is-cur{outline:3px solid var(--ga);outline-offset:1px}
 .pz-lo__c.is-sol::after{content:"";position:absolute;left:50%;top:50%;width:30%;height:30%;margin:-15% 0 0 -15%;border-radius:50%;background:#3ad1ff;box-shadow:0 0 0 3px rgba(0,0,0,.45)}
 .pz:not(.is-reduced) .pz-lo__c{transition:background .12s,box-shadow .12s}
+.pz.is-cb .pz-lo__c{background:#151a2b}
+.pz.is-cb .pz-lo__c.is-on{background:${PALETTE_CB[3]};box-shadow:0 0 0 2px #000 inset}
+.pz.is-cb .pz-lo__c.is-on::before{content:"";position:absolute;left:50%;top:50%;width:46%;height:46%;margin:-23% 0 0 -23%;border-radius:50%;border:calc(100cqmin * .012) solid #111;box-sizing:border-box}
+.pz.is-cb .pz-lo__c.is-sol::after{background:${PALETTE_CB[4]};box-shadow:0 0 0 3px #fff}
 .pz-lo__card{position:absolute;inset:0;display:grid;place-items:center;z-index:4;background:rgba(10,8,16,.78);border-radius:12px;text-align:center;padding:16px}
 .pz-lo__card b{display:block;font-size:22px;margin-bottom:6px;color:#fff}
 .pz-lo__card span{font-size:13px;color:var(--ink-2,#bbb)}
@@ -118,16 +139,20 @@ export default {
     const reduced = reducedMotion(ctx);
     const L = bag();
     let dead = false, paused = false;
-    const sv = load(GAME);
+    /* an online race: the shell's race kit, the room's seed */
+    const RACE = ctx.online?.kit && Number.isInteger(ctx.online.seed) ? ctx.online : null;
+    const sv = RACE ? {} : load(GAME);
     const bests = { ...(sv.best || {}) };
-    let level = Math.max(1, Math.min(999, Number(sv.level) || 1));
-    let board = 0, moves = 0, done = false, showSol = false, cur = 12, kbd = false, msg = '', hints = 0;
+    let level = RACE ? 4 + (RACE.seed >>> 0) % 12 : Math.max(1, Math.min(999, Number(sv.level) || 1));
+    let t0 = performance.now(), lit0 = 1;
+    let board = 0, moves = 0, done = false, showSol = false, cur = 12, kbd = false, msg = '', hints = 0, par = 0;
     let nodes = [];
 
     const levelV = h('span', { text: '1' });
     const levelRead = h('div.pz__read', { title: 'Level', 'aria-label': 'Level' }, icon('layers'), levelV);
     const movesV = h('span', { text: '0' });
-    const movesRead = h('div.pz__read', { title: 'Moves', 'aria-label': 'Moves' }, icon('grid'), movesV);
+    const parV = h('small', { text: '' });
+    const movesRead = h('div.pz__read', { title: 'Moves (par: the fewest presses that clear this level)', 'aria-label': 'Moves' }, icon('grid'), movesV, parV);
     const bestV = h('small', { text: '' });
     const prevBtn = h('button.pz__btn', { type: 'button', title: 'Previous level' }, icon('chevron-left'));
     const nextBtn = h('button.pz__btn', { type: 'button', title: 'Next level' }, icon('chevron-right'));
@@ -141,6 +166,10 @@ export default {
     const root = h('div.pz' + (reduced ? '.is-reduced' : ''), { style: { '--ga': ctx.accent || 'var(--accent, #ff456d)' } },
       h('style', { text: CSS }), top, bw, foot, live);
     el.appendChild(root);
+    if (RACE) { prevBtn.hidden = true; nextBtn.hidden = true; solBtn.hidden = true; resetBtn.hidden = true; bestV.hidden = true; }
+    const litCount = () => { let k = 0; for (let i = 0; i < CELLS; i++) k += board >> i & 1; return k; };
+    /* lights switched off, of the ones the level started with: the friend's progress bar */
+    const offShare = () => Math.max(0, Math.min(1, 1 - litCount() / lit0));
 
     const say = m => { msg = m; live.textContent = ''; live.textContent = m; paintFoot(); };
     const paintFoot = () => foot.replaceChildren(msg ? h('span', { text: msg })
@@ -151,8 +180,10 @@ export default {
       L.on(b, 'click', () => { if (!dead) { kbd = false; cur = i; press(i); } });
       nodes.push(b); grid.appendChild(b);
     }
+    const cb = () => ctx.palette === 'cb';
     function paint() {
       const sol = showSol && !done ? solve(board) : null;
+      root.classList.toggle('is-cb', cb());
       nodes.forEach((b, i) => {
         b.classList.toggle('is-on', !!(board >> i & 1));
         b.classList.toggle('is-sol', !!(sol && sol >> i & 1));
@@ -161,18 +192,24 @@ export default {
       });
       levelV.textContent = String(level);
       movesV.textContent = String(moves);
-      bestV.textContent = bests[level] != null ? `Best: ${bests[level]} moves` : '';
+      parV.textContent = `par ${par}`;
+      bestV.textContent = bests[level] != null ? `Best: ${bests[level]} moves${bests[level] <= par ? ' ★ in par' : ''}` : '';
       solBtn.setAttribute('aria-pressed', String(showSol));
       prevBtn.disabled = level <= 1;
     }
     function start(lv = level, custom = null) {
       level = lv;
       board = custom != null ? custom : makeLevel(level);
+      par = parOf(board) ?? 0;
       moves = 0; done = false; paused = false; showSol = false; hints = 0; msg = '';
       bw.querySelector('.pz__cover')?.remove(); bw.querySelector('.pz-lo__card')?.remove();
-      save(GAME, { level });
+      if (!RACE) save(GAME, { level });
+      t0 = performance.now();
+      lit0 = Math.max(1, litCount());
       paint();
-      say(`Level ${level}: switch every light off.`);
+      say(RACE ? `A race on level ${level}: the same board as ${RACE.peer?.name || 'your friend'}. Fewest presses wins; par is ${par}.`
+        : `Level ${level}: switch every light off. Par is ${par} press${par === 1 ? '' : 'es'}.`);
+      RACE?.progress(offShare());
     }
     const can = () => !dead && !paused && !done;
     function press(i) {
@@ -180,22 +217,34 @@ export default {
       board = applyPress(board, i);
       moves++;
       paint();
+      RACE?.progress(offShare());
       if (!board) win();
       return true;
     }
     function win() {
       done = true; showSol = false;
+      if (RACE) {
+        const ms = Math.round(performance.now() - t0);
+        paint();
+        bw.appendChild(h('div.pz-lo__card', h('div', h('b', { text: 'Lights out!' }), h('span', { text: `Level ${level} in ${moves} moves (par ${par}).` }))));
+        say(`Lights out in ${moves} moves.`);
+        onScore(moves);
+        onEnd({ score: moves, won: true, detail: `Level ${level} · par ${par}`, race: { done: true, ms, mv: moves, p: 1 } });
+        return;
+      }
       const prev = bests[level], fresh = prev == null || moves < prev;
       if (fresh) { bests[level] = moves; save(GAME, { best: bests }); }
       save(GAME, { level: level + 1 > (sv.level || 1) ? level + 1 : sv.level });
       paint();
-      bw.appendChild(h('div.pz-lo__card', h('div', h('b', { text: 'Lights out!' }),
-        h('span', { text: `Level ${level} in ${moves} moves${fresh ? (prev == null ? '' : ' — a new best') : ''}. Play again for level ${level + 1}.` }))));
-      say(`Level ${level} cleared in ${moves} moves.`);
+      const inPar = moves <= par;
+      const parLine = inPar ? `In par: ${par} is the fewest presses there are.` : `Par is ${par}: ${moves - par} more than the fewest.`;
+      bw.appendChild(h('div.pz-lo__card', h('div', h('b', { text: inPar ? 'Lights out, in par!' : 'Lights out!' }),
+        h('span', { text: `Level ${level} in ${moves} moves${fresh ? (prev == null ? '' : ' — a new best') : ''}. ${parLine} Play again for level ${level + 1}.` }))));
+      say(`Level ${level} cleared in ${moves} moves. ${parLine}`);
       onScore(moves);
-      onEnd({ score: moves, won: true, detail: `Level ${level}${hints ? ' · solution shown' : ''}` });
+      onEnd({ score: moves, won: true, detail: `Level ${level} · par ${par}${inPar ? ' (in par)' : ''}${hints ? ' · solution shown' : ''}` });
     }
-    const toggleSol = () => { if (!can()) return; showSol = !showSol; if (showSol) hints++; paint(); say(showSol ? 'Blue dots mark a shortest set of cells to press, in any order.' : 'Solution hidden.'); };
+    const toggleSol = () => { if (!can() || RACE) return; showSol = !showSol; if (showSol) hints++; paint(); say(showSol ? 'Blue dots mark a shortest set of cells to press, in any order.' : 'Solution hidden.'); };
 
     const unfocus = () => { const a = document.activeElement; if (a && a.tagName === 'BUTTON' && root.contains(a)) a.blur(); };   /* a Space aimed at the game must not also click the button you last used */
     const MOVE = { ArrowUp: -N, ArrowDown: N, ArrowLeft: -1, ArrowRight: 1 };
@@ -227,7 +276,8 @@ export default {
       resume() { if (dead || !paused) return; paused = false; bw.querySelector('.pz__cover')?.remove(); },
       peek: () => ({
         level, board, lights: Array.from({ length: CELLS }, (_, i) => board >> i & 1), moves, done, paused, showSolution: showSol,
-        solution: solve(board), hints, best: { ...bests }, solvable: solve(board) !== null,
+        solution: solve(board), hints, best: { ...bests }, solvable: solve(board) !== null, palette: cb() ? 'cb' : 'standard', par,
+        race: RACE ? { seed: RACE.seed, progress: offShare() } : null,
       }),
       /* test hook — nothing in the game calls it: level(n) · board(bitmask) */
       hook(cmd, arg) {

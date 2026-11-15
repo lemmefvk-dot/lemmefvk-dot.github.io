@@ -16,22 +16,37 @@
                                          and per person: core/profiles.js
                                          names it. A guest's saves stay in
                                          this page's memory and go with it.
+     IndexedDB 'staticos-classics-own'   "play your own old copy": the game
+                                         files a person chose to keep, store
+                                         'files', { game, path, data }, and
+                                         one row at path '' saying what they
+                                         are. Only when they tick "Keep";
+                                         per person, and never for a guest.
+                                         Not in backups: they are the
+                                         person's own copy, and big.
 
    A game can only write under its own id, within the limits below: the
    frame's messages are checked here rather than trusted. Removing the
    iframe is what stops a game: its code, timers and audio all go with it.
+   A player's own files go into the frame the same way the free games'
+   files do, and nowhere else: nothing here uploads them.
    ============================================================ */
-import { classicById } from './catalog.js';
+import { CLASSICS, classicById } from './catalog.js';
 import { FILES } from './files.js';
 import { wasmDocument, pageDocument } from './frame.js';
 import { idbName, stopped as profileStopped } from '../core/profiles.js';
 
 const CACHE = 'staticos-classics';
 const DB_NAME = idbName('staticos-classics');     /* null: this person keeps nothing (a guest) */
+const OWN_DB = idbName('staticos-classics-own');
 const STORE = 'saves';
+const OWN_STORE = 'files';
 const MAX_FILE = 16 * 1024 * 1024;
 const MAX_GAME = 64 * 1024 * 1024;
 const MAX_PATH = 200;
+/* a player's own game: what a browser tab can comfortably hold in memory */
+export const MAX_OWN = 1024 * 1024 * 1024;
+export const MAX_OWN_FILES = 4000;
 
 /* ------------------------------ saved games ------------------------------ */
 let dbOpen = null;
@@ -80,36 +95,119 @@ async function delSave(game, path) {
   await asPromise(d.transaction(STORE, 'readwrite').objectStore(STORE).delete([game, path]));
 }
 
+/** Deletes a game's saved games and nothing else: the download stays. */
+export async function resetSaves(game) {
+  const id = typeof game === 'string' ? game : game.id;
+  if (!DB_NAME) {
+    for (const r of [...memory.values()]) if (r.game === id) memory.delete(memoryKey(r.game, r.path));
+    return;
+  }
+  const d = await db();
+  await asPromise(d.transaction(STORE, 'readwrite').objectStore(STORE).delete(gameRange(id)));
+}
+
+/* ------------------------- a player's own game files ------------------------- */
+let ownOpen = null;
+function ownDb() {
+  if (!OWN_DB) return Promise.reject(new Error('A guest keeps nothing.'));
+  if (profileStopped()) return Promise.reject(new Error('This profile has stopped saving.'));
+  if (!ownOpen) {
+    ownOpen = new Promise((resolve, reject) => {
+      const req = indexedDB.open(OWN_DB, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(OWN_STORE, { keyPath: ['game', 'path'] });
+      req.onsuccess = () => {
+        req.result.onversionchange = () => { req.result.close(); ownOpen = null; };
+        resolve(req.result);
+      };
+      req.onerror = () => { ownOpen = null; reject(req.error); };
+    });
+  }
+  return ownOpen;
+}
+const ownKnown = async () => {
+  if (!OWN_DB) return false;
+  try { return !indexedDB.databases || (await indexedDB.databases()).some(d => d.name === OWN_DB); } catch (err) { return false; }
+};
+
+/** Can this person keep their own game files here? A guest can't. */
+export const ownKept = () => !!OWN_DB;
+
+/** What this person keeps of their own game for `game`: { label, count, bytes, at } or null. */
+export async function keptInfo(game) {
+  if (!(await ownKnown())) return null;
+  const d = await ownDb();
+  const meta = await asPromise(d.transaction(OWN_STORE).objectStore(OWN_STORE).get([game.id, '']));
+  return meta ? { label: meta.label, count: meta.count, bytes: meta.bytes, at: meta.at, names: meta.names || [] } : null;
+}
+/** The kept files themselves, [{ path, data }], for the frame. */
+export async function keptFiles(game) {
+  const d = await ownDb();
+  const rows = await asPromise(d.transaction(OWN_STORE).objectStore(OWN_STORE).getAll(gameRange(game.id)));
+  return rows.filter(r => r.path).map(r => ({ path: r.path, data: r.data }));
+}
+/** Keeps a player's own files for next time (each file is copied: a boot transfers its buffer away). */
+export async function keepFiles(game, label, files, names = []) {
+  const d = await ownDb();
+  const tx = d.transaction(OWN_STORE, 'readwrite');
+  const st = tx.objectStore(OWN_STORE);
+  st.delete(gameRange(game.id));
+  let bytes = 0;
+  for (const f of files) { bytes += f.data.byteLength; st.put({ game: game.id, path: f.path, data: f.data.slice(0) }); }
+  st.put({ game: game.id, path: '', label: String(label).slice(0, 120), count: files.length, bytes, at: Date.now(), names: names.slice(0, 4) });
+  await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error('Not kept: the browser said no.')); });
+}
+/** Forgets the files kept for `game` (saved games stay). */
+export async function forgetFiles(game) {
+  if (!(await ownKnown())) return;
+  const d = await ownDb();
+  await asPromise(d.transaction(OWN_STORE, 'readwrite').objectStore(OWN_STORE).delete(gameRange(game.id)));
+}
+
+/** A path from a file picker, made safe for the game's folder: 'MONKEY/MONKEY.000' → 'MONKEY.000'. */
+export function ownPath(rel, strip) {
+  const parts = String(rel).split(/[\\/]+/).filter(p => p && p !== '.' && p !== '..');
+  if (strip && parts.length > 1) parts.shift();
+  const clean = parts.map(p => p.replace(/[\0-\x1f]/g, '').slice(0, 80)).filter(Boolean);
+  return clean.length ? clean.join('/').slice(0, MAX_PATH - 20) : '';
+}
+
 const fileUrl = path => {
   const f = FILES[path];
   if (!f) throw new Error(`Not a Free Classics file: ${path}`);
   return `${path}?v=${f.sha256.slice(0, 12)}`;
 };
 
-/** This game's paths from files.js, each once. */
-export function filesOf(game) {
+/** This game's paths from files.js, each once. With `own`, the free game data the player's copy replaces is left out. */
+export function filesOf(game, own = false) {
   const r = game.run;
-  const paths = r.type === 'page' ? [r.page] : [r.glue, r.wasm, ...r.mount.map(m => m.file)];
+  const paths = r.type === 'page' ? [r.page] : [r.glue, r.wasm, ...r.mount.filter(m => !(own && m.free)).map(m => m.file)];
   return [...new Set(paths)];
 }
-export const downloadBytes = game => filesOf(game).reduce((n, p) => n + (FILES[p]?.bytes || 0), 0);
+export const downloadBytes = (game, own = false) => filesOf(game, own).reduce((n, p) => n + (FILES[p]?.bytes || 0), 0);
 
-/** What this device holds for a game, for its card. */
+/** What this device holds for a game, for its card. lastSaved: when a save was last written, or 0. */
 export async function deviceState(game) {
   /* asks first: looking at the shelf must not create an empty database and cache */
   let saves = 0;
+  let lastSaved = 0;
   try {
     const known = !DB_NAME || !indexedDB.databases || (await indexedDB.databases()).some(d => d.name === DB_NAME);
-    if (known) saves = (await listSaves(game.id)).length;
+    if (known) {
+      const rows = await listSaves(game.id);
+      saves = rows.length;
+      lastSaved = rows.reduce((t, r) => Math.max(t, Number.isFinite(r.at) ? r.at : 0), 0);
+    }
   } catch (err) { /* no database: nothing kept */ }
   let downloaded = false;
   try {
     if (self.caches && await caches.has(CACHE)) {
       const c = await caches.open(CACHE);
-      downloaded = (await Promise.all(filesOf(game).map(p => c.match(fileUrl(p))))).every(Boolean);
+      downloaded = (await Promise.all(filesOf(game, !!game.own?.only).map(p => c.match(fileUrl(p))))).every(Boolean);
     }
   } catch (err) { /* no cache: nothing kept */ }
-  return { saves, downloaded };
+  let kept = null;
+  try { if (game.own) kept = await keptInfo(game); } catch (err) { kept = null; }
+  return { saves, lastSaved, downloaded, kept };
 }
 
 /** Removes a game's saved games and its downloaded files from this device.
@@ -121,9 +219,12 @@ export async function removeFromDevice(game) {
   }
   const d = await db();
   await asPromise(d.transaction(STORE, 'readwrite').objectStore(STORE).delete(gameRange(game.id)));
+  if (game.own) await forgetFiles(game);
   if (self.caches) {
     const c = await caches.open(CACHE);
-    await Promise.all(filesOf(game).map(p => c.delete(fileUrl(p))));
+    /* an engine another game on the shelf shares stays for it */
+    const others = new Set(CLASSICS.filter(g => g.id !== game.id).flatMap(g => filesOf(g)));
+    await Promise.all(filesOf(game).filter(p => !others.has(p)).map(p => c.delete(fileUrl(p))));
   }
 }
 
@@ -180,8 +281,8 @@ async function getFile(path, signal, onBytes) {
   return out;
 }
 
-/** The members of a zip file, from its central directory. */
-async function unzip(bytes) {
+/** The members of a zip file, from its central directory, less any whose name a `skip` pattern matches. */
+async function unzip(bytes, skip = []) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let end = bytes.length - 22;
   while (end >= 0 && view.getUint32(end, true) !== 0x06054b50) end--;
@@ -198,7 +299,7 @@ async function unzip(bytes) {
     const commentLen = view.getUint16(at + 32, true);
     const local = view.getUint32(at + 42, true);
     const name = text.decode(bytes.subarray(at + 46, at + 46 + nameLen));
-    if (!name.endsWith('/')) {
+    if (!name.endsWith('/') && !skip.some(re => re.test(name))) {
       const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
       const raw = bytes.subarray(start, start + size);
       if (method !== 0 && method !== 8) throw new Error('A game file uses an unknown zip method.');
@@ -230,7 +331,11 @@ async function openLink(gameId, href) {
  * Downloads and starts a game inside `host`.
  *   hooks.onProgress({ done, total, phase })   phase 'download' | 'starting'
  *   hooks.onRunning()    hooks.onError(message)    hooks.onSaveProblem(message)
- * Returns { stop(), setMuted(on), focus(), frame() }. stop() is final and safe to repeat.
+ *   hooks.onExit()       hooks.onNoGame(): the engine found no game it knows in the files
+ *   hooks.own     { files: [{ path, data }], names }: the player's own copy, put under
+ *                 game.own.to (the free game data it replaces is not downloaded)
+ *   hooks.scale   'fit' | 'sharp' | 'stretch': how the canvas fills the frame
+ * Returns { stop(), setMuted(on), setScale(mode), focus(), frame() }. stop() is final and safe to repeat.
  */
 export function startClassic(id, host, hooks) {
   const game = classicById(id);
@@ -288,6 +393,9 @@ export function startClassic(id, host, hooks) {
       case 'exit':
         tell('onExit');
         break;
+      case 'nogame':
+        tell('onNoGame');
+        break;
       default:
     }
   };
@@ -303,7 +411,8 @@ export function startClassic(id, host, hooks) {
   };
 
   (async () => {
-    const paths = filesOf(game);
+    const own = hooks.own && game.own ? hooks.own : null;
+    const paths = filesOf(game, !!own);
     const total = paths.reduce((n, p) => n + FILES[p].bytes, 0);
     let done = 0;
     const onBytes = n => { done = Math.max(0, done + n); tell('onProgress', { done: Math.min(done, total), total, phase: 'download' }); };
@@ -337,16 +446,22 @@ export function startClassic(id, host, hooks) {
     } else {
       const files = [];
       for (const m of r.mount) {
+        if (own && m.free) continue;
         const bytes = content.get(m.file);
-        if (m.unzip) for (const z of await unzip(bytes)) files.push({ path: `${m.unzip}/${z.name}`, data: z.data.buffer });
+        if (m.unzip) for (const z of await unzip(bytes, m.skip)) files.push({ path: `${m.unzip}/${z.name}`, data: z.data.buffer });
         else files.push({ path: m.to, data: bytes.buffer });
       }
+      /* the player's own files, from their device: into the game's folder, as they were */
+      if (own) for (const f of own.files) files.push({ path: `${game.own.to}/${f.path}`, data: f.data });
       if (stopped) return;
       const glue = new TextDecoder().decode(content.get(r.glue));
       const wasm = content.get(r.wasm).buffer;
       const saveFiles = saves.filter(s => s.data instanceof ArrayBuffer).map(s => ({ path: s.path, data: s.data }));
+      const names = own?.names || [];
+      const args = own && game.own.args ? game.own.args(names) : r.args;
+      const cwd = own && game.own.cwd ? game.own.cwd(names) : r.cwd || null;
       bootMessage = {
-        message: { t: 'boot', glue, wasm, files, saves: saveFiles, args: r.args, watch: r.watch, aspect: r.aspect || null },
+        message: { t: 'boot', glue, wasm, files, saves: saveFiles, args, watch: r.watch, cwd, aspect: r.aspect || null, scale: hooks.scale || 'fit' },
         transfer: [wasm, ...files.map(f => f.data), ...saveFiles.map(f => f.data)],
       };
       frame.srcdoc = wasmDocument({ type: 'wasm', muted });
@@ -361,6 +476,7 @@ export function startClassic(id, host, hooks) {
   return {
     stop,
     setMuted(on) { muted = !!on; toFrame({ t: 'mute', on: muted }); },
+    setScale(mode) { toFrame({ t: 'scale', mode }); },
     focus() { if (frame) { frame.focus(); toFrame({ t: 'focus' }); } },
     frame: () => frame,
   };

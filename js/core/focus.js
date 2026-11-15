@@ -26,7 +26,10 @@
    Disturb (throughDnd); so does a homework reminder, and nothing else.
 
    History: completed focus sessions per day (count and minutes),
-   real ones only — a skipped or reset session is not counted.
+   real ones only — a skipped or reset session is not counted. A
+   session started on something named (startOn) also adds its minutes
+   to that name for the day, so Static Study can say how long went on
+   each subject: log[day] = [n, minutes, { name: minutes }].
 
    Saved in localStorage[KEY] = { run, log }, written on every
    change (they are rare). Other tabs follow through the storage
@@ -36,8 +39,12 @@
      init()                        start watching the clock (main.js)
      state()                       { phase, status, left, len, endAt, done, every, session, active, dnd }
      start() pause() toggle() skip() reset()
+     startOn(what)                 a focus session on something you named ("Essay"
+                                   from Static Tasks' "Focus on this"): state().what
+                                   says it until that session ends or is reset
      config() / configure(patch)   { focus, short, long, every, dnd }
      today() -> { n, min }   history(days) -> [{ key, n, min }] oldest first
+     onWhat(days) -> { name: minutes } over the last `days` days (named sessions only)
    bus 'focus:change' with state() after anything changes.
    ============================================================ */
 import { bus } from './bus.js';
@@ -81,7 +88,7 @@ function valid(r) {
 function load() {
   let v = null;
   try { v = JSON.parse(local.getItem(KEY) || 'null'); } catch (e) { v = null; }
-  run = v && valid(v.run) ? { ...v.run, done: Math.max(0, Math.floor(v.run.done) || 0), dnd: !!v.run.dnd } : fresh();
+  run = v && valid(v.run) ? { ...v.run, done: Math.max(0, Math.floor(v.run.done) || 0), dnd: !!v.run.dnd, what: typeof v.run.what === 'string' ? v.run.what.slice(0, 80) : '' } : fresh();
   log = v && v.log && typeof v.log === 'object' ? v.log : {};
 }
 
@@ -130,10 +137,20 @@ export function state() {
     phase: run.phase, status: run.status, left, len: run.len, endAt: run.endAt,
     done: run.done, every, session: run.phase === 'focus' ? (run.done % every) + 1 : (run.done % every) || every,
     active: run.status !== 'ready', dnd: !!run.dnd, label: PHASES[run.phase],
+    what: run.phase === 'focus' && typeof run.what === 'string' ? run.what : '',
   };
 }
 
 const entry = key => { const e = log[key]; return Array.isArray(e) ? { n: Math.max(0, e[0] | 0), min: Math.max(0, e[1] | 0) } : { n: 0, min: 0 }; };
+const MAX_WHATS = 24;          /* names kept for one day */
+const whatsOf = key => { const e = log[key]; return Array.isArray(e) && e[2] && typeof e[2] === 'object' && !Array.isArray(e[2]) ? e[2] : {}; };
+/** Minutes of finished sessions per name over the last `days` days (today included). */
+export function onWhat(days = 7, endKey = dayKey()) {
+  if (!run) load();
+  const out = {};
+  for (let i = 0; i < days; i++) for (const [w, m] of Object.entries(whatsOf(shiftKey(endKey, -i)))) out[w] = (out[w] || 0) + Math.max(0, m | 0);
+  return out;
+}
 export function today() { if (!run) load(); return entry(dayKey()); }
 export function history(days = 7, endKey = dayKey()) {
   if (!run) load();
@@ -169,11 +186,24 @@ export function pause() {
 
 export const toggle = () => (state().status === 'running' ? pause() : start());
 
+export const WHAT_MAX = 80;
+/** Focus on something named: a break gives way to a focus session, which starts
+    (or carries on) with that name on it. -> state() */
+export function startOn(what) {
+  if (!run) load();
+  const w = String(what == null ? '' : what).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, WHAT_MAX);
+  if (run.phase !== 'focus') { giveBackDnd(); enter('focus', 0); }
+  run.what = w;
+  if (run.status === 'running') { change(); return state(); }
+  return start();
+}
+
 /** On to the next phase without counting this one; a running timer keeps running. */
 export function skip() {
   if (!run) load();
   const wasRunning = run.status === 'running';
   giveBackDnd();
+  run.what = '';
   if (run.phase === 'long') run.done = 0;
   enter(run.phase === 'focus' ? 'short' : 'focus', wasRunning ? Date.now() : 0);
   change();
@@ -183,7 +213,7 @@ export function skip() {
 export function reset() {
   if (!run) load();
   giveBackDnd();
-  run = fresh();
+  run = fresh();       /* and what it was on goes with it */
   change();
   return state();
 }
@@ -240,15 +270,19 @@ function advance() {
     const at = run.endAt;
     if (run.phase === 'focus') {
       const min = Math.round(run.len / 60_000);
+      const on = typeof run.what === 'string' && run.what ? run.what : '';
+      run.what = '';
       const key = dayKey(at - 1);
       const e = entry(key);
-      log[key] = [e.n + 1, e.min + min];
+      const whats = { ...whatsOf(key) };
+      if (on && (on in whats || Object.keys(whats).length < MAX_WHATS)) whats[on] = (whats[on] | 0) + min;
+      log[key] = Object.keys(whats).length ? [e.n + 1, e.min + min, whats] : [e.n + 1, e.min + min];
       run.done += 1;
-      bus.emit('focus:done', { minutes: min });                    /* a focus session that ran to the end */
+      bus.emit('focus:done', { minutes: min, what: on });                    /* a focus session that ran to the end */
       giveBackDnd();
       const next = run.done % config().every === 0 ? 'long' : 'short';
       enter(next, at);
-      rang.push({ title: 'Focus session done', message: `${min} minute${min === 1 ? '' : 's'} of focus. ${next === 'long' ? 'Time for a long break' : 'Take a break'}: ${Math.round(run.len / 60_000)} minutes.`, icon: 'flame', skip: true });
+      rang.push({ title: on ? `Focus session done: ${on}` : 'Focus session done', message: `${min} minute${min === 1 ? '' : 's'} of focus. ${next === 'long' ? 'Time for a long break' : 'Take a break'}: ${Math.round(run.len / 60_000)} minutes.`, icon: 'flame', skip: true });
     } else {
       if (run.phase === 'long') run.done = 0;
       enter('focus', 0);
@@ -294,4 +328,4 @@ export function init() {
   emit();
 }
 
-export default { init, state, wantsDnd, adoptDnd, start, pause, toggle, skip, reset, config, configure, today, history, openFocus, KEY, DEFAULTS, PHASES };
+export default { init, state, wantsDnd, adoptDnd, start, startOn, pause, toggle, skip, reset, config, configure, today, history, onWhat, openFocus, KEY, DEFAULTS, PHASES };

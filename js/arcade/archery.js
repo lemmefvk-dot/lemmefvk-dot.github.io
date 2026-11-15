@@ -19,11 +19,17 @@
    Space. Hold Shift (or the right mouse button) to steady your aim
    for up to 2.5 seconds; it recovers when you let go. With reduced
    motion there is no tremor.
+
+   Master (ctx.mode 'master', its own best): five ends from 50 out to
+   90 metres, a wind up to 10 m/s that gusts (it can change while the
+   arrow is in the air, so a far shot is a gamble on the gust), and the
+   target sliding from the second end. The face, the rings and the
+   points are the same, so 150 is still perfect.
    Fixed 1/240-second steps. Follows the module contract in ./index.js.
    ============================================================ */
 import { clamp, hsl, FONT, coarse, fitView, surface, ownsKey, sounder, looper, rr, prompt } from './kit.js';
 import { fixedStepper } from './fixed.js';
-import { ENDS, ARROWS_PER_END, DT, THETA, FACE_R, RING_W, windAt, targetAt, ringPoints, stepArrow, launch, solveAim } from './archery-sim.js';
+import { ENDS as STANDARD, MASTER, ARROWS_PER_END, DT, THETA, FACE_R, RING_W, windAt, targetAt, ringPoints, stepArrow, launch, solveAim } from './archery-sim.js';
 
 const VW = 900, VH = 600, CX = 450, CY = 320, PPM = 190;       /* the target plane: centre and pixels per metre */
 const AIM_MAX_X = 2.4, AIM_MAX_Y = 1.3;
@@ -34,6 +40,9 @@ export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
+    const MASTER_ON = ctx.mode === 'master';
+    const ENDS = MASTER_ON ? MASTER : STANDARD;
+    const WIND_TOP = Math.max(...ENDS.map(e => e.wind));     /* the wind arrow's full length */
     const S = {
       state: 'aim',                                /* aim | flight | stuck | endcard | done */
       paused: false, over: false, time: 0,
@@ -49,7 +58,7 @@ export default {
     ctx.onScore(0);
 
     const E = () => ENDS[S.end];
-    const wind = () => windAt(S.time, E().wind, S.seed);
+    const wind = () => windAt(S.time, E().wind, S.seed, E().gust || 0);
     const tgt = () => targetAt(S.time, E());
     const tremorAmp = () => (S.calm ? 0 : THETA * E().dist * (S.steady && S.stamina > 0 ? 0.25 : 1));
     const tremor = () => { const a = tremorAmp(); return { x: a * Math.sin(S.time * 2.1 + 0.4) * 0.7 + a * 0.3 * Math.sin(S.time * 5.3), y: a * Math.cos(S.time * 1.7) * 0.7 + a * 0.3 * Math.cos(S.time * 4.1 + 1) }; };
@@ -97,7 +106,7 @@ export default {
     function finish() {
       if (S.over || dead) return;
       S.over = true;
-      ctx.onEnd({ score: S.total, detail: `${S.total} of 150 points over five ends (${S.ends.join(', ')}), out to 70 metres.${S.pts.filter(p => p === 10).length ? ` ${S.pts.filter(p => p === 10).length} gold.` : ''}` });
+      ctx.onEnd({ score: S.total, detail: `${S.total} of 150 points over five ends (${S.ends.join(', ')}), out to ${ENDS[ENDS.length - 1].dist} metres${MASTER_ON ? ' at Master level, in a gusting wind' : ''}.${S.pts.filter(p => p === 10).length ? ` ${S.pts.filter(p => p === 10).length} gold.` : ''}` });
     }
 
     /* ------------------------------ one fixed step ------------------------------ */
@@ -164,13 +173,13 @@ export default {
       const w = wind(), max = E().wind;
       g.fillStyle = 'rgba(255,255,255,.05)'; rr(g, 20, 470, 190, 100, 12); g.fill();
       g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillStyle = hsl(200, 40, 75); g.font = `600 11px ${FONT}`; g.fillText('WIND (CROSSWIND)', 34, 488);
+      g.fillStyle = hsl(200, 40, 75); g.font = `600 11px ${FONT}`; g.fillText(E().gust ? 'WIND (CROSSWIND, GUSTING)' : 'WIND (CROSSWIND)', 34, 488);
       g.fillStyle = '#f2f4f8'; g.font = `800 22px ${FONT}`;
       g.fillText(`${Math.abs(w).toFixed(1)} m/s`, 34, 520);
       g.font = `500 12px ${FONT}`; g.fillStyle = hsl(200, 30, 70);
       g.fillText(Math.abs(w) < 0.15 ? 'calm' : `blowing ${w > 0 ? 'to the right' : 'to the left'}`, 34, 546);
       /* an arrow whose length is the speed, on a scale to the strongest wind of this end */
-      const len = max ? (w / 7) * 52 : 0;
+      const len = max ? (w / WIND_TOP) * 52 : 0;
       g.strokeStyle = w > 0 ? '#7be0ff' : '#ffb27b'; g.lineWidth = 3; g.lineCap = 'round';
       const ax = 160;
       g.beginPath(); g.moveTo(ax - len, 520); g.lineTo(ax + len, 520); g.stroke();
@@ -183,7 +192,7 @@ export default {
       g.fillText(`END ${S.end + 1} OF ${ENDS.length}`, 36, 39);
       g.font = `600 14px ${FONT}`; g.fillStyle = hsl(40, 80, 72);
       g.fillText(`${E().dist} m`, 160, 39);
-      g.fillStyle = '#cfd6e2'; g.fillText(E().amp ? `target moving ±${E().amp} m` : 'target still', 226, 39);
+      g.fillStyle = '#cfd6e2'; g.fillText(`${E().amp ? `target moving ±${E().amp} m` : 'target still'}${MASTER_ON ? ' · MASTER' : ''}`, 226, 39);
       g.textAlign = 'right'; g.fillStyle = '#f2f4f8'; g.font = `700 14px ${FONT}`;
       g.fillText(`ARROW ${Math.min(S.shot + 1, ARROWS_PER_END)} OF ${ARROWS_PER_END}      TOTAL ${S.total}`, VW - 36, 39);
       if (S.msg && S.time - S.msgT < 2.4 && S.state !== 'endcard') {
@@ -323,7 +332,7 @@ export default {
       resume() { S.paused = false; stepper.reset(); if (!S.over) loop.start(); },
       peek: () => ({
         state: S.state, paused: S.paused, over: S.over, time: S.time, end: S.end + 1, ends: S.ends.slice(), shot: S.shot, total: S.total, pts: S.pts.slice(),
-        dist: E().dist, wind: wind(), windMax: E().wind, target: tgt(), amp: E().amp, aim: { ...S.aim }, tremor: tremor(), tremorAmp: tremorAmp(),
+        dist: E().dist, wind: wind(), windMax: E().wind, gust: E().gust || 0, master: MASTER_ON, endsTotal: ENDS.length, target: tgt(), amp: E().amp, aim: { ...S.aim }, tremor: tremor(), tremorAmp: tremorAmp(),
         stamina: S.stamina, arrow: S.arrow ? { x: S.arrow.x, y: S.arrow.y, z: S.arrow.z, t: S.arrow.t } : null, lastHit: S.lastHit, marks: S.marks.map(m => ({ ...m })),
         view: { ox: V.ox, oy: V.oy, s: V.s, cx: CX, cy: CY, ppm: PPM },
       }),

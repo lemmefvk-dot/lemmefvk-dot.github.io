@@ -1,0 +1,32 @@
+/* Spotify — the library's folders and menus, the sheets (rename, folder, send, study),
+   the "From Apple" label on search rows, and the player's frame. */
+.sp__main{position:relative}
+.sp__stage iframe{flex:1;min-height:180px;border:0;border-radius:var(--r-md);width:100%}
+.sp__stage .sp__frame-host{flex:1;min-height:152px}
+.sp__bar{flex-wrap:wrap}
+.sp__bar .btn .icon{margin-right:2px}
+
+.sp-item{cursor:pointer}
+.sp-item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.sp-item__x{margin-left:auto;flex:0 0 auto}
+.sp-item__x:focus-visible,.sp-item:focus-within .sp-item__x{opacity:1}
+.sp-item__tag{flex:0 0 auto;font-size:var(--fs-10);padding:0 6px;border-radius:var(--r-pill);
+  background:var(--fill-accent);color:var(--ink-1)}
+.sp-folder{display:flex;flex-direction:column;gap:1px;margin-top:var(--sp-2)}
+.sp-folder__h{display:flex;align-items:center;gap:var(--sp-2);width:100%;padding:var(--sp-2) var(--sp-3);
+  border-radius:var(--r-sm);text-align:left;color:var(--ink-2);font-size:var(--fs-11)}
+.sp-folder__h:hover{background:var(--fill-1)}
+.sp-folder__h small{color:var(--ink-3)}
+.sp-folder .sp-item{padding-left:var(--sp-6)}
+
+.sp-sheet{position:absolute;z-index:20;top:48px;right:var(--sp-4);width:min(360px,calc(100% - 2 * var(--sp-4)));
+  max-height:calc(100% - 64px);overflow:auto;display:flex;flex-direction:column;gap:var(--sp-3);
+  padding:var(--sp-4);border-radius:var(--r-md);background:var(--bg-2, #1b1b22);border:1px solid var(--line-1);box-shadow:var(--sh-3)}
+.sp-sheet__h{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3)}
+.sp-sheet__row{display:flex;gap:var(--sp-3);flex-wrap:wrap}
+.sp-sheet__list{display:flex;flex-direction:column;gap:var(--sp-2)}
+.sp-sheet .field{height:30px}
+.sp-sheet .field input{width:100%}
+
+.sp-res__src{position:absolute;left:7px;top:7px;z-index:2;font-size:var(--fs-10);line-height:1;padding:3px 7px;
+  border-radius:var(--r-pill);background:rgba(0,0,0,.66);color:#fff;letter-spacing:.2px;pointer-events:none}

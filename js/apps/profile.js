@@ -10,28 +10,48 @@
      an image and crop it to a square (it is re-encoded at 256×256;
      the original file is never kept). core/avatar.js draws it.
    · Costume  — a witch hat, vampire cape or ghost sheet drawn over
-     the picture. Available all year; from 24 October to 1 November
-     the costume row is put up front and highlighted.
+     the picture. Available all year; while Halloween season is on
+     (the dates live in core/season.js, nowhere else) the costume row
+     is highlighted.
    · Name     — the same name Static Social and Party show
      (core/identity.js), so there is one name, not two. Names are
      not verified by anyone, and the field says so.
    · Top games — core/plays.js: games launched on this device, the
      most-launched first. A count is shown only where it was really
      counted; older history shows when it was last played instead.
-   · Creations — Forge and Studio projects (core/projects.js), each
-     with Share link (shell/share.js → core/sharelink.js).
+   · Creations — game projects from Forge, Studio and remixes
+     (core/projects.js), each with Share link (shell/share.js →
+     core/sharelink.js) and a pin. Pictures and sprites are the Art
+     strip below.
+   · Art — your newest Paint drawings (~/Pictures, "Static Paint …")
+     and Asset Lab sprites. Local only; never part of the card.
+   · Pins — up to 3 achievements and 3 creations, kept in the
+     profile and shown first.
+   · Status line — the status Social shows friends beside your name
+     (core/friends.js setStatus), set here too.
+   · Birthday — the same month-and-day Settings › Celebrations keeps
+     (prefs.birthday). It is never part of the card or sent anywhere.
+   · Profile card — what friends can see of you, over core/friends.js:
+     off until you press Send. You tick what goes in it (bio, top
+     games, pinned achievements, pinned creations — titles only), the
+     preview shows exactly that, and Take it back asks friends'
+     devices to delete it. "Save as picture" draws the same card as a
+     PNG. Friends' cards show under From friends.
    · Achievements are read defensively: if the achievements module
      is missing, changed or throws, the section is simply left out.
 
    Followers and other people's profiles need accounts on a server,
    which StaticOS doesn't have — the page says that plainly.
 
-   Store: portal.profile = { bio, picture, costume }   (see core/avatar.js)
+   Store: portal.profile = { bio, picture, costume, pinAch:[names],
+   pinCre:[project ids], cardFields:{ bio, games, ach, cre }, cardSent:{ at, n } }
+   (see core/avatar.js)
    ============================================================ */
 import { defineApp } from '../core/registry.js';
 import * as Avatar from '../core/avatar.js';
 import * as Identity from '../core/identity.js';
 import { launchItem } from '../core/launch.js';
+import * as SEASON from '../core/season.js';
 import { arcadeById } from '../arcade/index.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-profile-css')) {
@@ -47,6 +67,13 @@ const MAX_FILE = 20 * 1024 * 1024;
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 const CROP = 240;                /* crop viewport, CSS px */
 const OUT = 256;                 /* saved picture, px */
+
+const MAX_PINS = 3;
+const ART_MAX = 10;
+const CARD_PICKS = [
+  ['bio', 'My bio'], ['games', 'My top 3 games'], ['ach', 'My pinned achievements'], ['cre', 'My pinned creations'],
+];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const KIND_LABEL = { web: 'Static Games', arcade: 'Static Arcade', creation: 'Your creation' };
 
@@ -66,6 +93,8 @@ defineApp({
     const { h, icon, clear, store, bus, fmt } = api;
     let dead = false;
     let sheet = null;               /* the picture editor, when open */
+    let offF = null;                /* friends.js onChange, for the cards friends send */
+    let lastCards = '';
     let pending = false;            /* a repaint waiting for typing to end */
     const body = h('div.pf__body');
     const live = h('div.sr', { role: 'status', 'aria-live': 'polite' });
@@ -73,6 +102,9 @@ defineApp({
     root.appendChild(appEl);
     const say = t => { live.textContent = ''; setTimeout(() => { if (!dead) live.textContent = t; }, 40); };
 
+    let pinMsg = '';                /* "you can pin up to 3…", until the next change */
+    let cardMsg = '';               /* what the last Send / Take back did */
+    let cardCtx = { bio: '', games: [], ach: [], cre: [], friends: 0 };   /* what a card would hold right now */
     const prof = () => { const v = store.get(KEY, {}); return v && typeof v === 'object' ? v : {}; };
     const saveProf = patch => store.set(KEY, { ...prof(), ...patch });
     const who = () => store.get('session.user', null);
@@ -84,6 +116,291 @@ defineApp({
     const initial = () => (shownName() || Identity.me().name || '?').trim().charAt(0).toUpperCase();
     const thumbs = () => store.get('portal.forge.thumbs', {}) || {};
     const ago = ms => (Number.isFinite(Number(ms)) && ms > 0 ? fmt.fmtAgo(new Date(Number(ms)).toISOString()) : '');
+
+    /* ------------------------------------------------------------------ */
+    /*  pins                                                               */
+    /* ------------------------------------------------------------------ */
+    const pinList = k => { const a = prof()[k]; return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(0, MAX_PINS) : []; };
+    function togglePin(kind, key, label) {
+      const k = kind === 'ach' ? 'pinAch' : 'pinCre';
+      const cur = pinList(k);
+      const has = cur.includes(key);
+      if (!has && cur.length >= MAX_PINS) {
+        pinMsg = `You can pin up to ${MAX_PINS} ${kind === 'ach' ? 'achievements' : 'creations'}. Unpin one first.`;
+        say(pinMsg);
+        paint();
+        return;
+      }
+      pinMsg = '';
+      saveProf({ [k]: has ? cur.filter(x => x !== key) : [...cur, key] });
+      say(has ? `Unpinned ${label}.` : `Pinned ${label}.`);
+    }
+    const pinBtn = (on, label, onclick, fk) => h('button.ibtn.pf__pin', {
+      type: 'button', 'aria-pressed': on ? 'true' : 'false', class: on ? 'is-on' : '', title: on ? 'Unpin' : 'Pin to the top of your profile',
+      'aria-label': `${on ? 'Unpin' : 'Pin'} ${label}`, dataset: { fk }, onclick,
+    }, icon('pin'));
+
+    /* ------------------------------------------------------------------ */
+    /*  art strip: Paint drawings and Asset Lab sprites                    */
+    /* ------------------------------------------------------------------ */
+    async function readArt() {
+      const out = [];
+      try {
+        const vfs = (await import('../core/vfs.js')).default;
+        const media = (await import('../core/media.js')).default;
+        const dir = `${vfs.HOME}/Pictures`;
+        for (const n of vfs.ls(dir, { sort: 'mtime' })) {
+          if (n.type !== 'file' || !/^Static Paint .*\.png$/i.test(n.name)) continue;
+          const path = `${dir}/${n.name}`;
+          const src = await media.urlOf(path);
+          if (src) out.push({ kind: 'paint', name: n.name.replace(/^Static Paint /i, '').replace(/\.png$/i, ''), at: Date.parse(n.mtime) || 0, src, path });
+          if (out.length >= ART_MAX) break;
+        }
+      } catch (e) { /* no Pictures folder, or no media: the strip just has fewer */ }
+      try {
+        const DB = await import('../core/db.js');
+        for (const v of await DB.kv('assets').all()) {
+          if (v && v.app === 'assetlab' && v.kind === 'sprite' && typeof v.png === 'string' && v.png.length < 400000 && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(v.png)) {
+            out.push({ kind: 'sprite', name: String(v.name || 'sprite').slice(0, 40), at: Number(v.updatedAt || v.createdAt) || 0, src: v.png });
+          }
+        }
+      } catch (e) { /* no library */ }
+      return out.sort((a, b) => b.at - a.at).slice(0, ART_MAX);
+    }
+    function artSection(art) {
+      if (!art.length) return null;
+      return h('section.pf__sec.pf__art',
+        h('div.pf__caprow', h('div.pf__cap', { text: 'Art' }), h('small.pf__capnote', { text: 'Your newest Paint drawings and Asset Lab sprites · stays on this device, never in your card' })),
+        h('div.pf__artstrip', { role: 'list', 'aria-label': 'Your art' }, art.map((a, i) => {
+          const where = a.kind === 'paint' ? 'Paint' : 'Asset Lab';
+          return h('button.pf__arttile', {
+            type: 'button', role: 'listitem', title: `${a.name} · ${where}`, 'aria-label': `Open ${a.name} from ${where}`,
+            dataset: { fk: `art:${i}`, art: a.kind },
+            onclick: () => (a.kind === 'paint' ? api.openFile(a.path) : api.openApp('assetlab', { tab: 'library' })),
+          },
+          h('img', { src: a.src, alt: '', loading: 'lazy', class: a.kind === 'sprite' ? 'is-pixel' : '' }),
+          h('span', { text: where }));
+        })));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  status line and birthday                                           */
+    /* ------------------------------------------------------------------ */
+    function statusSection(F) {
+      const cap = h('div.pf__caprow', h('div.pf__cap', { text: 'Status' }), h('small.pf__capnote', { text: 'The line friends see next to your name in Social' }));
+      if (!F || !F.available()) {
+        return h('div.pf__stat', cap, h('div.pf__empty', { text: 'Friends and their status need a signed-in account on this device — a guest doesn’t have them.' }));
+      }
+      const st = F.myStatus();
+      const input = h('input.pf__statusin', { type: 'text', maxlength: '60', placeholder: 'What are you up to?', 'aria-label': 'Status line for friends', autocomplete: 'off', spellcheck: 'false', dataset: { fk: 'status' } });
+      input.value = st ? st.text : '';
+      const exp = h('select.select.pf__statusexp', { 'aria-label': 'Clear the status after', dataset: { fk: 'status-exp' } },
+        F.EXPIRY.map(x => h('option', { value: x.id, text: x.id === 'never' ? 'Keep it' : `Clear after: ${x.label}`, selected: (st ? st.expiry : 'never') === x.id ? true : null })));
+      const set = () => {
+        const t = Identity.tidy(input.value, 60);
+        if (!t) { F.clearStatus(); say('Status cleared.'); }
+        else { F.setStatus({ text: t, emoji: st ? st.emoji : '', preset: null, expiry: exp.value }); say(`Status set: ${t}`); }
+        pending = false;
+        paint();
+      };
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); set(); } });
+      return h('div.pf__stat', cap,
+        h('div.pf__statrow', input, exp,
+          h('button.btn.btn--sm.btn--primary', { type: 'button', dataset: { fk: 'status-set' }, onclick: set }, icon('check'), h('span', { text: 'Set' })),
+          st ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'status-clear' }, onclick: () => { input.value = ''; set(); } }, h('span', { text: 'Clear' })) : null),
+        st ? h('small.pf__capnote', { text: `Friends who are online see “${st.emoji ? `${st.emoji} ` : ''}${st.text}”${st.until ? ` until ${new Date(st.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}.` }) : null);
+    }
+    function birthdaySection() {
+      const bd = SEASON.parseBirthday(store.get('prefs.birthday', ''));
+      let m = bd ? bd[0] : 0, d = bd ? bd[1] : 0;
+      const days = () => (m ? new Date(2024, m, 0).getDate() : 31);
+      const mon = h('select.select', { 'aria-label': 'Birthday month', dataset: { fk: 'bd-month' } },
+        h('option', { value: '0', text: 'Month' }), MONTHS.map((n, i) => h('option', { value: String(i + 1), text: n, selected: m === i + 1 ? true : null })));
+      const day = h('select.select', { 'aria-label': 'Birthday day', dataset: { fk: 'bd-day' } });
+      const fill = () => {
+        clear(day);
+        day.append(h('option', { value: '0', text: 'Day' }), ...Array.from({ length: days() }, (_, i) => h('option', { value: String(i + 1), text: String(i + 1), selected: d === i + 1 ? true : null })));
+      };
+      fill();
+      const save = () => {
+        const pad2 = n => String(n).padStart(2, '0');
+        if (m && d) { store.set('prefs.birthday', `${pad2(m)}-${pad2(d)}`); say(`Birthday saved: ${MONTHS[m - 1]} ${d}.`); }
+        else if (!m && !d) store.set('prefs.birthday', '');
+      };
+      mon.addEventListener('change', () => { m = Number(mon.value); if (d > days()) d = days(); fill(); save(); });
+      day.addEventListener('change', () => { d = Number(day.value); save(); });
+      return h('div.pf__bd',
+        h('div.pf__caprow', h('div.pf__cap', { text: 'Birthday' }),
+          h('small.pf__capnote', { text: 'Month and day only. The same one as Settings › Celebrations. Kept on this device — never in your card, never sent to friends.' })),
+        h('div.pf__statrow', mon, day,
+          bd ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'bd-clear' }, onclick: () => { m = 0; d = 0; store.set('prefs.birthday', ''); say('Birthday forgotten.'); } }, icon('rotate-ccw'), h('span', { text: 'Forget it' })) : null));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  pinned                                                             */
+    /* ------------------------------------------------------------------ */
+    function pinnedSection(ach, projects) {
+      const pa = pinList('pinAch').map(n => (ach || []).find(x => x.name === n)).filter(Boolean);
+      const pc = pinList('pinCre').map(id => projects.find(x => x.id === id)).filter(Boolean);
+      if (!pa.length && !pc.length) return null;
+      return h('section.pf__sec.pf__pinned',
+        h('div.pf__caprow', h('div.pf__cap', { text: 'Pinned' }), h('small.pf__capnote', { text: `Up to ${MAX_PINS} achievements and ${MAX_PINS} creations` })),
+        h('div.pf__chips',
+          pa.map(x => h('span.pf__chip.pf__chip--ach', { title: x.desc, dataset: { pinned: 'ach' } }, icon(x.icon), h('span', { text: x.name }))),
+          pc.map(x => h('button.pf__chip', { type: 'button', dataset: { pinned: 'cre' }, onclick: () => api.openApp('forge', { project: x.id }) }, icon('sparkles'), h('span', { text: x.published?.title || x.name })))));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*  the profile card: what friends can see, and the picture of it      */
+    /* ------------------------------------------------------------------ */
+    const cardFields = () => { const f = prof().cardFields || {}; return { bio: !!f.bio, games: !!f.games, ach: !!f.ach, cre: !!f.cre }; };
+    /** exactly what a card would hold, from the ticks — nothing else is ever put in it */
+    function cardNow() {
+      const f = cardFields();
+      return { bio: f.bio ? cardCtx.bio : '', games: f.games ? cardCtx.games : [], ach: f.ach ? cardCtx.ach : [], cre: f.cre ? cardCtx.cre : [] };
+    }
+    const cardEmpty = c => !c.bio && !c.games.length && !c.ach.length && !c.cre.length;
+    function cardLines(c) {
+      return [
+        c.bio ? ['Bio', [c.bio]] : null,
+        c.games.length ? ['Top games', c.games] : null,
+        c.ach.length ? ['Achievements', c.ach] : null,
+        c.cre.length ? ['Creations', c.cre] : null,
+      ].filter(Boolean);
+    }
+    async function sendMyCard(F) {
+      const card = cardNow();
+      if (cardEmpty(card)) return;
+      const r = await F.sendCard(card);
+      if (dead) return;
+      if (r.unavailable) cardMsg = 'Friends aren’t available here.';
+      else if (!r.total) cardMsg = 'You don’t have any friends to send it to yet. Add one in Static Social › Friends.';
+      else if (!r.sent) cardMsg = 'The live channel isn’t connected right now, so nothing was sent. Try again in a moment.';
+      else {
+        cardMsg = `Sent to ${r.sent} of ${r.total} friend${r.total === 1 ? '' : 's'}. A friend who isn’t online right now won’t get it — send it again later.`;
+        saveProf({ cardSent: { at: Date.now(), n: r.sent } });
+      }
+      say(cardMsg);
+      paint();
+    }
+    async function takeBack(F) {
+      const r = await F.withdrawCard();
+      if (dead) return;
+      cardMsg = r.sent ? `Asked ${r.sent} friend${r.sent === 1 ? '' : 's'}’ devices to delete your card.` : 'There was nobody to ask.';
+      saveProf({ cardSent: null });
+      say(cardMsg);
+      paint();
+    }
+    function cardSection(F) {
+      const f = cardFields();
+      const card = cardNow();
+      const avail = !!F && F.available();
+      const sent = prof().cardSent;
+      const have = { bio: !!cardCtx.bio, games: cardCtx.games.length > 0, ach: cardCtx.ach.length > 0, cre: cardCtx.cre.length > 0 };
+      const picks = h('div.pf__picks', { role: 'group', 'aria-label': 'What goes in your card' },
+        CARD_PICKS.map(([k, label]) => h('label.pf__pickrow',
+          h('input', { type: 'checkbox', checked: f[k] ? true : null, dataset: { fk: `card-${k}`, card: k },
+            onchange: e => { saveProf({ cardFields: { ...cardFields(), [k]: e.target.checked } }); } }),
+          h('span', { text: label }),
+          f[k] && !have[k] ? h('small.dim', { text: k === 'bio' ? ' — write a bio first' : k === 'games' ? ' — play a game first' : k === 'ach' ? ' — pin an achievement first' : ' — pin a creation first' }) : null)));
+      const lines = cardLines(card);
+      const preview = h('div.pf__cardprev', { 'aria-label': 'What friends will see', role: 'group' },
+        h('div.pf__cardprev__h', Avatar.avatarEl(h, { initial: initial(), size: 36 }), h('b', { text: shownName() || Identity.me().name })),
+        lines.length ? lines.map(([k, vals]) => h('div.pf__cardline', h('span.pf__cardk', { text: k }), h('span', { text: vals.join(' · ') })))
+          : h('small.dim', { text: 'Nothing ticked yet — tick what you want in it.' }));
+      return h('section.pf__sec.pf__share',
+        h('div.pf__caprow', h('div.pf__cap', { text: 'Your profile card' }), h('small.pf__capnote', { text: 'Off until you press Send' })),
+        h('p.pf__note', { text: 'Nothing here goes to friends on its own. Tick what you want in your card, check the preview, then send it. Friends get exactly the preview, as text, over the same private channel as their friend list — your picture and name they already see. You can take it back, and Save as picture makes a PNG of the same card for anywhere else.' }),
+        picks, preview,
+        h('div.pf__cardbtns',
+          avail ? h('button.btn.btn--sm.btn--primary', { type: 'button', disabled: cardEmpty(card) || !cardCtx.friends ? true : null, dataset: { fk: 'card-send' }, onclick: () => sendMyCard(F) }, icon('send'), h('span', { text: cardCtx.friends ? `Send to ${cardCtx.friends} friend${cardCtx.friends === 1 ? '' : 's'}` : 'Send (no friends yet)' })) : null,
+          avail && sent ? h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'card-back' }, onclick: () => takeBack(F) }, icon('x-circle'), h('span', { text: 'Take it back' })) : null,
+          h('button.btn.btn--sm', { type: 'button', dataset: { fk: 'card-png' }, onclick: () => exportCard() }, icon('image'), h('span', { text: 'Save as picture' }))),
+        !avail ? h('small.pf__capnote', { text: 'Sending needs friends, which a guest doesn’t have. You can still save the card as a picture.' }) : null,
+        sent ? h('small.pf__capnote', { text: `Last sent ${ago(sent.at)} to ${sent.n} friend${sent.n === 1 ? '' : 's'}. Changing the ticks doesn’t change what they have until you send again.` }) : null,
+        cardMsg ? h('div.pf__cardmsg', { role: 'status', text: cardMsg }) : null);
+    }
+    function fromFriends(F) {
+      const list = F ? F.cards() : [];
+      if (!list.length) return null;
+      return h('section.pf__sec.pf__fromfr',
+        h('div.pf__caprow', h('div.pf__cap', { text: 'From friends' }), h('small.pf__capnote', { text: 'Cards friends chose to send you' })),
+        h('div.pf__fr', list.map(x => h('div.pf__frcard', { dataset: { fp: x.fp } },
+          Avatar.avatarEl(h, { picture: x.picture, costume: x.costume, initial: x.display.charAt(0).toUpperCase() || '?', size: 40 }),
+          h('div.pf__frbody', h('b', { text: x.display }),
+            cardLines(x.card).map(([k, vals]) => h('div.pf__cardline', h('span.pf__cardk', { text: k }), h('span', { text: vals.join(' · ') }))),
+            h('small.dim', { text: `Sent ${ago(x.card.at)}` }))))));
+    }
+    /** the card as a PNG — the same picks as the preview, drawn on a canvas */
+    async function exportCard() {
+      const card = cardNow();
+      const name = shownName() || Identity.me().name;
+      const W = 800, pad = 44, S = 2;
+      const font = (w, px) => `${w} ${px}px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif`;
+      const scratch = document.createElement('canvas').getContext('2d');
+      const wrap = (txt, px, w, maxW) => { scratch.font = font(w, px); const out = []; let line = ''; for (const word of String(txt).split(/\s+/)) { const t = line ? `${line} ${word}` : word; if (scratch.measureText(t).width > maxW && line) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; };
+      /* lay out first, so the picture is as tall as its content */
+      const ops = [];
+      let y = pad + 120;
+      for (const [label, vals] of cardLines(card)) {
+        ops.push({ t: 'label', text: label.toUpperCase(), y: y + 12 });
+        y += 30;
+        if (label === 'Bio') {
+          for (const ln of wrap(vals[0], 20, 400, W - pad * 2)) { ops.push({ t: 'text', text: ln, y: y + 20 }); y += 28; }
+          y += 16;
+        } else {
+          let x = pad, row = 0;
+          for (const v of vals) {
+            scratch.font = font(600, 17);
+            const w = Math.min(W - pad * 2, Math.ceil(scratch.measureText(v).width) + 28);
+            if (x + w > W - pad && x > pad) { x = pad; row++; }
+            ops.push({ t: 'chip', text: v, x, y: y + row * 42, w });
+            x += w + 10;
+          }
+          y += (row + 1) * 42 + 14;
+        }
+      }
+      const H = Math.max(y + 56, 300);
+      const cv = document.createElement('canvas');
+      cv.width = W * S; cv.height = H * S;
+      const g = cv.getContext('2d');
+      g.scale(S, S);
+      const bg = g.createLinearGradient(0, 0, W, H);
+      bg.addColorStop(0, '#2a1a4d'); bg.addColorStop(1, '#120a22');
+      g.fillStyle = bg; g.fillRect(0, 0, W, H);
+      const rr = (x, yy, w, h2, r) => { g.beginPath(); g.moveTo(x + r, yy); g.arcTo(x + w, yy, x + w, yy + h2, r); g.arcTo(x + w, yy + h2, x, yy + h2, r); g.arcTo(x, yy + h2, x, yy, r); g.arcTo(x, yy, x + w, yy, r); g.closePath(); };
+      const loadImg = src => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+      /* the picture, as the profile shows it (initial on a disc when there is none) */
+      const { picture, costume } = Avatar.read();
+      g.save(); rr(pad, pad, 96, 96, 26); g.clip();
+      let drew = false;
+      try {
+        if (picture && picture.kind === 'upload') { g.drawImage(await loadImg(picture.dataUrl), pad, pad, 96, 96); drew = true; }
+        else if (picture && picture.kind === 'builtin') { g.drawImage(await loadImg(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(Avatar.builtinSvg(picture.id))}`), pad, pad, 96, 96); drew = true; }
+      } catch (e) { drew = false; }
+      if (!drew) { g.fillStyle = '#6d4cc4'; g.fillRect(pad, pad, 96, 96); g.fillStyle = '#fff'; g.font = font(700, 48); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(initial(), pad + 48, pad + 52); g.textAlign = 'left'; g.textBaseline = 'alphabetic'; }
+      g.restore();
+      try {
+        const c = Avatar.COSTUMES.find(x => x.id === costume);
+        if (c && drew) g.drawImage(await loadImg(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(c.svg)}`), pad, pad, 96, 96);
+      } catch (e) { /* a costume that won't draw is left off */ }
+      g.fillStyle = '#fff'; g.font = font(750, 34); g.fillText(name.length > 26 ? `${name.slice(0, 25)}…` : name, pad + 120, pad + 52);
+      g.fillStyle = 'rgba(255,255,255,.62)'; g.font = font(500, 16); g.fillText('StaticOS profile card', pad + 120, pad + 80);
+      for (const o of ops) {
+        if (o.t === 'label') { g.fillStyle = 'rgba(255,255,255,.5)'; g.font = font(700, 12); g.fillText(o.text, pad, o.y); }
+        else if (o.t === 'text') { g.fillStyle = 'rgba(255,255,255,.9)'; g.font = font(400, 20); g.fillText(o.text, pad, o.y); }
+        else { g.fillStyle = 'rgba(167,139,250,.22)'; rr(o.x, o.y, o.w, 32, 16); g.fill(); g.strokeStyle = 'rgba(167,139,250,.5)'; g.lineWidth = 1; g.stroke(); g.fillStyle = '#fff'; g.font = font(600, 17); g.fillText(o.text, o.x + 14, o.y + 21, o.w - 20); }
+      }
+      g.fillStyle = 'rgba(255,255,255,.4)'; g.font = font(500, 13);
+      g.fillText(`Made on ${new Date().toLocaleDateString(undefined, { dateStyle: 'medium' })} on this device`, pad, H - 24);
+      const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
+      if (!blob || dead) { say('The picture couldn’t be made.'); return; }
+      const url = URL.createObjectURL(blob);
+      const a = h('a', { href: url, download: `${name.replace(/[^\p{L}\p{N} _-]+/gu, '').trim() || 'My'} profile card.png` });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 8000);
+      say('Saved your card as a picture.');
+    }
 
     /* ------------------------------------------------------------------ */
     /*  creations                                                          */
@@ -101,7 +418,8 @@ defineApp({
         h('button.ibtn.pf__gshare', {
           type: 'button', title: 'Share link', 'aria-label': `Share link for ${title}`, dataset: { fk: `share:${p.id}` },
           onclick: () => bus.emit('share:open', { kind: 'creation', id: p.id, title, art: t || null }),
-        }, icon('link')));
+        }, icon('link')),
+        h('span.pf__gpin', pinBtn(pinList('pinCre').includes(p.id), title, () => togglePin('cre', p.id, title), `pincre:${p.id}`)));
     }
 
     /* ------------------------------------------------------------------ */
@@ -197,7 +515,7 @@ defineApp({
       return h('section.pf__sec.pf__costumes', { class: season ? 'is-season' : '' },
         h('div.pf__caprow',
           h('div.pf__cap', { text: 'Costume' }),
-          season ? h('span.pf__season', icon('moon'), h('span', { text: 'Halloween season · until 1 November' })) : h('small.pf__capnote', { text: 'Drawn over your picture. Wear one any time.' })),
+          season ? h('span.pf__season', icon('moon'), h('span', { text: 'Halloween season' })) : h('small.pf__capnote', { text: 'Drawn over your picture. Wear one any time.' })),
         row);
     }
     function setCostume(id) {
@@ -222,12 +540,15 @@ defineApp({
       let projects = [];
       try { projects = await P.list(); } catch (e) { projects = []; }
       const ach = await readAchievements(plays);
+      const F = await import('../core/friends.js').catch(() => null);
+      const art = await readArt();
       if (dead || my !== seq) return;
+      if (F && !offF) { lastCards = JSON.stringify(F.cards()); offF = F.onChange(() => { const sig = JSON.stringify(F.cards()); if (sig !== lastCards) { lastCards = sig; paint(); } }); }
       const published = projects.filter(p => p.published);
       const cols = C?.list ? C.list() : [];
       const u = who();
       const { picture } = Avatar.read();
-      const season = Avatar.isHalloweenSeason();
+      const season = SEASON.isSpookySeason();
 
       const name = h('input.pf__name', {
         type: 'text', maxlength: '24', placeholder: Identity.me().name, 'aria-label': 'Display name',
@@ -247,6 +568,15 @@ defineApp({
       bio.value = prof().bio || '';
       bio.addEventListener('change', () => saveProf({ bio: bio.value.slice(0, 240) }));
 
+      /* what a card could hold: only ever the ticked parts of this */
+      const pinnedAch = pinList('pinAch').filter(n => (ach || []).some(x => x.name === n));
+      const pinnedCre = pinList('pinCre').map(id => projects.find(x => x.id === id)).filter(Boolean).map(x => x.published?.title || x.name);
+      cardCtx = {
+        bio: String(prof().bio || '').trim(),
+        games: (typeof plays.top === 'function' ? plays.top(3) : plays.recent(3)).map(g => String(g.title || '').trim()).filter(Boolean).slice(0, 3),
+        ach: pinnedAch, cre: pinnedCre.slice(0, MAX_PINS),
+        friends: F && F.available() ? F.friends().length : 0,
+      };
       const stats = [
         [projects.length, projects.length === 1 ? 'creation' : 'creations'],
         [published.length, 'published'],
@@ -267,17 +597,24 @@ defineApp({
             h('div.pf__handle', { text: u ? `@${u.username} · shown in Static Social and Party too. Names aren’t checked by anyone.` : 'Shown in Static Social and Party too. Names aren’t checked by anyone.' }),
             bio),
           h('div.pf__stats', stats.map(([n, l]) => h('div', h('b', { text: String(n) }), h('span', { text: l }))))),
+        pinMsg ? h('div.pf__pinmsg', { role: 'status', text: pinMsg }) : null,
+        h('section.pf__sec.pf__about', statusSection(F), birthdaySection()),
         costumes(picture, season),
+        pinnedSection(ach, projects),
         topGames(plays),
         h('section.pf__sec.pf__creations',
-          h('div.pf__caprow', h('div.pf__cap', { text: 'Your creations' }), h('small.pf__capnote', { text: 'Made in Static Forge and Studio on this device' })),
+          h('div.pf__caprow', h('div.pf__cap', { text: 'Your creations' }), h('small.pf__capnote', { text: 'Games and projects from Static Forge, Studio and remixes on this device · pictures and sprites are in Art' })),
           projects.length ? h('div.pf__grid', projects.map(creationTile))
             : h('div.pf__empty', h('span', { text: 'No creations yet.' }), h('button.btn.btn--sm', { type: 'button', onclick: () => api.openApp('forge') }, icon('sparkles'), 'Open Static Forge'))),
+        artSection(art),
         cols.length ? h('section.pf__sec', h('div.pf__cap', { text: 'Collections' }),
           h('div.pf__chips', cols.map(c => h('button.pf__chip', { type: 'button', onclick: () => api.openApp('aether-library') }, icon('bookmark'), h('span', { text: `${c.name} · ${(c.items || []).length}` }))))) : null,
         activity(projects, cols, ach, plays),
         ach && ach.length ? h('section.pf__sec.pf__ach', h('div.pf__cap', { text: 'Achievements' }),
-          h('div.pf__chips', ach.map(x => h('span.pf__chip.pf__chip--ach', { title: x.desc }, icon(x.icon), h('span', { text: x.name }))))) : null,
+          h('div.pf__chips', ach.map(x => h('span.pf__chip.pf__chip--ach', { title: x.desc, dataset: { ach: x.name } }, icon(x.icon), h('span', { text: x.name }),
+            pinBtn(pinList('pinAch').includes(x.name), x.name, () => togglePin('ach', x.name, x.name), `pinach:${x.name}`))))) : null,
+        cardSection(F),
+        fromFriends(F),
         h('p.pf__note', { text: 'This profile lives on this device — your picture, name and bio are saved here and nowhere else. Followers and other people’s profiles need accounts on a server, which StaticOS doesn’t have. To pass a game on, use Share link on any creation.' }),
       ].filter(Boolean));
       if (fk) body.querySelector(`[data-fk="${CSS.escape(fk)}"]`)?.focus({ preventScroll: true });
@@ -521,7 +858,7 @@ defineApp({
 
     paint();
     const offs = [bus.on('projects:change', paint), bus.on('achievement:unlock', paint), store.sub('session.user', paint),
-      store.sub('portal.collections', paint), bus.on('game:launch', paint), store.sub(KEY, paint), store.sub('portal.identity', paint)];
-    return () => { dead = true; closeSheet(); offs.forEach(f => f?.()); };
+      store.sub('portal.collections', paint), bus.on('game:launch', paint), store.sub(KEY, paint), store.sub('portal.identity', paint), store.sub('prefs.birthday', paint)];
+    return () => { dead = true; closeSheet(); offs.forEach(f => f?.()); offF?.(); offF = null; };
   },
 });

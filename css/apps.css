@@ -30,7 +30,7 @@
   transition:background var(--t-fast),color var(--t-fast);
 }
 .side__item .icon{width:14px;height:14px;color:var(--ink-2);flex:0 0 auto}
-.side__item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side__item span{min-width:0;overflow-wrap:anywhere;line-height:1.2}   /* a longer word (Spanish) wraps instead of being cut off */
 .side__item:hover{background:var(--fill-1)}
 .side__item.is-on{background:var(--fill-accent);color:#fff;font-weight:600}
 .side__item.is-on .icon{color:var(--accent-soft)}
@@ -250,6 +250,32 @@
 .brw__url{flex:1;height:26px;border-radius:var(--r-pill);background:var(--bg-2);padding:0 var(--sp-4)}
 .brw__url input{font-size:var(--fs-10);color:var(--ink-1)}
 .brw__view{flex:1;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;position:relative}
+/* pinned tabs are just their icon; a dragged one dims, and the one it would land on shows an edge */
+.brw__tab.is-pin{min-width:0;width:34px;max-width:34px;padding:0;justify-content:center}
+.brw__tab.is-pin>button{justify-content:center}
+.brw__tab.is-drag{opacity:.45}
+.brw__tab.is-over{box-shadow:inset 2px 0 0 var(--accent)}
+/* the bookmarks bar under the address bar */
+.brw__bar{display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) var(--sp-4);border-bottom:1px solid var(--line-0);flex:0 0 auto;overflow-x:auto}
+.brw__bar[hidden]{display:none}
+.brw__mark{display:flex;align-items:center;gap:var(--sp-2);height:22px;max-width:170px;padding:0 var(--sp-3);border-radius:var(--r-sm);flex:0 0 auto;font-size:var(--fs-10);color:var(--ink-1);white-space:nowrap}
+.brw__mark:hover{background:var(--fill-1);color:var(--ink-0)}
+.brw__mark .icon{width:12px;height:12px;flex:0 0 auto}
+.brw__mark span:not(.icon){overflow:hidden;text-overflow:ellipsis}
+/* static://bookmarks and static://history */
+.bm__head{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap}
+.bm__find{width:200px;height:26px;border-radius:var(--r-sm)}
+.bm__group{margin-top:var(--sp-5)}
+.bm__ghead{display:flex;align-items:center;gap:var(--sp-3);padding:0 var(--sp-4) var(--sp-2);color:var(--ink-1);font-size:var(--fs-11)}
+.bm__ghead .icon{width:13px;height:13px}
+.bm__row{display:flex;align-items:center;gap:var(--sp-1);border-radius:var(--r-sm)}
+.bm__row:hover{background:var(--fill-1)}
+.bm__open{display:flex;align-items:center;gap:var(--sp-4);flex:1;min-width:0;text-align:left;padding:var(--sp-3) var(--sp-4);color:inherit}
+.bm__open .icon{width:14px;height:14px}
+.bm__t{flex:0 1 auto;min-width:0;max-width:55%;color:var(--ink-0)}
+.bm__open small{flex:1;min-width:0}
+.bm__edit{flex:1;min-width:0;height:24px;padding:0 var(--sp-3);border-radius:var(--r-sm);background:var(--bg-2);color:var(--ink-0);font-size:var(--fs-11)}
+.bm__none,.bm__when{padding:var(--sp-3) var(--sp-4);font-size:var(--fs-10)}
 
 /* the start page, rendered inside the browser viewport */
 .start{
@@ -639,6 +665,8 @@ body.is-mobile .notes__tools .btn:last-child{order:5}
 .cx-detail__meta{display:flex;flex-wrap:wrap;gap:var(--sp-3);align-items:center}
 .cx-detail__syn{font-size:var(--fs-12);color:var(--ink-1);line-height:1.65;max-width:620px}
 .cx-detail__acts{display:flex;gap:var(--sp-3);flex-wrap:wrap}
+.cx-detail__found{display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:center;margin-top:var(--sp-3);font-size:var(--fs-12);color:var(--ink-1)}
+.cx-detail__found[hidden]{display:none}
 .cx-detail__facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:var(--sp-4);margin-top:var(--sp-2)}
 
 /* ---- play / watch stage ------------------------------------ */
@@ -1770,3 +1798,35 @@ body.is-mobile .dc-msg__frame{height:calc(100vh - 300px);min-height:320px}
 .ch__log.is-external .dc-msg,
 .ch__log.is-external .dc-msg__wrap{flex:1;min-height:0}
 .ch__log.is-external .dc-msg__frame{flex:1;height:auto;min-height:340px}
+
+/* ---------- Static Search: quick filters, did-you-mean, notes and files, preview ---------- */
+.cx-srch__flt{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;padding:var(--sp-2) var(--sp-6) 0;font-size:var(--fs-10)}
+.cx-srch__flt button{height:24px;padding:0 var(--sp-3);border-radius:var(--r-pill);border:1px solid var(--line-1);background:var(--fill-0);color:var(--ink-2);font-size:var(--fs-10);font-weight:600}
+.cx-srch__flt button:hover{color:var(--ink-0)}
+.cx-srch__flt button.is-on{background:var(--fill-accent);border-color:var(--line-accent);color:var(--ink-0)}
+.cx-srch__dym{display:flex;align-items:center;gap:6px;padding:var(--sp-2) var(--sp-6) 0;font-size:var(--fs-11);color:var(--ink-2)}
+.cx-srch__dym .icon{width:12px;height:12px}
+.cx-srch__dym button{font-weight:650;color:var(--accent-soft);text-decoration:underline}
+.cx-mine{display:flex;flex-direction:column;gap:var(--sp-1);margin-bottom:var(--sp-4);padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);border:1px solid var(--line-1);background:var(--fill-0)}
+.cx-mine__h{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-11);color:var(--ink-0)}
+.cx-mine__h .icon{width:13px;height:13px}
+.cx-mine__h small{margin-left:auto;color:var(--ink-3)}
+.cx-prev{position:absolute;z-index:30;width:320px;display:flex;gap:var(--sp-3);padding:var(--sp-3);border-radius:var(--r-md);border:1px solid var(--line-2);background:var(--bg-2);box-shadow:0 12px 32px rgba(0,0,0,.4)}
+.cx-prev img{width:64px;height:64px;object-fit:cover;border-radius:var(--r-sm);flex:none}
+.cx-prev__b{display:flex;flex-direction:column;gap:4px;min-width:0}
+.cx-prev__b b{font-size:var(--fs-12);color:var(--ink-0)}
+.cx-prev__b small{font-size:var(--fs-10);color:var(--ink-3)}
+.cx-prev__acts{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:4px}
+
+/* mdlite output (js/portal/mdlite.js): Lens, Code, Studio and Markets */
+.md-p{margin:0 0 .6em}
+.md-p:last-child{margin-bottom:0}
+.md-h{font-weight:700;color:var(--ink-0);margin:.7em 0 .3em}
+.md-list{margin:0 0 .6em;padding-left:1.3em}
+.md-list li{margin:.18em 0}
+.md-pre{margin:0 0 .6em;padding:var(--sp-2) var(--sp-3);border-radius:var(--r-sm);background:rgba(0,0,0,.35);overflow:auto;
+  font:var(--fs-11)/1.5 var(--font-mono,ui-monospace,Menlo,monospace)}
+.md-pre code{background:none;padding:0}
+.md-table{border-collapse:collapse;margin:0 0 .6em;font-size:var(--fs-11)}
+.md-table th,.md-table td{border:1px solid var(--line-1);padding:4px 8px;text-align:left}
+.md-table th{color:var(--ink-0);background:var(--fill-1)}

@@ -25,7 +25,12 @@
      "file": "comics/peppercarrot/ep01_Potion-of-Flight.cbz",
      "bytes": 204631,
      "sha256": "8281130d3d782125e6a69207d6ec2501b3f9e9df14136396c8ecf77ac879d732",
-     "pages": 5
+     "pages": 5,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep01.jpg",
+      "bytes": 2712,
+      "sha256": "8663da95981a50bed8c951eb73ddec126de8e2e187647f34284e048bbc516669"
+     }
     },
     {
      "id": "ep02",
@@ -33,7 +38,12 @@
      "file": "comics/peppercarrot/ep02_Rainbow-potions.cbz",
      "bytes": 459772,
      "sha256": "5b13eecbb6790451b57703589c495729dc0aca9a0d0719bfef5dec47e3552e03",
-     "pages": 7
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep02.jpg",
+      "bytes": 2823,
+      "sha256": "dca3b0f7bd0ec05dbc8e68626fe10564320d827c9d8a7e2e55809e339ada701d"
+     }
     },
     {
      "id": "ep03",
@@ -41,7 +51,12 @@
      "file": "comics/peppercarrot/ep03_The-secret-ingredients.cbz",
      "bytes": 832604,
      "sha256": "10131202ca345132cf97bc39d4b9eb54e9f17bd3f85d94b3ce43c6cbcdc13c4f",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep03.jpg",
+      "bytes": 2920,
+      "sha256": "3edeeaf0652fa554b8b01b18b49e5ecee6b42958af206141fa16c6ff38f7f439"
+     }
     },
     {
      "id": "ep04",
@@ -49,7 +64,12 @@
      "file": "comics/peppercarrot/ep04_Stroke-of-genius.cbz",
      "bytes": 571218,
      "sha256": "1bf62ded42b2f1a83042c578d61740447adad949cddb96310ab25e5dba33abd6",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep04.jpg",
+      "bytes": 2786,
+      "sha256": "1734eba5cad4df559fd1f90661ece3ca9bfcab6e1ffcbbae90727000c1a1c5be"
+     }
     },
     {
      "id": "ep05",
@@ -57,7 +77,12 @@
      "file": "comics/peppercarrot/ep05_Special-holiday-episode.cbz",
      "bytes": 359387,
      "sha256": "33b36bf11422ae74d7c1670bfac58d04842f9f2374823bffaa06e71eb30e9506",
-     "pages": 6
+     "pages": 6,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep05.jpg",
+      "bytes": 2208,
+      "sha256": "24afd9be6232738633f0aca5a1563414d0847f26b79a9c2a237081de4fffb35d"
+     }
     },
     {
      "id": "ep06",
@@ -65,7 +90,12 @@
      "file": "comics/peppercarrot/ep06_The-Potion-Contest.cbz",
      "bytes": 1104901,
      "sha256": "276de7454dc386f83bea258bcd94476e8aed150a2e0220b5d26cff289344f580",
-     "pages": 11
+     "pages": 11,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep06.jpg",
+      "bytes": 2832,
+      "sha256": "d284408b79904f2f926f0fefaf5a93780e32d065631d6af0e1508b7ed93a4fc2"
+     }
     },
     {
      "id": "ep07",
@@ -73,7 +103,12 @@
      "file": "comics/peppercarrot/ep07_The-Wish.cbz",
      "bytes": 514386,
      "sha256": "7058e6d49e484c97f76290fb2bf8e8f85fd0d214b077a12df2d1646bba61071b",
-     "pages": 7
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep07.jpg",
+      "bytes": 2636,
+      "sha256": "8457b94a9c932acbbf4ad5ba2b5ed2218997778b058263dfbb58cd196d53954d"
+     }
     },
     {
      "id": "ep08",
@@ -81,7 +116,12 @@
      "file": "comics/peppercarrot/ep08_Pepper-s-Birthday-Party.cbz",
      "bytes": 661313,
      "sha256": "2af55f699173ca76fd86f7b3ba02fb003773c6e617e8b74bc1e6040d02668b7b",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep08.jpg",
+      "bytes": 2943,
+      "sha256": "8c6426ddcf1f07c40c36f56aede6302c475075f5ca72218be6dd3b99d00cdc5f"
+     }
     },
     {
      "id": "ep09",
@@ -89,7 +129,12 @@
      "file": "comics/peppercarrot/ep09_The-Remedy.cbz",
      "bytes": 682341,
      "sha256": "fa109bb50e389404e926e0f0e1cf4e6289bfd139bd2ecc89b259de879b10ac14",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep09.jpg",
+      "bytes": 2765,
+      "sha256": "41aa5ed7a780a25a242892ca201d06dd5e17e07e062c02fe294a65e39229a200"
+     }
     },
     {
      "id": "ep10",
@@ -97,7 +142,12 @@
      "file": "comics/peppercarrot/ep10_Summer-Special.cbz",
      "bytes": 548098,
      "sha256": "b3367867f7aacabd83cfa38fa69f093bccc56d2e4ea7ec3055e205f935b62a03",
-     "pages": 7
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep10.jpg",
+      "bytes": 3018,
+      "sha256": "97e1744735cef1a56187ab6d44e4666714fc8ab8c2de4ce7beaa7904f0fc81cb"
+     }
     },
     {
      "id": "ep11",
@@ -105,7 +155,12 @@
      "file": "comics/peppercarrot/ep11_The-Witches-of-Chaosah.cbz",
      "bytes": 745255,
      "sha256": "38d4b8fa8d2555a9e24518dbc4504f3093e8ee73351892941a7473876f8a322d",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep11.jpg",
+      "bytes": 2933,
+      "sha256": "fdaec2ceffcca3cdc9c87386d7f45097c4f390efc1c571ef7c29c7edafbcfc34"
+     }
     },
     {
      "id": "ep12",
@@ -113,7 +168,12 @@
      "file": "comics/peppercarrot/ep12_Autumn-Clearout.cbz",
      "bytes": 838129,
      "sha256": "7034217516f43e5383e123dde6fa9840b770afdd006830d578876706ff9a8602",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep12.jpg",
+      "bytes": 2833,
+      "sha256": "3b84ee48971f9941f9bc48b9feb33a10f4f4288cfd3b1fb6a7eefb8a54fec4b3"
+     }
     },
     {
      "id": "ep13",
@@ -121,7 +181,12 @@
      "file": "comics/peppercarrot/ep13_The-Pyjama-Party.cbz",
      "bytes": 750696,
      "sha256": "db11660845dd16f05128f4fbadefb2aa1c0a316e7589026139a36d3d0382fad3",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep13.jpg",
+      "bytes": 2912,
+      "sha256": "cdbbb31aea04421a4c87eedc5c4225c65d62489aca32a4b59830b3dffd70748f"
+     }
     },
     {
      "id": "ep14",
@@ -129,7 +194,12 @@
      "file": "comics/peppercarrot/ep14_The-Dragon-s-Tooth.cbz",
      "bytes": 645202,
      "sha256": "cd9856052d25ff62a887a54975eca843e8ed52a3f5cebd8321823c15110f9f23",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep14.jpg",
+      "bytes": 2864,
+      "sha256": "e30ccf98d3d3b00dc16db5caaea2b8aaf394d07cc66f59880f43feb0d55d07dd"
+     }
     },
     {
      "id": "ep15",
@@ -137,7 +207,12 @@
      "file": "comics/peppercarrot/ep15_The-Crystal-Ball.cbz",
      "bytes": 792551,
      "sha256": "9b956e907a8e4f8a88ba9635eb8f7199f19238e6f7c4122d4ef40ab487152e3a",
-     "pages": 10
+     "pages": 10,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep15.jpg",
+      "bytes": 3122,
+      "sha256": "904b91a7e07457f05f8c0abcee0a1695c64ad8d7efab60752c2b5c77a7595b47"
+     }
     },
     {
      "id": "ep16",
@@ -145,7 +220,12 @@
      "file": "comics/peppercarrot/ep16_The-Sage-of-the-Mountain.cbz",
      "bytes": 741880,
      "sha256": "5ce843263c2de077a35e7e50fea555adbc602f67180f4c584a589925f3469552",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep16.jpg",
+      "bytes": 2990,
+      "sha256": "5d0fced681315e4b5e8a7bfd0ff7e25541405c94591475ed175566ebd9e2abb5"
+     }
     },
     {
      "id": "ep17",
@@ -153,7 +233,12 @@
      "file": "comics/peppercarrot/ep17_A-Fresh-Start.cbz",
      "bytes": 749023,
      "sha256": "393161ec989c34e57ddbfe4ab53cfb33eb2e77077838db8c763ccdf0dd0cc515",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep17.jpg",
+      "bytes": 2782,
+      "sha256": "16fc46753fc78f8e44a6faa69b3b4564349fa13862991056b1f43f1490e5cc21"
+     }
     },
     {
      "id": "ep18",
@@ -161,7 +246,12 @@
      "file": "comics/peppercarrot/ep18_The-Encounter.cbz",
      "bytes": 728883,
      "sha256": "75e6d41842c4a1873c86ab24fac774a1f372386806ef770434268bec47e9a221",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep18.jpg",
+      "bytes": 2791,
+      "sha256": "33e024536572ae32b414e2827dd42639960e0e4c3df2e6f90f78999627b4b718"
+     }
     },
     {
      "id": "ep19",
@@ -169,7 +259,12 @@
      "file": "comics/peppercarrot/ep19_Pollution.cbz",
      "bytes": 860999,
      "sha256": "20239c143ce89c3d3ee27e606e4103a451c11b0a690a87bd082efbc86b43d406",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep19.jpg",
+      "bytes": 2731,
+      "sha256": "723227df1e7a9b6adf48d2de5fcc0d6c92e01dd48488e4feb399a0fd2227cf00"
+     }
     },
     {
      "id": "ep20",
@@ -177,7 +272,12 @@
      "file": "comics/peppercarrot/ep20_The-Picnic.cbz",
      "bytes": 664996,
      "sha256": "61fb48c2b8b8f123bb531f3f4c05de12fc3ffce5492e732896794b7a41d9ef72",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep20.jpg",
+      "bytes": 2766,
+      "sha256": "ec8fde07c536a07501fb378886fa4e612f950e3e7574c5bc1a530be3076e743a"
+     }
     },
     {
      "id": "ep21",
@@ -185,7 +285,12 @@
      "file": "comics/peppercarrot/ep21_The-Magic-Contest.cbz",
      "bytes": 919743,
      "sha256": "09c06a6434739c2f70378cbea2c948eeb3e85c9b183885ed4e9bcfbe19fb0ea8",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep21.jpg",
+      "bytes": 2857,
+      "sha256": "06c82cb17ce59d8c08becfde1aa945d079acb1dc940cac474453cffdd12d8af4"
+     }
     },
     {
      "id": "ep22",
@@ -193,7 +298,12 @@
      "file": "comics/peppercarrot/ep22_The-Voting-System.cbz",
      "bytes": 1323806,
      "sha256": "9839e008800f5302e821e595a703aaad3af432a650524301606ef3efc47d1dce",
-     "pages": 12
+     "pages": 12,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep22.jpg",
+      "bytes": 2858,
+      "sha256": "9b5fc86d398e1279a289394e8d171c5030d3d202dcc583225edfc14738bbc25a"
+     }
     },
     {
      "id": "ep23",
@@ -201,7 +311,12 @@
      "file": "comics/peppercarrot/ep23_Take-a-Chance.cbz",
      "bytes": 828167,
      "sha256": "efc6972d1f5e88787e6e32d169ff9a40a41d86e39fe8ced2bbd70687aab41a8f",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep23.jpg",
+      "bytes": 2798,
+      "sha256": "c5da90c12c0e10815c1bb90fae620012bf13e745242c3edab85c2f8142fd8857"
+     }
     },
     {
      "id": "ep24",
@@ -209,7 +324,12 @@
      "file": "comics/peppercarrot/ep24_The-Unity-Tree.cbz",
      "bytes": 869424,
      "sha256": "b2e322ba8b3a2f1e44503cc020941e0fd11dd3f915e4773642fcecc19fd18d42",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep24.jpg",
+      "bytes": 2817,
+      "sha256": "689670b932f40c1ec6a490c437a594dcb192ead53341954f1ba63fe4ae546e4e"
+     }
     },
     {
      "id": "ep25",
@@ -217,7 +337,12 @@
      "file": "comics/peppercarrot/ep25_There-are-no-Shortcuts.cbz",
      "bytes": 989757,
      "sha256": "e93d0a0dc1ea5bab5098cebe0afef50218de67708890a05dcb79c25284583a9e",
-     "pages": 11
+     "pages": 11,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep25.jpg",
+      "bytes": 2930,
+      "sha256": "c865340d34260da4da5a37c83a517d5d0c666b570ba22f71b6686afbf95a12cb"
+     }
     },
     {
      "id": "ep26",
@@ -225,7 +350,12 @@
      "file": "comics/peppercarrot/ep26_Books-Are-Great.cbz",
      "bytes": 876280,
      "sha256": "6483a4bbc61313b17a0197dc86a54afb3305200fd659bc94aab8e23f1f73282c",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep26.jpg",
+      "bytes": 2825,
+      "sha256": "8872ac511db196dbaef3255b15b9ba99196b844556c8f42b3fe0c04b09772eb4"
+     }
     },
     {
      "id": "ep27",
@@ -233,7 +363,12 @@
      "file": "comics/peppercarrot/ep27_Coriander-s-Invention.cbz",
      "bytes": 823514,
      "sha256": "85c531d6725a6bf71f251dc984a7bdb1f233013db18ec57156f03e85c14acae6",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep27.jpg",
+      "bytes": 2921,
+      "sha256": "016dec8501f1285abf8e75d242ce0b40beda66d983a70fc9d558668c3e335992"
+     }
     },
     {
      "id": "ep28",
@@ -241,7 +376,12 @@
      "file": "comics/peppercarrot/ep28_The-Festivities.cbz",
      "bytes": 915617,
      "sha256": "4e44d0c41ae4d92d18e9afd2a4bba9f27ca09585fe66c853845e65465cde3e4c",
-     "pages": 10
+     "pages": 10,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep28.jpg",
+      "bytes": 3640,
+      "sha256": "6618367db548853f4fa6628c635f2939d2cddbfcbf935ea30ac46feeaef564ef"
+     }
     },
     {
      "id": "ep29",
@@ -249,7 +389,12 @@
      "file": "comics/peppercarrot/ep29_Destroyer-of-Worlds.cbz",
      "bytes": 1018109,
      "sha256": "5cee6fa419940374fdad6d570b3ec2634d138a7a190ded4b57884775338e761a",
-     "pages": 10
+     "pages": 10,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep29.jpg",
+      "bytes": 2892,
+      "sha256": "749561fbb04bd0017f59f1ffecc363c3a69415215c21d09f1b198a186211c7f9"
+     }
     },
     {
      "id": "ep30",
@@ -257,7 +402,12 @@
      "file": "comics/peppercarrot/ep30_Need-a-Hug.cbz",
      "bytes": 729521,
      "sha256": "5b01f89641acc96cae90c69fe94968ee6401c9ca5dc0d146a6c5b357ae756666",
-     "pages": 8
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep30.jpg",
+      "bytes": 2805,
+      "sha256": "bb4aa75a613190247cd8e564020b519884edc01b1488b31c67aaeba5915960ff"
+     }
     },
     {
      "id": "ep31",
@@ -265,7 +415,12 @@
      "file": "comics/peppercarrot/ep31_The-Fight.cbz",
      "bytes": 909023,
      "sha256": "7a096866a0f50fda5bd4db6e1ecf45da7eb3101cd51218af6df23c5945e3b71d",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep31.jpg",
+      "bytes": 2790,
+      "sha256": "2f12108b2343a25529c969a6714d8a8fbfa03d8d3a3ad064089feb594c5ffafe"
+     }
     },
     {
      "id": "ep32",
@@ -273,7 +428,12 @@
      "file": "comics/peppercarrot/ep32_The-Battlefield.cbz",
      "bytes": 947431,
      "sha256": "32b6bc6453ecceda354fee7dff93f9205096bc01ebeb59aa2a674b83bbadbd97",
-     "pages": 9
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep32.jpg",
+      "bytes": 2450,
+      "sha256": "c9591d1dfa6303ebfb7671e6f1464880510cbe192da2b7e98c552b41240f0bf6"
+     }
     },
     {
      "id": "ep33",
@@ -281,7 +441,12 @@
      "file": "comics/peppercarrot/ep33_Spell-of-War.cbz",
      "bytes": 989213,
      "sha256": "91a8c97cd20ed7b9a872507404b2908c3fea177c0cda68e33a0567568bfe7779",
-     "pages": 10
+     "pages": 10,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep33.jpg",
+      "bytes": 2596,
+      "sha256": "66dd9ab7e299f8c93dca0d053d453ec20191407aa445a073c6645b657be78e8d"
+     }
     },
     {
      "id": "ep34",
@@ -289,7 +454,12 @@
      "file": "comics/peppercarrot/ep34_The-Knighting-of-Shichimi.cbz",
      "bytes": 1375234,
      "sha256": "6dc66a14252e9aa54bc21c5345e48f28bbf11cf027858c2e8582187db4c5c922",
-     "pages": 12
+     "pages": 12,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep34.jpg",
+      "bytes": 2954,
+      "sha256": "d333ed645fb1e97695e87ed7ca41c7735a115512944d35583262872cd686df07"
+     }
     },
     {
      "id": "ep35",
@@ -297,7 +467,12 @@
      "file": "comics/peppercarrot/ep35_The-Reflection.cbz",
      "bytes": 1201121,
      "sha256": "c3ad914c483b73210e5c430bb6b520356f5da9943a3edbfcf59495d1d9b2d313",
-     "pages": 14
+     "pages": 14,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep35.jpg",
+      "bytes": 2790,
+      "sha256": "7403fc40dafb63922547d34c5bb9fb88350a15978300519485f7ad34675b34b9"
+     }
     },
     {
      "id": "ep36",
@@ -305,7 +480,12 @@
      "file": "comics/peppercarrot/ep36_The-Surprise-Attack.cbz",
      "bytes": 1604590,
      "sha256": "94425207cef6823e4f3875a8bffd98248c423b04f61653e8285fd4c7fed0bac7",
-     "pages": 17
+     "pages": 17,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep36.jpg",
+      "bytes": 2350,
+      "sha256": "0eb9d0ba77cede855c2c587221c7b85023a4390bc618af53f10e1c4e4c1fa3a6"
+     }
     },
     {
      "id": "ep37",
@@ -313,7 +493,12 @@
      "file": "comics/peppercarrot/ep37_The-Tears-of-the-Phoenix.cbz",
      "bytes": 1066939,
      "sha256": "25bbc12e777db3cc3c45b91e4c72d4f7640c80192c55df61234d7cc36b157d9a",
-     "pages": 10
+     "pages": 10,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep37.jpg",
+      "bytes": 2974,
+      "sha256": "663e42cf3b5a033195c3c685c47b9161f1895786e1b1c788f3e21fe0fb9f9e2d"
+     }
     },
     {
      "id": "ep38",
@@ -321,7 +506,12 @@
      "file": "comics/peppercarrot/ep38_The-Healer.cbz",
      "bytes": 961100,
      "sha256": "5080f6d86bc16aac7a7245a3396d13a12fe4fb8ba15323cfaddf6e998db1a59c",
-     "pages": 10
+     "pages": 10,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep38.jpg",
+      "bytes": 2810,
+      "sha256": "8a5b6a86834f73c143805a8bb5075b59d6bb0ba9a61e0ad2ffb1d0ab53adeec5"
+     }
     },
     {
      "id": "ep39",
@@ -329,7 +519,12 @@
      "file": "comics/peppercarrot/ep39_The-Tavern.cbz",
      "bytes": 1430552,
      "sha256": "822ede7326af66a386ddb24511580d27be2f912a726d246b3a30cf0005710f66",
-     "pages": 13
+     "pages": 13,
+     "cover": {
+      "file": "comics/covers/peppercarrot/ep39.jpg",
+      "bytes": 2596,
+      "sha256": "3d98f1936be16e251d1bd6f3c7d7c3d08559caaa6449c7539d2fa7e3a2e737fa"
+     }
     }
    ]
   },
@@ -357,7 +552,12 @@
      "file": "comics/minifantasytheater/minifantasytheater.cbz",
      "bytes": 5350609,
      "sha256": "945f82cda5ba989e986703625fde19f455559561dabdc4120a2b8e613c0b9d1a",
-     "pages": 77
+     "pages": 77,
+     "cover": {
+      "file": "comics/covers/minifantasytheater/mft.jpg",
+      "bytes": 12757,
+      "sha256": "6419802c73115e3f3175fcfe030a911a3e05a42417954fe6f96769db5792c6bb"
+     }
     }
    ]
   },
@@ -386,7 +586,12 @@
      "file": "comics/max-und-moritz/max-und-moritz.cbz",
      "bytes": 6762789,
      "sha256": "95c51dbd9cbfebae9a02337846cc6e6ac60fdaad0fabce14606800b289bb0a52",
-     "pages": 93
+     "pages": 93,
+     "cover": {
+      "file": "comics/covers/max-und-moritz/mum.jpg",
+      "bytes": 9431,
+      "sha256": "f399acefb28bc928ad9daecb7da810e9d33397208cdd9a326c8ddc65d6faef38"
+     }
     }
    ]
   },
@@ -414,7 +619,821 @@
      "file": "comics/all-negro-comics/all-negro-comics-1.cbz",
      "bytes": 6111413,
      "sha256": "4b60a2114f2423a51758e11000a40da821f62a1a712bc17c25df2f36ac307d47",
-     "pages": 51
+     "pages": 51,
+     "cover": {
+      "file": "comics/covers/all-negro-comics/issue1.jpg",
+      "bytes": 31749,
+      "sha256": "18cb3fc82c5716921b6592e53b66772a401a37c9a1274033cc4696c6161c6c33"
+     }
+    }
+   ]
+  },
+  {
+   "id": "peppercarrot-fr",
+   "title": "Pepper&Carrot in French (Français)",
+   "author": "David Revoy",
+   "year": "2014-2025",
+   "summary": "The first 12 episodes of Pepper&Carrot with the French translation, for reading in your language or learning it.",
+   "licence": "CC BY 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+   "attribution": "Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). French translation: David Revoy, Aurélien Gâteau, Remi Rampin, Xavier Dolques, Nartance, Valvin, Calimeroteknik, credited in https://www.peppercarrot.com/0_sources/langs.json. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/index.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "witch",
+    "cc-by",
+    "translation",
+    "fr"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "ep01-fr",
+     "title": "Episode 1: The Potion of Flight",
+     "file": "comics/peppercarrot-fr/ep01_Potion-of-Flight.cbz",
+     "bytes": 144523,
+     "sha256": "9fc0688940d091f3a5a494cec9c399223653c4409c2aea351aa296ca93dc959c",
+     "pages": 5,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep01-fr.jpg",
+      "bytes": 3263,
+      "sha256": "e803398b326c26e3fbcafaaef0130be2f51cb1f3c555239205d9983b16e8bc98"
+     }
+    },
+    {
+     "id": "ep02-fr",
+     "title": "Episode 2: Rainbow Potions",
+     "file": "comics/peppercarrot-fr/ep02_Rainbow-potions.cbz",
+     "bytes": 309261,
+     "sha256": "9d694d2b4df92802e1b47b9741f4df4b4046864333edef2efa3fb0f31b738a0d",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep02-fr.jpg",
+      "bytes": 3370,
+      "sha256": "768e6ef9841520d308b2ad2ae43f340a34276e5e7de42c1ef227c962c8fd7c93"
+     }
+    },
+    {
+     "id": "ep03-fr",
+     "title": "Episode 3: The Secret Ingredients",
+     "file": "comics/peppercarrot-fr/ep03_The-secret-ingredients.cbz",
+     "bytes": 549691,
+     "sha256": "d9d82d957b413d534a44e21701d9b60f7e3fb43a3384f5eaf789d0f013f3ba8a",
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep03-fr.jpg",
+      "bytes": 3446,
+      "sha256": "fe72286520d8b16938956a81a0041bae2067ad29f2f8284a2aceb1cea57bb52d"
+     }
+    },
+    {
+     "id": "ep04-fr",
+     "title": "Episode 4: Stroke of Genius",
+     "file": "comics/peppercarrot-fr/ep04_Stroke-of-genius.cbz",
+     "bytes": 387895,
+     "sha256": "21ef9eb6c0b6be2dadc7d33fe6274491753eb176a1b0364d1ae098177220c163",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep04-fr.jpg",
+      "bytes": 3363,
+      "sha256": "c4a1d853addd8657dc2bbd46525e7608e864cd6e3b903c1a78508b16f8f171e2"
+     }
+    },
+    {
+     "id": "ep05-fr",
+     "title": "Episode 5: Special holiday episode",
+     "file": "comics/peppercarrot-fr/ep05_Special-holiday-episode.cbz",
+     "bytes": 241607,
+     "sha256": "aa9fa72475db7da0dc8e3de069a6272798595cc6f813f77da03208f4dda28f82",
+     "pages": 6,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep05-fr.jpg",
+      "bytes": 2700,
+      "sha256": "7315a3ffccb1338b19c7484236818d96e8d5b154e50d6596dadefc11b9ed3516"
+     }
+    },
+    {
+     "id": "ep06-fr",
+     "title": "Episode 6: The Potion Contest",
+     "file": "comics/peppercarrot-fr/ep06_The-Potion-Contest.cbz",
+     "bytes": 737882,
+     "sha256": "ce669e0156ab1c4a1a80ba1ebb6292a1f104f49d9ed9ca70367e4587dd67ae3d",
+     "pages": 11,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep06-fr.jpg",
+      "bytes": 3475,
+      "sha256": "fb73ce087304b1d5479480f926335fd085490f914b4f6015f6711327a020122b"
+     }
+    },
+    {
+     "id": "ep07-fr",
+     "title": "Episode 7: The Wish",
+     "file": "comics/peppercarrot-fr/ep07_The-Wish.cbz",
+     "bytes": 349262,
+     "sha256": "a49ee1c2229b9bad891a04254277713f1ff0414d8369cc088df4a76de0ae0a56",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep07-fr.jpg",
+      "bytes": 3231,
+      "sha256": "61bd923c236cb8e571862c838a115b0b318d372e095f3aef8cccc3498bd0d292"
+     }
+    },
+    {
+     "id": "ep08-fr",
+     "title": "Episode 8: Pepper's Birthday Party",
+     "file": "comics/peppercarrot-fr/ep08_Pepper-s-Birthday-Party.cbz",
+     "bytes": 445639,
+     "sha256": "0c112da05e6a8781f341592c04c2eaae843324647d30f594a8cdecb71ab5e8a5",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep08-fr.jpg",
+      "bytes": 3495,
+      "sha256": "081bb4314e76d0cf230d5dfa782e62b389de282bc6c61d4e2b30f16171286c17"
+     }
+    },
+    {
+     "id": "ep09-fr",
+     "title": "Episode 9: The Remedy",
+     "file": "comics/peppercarrot-fr/ep09_The-Remedy.cbz",
+     "bytes": 469113,
+     "sha256": "60bec2423259f2ea40631920255d7141c02b4b245ea422356699c0d6d340bb1b",
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep09-fr.jpg",
+      "bytes": 3336,
+      "sha256": "f063de0b73c054cdbe6559320f0b2b7dcef177bdb4c0f4bf0cf454448e6b058b"
+     }
+    },
+    {
+     "id": "ep10-fr",
+     "title": "Episode 10: Summer Special",
+     "file": "comics/peppercarrot-fr/ep10_Summer-Special.cbz",
+     "bytes": 365506,
+     "sha256": "39d7bfe8599b0fac695769682b414216ce5d4c25e03d87b5cd881e627fbc8a17",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep10-fr.jpg",
+      "bytes": 3567,
+      "sha256": "0335f7ec7a977a17919c57082f5f115cef50ababa95f53b8a970ab9d5ef4d06a"
+     }
+    },
+    {
+     "id": "ep11-fr",
+     "title": "Episode 11: The Witches of Chaosah",
+     "file": "comics/peppercarrot-fr/ep11_The-Witches-of-Chaosah.cbz",
+     "bytes": 487530,
+     "sha256": "53c1e8d7461b6bdfbcce741716ba53c6c96858df76f6f9b00a7b6a5cf80f7483",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep11-fr.jpg",
+      "bytes": 3561,
+      "sha256": "0aa3307d76fe38e7339295e1cc515fcc3c6336683826560c094f7d6419efac0a"
+     }
+    },
+    {
+     "id": "ep12-fr",
+     "title": "Episode 12: Autumn Clearout",
+     "file": "comics/peppercarrot-fr/ep12_Autumn-Clearout.cbz",
+     "bytes": 559063,
+     "sha256": "33559dd76c8c77dae76ca083ae0fdc249f8802da68187cb5e9ecd535476742fb",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-fr/ep12-fr.jpg",
+      "bytes": 3509,
+      "sha256": "a81bc85a84023f0bf7445f7f0b825afd828119809a0794cf2d782064e530437a"
+     }
+    }
+   ]
+  },
+  {
+   "id": "peppercarrot-es",
+   "title": "Pepper&Carrot in Spanish (Español)",
+   "author": "David Revoy",
+   "year": "2014-2025",
+   "summary": "The first 12 episodes of Pepper&Carrot with the Spanish translation, for reading in your language or learning it.",
+   "licence": "CC BY 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+   "attribution": "Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Spanish translation: TheFaico, credited in https://www.peppercarrot.com/0_sources/langs.json. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/index.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "witch",
+    "cc-by",
+    "translation",
+    "es"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "ep01-es",
+     "title": "Episode 1: The Potion of Flight",
+     "file": "comics/peppercarrot-es/ep01_Potion-of-Flight.cbz",
+     "bytes": 144039,
+     "sha256": "6bc08e4b39bf188611b7be4bb8d902749e5688a9b3b4431f7cf81c2198337259",
+     "pages": 5,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep01-es.jpg",
+      "bytes": 3187,
+      "sha256": "a5557bd071eca1e1045bff59cb38871e855607bc7aa97ede02f5fa65b34fb102"
+     }
+    },
+    {
+     "id": "ep02-es",
+     "title": "Episode 2: Rainbow Potions",
+     "file": "comics/peppercarrot-es/ep02_Rainbow-potions.cbz",
+     "bytes": 309447,
+     "sha256": "b48a6a30c91c05132f3f9b6c24dc9e717e818028a63c7f05d6bccf9dfa57a25f",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep02-es.jpg",
+      "bytes": 3320,
+      "sha256": "e9182a42318408d1049ce23ce2ace64f54a31427cb9ff504ad43dcf8c34b89cb"
+     }
+    },
+    {
+     "id": "ep03-es",
+     "title": "Episode 3: The Secret Ingredients",
+     "file": "comics/peppercarrot-es/ep03_The-secret-ingredients.cbz",
+     "bytes": 551887,
+     "sha256": "28e0268ba949d97cc0e02030f45e2b99820b2dfa048aec5280a59b275b8589b3",
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep03-es.jpg",
+      "bytes": 3491,
+      "sha256": "23683b0ef7d107667722d5a731f5f442737a9c887bc3ff1a7500c8c34840660a"
+     }
+    },
+    {
+     "id": "ep04-es",
+     "title": "Episode 4: Stroke of Genius",
+     "file": "comics/peppercarrot-es/ep04_Stroke-of-genius.cbz",
+     "bytes": 391544,
+     "sha256": "9d2fc3fe1f3a67761f60759a998d159414745df09b761b750ea195935c5f2efd",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep04-es.jpg",
+      "bytes": 3311,
+      "sha256": "e0faf9f4601e028207243308539fa7c5c08daf34eae3d6f06f6d3d830edf2bd7"
+     }
+    },
+    {
+     "id": "ep05-es",
+     "title": "Episode 5: Special holiday episode",
+     "file": "comics/peppercarrot-es/ep05_Special-holiday-episode.cbz",
+     "bytes": 242655,
+     "sha256": "e382198b02e4fa69ce7e3b3ead3b6a55713616154fa0b504193105392fd0abfe",
+     "pages": 6,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep05-es.jpg",
+      "bytes": 2687,
+      "sha256": "540a4a52f67d27d85cbcf5382eda43a010dc450eeae0288a9bff7f279372f15f"
+     }
+    },
+    {
+     "id": "ep06-es",
+     "title": "Episode 6: The Potion Contest",
+     "file": "comics/peppercarrot-es/ep06_The-Potion-Contest.cbz",
+     "bytes": 741134,
+     "sha256": "a3fe8a0db40ac0f60932a995ca63adf1519956e82bdbac032e07617fa93ced44",
+     "pages": 11,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep06-es.jpg",
+      "bytes": 3454,
+      "sha256": "f4166fe1687ba97e906d159efd1a1aeb55baced691128a3595bcf079d362e019"
+     }
+    },
+    {
+     "id": "ep07-es",
+     "title": "Episode 7: The Wish",
+     "file": "comics/peppercarrot-es/ep07_The-Wish.cbz",
+     "bytes": 349472,
+     "sha256": "87ce7c88c39081354e309fc75d2d792804d7d43c89ccc9bd7492c7523f915ed3",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep07-es.jpg",
+      "bytes": 3158,
+      "sha256": "5ec64b94151986f53e40ac70f11472ba56d4c4c42602d4dfb74a20a12d255059"
+     }
+    },
+    {
+     "id": "ep08-es",
+     "title": "Episode 8: Pepper's Birthday Party",
+     "file": "comics/peppercarrot-es/ep08_Pepper-s-Birthday-Party.cbz",
+     "bytes": 449703,
+     "sha256": "2f4510c9460a644310b11d04d325d534f1776c9092cc52b361c10347a1c14dbc",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep08-es.jpg",
+      "bytes": 3527,
+      "sha256": "39677a59d6bcfeb0a1b48d978608ed5b953e8c8ca6a1c9e293db25bc7dcf2e7e"
+     }
+    },
+    {
+     "id": "ep09-es",
+     "title": "Episode 9: The Remedy",
+     "file": "comics/peppercarrot-es/ep09_The-Remedy.cbz",
+     "bytes": 470281,
+     "sha256": "9e3b2a5b6bfb0bc2ed55e2cd664186f46efcc83e6df7aa64f79a54e876151f21",
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep09-es.jpg",
+      "bytes": 3260,
+      "sha256": "0790247e715bb5482cc6338884930c575d6bcf744ec14ee7f08587a68bad3373"
+     }
+    },
+    {
+     "id": "ep10-es",
+     "title": "Episode 10: Summer Special",
+     "file": "comics/peppercarrot-es/ep10_Summer-Special.cbz",
+     "bytes": 366241,
+     "sha256": "56a179a47eec1268f188e3727f1e7654e08f3a01c3ca3be8f3abdc973ff4cc0d",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep10-es.jpg",
+      "bytes": 3583,
+      "sha256": "ce385340936a5ed0d87c104c055ccf53dd2f2e7924a4628616049d01b32ea172"
+     }
+    },
+    {
+     "id": "ep11-es",
+     "title": "Episode 11: The Witches of Chaosah",
+     "file": "comics/peppercarrot-es/ep11_The-Witches-of-Chaosah.cbz",
+     "bytes": 489528,
+     "sha256": "79a63c86a23244868be6dd25e63f11c954e0bcac9396564b10a9073cfcb2d5d5",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep11-es.jpg",
+      "bytes": 3474,
+      "sha256": "922550207d3ac7ade7197005150044c6ecf2ca46e8a9afd52b1ed63dbea634ee"
+     }
+    },
+    {
+     "id": "ep12-es",
+     "title": "Episode 12: Autumn Clearout",
+     "file": "comics/peppercarrot-es/ep12_Autumn-Clearout.cbz",
+     "bytes": 563781,
+     "sha256": "5beeac1dd0e4cf17d1a0f5ba94ada936ee0162b5fbd4a477e050e1e0d3aa00b6",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-es/ep12-es.jpg",
+      "bytes": 3389,
+      "sha256": "458dfc4e9b8d2ee74de5b6408b5804303a119d05f1b4071eac94cbc4d9deea6a"
+     }
+    }
+   ]
+  },
+  {
+   "id": "peppercarrot-de",
+   "title": "Pepper&Carrot in German (Deutsch)",
+   "author": "David Revoy",
+   "year": "2014-2025",
+   "summary": "The first 12 episodes of Pepper&Carrot with the German translation, for reading in your language or learning it.",
+   "licence": "CC BY 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+   "attribution": "Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). German translation: Alexandra Jordan, Helmar Suschka, Carlo Gandolfi, colognella, Julian Eric Ain, Philipp (hapit) Hemmer, Ret Samys, Martin Disch, Ulrich Greve, kate, credited in https://www.peppercarrot.com/0_sources/langs.json. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/index.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "witch",
+    "cc-by",
+    "translation",
+    "de"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "ep01-de",
+     "title": "Episode 1: The Potion of Flight",
+     "file": "comics/peppercarrot-de/ep01_Potion-of-Flight.cbz",
+     "bytes": 144469,
+     "sha256": "8a2d1cac20e34e63d6a41bf6f20ca47bf9d86fbf442ffd849223c513d17003f3",
+     "pages": 5,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep01-de.jpg",
+      "bytes": 3234,
+      "sha256": "7126d27c8579804b09b608375adbe2734dde53c583633baa95685f6df730e2a6"
+     }
+    },
+    {
+     "id": "ep02-de",
+     "title": "Episode 2: Rainbow Potions",
+     "file": "comics/peppercarrot-de/ep02_Rainbow-potions.cbz",
+     "bytes": 310289,
+     "sha256": "144c29e62b3ff4b5ce091d1c7026cf7412c546ae9e78108c69fac5689cd10fa1",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep02-de.jpg",
+      "bytes": 3434,
+      "sha256": "938fb97a6348152461856afd4202c37c108f5f5dd6a8885b3524fc5b98a1e603"
+     }
+    },
+    {
+     "id": "ep03-de",
+     "title": "Episode 3: The Secret Ingredients",
+     "file": "comics/peppercarrot-de/ep03_The-secret-ingredients.cbz",
+     "bytes": 555737,
+     "sha256": "c95584664b73d8598d6d7e228055921a53d1894621247b11a10d3ad77df30714",
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep03-de.jpg",
+      "bytes": 3483,
+      "sha256": "2f2fc149248579aed29fb99c0e9a14aca85af6f66912cc8af85e25e1a4aa8c15"
+     }
+    },
+    {
+     "id": "ep04-de",
+     "title": "Episode 4: Stroke of Genius",
+     "file": "comics/peppercarrot-de/ep04_Stroke-of-genius.cbz",
+     "bytes": 394649,
+     "sha256": "4d305f913bcd0d9639024346e635d2686294143b6902cb0b805251dbd2b7a714",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep04-de.jpg",
+      "bytes": 3317,
+      "sha256": "f3f48952005e89f8897d41cc4ad6f9e00203922c2c67729289cf045241ab39b6"
+     }
+    },
+    {
+     "id": "ep05-de",
+     "title": "Episode 5: Special holiday episode",
+     "file": "comics/peppercarrot-de/ep05_Special-holiday-episode.cbz",
+     "bytes": 244812,
+     "sha256": "ab2c602dbfe07bce1e880c3df659d7332fc2f71b5b0027f894d6bf3f7b8b037f",
+     "pages": 6,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep05-de.jpg",
+      "bytes": 2706,
+      "sha256": "4dec3a3b01f66a32a21c5eee52b415d11547fbba313125944f1223f0409bc5b1"
+     }
+    },
+    {
+     "id": "ep06-de",
+     "title": "Episode 6: The Potion Contest",
+     "file": "comics/peppercarrot-de/ep06_The-Potion-Contest.cbz",
+     "bytes": 748117,
+     "sha256": "f8dcb675603d07b74ed2a186a664969b405c33a2f59f3f057bd0b99844c12ef9",
+     "pages": 11,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep06-de.jpg",
+      "bytes": 3606,
+      "sha256": "5a773cde1e9a9a393b150b04fd051399be04368487e0d9fc747ee7ce179b054a"
+     }
+    },
+    {
+     "id": "ep07-de",
+     "title": "Episode 7: The Wish",
+     "file": "comics/peppercarrot-de/ep07_The-Wish.cbz",
+     "bytes": 350412,
+     "sha256": "a9b1544013520b8c560e74e25ca5cc1f8cb8fbbc0cdf45ac3d0e9144f4ca919d",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep07-de.jpg",
+      "bytes": 3247,
+      "sha256": "1eacee8f193d34ade55cef20e549ff162b0d212f81ec8f59e59c8c6eded6df4d"
+     }
+    },
+    {
+     "id": "ep08-de",
+     "title": "Episode 8: Pepper's Birthday Party",
+     "file": "comics/peppercarrot-de/ep08_Pepper-s-Birthday-Party.cbz",
+     "bytes": 448513,
+     "sha256": "e02b1f4f7268b072bf3ca0e940f91b2af31258e65343e01c2c46f18f33863282",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep08-de.jpg",
+      "bytes": 3496,
+      "sha256": "53260d4e012d217670813fcdd8fe0b4d27d181177463f2cefaeb948eae6844de"
+     }
+    },
+    {
+     "id": "ep09-de",
+     "title": "Episode 9: The Remedy",
+     "file": "comics/peppercarrot-de/ep09_The-Remedy.cbz",
+     "bytes": 469239,
+     "sha256": "aef714735d3860bccb3f87d10313ea478cd6e40f2d2265827808282db8122db5",
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep09-de.jpg",
+      "bytes": 3369,
+      "sha256": "c91bf4e014510beffe3348af98eee0ceb6f2db324b8f8c7f19a5e7de36833d22"
+     }
+    },
+    {
+     "id": "ep10-de",
+     "title": "Episode 10: Summer Special",
+     "file": "comics/peppercarrot-de/ep10_Summer-Special.cbz",
+     "bytes": 365447,
+     "sha256": "4b74624994d9a8998d8e6d9cb8c4e5f4ce66c4157845744bdb6e6c3661fd9703",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep10-de.jpg",
+      "bytes": 3609,
+      "sha256": "2bc9c863522ec3b7292bf5b57e82eb1fc3a8b73960295fc99d0bf03149f3ca5f"
+     }
+    },
+    {
+     "id": "ep11-de",
+     "title": "Episode 11: The Witches of Chaosah",
+     "file": "comics/peppercarrot-de/ep11_The-Witches-of-Chaosah.cbz",
+     "bytes": 488067,
+     "sha256": "18f5fa2d2e7ad8d97477e9fbecc4989b04f81922ddcd583828639c2987b0b5c1",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep11-de.jpg",
+      "bytes": 3503,
+      "sha256": "05ad315ebb4ebdf9ed88ba372cf52faae6e2b5d21a7d3dd943bec4cac06fbbcf"
+     }
+    },
+    {
+     "id": "ep12-de",
+     "title": "Episode 12: Autumn Clearout",
+     "file": "comics/peppercarrot-de/ep12_Autumn-Clearout.cbz",
+     "bytes": 557943,
+     "sha256": "06623da452b0a42a9e42aa7e2af1e8ca5d2ad1170af9990a52b6b64f76b72b72",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-de/ep12-de.jpg",
+      "bytes": 3357,
+      "sha256": "918a30e68aac69fe8ec396471fdfbe8e74ce7dacf9bbcd943edb3e2942ab34b3"
+     }
+    }
+   ]
+  },
+  {
+   "id": "peppercarrot-ja",
+   "title": "Pepper&Carrot in Japanese (日本語)",
+   "author": "David Revoy",
+   "year": "2014-2025",
+   "summary": "The first 12 episodes of Pepper&Carrot with the Japanese translation, for reading in your language or learning it.",
+   "licence": "CC BY 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+   "attribution": "Art & scenario: David Revoy, www.peppercarrot.com, licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Japanese translation: guruguru, credited in https://www.peppercarrot.com/0_sources/langs.json. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://www.peppercarrot.com/en/webcomics/index.html",
+   "tags": [
+    "fantasy",
+    "all-ages",
+    "witch",
+    "cc-by",
+    "translation",
+    "ja"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "ep01-ja",
+     "title": "Episode 1: The Potion of Flight",
+     "file": "comics/peppercarrot-ja/ep01_Potion-of-Flight.cbz",
+     "bytes": 143104,
+     "sha256": "5822678ab09d7e78894d7a85a1511163e5d27557a11644f97e28840b57314e14",
+     "pages": 5,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep01-ja.jpg",
+      "bytes": 2747,
+      "sha256": "7a6926ff9f589bfba19e56694d74ca989336401f35ab22850a1c7e9b1095a0d9"
+     }
+    },
+    {
+     "id": "ep02-ja",
+     "title": "Episode 2: Rainbow Potions",
+     "file": "comics/peppercarrot-ja/ep02_Rainbow-potions.cbz",
+     "bytes": 308057,
+     "sha256": "bfd0569a36d4146018a0f3329b4e53d9515bab18cd94b4b455a4519031295d36",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep02-ja.jpg",
+      "bytes": 2876,
+      "sha256": "5d7249f5aaaa29276394f60db53f9b5987c35b7eb9172135c0c5376eec2e2066"
+     }
+    },
+    {
+     "id": "ep03-ja",
+     "title": "Episode 3: The Secret Ingredients",
+     "file": "comics/peppercarrot-ja/ep03_The-secret-ingredients.cbz",
+     "bytes": 552721,
+     "sha256": "82a73ba580f46abcc1b1eda474896e09711e85b807729ee8ee99cf4df5fa06ba",
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep03-ja.jpg",
+      "bytes": 3030,
+      "sha256": "bf799dfe1c8337495ab84bda0c8efb27f4aada6db919e58cbab4a4321ca71d11"
+     }
+    },
+    {
+     "id": "ep04-ja",
+     "title": "Episode 4: Stroke of Genius",
+     "file": "comics/peppercarrot-ja/ep04_Stroke-of-genius.cbz",
+     "bytes": 391271,
+     "sha256": "d768e757112253f02c86a2c6a13808c2e78326a9917fca6fa62e7406ab50f28a",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep04-ja.jpg",
+      "bytes": 3054,
+      "sha256": "3a4e19f1e6e77a9b9d295366eb91927855098fb1853bfd5c9c6a3515197e22c5"
+     }
+    },
+    {
+     "id": "ep05-ja",
+     "title": "Episode 5: Special holiday episode",
+     "file": "comics/peppercarrot-ja/ep05_Special-holiday-episode.cbz",
+     "bytes": 245171,
+     "sha256": "6e9369e0ec64a237f362286b5e157ae354bddc6136660a989839307156a111be",
+     "pages": 6,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep05-ja.jpg",
+      "bytes": 2621,
+      "sha256": "7f8587e5c96a3fc05edbaa087ba5224fc6a12f389dc8f8111c37c4ee3b48cf55"
+     }
+    },
+    {
+     "id": "ep06-ja",
+     "title": "Episode 6: The Potion Contest",
+     "file": "comics/peppercarrot-ja/ep06_The-Potion-Contest.cbz",
+     "bytes": 736116,
+     "sha256": "85e4dc1c1e389f498ff63bfa776179b62239691d726ab8db423190609ca4aec0",
+     "pages": 11,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep06-ja.jpg",
+      "bytes": 3130,
+      "sha256": "687b50c115eb0e7f260d9f7e7f8ba5ef80f662639f2e6fef5f43923546e8c94e"
+     }
+    },
+    {
+     "id": "ep07-ja",
+     "title": "Episode 7: The Wish",
+     "file": "comics/peppercarrot-ja/ep07_The-Wish.cbz",
+     "bytes": 348973,
+     "sha256": "431edb1bf024a88412d8ba28578ae43013162d0d71c05b277ee108caa0cbf193",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep07-ja.jpg",
+      "bytes": 2860,
+      "sha256": "2649db0c0c7251a474ae802219e6613a4bd43ad38f7bd9898fa77aaa69ebb304"
+     }
+    },
+    {
+     "id": "ep08-ja",
+     "title": "Episode 8: Pepper's Birthday Party",
+     "file": "comics/peppercarrot-ja/ep08_Pepper-s-Birthday-Party.cbz",
+     "bytes": 446982,
+     "sha256": "1e5feaaaddb8e182254c831460c045277c26592456e382308fb8c806bb3a4ddc",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep08-ja.jpg",
+      "bytes": 3235,
+      "sha256": "93d70fc1b8488dee87e836be747cb602a2ad468708f372dce342cfb9073b0d7c"
+     }
+    },
+    {
+     "id": "ep09-ja",
+     "title": "Episode 9: The Remedy",
+     "file": "comics/peppercarrot-ja/ep09_The-Remedy.cbz",
+     "bytes": 465526,
+     "sha256": "c39460215683ba58730c63644b9ac11300f2283146e640d7b2cba10f101ef0de",
+     "pages": 9,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep09-ja.jpg",
+      "bytes": 2965,
+      "sha256": "e0aad251b0557a40e5b0102353a3a2a886ca07eb02c8f8d74da2207bf0bf12d9"
+     }
+    },
+    {
+     "id": "ep10-ja",
+     "title": "Episode 10: Summer Special",
+     "file": "comics/peppercarrot-ja/ep10_Summer-Special.cbz",
+     "bytes": 365743,
+     "sha256": "20e70a3b9862a694b4a3349798c6bdfed7bf4c998f7079454ef3042a0dbf005b",
+     "pages": 7,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep10-ja.jpg",
+      "bytes": 3389,
+      "sha256": "2052a86dc2d00dc6ca603fe902bf76a7e11fc1fc654d982c50b4f92f8f0913ee"
+     }
+    },
+    {
+     "id": "ep11-ja",
+     "title": "Episode 11: The Witches of Chaosah",
+     "file": "comics/peppercarrot-ja/ep11_The-Witches-of-Chaosah.cbz",
+     "bytes": 485150,
+     "sha256": "90d3e30c101e8cbdf87404c8b44c00eb3148299f6c7a4a70dfe87f68b8448651",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep11-ja.jpg",
+      "bytes": 3326,
+      "sha256": "07cbd2411cd0a392c63139f958c6d86540aed40503c9641c62bf94b9bd8a03f0"
+     }
+    },
+    {
+     "id": "ep12-ja",
+     "title": "Episode 12: Autumn Clearout",
+     "file": "comics/peppercarrot-ja/ep12_Autumn-Clearout.cbz",
+     "bytes": 553775,
+     "sha256": "14fb05fb22aacb4faa616a80206d4816515908bbb9270c597b5a7caaee3ca70d",
+     "pages": 8,
+     "cover": {
+      "file": "comics/covers/peppercarrot-ja/ep12-ja.jpg",
+      "bytes": 3083,
+      "sha256": "dd46881b0aedf2dcaa464f3bd5a91f0c1cb8c4a1f329fd8fb4440320a77294d2"
+     }
+    }
+   ]
+  },
+  {
+   "id": "plish-and-plum",
+   "title": "Plish and Plum",
+   "author": "Wilhelm Busch (translated by Charles Timothy Brooks)",
+   "year": "1883",
+   "summary": "Busch’s Max und Moritz in English verse: two boys, seven pranks, one mill. A picture story from 1865 that helped invent the comic strip.",
+   "licence": "Public domain (author died 1908; US edition 1883)",
+   "licenceUrl": "https://archive.org/details/plishplumfromger00buscrich",
+   "attribution": "Plish and Plum, from the German of Wilhelm Busch (Wilhelm Busch, 1832-1908; translated by Charles Timothy Brooks, Roberts Brothers, Boston, 1883), public domain. Scan: University of California Libraries via the Internet Archive. Pages downscaled to 640 px wide for StaticOS.",
+   "source": "https://archive.org/details/plishplumfromger00buscrich",
+   "tags": [
+    "classic",
+    "public-domain",
+    "english"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "plish-and-plum",
+     "title": "Plish and Plum",
+     "file": "comics/plish-and-plum/plish-and-plum.cbz",
+     "bytes": 4468053,
+     "sha256": "f5062e1ba54297f34e943f0f4a229fabf5037ac56a4fe1a673f3d66d58133ad0",
+     "pages": 84,
+     "cover": {
+      "file": "comics/covers/plish-and-plum/plish-and-plum.jpg",
+      "bytes": 9318,
+      "sha256": "a6d8309ddc388df5fd19a9b94632a304505ca74bf06b077f616081da72d2815d"
+     }
+    }
+   ]
+  },
+  {
+   "id": "english-struwwelpeter",
+   "title": "The English Struwwelpeter",
+   "author": "Heinrich Hoffmann",
+   "year": "1909 edition (first published 1845)",
+   "summary": "Pretty stories and funny pictures: the cautionary picture tales of Shock-Headed Peter, in English, with the original drawings.",
+   "licence": "Public domain (author died 1894; published 1909)",
+   "licenceUrl": "https://archive.org/details/englishstruwwelp00hoffrich",
+   "attribution": "The English Struwwelpeter, or, Pretty stories and funny pictures (Heinrich Hoffmann, 1809-1894; London: Routledge & Kegan Paul, 1909), public domain. Scan: University of California Libraries via the Internet Archive. Pages downscaled to 800 px wide for StaticOS.",
+   "source": "https://archive.org/details/englishstruwwelp00hoffrich",
+   "tags": [
+    "classic",
+    "public-domain",
+    "english"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "english-struwwelpeter",
+     "title": "The English Struwwelpeter",
+     "file": "comics/english-struwwelpeter/english-struwwelpeter.cbz",
+     "bytes": 3941183,
+     "sha256": "fb5ff896fe38c0302e586f800c04741b3f2c4448ca5dd24b9bf0fbdc354795f3",
+     "pages": 55,
+     "cover": {
+      "file": "comics/covers/english-struwwelpeter/english-struwwelpeter.jpg",
+      "bytes": 19162,
+      "sha256": "fc7d5b3f0040704ae25a57c246decdb7fba1b5e047db9867910c779b281aa8f8"
+     }
+    }
+   ]
+  },
+  {
+   "id": "buster-brown",
+   "title": "Buster Brown, his dog Tige and their troubles",
+   "author": "R. F. Outcault",
+   "year": "1904",
+   "summary": "The Sunday-paper strip that sold a million shoes: a mischievous boy, his bulldog Tige, and a good resolution at the bottom of every page.",
+   "licence": "Public domain (author died 1928; published 1904)",
+   "licenceUrl": "https://archive.org/details/BusterBrownhisd00Outc",
+   "attribution": "Buster Brown, his dog Tige and their troubles (Richard Felton Outcault, 1863-1928; New York: Frederick A. Stokes Company, 1904), public domain. Scan: Smithsonian Libraries via the Internet Archive. Pages downscaled to 800 px wide for StaticOS.",
+   "source": "https://archive.org/details/BusterBrownhisd00Outc",
+   "tags": [
+    "classic",
+    "public-domain",
+    "english",
+    "comic-strip"
+   ],
+   "rtl": false,
+   "books": [
+    {
+     "id": "buster-brown",
+     "title": "Buster Brown, his dog Tige and their troubles",
+     "file": "comics/buster-brown/buster-brown.cbz",
+     "bytes": 4348836,
+     "sha256": "04569f0aa07af7047b503e2054fa1a296664ad290de2fcad73f58435e1af45f2",
+     "pages": 72,
+     "cover": {
+      "file": "comics/covers/buster-brown/buster-brown.jpg",
+      "bytes": 6764,
+      "sha256": "ca91cd240c2a2b70cca6a3e9f212d3a9e43035f006f9f600f56e1398db17591a"
+     }
     }
    ]
   }

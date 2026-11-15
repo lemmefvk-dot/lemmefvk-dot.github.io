@@ -1,0 +1,99 @@
+/* ==================================================================
+   Looks — dock styles, top bar styles, the interface font, the Clay
+   icon style and the retro CRT start-up. Each is one data attribute
+   on <html> (js/core/appearance.js sets them from prefs, main.js's
+   applyPrefs does the icon style) so the right look is on the first
+   painted frame. At their defaults none of this applies.
+
+     data-dockstyle  glass (default) | solid | minimal
+     data-barstyle   default | transparent | compact
+     data-uifont     default | system | rounded | serif | mono
+     data-icons      clay            (the others are in feat-store.css)
+   ================================================================== */
+
+/* ---- dock ---- */
+html[data-dockstyle="solid"] .dock{
+  background:var(--bg-2);-webkit-backdrop-filter:none;backdrop-filter:none;
+  border-color:var(--line-2);box-shadow:var(--sh-3);
+}
+html[data-dockstyle="minimal"] .dock{
+  background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;
+  border-color:transparent;box-shadow:none;padding-left:var(--sp-2);padding-right:var(--sp-2);
+}
+html[data-dockstyle="minimal"] .dock__sep{opacity:.35}
+
+/* ---- top bar ---- */
+html[data-barstyle="transparent"] .topbar{
+  background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;border-bottom-color:transparent;
+  text-shadow:0 1px 3px rgba(0,0,0,.7),0 0 10px rgba(0,0,0,.45);
+}
+:root[data-theme="light"][data-barstyle="transparent"] .topbar{text-shadow:0 1px 3px rgba(255,255,255,.8),0 0 10px rgba(255,255,255,.5)}
+:root[data-barstyle="compact"]{--topbar-h:26px}
+:root[data-barstyle="compact"] .topbar{gap:var(--sp-3);font-size:calc(10.5px * var(--fs-k,1))}
+:root[data-barstyle="compact"] .topbar__logo{width:15px;height:15px}
+
+/* ---- interface font: --font is what every app's text is set in. A reading
+   font chosen in Accessibility (data-font) always wins over this one. ---- */
+:root[data-uifont="system"]:not([data-font="dyslexic"]):not([data-font="hyperlegible"]){--font:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+:root[data-uifont="rounded"]:not([data-font="dyslexic"]):not([data-font="hyperlegible"]){--font:ui-rounded,"SF Pro Rounded","Hiragino Maru Gothic ProN","Arial Rounded MT Bold",Quicksand,Nunito,system-ui,sans-serif}
+:root[data-uifont="serif"]:not([data-font="dyslexic"]):not([data-font="hyperlegible"]){--font:ui-serif,"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif}
+:root[data-uifont="mono"]:not([data-font="dyslexic"]):not([data-font="hyperlegible"]){--font:var(--mono)}
+
+/* ---- Clay: soft, puffy tiles, as if pressed out of modelling clay ---- */
+html[data-icons="clay"] .glyph,
+.st-look[data-icons="clay"] .glyph.glyph{
+  border-radius:calc(var(--gs,38px) * .36);
+  background:linear-gradient(160deg,var(--g1,#6a6a78),var(--g2,#42424e));
+  box-shadow:
+    inset 0 calc(var(--gs,38px) * .07) calc(var(--gs,38px) * .12) rgba(255,255,255,.42),
+    inset 0 calc(var(--gs,38px) * -.09) calc(var(--gs,38px) * .13) rgba(0,0,0,.30),
+    0 calc(var(--gs,38px) * .09) calc(var(--gs,38px) * .16) -2px rgba(0,0,0,.5);
+}
+html[data-icons="clay"] .glyph::after,
+.st-look[data-icons="clay"] .glyph.glyph::after{
+  mix-blend-mode:normal;border-radius:inherit;
+  background:radial-gradient(70% 55% at 32% 18%,rgba(255,255,255,.34),transparent 70%);
+  box-shadow:none;
+}
+html[data-icons="clay"] .glyph.glyph--art::after,
+.st-look[data-icons="clay"] .glyph.glyph--art::after{box-shadow:none}
+/* the drawing is softened a little, so it reads as one lump with the tile */
+html[data-icons="clay"] .glyph .appart svg,
+.st-look[data-icons="clay"] .glyph .appart svg{filter:saturate(.92) contrast(.96) brightness(1.04)}
+html[data-icons="clay"] .glyph .icon,
+.st-look[data-icons="clay"] .glyph .icon{filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
+html[data-icons="clay"] .dock__item:hover .glyph{transform:translateY(-8px) scale(1.07)}
+
+/* ---- the retro CRT start-up (js/shell/boot.js, prefs.bootCrt) ---- */
+.boot--crt{background:#020804;color:#7dffa0;font-family:var(--mono);align-items:stretch;justify-content:center;padding:0;gap:0;overflow:hidden}
+.boot__crt{
+  margin:auto;width:min(640px,calc(100% - 48px));display:flex;flex-direction:column;gap:10px;
+  font-size:calc(14px * var(--fs-k,1));line-height:1.55;text-shadow:0 0 6px rgba(125,255,160,.65);
+  animation:crt-on 520ms cubic-bezier(.2,.8,.2,1) both,crt-flicker 3.2s steps(1) 600ms infinite;
+}
+.boot__crt-title{letter-spacing:.12em;text-transform:uppercase;opacity:.9}
+.boot__crt-log{margin:0;white-space:pre-wrap;font:inherit;min-height:7.2em}
+.boot__crt-bar{height:8px;border:1px solid #7dffa0;padding:1px}
+.boot__crt-bar i{display:block;height:100%;width:0;background:#7dffa0;box-shadow:0 0 8px rgba(125,255,160,.8);transition:width 220ms linear}
+.boot__crt-cursor{animation:crt-blink 1s steps(1) infinite}
+.boot__crt-scan{
+  position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(180deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) 2px,rgba(0,0,0,.28) 3px),radial-gradient(120% 90% at 50% 50%,transparent 55%,rgba(0,0,0,.65));
+}
+.boot--crt.is-off .boot__crt{animation:crt-off 420ms cubic-bezier(.6,0,.9,.4) both}
+.boot--crt.is-done{transition:opacity 80ms linear,visibility 80ms}
+@keyframes crt-on{0%{transform:scaleY(.004) scaleX(.2);filter:brightness(3)}55%{transform:scaleY(.004) scaleX(1);filter:brightness(2.2)}100%{transform:none;filter:none}}
+@keyframes crt-off{0%{transform:none;filter:none}60%{transform:scaleY(.004) scaleX(1);filter:brightness(2.4)}100%{transform:scaleY(.004) scaleX(.02);filter:brightness(3);opacity:.6}}
+@keyframes crt-flicker{0%,100%{opacity:1}92%{opacity:.93}94%{opacity:1}97%{opacity:.96}}
+@keyframes crt-blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.boot__crt,.boot--crt.is-off .boot__crt{animation:none}.boot__crt-cursor{animation:none}.boot__crt-bar i{transition:none}}
+body.reduce-motion .boot__crt,body.reduce-motion .boot--crt.is-off .boot__crt{animation:none}
+body.reduce-motion .boot__crt-cursor{animation:none}
+body.reduce-motion .boot__crt-bar i{transition:none}
+
+/* ---- the heart on a wallpaper card (Settings › Wallpaper) ---- */
+.wpp-card__fav{position:absolute;top:6px;right:6px;z-index:2;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;background:rgba(10,6,9,.55);color:#fff;opacity:.55;cursor:pointer;transition:opacity var(--t-fast)}
+.wpp-card:hover .wpp-card__fav,.wpp-card__fav:focus-visible,.wpp-card__fav.is-on{opacity:1}
+.wpp-card__fav .icon{width:14px;height:14px}
+.wpp-card__fav.is-on{color:#ff5a7a}
+.wpp-card__fav.is-on .icon svg{fill:currentColor}

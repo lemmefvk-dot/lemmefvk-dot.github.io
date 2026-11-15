@@ -21,6 +21,10 @@
    · Switching it off by hand during a schedule lasts until that
      schedule's end (state.override); switching it on again by hand
      during that time makes it yours.
+   · A quick duration ("1 hour", "until tomorrow" — the bell menu, Spotlight)
+     sets prefs.dndUntil and turns it on; tick:1s turns it off when that
+     time comes — unless a focus session or a schedule is holding it, which
+     keep it. Turning it off by hand clears the timer.
    Everything is derived from the clock and the saved state, so a
    reload or a laptop that slept lands in the right place.
    bus 'dndsched:change' with info() when the indicator should repaint.
@@ -80,14 +84,46 @@ export function evaluate(now = new Date()) {
   emitChange();
 }
 
+/* ---------- a quick duration ---------- */
+const KEY_UNTIL = 'prefs.dndUntil';
+
+/** ms when a quick Do Not Disturb ends, or 0. */
+export function quickUntil() {
+  const v = Number(store.get(KEY_UNTIL)) || 0;
+  return v > Date.now() && store.get('prefs.dnd') === true ? v : 0;
+}
+
+/** Do Not Disturb on until `until` (ms). */
+export function quickUntilTime(until) {
+  const t = Number(until);
+  if (!(t > Date.now())) return false;
+  store.set(KEY_UNTIL, t);
+  if (store.get('prefs.dnd') !== true) store.set('prefs.dnd', true);
+  bus.emit('dndsched:change', info());
+  return true;
+}
+export const quickFor = ms => quickUntilTime(Date.now() + ms);
+export const quickTomorrow = () => quickUntilTime(R.tomorrowMorning());
+
+function expireQuick() {
+  const until = Number(store.get(KEY_UNTIL)) || 0;
+  if (!until || until > Date.now()) return;
+  store.set(KEY_UNTIL, 0);
+  /* a focus session or a schedule that is holding it keeps it */
+  if (store.get('prefs.dnd') === true && !focus.state().dnd && !R.holds()) setDnd(false);
+  bus.emit('dndsched:change', info());
+}
+
 export function init() {
   if (started || typeof window === 'undefined') return;
   started = true;
-  const tick = () => evaluate();
+  const tick = () => { evaluate(); expireQuick(); };
   bus.on('tick:1s', tick);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') tick(); });
   store.sub('prefs.dndSchedules', tick);
   store.sub('prefs.dnd', v => {
+    if (v === false && Number(store.get(KEY_UNTIL))) store.set(KEY_UNTIL, 0);     /* off by hand: the timer goes too */
+    bus.emit('dndsched:change', info());
     if (internal) return;
     const st = R.state();
     if (!st.engaged) return;
@@ -103,4 +139,4 @@ export function init() {
   evaluate();
 }
 
-export default { init, evaluate, info };
+export default { init, evaluate, info, quickUntil, quickFor, quickTomorrow, quickUntilTime };

@@ -532,6 +532,32 @@
 .libx-dlg__hint{margin-top:-6px;font-size:var(--fs-10);line-height:1.5;color:var(--ink-3)}
 .libx-dlg__acts{display:flex;justify-content:flex-end;gap:var(--sp-2)}
 
+.libx-dlg__rule{display:flex;flex-direction:column;gap:var(--sp-3)}
+.libx-dlg__chk{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-11);color:var(--ink-1)}
+
+/* ---------- bulk: filter box, week, favourites bar, sending ---------- */
+.is-filtered{display:none !important}
+.libx-find--all{flex:0 1 240px;max-width:240px;height:30px}
+.libx-find__n{flex:none;font-size:var(--fs-10);color:var(--ink-3);white-space:nowrap}
+.libx-week{display:flex;flex-direction:column;gap:var(--sp-4)}
+.libx-week__tiles{display:flex;flex-wrap:wrap;gap:var(--sp-3)}
+.libx-wk{display:flex;flex-direction:column;gap:2px;min-width:132px;padding:var(--sp-3) var(--sp-5);border-radius:var(--r-md);border:1px solid var(--line-1);background:var(--fill-0)}
+.libx-wk b{font-size:var(--fs-18);font-weight:740;letter-spacing:-.4px;color:var(--ink-0);font-variant-numeric:tabular-nums}
+.libx-wk span{font-size:var(--fs-10);color:var(--ink-2)}
+.libx-week__top{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border-radius:var(--r-md);border:1px solid var(--line-1);background:var(--fill-0);max-width:420px}
+.libx-week__top li{display:flex;justify-content:space-between;gap:var(--sp-4);padding:var(--sp-2) var(--sp-4);border-top:1px solid var(--line-0);font-size:var(--fs-11);color:var(--ink-1)}
+.libx-week__top li:first-child{border-top:0}
+.libx-week__top small{color:var(--ink-3);font-variant-numeric:tabular-nums}
+.libx-favbar{display:flex;flex-wrap:wrap;gap:var(--sp-3) var(--sp-6)}
+.libx-favbar__g{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap}
+.libx-favbar__l{font-size:var(--fs-10);font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.libx-favgroups{display:flex;flex-direction:column;gap:var(--sp-6)}
+.libx-send{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4);border-radius:var(--r-md);border:1px solid var(--line-1);background:var(--fill-0)}
+.libx-send[hidden]{display:none}
+.libx-send__list{display:flex;flex-direction:column;gap:var(--sp-2)}
+.libx-send__row{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-11)}
+.libx-send__row .grow{flex:1}
+
 /* ---------- narrow windows ---------- */
 @container libx (max-width: 760px){
   .libx{grid-template-columns:minmax(0,1fr)}

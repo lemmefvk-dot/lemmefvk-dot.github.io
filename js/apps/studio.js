@@ -44,7 +44,7 @@
      sounds inside it) that plays when opened on its own, offline.
      With unsaved changes it asks which to export: what you see now,
      or the saved version.
-   · Assistant. GPT-OSS 20B through portal/llm.js. It can explain,
+   · Assistant. The model Settings → AI model picked, through portal/llm.js. It can explain,
      fix errors and make requested changes — but it only ever
      PROPOSES: Studio extracts the full document it sends back, shows
      a line diff, test-runs it in the sandbox, and nothing changes
@@ -57,6 +57,18 @@
      scene change is also summed up in words ("Player: extra jumps
      in the air 0 → 1").
 
+   · Version 2 (studio/runtime.js lists what the engine gained): a world
+     bigger than the screen with a camera that follows the player; several
+     levels (scene.levels; while another level is open its contents are
+     swapped into scene.objects and plain() puts level 1 back before
+     anything is saved or sent); a tile painter; animated sprites from
+     Asset Lab's sheet data (or a frame size); copy / paste / multi-select;
+     "Check my game" (studio/check.js); custom win and game-over screens;
+     your ~/Music WAV exports as game music (studio/music.js); Share link
+     (the shared "creation" sheet, with its QR) next to Export; "Watch live"
+     (a read-only friend over a pair.js room, studio/live.js); and Blocks
+     (studio/blocks.js, blocksui.js), which write the game's own code.
+
    Store: portal.studio = { autoRun, snap, grid, last } (prefs only)
    IndexedDB (db.js 'misc'): studio-draft:<projectId> — unsaved work.
    ============================================================ */
@@ -65,11 +77,21 @@ import * as P from '../core/projects.js';
 import * as SB from '../core/sandbox.js';
 import { kv } from '../core/db.js';
 import * as LLM from '../portal/llm.js';
+import * as AIM from '../portal/aimodel.js';
 import { render as md } from '../portal/mdlite.js';
 import * as R from '../studio/runtime.js';
 import { TEMPLATES, template as findTemplate } from '../studio/templates.js';
 import { addToDesktop } from '../core/shortcuts.js';
 import * as Plays from '../core/plays.js';
+import * as Sheet from '../studio/sheet.js';
+import { checkGame } from '../studio/check.js';
+import * as Music from '../studio/music.js';
+import * as Live from '../studio/live.js';
+import * as Blocks from '../studio/blocks.js';
+import { createBlocksEditor } from '../studio/blocksui.js';
+import { openPair } from '../core/pair.js';
+import * as media from '../core/media.js';
+import { normalizeCode, spaced } from '../core/roomcode.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-studio-css')) {
   const l = document.createElement('link');
@@ -96,6 +118,8 @@ const llmParams = () => ({ reasoning_effort: 'low', seed: Math.floor(Math.random
 const LH = 18;                     /* code editor line height, px — keep in step with the css */
 const SNAP = 8;
 const MAX_LOG = 400;
+/* objects copied with Ctrl+C, kept for as long as the page is open so they can be pasted into another project */
+let CLIP = null;
 /* how many lines core/sandbox.js adds in front of a game (its console bridge) */
 const PRELUDE_LINES = (() => { try { return SB.withPrelude('<head>').split('\n').length - 1; } catch (err) { return 0; } })();
 
@@ -103,15 +127,17 @@ const EXAMPLES = ['Make the player double jump', 'Make enemies chase the player'
 const CODE_EXAMPLES = ['Add a pause screen', 'Make the player faster', 'Add a score counter', 'Explain the game loop'];
 
 const API_NOTES = [
-  'game-code API (window.game): game.on(event, fn) with events start, update (dt in seconds), draw (2D context, scene pixels), touch (a, b), win, lose, hurt, key.',
+  'game-code API (window.game): game.on(event, fn) with events start, update (dt in seconds), draw (2D context, world pixels), touch (a, b), win, lose, hurt, key, click (object or null, x, y), level (number).',
   'game.player, game.find(nameOrRef), game.findAll(ref), game.objects, game.vars.score / lives / time, game.keys.left/right/up/down/jump (held), game.pressed(key) (this frame),',
   'game.addScore(n), game.loseLife(), game.win(), game.lose(), game.restart(), game.say(text), game.play(soundName), game.image(name), game.spawn({name,group,x,y,w,h,color,shape,solid,behaviours}),',
   'game.destroy(obj), game.touching(a, b), game.behaviour(obj, type) returns the live settings object of that behaviour (e.g. game.behaviour(game.player, "platformer").airJumps = 1), game.width, game.height.',
+  'Also game.clone(nameOrId, x, y) (a copy of a scene object, centred on x,y), game.nextLevel(), game.level, game.levels, game.camera {x,y}, game.world {width,height}.',
   'Objects have x, y, w, h, vx, vy, color, visible, solid, onGround, face (1 or -1), group, name, data (free-form).',
+  'A section between "// ===== Blocks" and "// ===== end of blocks" in game-code is written by Studio\'s block editor: leave those lines alone and put your code outside them.',
 ].join(' ');
 
 /* "platformer {speed:240, jump:560, airJumps:0}" — every setting with its default */
-const BEHAVIOUR_NOTES = R.BEHAVIOURS.map(b => `${b.type} {${b.params.map(p => `${p.k}:${JSON.stringify(p.def)}${p.kind === 'select' ? ` (${p.options.map(o => JSON.stringify(o[0])).join('|')})` : p.kind === 'sound' ? ' (a sound asset id)' : ''}`).join(', ')}}`).join(' · ');
+const BEHAVIOUR_NOTES = R.BEHAVIOURS.map(b => `${b.type} {${b.params.map(p => `${p.k}:${JSON.stringify(p.def)}${p.kind === 'select' ? ` (${p.options.map(o => JSON.stringify(o[0])).join('|')})` : p.kind === 'sound' ? ' (a sound asset id)' : p.kind === 'object' ? ' (an object id)' : ''}`).join(', ')}}`).join(' · ');
 
 /** What to say when an answer stopped part-way. */
 const continuePrompt = tail => [
@@ -137,7 +163,8 @@ function changeSystem(isScene) {
     '- Object fields that are left out use their defaults: shape "rect", solid false, visible true, layer 0, no sprite, no text, no behaviours. New objects need a unique id (e.g. "o-new1"). "locked": true only matters in Studio\'s editor (the object cannot be dragged there); keep it as it is.',
     `- Behaviours, with the default of every setting (a setting that is left out has its default): ${BEHAVIOUR_NOTES}. airJumps = extra jumps in the air (1 = double jump). An object has each behaviour at most once, and never both platformer and topdown.`,
     '- Players are objects with platformer or topdown. patrol and chase enemies cost a player a life on touch; hazards too; collectibles add points; goal wins.',
-    '- Events: a and b are "player", "any", "group:<group>" or "id:<object id>". Actions: score (n), destroyA, destroyB, loseLife, gainLife (n), win, lose, sound (sound = asset id).',
+    '- Events: a and b are "player", "any", "group:<group>" or "id:<object id>". Actions: score (n), destroyA, destroyB, loseLife, gainLife (n), win, lose, sound (sound = asset id), say (text), setVar and addVar (name, n), spawn (obj = id of an object to copy, at = "a" | "b"), teleport (obj), nextLevel. An event can also have "if":{"v":"keys","op":">=","n":1} (op is one of >= > <= < = !=).',
+    '- More scene fields, all optional: settings.worldWidth / worldHeight (a world bigger than the screen; the camera follows the first player), settings.vars {name: startNumber} (text shows {name}), settings.music (a sound asset id), settings.winTitle / winText / loseTitle / loseText / winColor / loseColor; "levels":[{"id","name","objects":[…],"events":[…]}] are levels 2 and up (objects and events at the top are level 1); an object may have "fixed":true (stays on screen), "spawnOnly":true (only exists once spawned), "anim":{"fw","fh","fps","idle":[from,to],"walk":[from,to]} (animates a sprite sheet) or "tiles":{"size":32,"rows":["..##.."]} (a grid of solid ground; # = a tile).',
     `- ${API_NOTES}`,
     '- Prefer the simplest change: adjust a behaviour setting or the scene before writing new code. Put new code inside the game-code script only.',
   ].join('\n');
@@ -163,6 +190,11 @@ const PRESETS = [
   { id: 'goal', label: 'Goal flag', icon: 'check-circle', make: () => ({ name: 'Flag', group: 'goal', w: 24, h: 48, color: '#4ade80', behaviours: [beh('goal')] }) },
   { id: 'moving', label: 'Moving platform', icon: 'arrow-right', make: () => ({ name: 'Lift', group: 'platform', w: 90, h: 16, color: '#7dd3fc', solid: true, behaviours: [beh('moving')] }) },
   { id: 'faller', label: 'Falling rock', icon: 'arrow-down', make: () => ({ name: 'Rock', group: 'rock', w: 28, h: 28, color: '#a8a29e', shape: 'ellipse', behaviours: [beh('faller'), beh('hazard')] }) },
+  { id: 'tiles', label: 'Ground tiles (paint it)', icon: 'grid', make: () => ({ name: 'Ground tiles', group: 'ground', w: 800, h: 450, color: '#5b6b94', solid: true, tiles: { size: 32, rows: [] } }) },
+  { id: 'shooter', label: 'Player — top-down shooter', icon: 'zap', make: () => ({ name: 'Ship', group: 'player', w: 34, h: 28, color: '#38bdf8', layer: 1, behaviours: [{ ...beh('topdown'), axis: 'x' }, { ...beh('shooter'), dir: 'up' }] }) },
+  { id: 'spawner', label: 'Timer spawner', icon: 'clock', make: () => ({ name: 'Spawner', group: 'spawner', w: 24, h: 24, color: '#94a3b8', behaviours: [beh('spawner')] }) },
+  { id: 'clickable', label: 'Clickable button', icon: 'mouse-pointer', make: () => ({ name: 'Button', group: 'button', w: 90, h: 90, color: '#fbbf24', shape: 'ellipse', behaviours: [beh('clickable')] }) },
+  { id: 'spinner', label: 'Spinning star', icon: 'refresh', make: () => ({ name: 'Star', group: 'star', w: 30, h: 30, color: '#fde047', behaviours: [beh('collectible'), beh('spinner'), beh('bobber')] }) },
   { id: 'text', label: 'Text', icon: 'type', make: () => ({ name: 'Text', group: 'text', w: 220, h: 22, color: '#e2e8f0', text: 'Score: {score}' }) },
 ];
 function beh(type) {
@@ -419,11 +451,11 @@ const readAsDataUrl = file => new Promise((res, rej) => {
   r.readAsDataURL(file);
 });
 /* images bigger than 512 px are scaled down: every saved version carries them */
-async function imageDataUrl(file) {
+async function imageDataUrl(file, max = 512) {
   const url = await readAsDataUrl(file);
   if (/svg|gif/i.test(file.type) && file.size < 400000) return url;
   const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('That image could not be opened')); i.src = url; });
-  const max = 512, k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+  const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
   if (k >= 1 && file.size < 400000) return url;
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.round(img.naturalWidth * k));
@@ -433,9 +465,24 @@ async function imageDataUrl(file) {
 }
 
 /* ---------- drawing a scene (editor stage and thumbnails) ----------- */
-function paintScene(g, scene, { images, grid = 0, px = 1, paths = false, sel = null } = {}) {
+/* the whole world: the screen, or a bigger area the camera scrolls over */
+const worldOf = st => ({ w: Math.max(st.width, st.worldWidth || 0), h: Math.max(st.height, st.worldHeight || 0) });
+/* which part of a sheet an animated sprite shows first (its idle clip's first frame) */
+function frameRect(o, im, sheets) {
+  if (!o.anim || !im || !im.naturalWidth) return null;
+  const sh = sheets && sheets.get(o.sprite);
+  let fr = sh && Array.isArray(sh.frames) && sh.frames.length ? sh.frames : null;
+  if (!fr) {
+    const fw = o.anim.fw || sh?.fw, fh = o.anim.fh || sh?.fh;
+    if (!fw || !fh) return null;
+    fr = [[0, 0, fw, fh]];
+  }
+  const i = Math.min(fr.length - 1, Math.max(0, o.anim.idle ? o.anim.idle[0] : 0));
+  return fr[i];
+}
+function paintScene(g, scene, { images, sheets = null, grid = 0, px = 1, paths = false, sel = null, ghosts = false, multi = null } = {}) {
   const st = scene.settings || R.SETTINGS;
-  const W = st.width, H = st.height;
+  const { w: W, h: H } = worldOf(st);
   g.fillStyle = st.background || '#141a2e';
   g.fillRect(0, 0, W, H);
   if (grid) {
@@ -448,9 +495,18 @@ function paintScene(g, scene, { images, grid = 0, px = 1, paths = false, sel = n
   }
   const objs = (scene.objects || []).map((o, i) => [o, i]).sort((a, b) => (a[0].layer || 0) - (b[0].layer || 0) || a[1] - b[1]);
   for (const [o] of objs) {
+    if (o.spawnOnly && !ghosts) continue;
     g.save();
     if (o.visible === false) g.globalAlpha = 0.28;
+    if (o.spawnOnly) g.globalAlpha = 0.45;
     const im = o.sprite && images && images.get(o.sprite);
+    if (o.tiles && Array.isArray(o.tiles.rows)) {
+      const sz = o.tiles.size || 32;
+      g.fillStyle = o.color || '#8b93a7';
+      o.tiles.rows.forEach((row, r) => { for (let c = 0; c < row.length; c++) if (row[c] === '#') g.fillRect(o.x + c * sz, o.y + r * sz, sz, sz); });
+      g.restore();
+      continue;
+    }
     if (o.text) {
       const t = String(o.text).replace(/\{score\}/g, String(st.score || 0)).replace(/\{lives\}/g, String(st.lives || 3))
         .replace(/\{time\}/g, st.timer ? `${Math.floor(st.timer / 60)}:${pad2(Math.ceil(st.timer % 60))}` : '0:00');
@@ -463,11 +519,17 @@ function paintScene(g, scene, { images, grid = 0, px = 1, paths = false, sel = n
       g.textBaseline = 'middle';
       g.fillText(t, o.x + o.w / 2, o.y + o.h / 2);
     } else if (im && im.complete && im.naturalWidth) {
-      g.drawImage(im, o.x, o.y, o.w, o.h);
+      const fr = frameRect(o, im, sheets);
+      if (fr) g.drawImage(im, fr[0], fr[1], fr[2], fr[3], o.x, o.y, o.w, o.h);
+      else g.drawImage(im, o.x, o.y, o.w, o.h);
     } else {
       g.fillStyle = o.color || '#8b93a7';
       if (o.shape === 'ellipse') { g.beginPath(); g.ellipse(o.x + o.w / 2, o.y + o.h / 2, o.w / 2, o.h / 2, 0, 0, Math.PI * 2); g.fill(); }
       else g.fillRect(o.x, o.y, o.w, o.h);
+    }
+    if (o.spawnOnly) {
+      g.globalAlpha = 0.9; g.setLineDash([4 * px, 3 * px]); g.lineWidth = 1 * px; g.strokeStyle = '#fff';
+      g.strokeRect(o.x, o.y, o.w, o.h);
     }
     g.restore();
   }
@@ -479,7 +541,7 @@ function paintScene(g, scene, { images, grid = 0, px = 1, paths = false, sel = n
   for (const o of scene.objects || []) {
     const mv = (o.behaviours || []).find(b => b.type === 'moving');
     const pt = (o.behaviours || []).find(b => b.type === 'patrol');
-    const on = o.id === sel;
+    const on = o.id === sel || !!(multi && multi.has(o.id));
     g.strokeStyle = on ? 'rgba(255,255,255,.75)' : 'rgba(255,255,255,.28)';
     if (mv && (mv.dx || mv.dy)) {
       g.strokeRect(o.x + mv.dx, o.y + mv.dy, o.w, o.h);
@@ -513,7 +575,7 @@ defineApp({
   icon: 'code',
   g1: '#7cc4ff', g2: '#4338ca',
   category: 'Create',
-  keywords: ['game', 'engine', 'editor', 'scene', 'level', 'make a game', 'build', 'code', 'sprites', 'platformer', 'studio', 'ide', 'develop'],
+  keywords: ['blocks', 'block coding', 'tilemap', 'levels', 'shooter', 'game', 'engine', 'editor', 'scene', 'level', 'make a game', 'build', 'code', 'sprites', 'platformer', 'studio', 'ide', 'develop'],
   desc: 'Build games with a scene editor, code, and an assistant that only changes things when you say so',
   singleton: true,
   win: { w: 1180, h: 740, minW: 600, minH: 460 },
@@ -527,6 +589,8 @@ defineApp({
     ['[ / ]', 'Select the previous / next object'],
     ['Mod+[ / Mod+]', 'Send backward / bring forward (with Shift, to the back / front)'],
     ['Mod+D', 'Duplicate'],
+    ['Mod+C / Mod+X / Mod+V', 'Copy, cut and paste objects'],
+    ['Mod+A', 'Select every object'],
     ['Delete', 'Remove the selected object'],
     ['Mod+F', 'Find (code)'],
     ['Tab / Shift+Tab', 'Indent / outdent (code)'],
@@ -552,6 +616,13 @@ defineApp({
       dirty: false,
       undo: [], redo: [],
       sel: null,
+      multi: new Set(),      /* every selected object id when more than one (always includes sel) */
+      paint: { on: false, erase: false },   /* the tile painter */
+      check: null,           /* the last "Check my game" result */
+      sheets: new Map(),     /* image asset id -> its sprite-sheet data */
+      live: { room: null, on: false, phase: '', last: '', note: '', t: 0, sending: false },
+      watch: { room: null, scene: null, sel: '', phase: '', note: '', name: '', asm: null },
+      blocks: null,
       right: 'object',
       notices: [],
       logs: [], logOpen: true,
@@ -589,6 +660,8 @@ defineApp({
     const histBtn = h('button.stu-tb', { type: 'button', 'aria-label': 'History', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: e => toggleHistory(e.currentTarget) }, icon('clock'), h('span.stu-hide-tiny', { text: 'History' }));
     const saveBtn = h('button.btn.stu-save', { type: 'button', onclick: () => save() });
     const exportBtn = h('button.stu-tb', { type: 'button', title: 'Export the game as one .html file that plays in any browser', 'aria-label': 'Export as an HTML file', onclick: e => { if (S.p) exportProject(S.p, e.currentTarget); } }, icon('download'), h('span.stu-hide-tiny', { text: 'Export' }));
+    const shareBtn = h('button.stu-tb', { type: 'button', title: 'Share the game as a link (with a QR code) that opens it in StaticOS', 'aria-label': 'Share link', onclick: e => { if (S.p) shareProject(S.p, e.currentTarget); } }, icon('share'), h('span.stu-hide-tiny', { text: 'Share' }));
+    const liveBtn = h('button.stu-tb', { type: 'button', title: 'Let a friend watch your scene live, read-only', 'aria-label': 'Watch live', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: e => toggleLive(e.currentTarget) }, icon('users'), h('span.stu-hide-tiny', { text: 'Watch live' }));
     const aiBtn = h('button.stu-tb', { type: 'button', 'aria-label': 'Assistant', title: 'Assistant', onclick: () => showRight('ai') }, icon('sparkles'), h('span.stu-hide-tiny', { text: 'Assistant' }));
     const rightBtn = h('button.stu-tb.stu-tb--icon.stu-only-tiny', { type: 'button', title: 'Inspector', 'aria-label': 'Show inspector', onclick: () => toggleDrawer('right') }, icon('sliders'));
     const moreBtn = h('button.stu-tb.stu-tb--icon', { type: 'button', title: 'More for this project', 'aria-label': 'More for this project', 'aria-haspopup': 'menu', onclick: e => { if (S.p) projectMenu(S.p, e.currentTarget); } }, icon('more-horizontal'));
@@ -597,7 +670,7 @@ defineApp({
       h('div.stu-top__name', nameIn, statusEl),
       h('div.stu-top__grow'),
       h('div.stu-top__grp', undoBtn, redoBtn, histBtn),
-      h('div.stu-top__grp', exportBtn, saveBtn, aiBtn, moreBtn, rightBtn));
+      h('div.stu-top__grp', shareBtn, exportBtn, liveBtn, saveBtn, aiBtn, moreBtn, rightBtn));
 
     const noticesEl = h('div.stu-notices');
 
@@ -610,7 +683,7 @@ defineApp({
     const outlineEl = h('div.stu-outline');
     const outlineSec = h('section.stu-sec', { 'aria-label': 'Jump to' },
       h('div.stu-sec__head', h('span.stu-sec__title', { text: 'Jump to' })), outlineEl);
-    const fileIn = h('input', { type: 'file', accept: 'image/*,audio/*', multiple: true, hidden: true, onchange: e => { importFiles([...e.target.files]); e.target.value = ''; } });
+    const fileIn = h('input', { type: 'file', accept: 'image/*,audio/*,application/json,.json', multiple: true, hidden: true, onchange: e => { importFiles([...e.target.files]); e.target.value = ''; } });
     const assetList = h('div.stu-assets');
     const assetSec = h('section.stu-sec.stu-sec--assets', { 'aria-label': 'Assets' },
       h('div.stu-sec__head', h('span.stu-sec__title', { text: 'Assets' }), h('span.stu-sec__count'),
@@ -624,8 +697,9 @@ defineApp({
     /* ---------- centre: bar, panes, console ---------- */
     const segScene = h('button', { type: 'button', onclick: () => setMode('scene') }, icon('layers'), h('span', { text: 'Scene' }));
     const segCode = h('button', { type: 'button', onclick: () => setMode('code') }, icon('code'), h('span', { text: 'Code' }));
+    const segBlocks = h('button', { type: 'button', onclick: () => showPane('blocks') }, icon('layers'), h('span', { text: 'Blocks' }));
     const segGame = h('button', { type: 'button', onclick: () => showPane('game') }, icon('play'), h('span', { text: 'Game' }));
-    const seg = h('div.seg.stu-seg', { role: 'group', 'aria-label': 'Editor' }, segScene, segCode, segGame);
+    const seg = h('div.seg.stu-seg', { role: 'group', 'aria-label': 'Editor' }, segScene, segBlocks, segCode, segGame);
     const runBtn = h('button.btn.btn--sm.stu-run', { type: 'button', onclick: () => (S.run.on ? stopGame() : runGame()) });
     const restartBtn = h('button.stu-tb.stu-tb--icon', { type: 'button', title: 'Restart the game', 'aria-label': 'Restart the game', onclick: () => runGame() }, icon('refresh'));
     const autoSw = h('button.switch', { type: 'button', role: 'switch', 'aria-label': 'Run after saving', onclick: () => { setPref('autoRun', prefs().autoRun === false); paintCenterBar(); } });
@@ -635,7 +709,7 @@ defineApp({
     /* scene stage */
     const cv = h('canvas.stu-cv', {
       tabindex: '0', role: 'application',
-      'aria-label': 'Scene editor. Click an object to select it and drag to move it; drag a corner to resize. ] and [ step through objects, arrow keys nudge the selected one (Shift for 10 px), Delete removes it, Ctrl+D duplicates, Escape deselects.',
+      'aria-label': 'Scene editor. Click an object to select it and drag to move it; drag a corner to resize; drag over empty space or Shift-click to select several. ] and [ step through objects, arrow keys nudge the selection (Shift for 10 px), Delete removes it, Ctrl+C, X and V copy, cut and paste, Ctrl+D duplicates, Escape deselects.',
     });
     const stageInfo = h('div.stu-stage__info');
     const stageEmpty = h('div.stu-stage__empty', { hidden: true },
@@ -644,9 +718,13 @@ defineApp({
       h('button.btn.btn--primary.btn--sm', { type: 'button', onclick: e => addMenu(e.currentTarget) }, icon('plus'), h('span', { text: 'Add an object' })));
     const snapBtn = h('button.stu-chipbtn', { type: 'button', 'aria-pressed': 'true', onclick: () => { setPref('snap', prefs().snap === false); paintStageTools(); } }, h('span', { text: 'Snap' }));
     const gridBtn = h('button.stu-chipbtn', { type: 'button', 'aria-pressed': 'true', onclick: () => { setPref('grid', prefs().grid === false); paintStageTools(); drawStage(); } }, h('span', { text: 'Grid' }));
+    const levelBar = h('div.stu-stage__levels', { role: 'group', 'aria-label': 'Levels' });
+    /* the tile painter's brushes, shown while a tilemap is selected */
+    const brushBtn = h('button.stu-chipbtn', { type: 'button', 'aria-pressed': 'false', title: 'Paint ground tiles on the stage (hold Shift to erase)', onclick: () => { S.paint = { on: !(S.paint.on && !S.paint.erase), erase: false }; paintStageTools(); paintRight(); drawStage(); } }, icon('edit-3'), h('span', { text: 'Paint tiles' }));
+    const eraseBtn = h('button.stu-chipbtn', { type: 'button', 'aria-pressed': 'false', title: 'Erase ground tiles', onclick: () => { S.paint = { on: !(S.paint.on && S.paint.erase), erase: true }; paintStageTools(); paintRight(); drawStage(); } }, icon('x'), h('span', { text: 'Erase' }));
     const liveEl = h('div.stu-sr', { 'aria-live': 'polite' });
     const announce = text => { liveEl.textContent = ''; later(() => { liveEl.textContent = text; }, 30); };
-    const stage = h('div.stu-stage', cv, h('div.stu-stage__tools', snapBtn, gridBtn), stageInfo, stageEmpty, liveEl);
+    const stage = h('div.stu-stage', cv, h('div.stu-stage__tools', brushBtn, eraseBtn, snapBtn, gridBtn), levelBar, stageInfo, stageEmpty, liveEl);
 
     /* code editor */
     const gutPre = h('pre.stu-gut__n', { 'aria-hidden': 'true' });
@@ -685,7 +763,8 @@ defineApp({
       h('button.stu-game__minib', { type: 'button', title: 'Stop the game', 'aria-label': 'Stop the game', onclick: () => stopGame() }, icon('square', { fill: true })));
     const gameWrap = h('div.stu-game', gameHost, gameIdle, gameMini);
 
-    const panes = h('div.stu-panes', stage, codeWrap, gameWrap);
+    const blocksWrap = h('div.stu-blockswrap', { hidden: true });
+    const panes = h('div.stu-panes', stage, blocksWrap, codeWrap, gameWrap);
 
     /* console */
     const logList = h('div.stu-log__list', { role: 'log', 'aria-label': 'Console output' });
@@ -790,9 +869,9 @@ defineApp({
         try {
           const sc = t.scene();
           const g = c.getContext('2d');
-          const k = Math.min(320 / sc.settings.width, 180 / sc.settings.height);
+          const wd = worldOf(sc.settings), k = Math.min(320 / wd.w, 180 / wd.h);
           g.fillStyle = '#0b0b10'; g.fillRect(0, 0, 320, 180);
-          g.setTransform(k, 0, 0, k, (320 - sc.settings.width * k) / 2, (180 - sc.settings.height * k) / 2);
+          g.setTransform(k, 0, 0, k, (320 - wd.w * k) / 2, (180 - wd.h * k) / 2);
           paintScene(g, sc, { px: 1 / k });
           if (t.id === 'blank') {
             /* an empty stage waiting for its first object */
@@ -820,6 +899,7 @@ defineApp({
             h('div',
               h('h1', { text: 'Static Studio' }),
               h('p', { text: 'Build a game with a scene editor, write code when you want to, and ask the assistant for changes — it only changes things when you press Apply.' }))),
+          h('div.stu-wcard', h('div.stu-wcard__t', icon('users'), h('div', h('b', { text: 'Watch a friend build' }), h('span', { text: 'Type the room code your friend gets from “Watch live” in their Studio. You can only watch.' }))), watchJoinRow()),
           h('h2.stu-h2', { text: 'Start from a template' }),
           tpls,
           h('h2.stu-h2', h('span', { text: 'Your projects' }), list.length ? h('small', { text: plural(list.length, 'project') }) : null),
@@ -838,9 +918,9 @@ defineApp({
         thumb = h('canvas.stu-prow__cv', { width: 128, height: 72, 'aria-hidden': 'true' });
         try {
           const g = thumb.getContext('2d');
-          const st = d.scene.settings, k = Math.min(128 / st.width, 72 / st.height);
+          const wd = worldOf(d.scene.settings), k = Math.min(128 / wd.w, 72 / wd.h);
           g.fillStyle = '#0b0b10'; g.fillRect(0, 0, 128, 72);
-          g.setTransform(k, 0, 0, k, (128 - st.width * k) / 2, (72 - st.height * k) / 2);
+          g.setTransform(k, 0, 0, k, (128 - wd.w * k) / 2, (72 - wd.h * k) / 2);
           paintScene(g, d.scene, { px: 1 / k });
         } catch (err) { /* decoration */ }
       } else if (p.published?.thumbnail) {
@@ -865,6 +945,7 @@ defineApp({
       if (!here) items.push({ label: 'Open', icon: 'code', onClick: () => openProject(p.id) });
       if (api.getApp('forge')) items.push({ label: 'Open in Static Forge', hint: 'play · publish', icon: 'sparkles', onClick: () => openInForge(p) });
       items.push({ label: 'Add to Desktop', icon: 'monitor', onClick: () => addToDesktop({ kind: 'creation', id: p.id, title: p.name }) });
+      items.push({ label: 'Share link…', hint: 'with a QR code', icon: 'share', onClick: () => shareProject(p, anchor) });
       items.push({ label: 'Export .html', hint: 'plays in any browser', icon: 'download', onClick: () => exportProject(p, anchor) });
       if (api.getApp('assetlab')) items.push({ label: 'Make art or sounds in Asset Lab', icon: 'palette', onClick: () => api.openApp('assetlab', { project: p.id }) });
       items.push('-');
@@ -949,6 +1030,8 @@ defineApp({
 
     async function goHome() {
       if (S.view === 'home') return;
+      if (S.view === 'watch') { watchStop(true); return; }
+      liveStop(false); closeLive();
       await flushDraft();
       stopGame(true);
       S.ai.ac?.abort();
@@ -1026,6 +1109,9 @@ defineApp({
       S.draftLabels = [];
       if (!S.scene && S.mode === 'scene') { S.mode = 'code'; if (S.pane === 'scene') S.pane = 'code'; }
       if (!keepSel || !S.scene?.objects.some(o => o.id === S.sel)) S.sel = null;
+      S.multi = new Set();
+      S.paint = { on: false, erase: false };
+      S.check = null;
       setCode(S.headHtml);
       refreshImages();
       win.setSubtitle?.(p.name);
@@ -1044,11 +1130,13 @@ defineApp({
       return S.headHtml;
     }
     function compose(engine = true) {
-      return R.writeScene(S.baseHtml, S.scene, { assets: S.p?.assets || [], engine });
+      return R.writeScene(S.baseHtml, plain(S.scene), { assets: S.p?.assets || [], engine });
     }
 
     function paintAll() {
       paintLayout();
+      paintLevelBar();
+      paintStageTools();
       paintTop();
       paintLeft();
       paintCenter();
@@ -1119,6 +1207,7 @@ defineApp({
       refreshHistory();
     }
     function markRunStale() {
+      liveSoon();
       if (!S.run.on || S.run.dirtyRun) return;
       S.run.dirtyRun = true;
       paintCenterBar();
@@ -1140,6 +1229,7 @@ defineApp({
       S.redo.push({ snap: JSON.stringify(S.scene), sel: S.sel, label: e.label, at: Date.now(), was: e.at });
       S.scene = JSON.parse(e.snap);
       S.sel = S.scene.objects.some(o => o.id === e.sel) ? e.sel : null;
+      S.multi = new Set();
       if (!S.undo.length) S.draftLabels = [];
       S.dirty = S.undo.length > 0 || S.baseHtml !== S.headHtml;
       scheduleDraft();
@@ -1152,6 +1242,7 @@ defineApp({
       S.undo.push({ snap: JSON.stringify(S.scene), sel: S.sel, label: e.label, at: e.was || Date.now() });
       S.scene = JSON.parse(e.snap);
       S.sel = S.scene.objects.some(o => o.id === e.sel) ? e.sel : null;
+      S.multi = new Set();
       S.dirty = true;
       scheduleDraft();
       markRunStale();
@@ -1168,7 +1259,7 @@ defineApp({
         if (!isDirty()) { await DRAFTS.del(draftKey(p.id)); return; }
         const d = S.mode === 'code'
           ? { mode: 'code', text: ta.value }
-          : { mode: 'scene', scene: S.scene, base: S.baseHtml !== S.headHtml ? S.baseHtml : null };
+          : { mode: 'scene', scene: plain(S.scene), base: S.baseHtml !== S.headHtml ? S.baseHtml : null };
         await DRAFTS.set(draftKey(p.id), { ...d, headId: S.headId, at: Date.now(), labels: [...(S.draftLabels || []), ...S.undo.map(u => u.label)].slice(-30) });
       } catch (err) { /* drafts are a convenience */ }
     }
@@ -1280,8 +1371,11 @@ defineApp({
       catch (err) { toast('Could not save', err.message, 'alert'); }
       finally { S.selfWrite--; S.busy = false; }
       if (!p || S.dead) { paintTop(); return null; }
-      const mode = S.mode;
+      const mode = S.mode, keepLv = lvIndex(), keepPaint = S.paint;
       loadHead(p, { keepSel: true });
+      /* Build keeps the level that was open and the brush that was in hand */
+      if (keepLv && S.scene?.levels?.[keepLv - 1]) { const sel = S.sel; enterLevel(S.scene, keepLv); S.sel = S.scene.objects.some(o => o.id === sel) ? sel : null; }
+      if (S.scene && S.scene.objects.some(o => o.id === S.sel && o.tiles)) S.paint = keepPaint;
       if (S.scene && mode === 'scene') S.mode = 'scene';
       clearDraft();
       paintAll();
@@ -1407,7 +1501,7 @@ defineApp({
         S.sceneErr = null;
         dropNotice('scene-err');
         const changedHere = text !== S.headHtml;
-        if (changedHere && S.scene && JSON.stringify(d.scene) !== JSON.stringify(S.scene)) { S.mode = 'scene'; snapshot('Edited in Code mode'); }
+        if (changedHere && S.scene && JSON.stringify(d.scene) !== JSON.stringify(plain(S.scene))) { S.mode = 'scene'; snapshot('Edited in Code mode'); }
         S.scene = d.scene;
         S.baseHtml = text;
         S.baseRuntime = d.runtime;
@@ -1429,8 +1523,11 @@ defineApp({
     }
 
     function showPane(pane) {
+      if (pane === 'scene' && S.pane === 'blocks') pane = 'scene';
       if (pane === 'game' && !S.run.on) runGame({ reveal: false });
-      S.pane = pane === 'game' ? 'game' : S.mode;
+      if (pane === 'blocks' && (S.mode !== 'scene' || S.kind !== 'scene')) pane = S.mode;
+      S.pane = pane === 'game' || pane === 'blocks' ? pane : S.mode;
+      if (S.pane === 'blocks') { if (!blocksWrap.firstChild) blocksWrap.append(blocksEd.el); loadBlocks(); }
       paintCenter();
       if (S.pane === 'game') S.run.sb?.focus();
     }
@@ -1444,7 +1541,8 @@ defineApp({
       const split = S.run.on && splitOK();
       const pane = S.pane;
       const mini = S.run.on && !split && S.mode === 'code' && pane !== 'game' && miniOK();
-      stage.hidden = !(S.mode === 'scene' && pane !== 'game');
+      stage.hidden = !(S.mode === 'scene' && pane !== 'game' && pane !== 'blocks');
+      blocksWrap.hidden = !(S.mode === 'scene' && pane === 'blocks');
       codeWrap.hidden = !(S.mode === 'code' && (pane !== 'game' || split));
       gameWrap.hidden = !(pane === 'game' || split || mini);
       panes.classList.toggle('is-split', split && !codeWrap.hidden && !gameWrap.hidden);
@@ -1458,9 +1556,12 @@ defineApp({
         miniFold.setAttribute('aria-expanded', String(!S.miniFolded));
       }
       segScene.hidden = S.kind !== 'scene';
-      segScene.setAttribute('aria-pressed', String(S.mode === 'scene' && pane !== 'game'));
+      segBlocks.hidden = S.kind !== 'scene' || S.mode !== 'scene';
+      segBlocks.classList.toggle('is-on', S.mode === 'scene' && pane === 'blocks');
+      segBlocks.setAttribute('aria-pressed', String(S.mode === 'scene' && pane === 'blocks'));
+      segScene.setAttribute('aria-pressed', String(S.mode === 'scene' && pane !== 'game' && pane !== 'blocks'));
       segCode.setAttribute('aria-pressed', String(S.mode === 'code' && pane !== 'game'));
-      segScene.classList.toggle('is-on', S.mode === 'scene' && pane !== 'game');
+      segScene.classList.toggle('is-on', S.mode === 'scene' && pane !== 'game' && pane !== 'blocks');
       segCode.classList.toggle('is-on', S.mode === 'code' && (pane !== 'game' || split));
       segGame.classList.toggle('is-on', pane === 'game' || split);
       segGame.setAttribute('aria-pressed', String(pane === 'game'));
@@ -1651,7 +1752,7 @@ defineApp({
         return;
       }
       for (const o of objs) {
-        const on = o.id === S.sel;
+        const on = isSel(o.id);
         const img = o.sprite && S.p?.assets?.find(a => a.id === o.sprite);
         const sw = o.text ? h('span.stu-sw.stu-sw--text', { text: 'T', style: { color: o.color } })
           : img ? h('img.stu-sw', { src: img.dataUrl, alt: '' })
@@ -1660,8 +1761,8 @@ defineApp({
         hierList.append(h(`div.stu-hrow${on ? '.is-on' : ''}${hidden ? '.is-hidden' : ''}${locked ? '.is-locked' : ''}`, { role: 'listitem', dataset: { id: o.id } },
           h('button.stu-hrow__main', {
             type: 'button', 'aria-pressed': String(on),
-            title: 'Click to select · drag to reorder · Alt+↑/↓ moves it forward or back',
-            onclick: () => { if (rowDrag.ate) { rowDrag.ate = false; return; } select(o.id, true); },
+            title: 'Click to select · Shift-click to add to the selection · drag to reorder · Alt+↑/↓ moves it forward or back',
+            onclick: e => { if (rowDrag.ate) { rowDrag.ate = false; return; } if (e.shiftKey || e.ctrlKey || e.metaKey) toggleSelect(o.id); else select(o.id, true); },
             ondblclick: () => { select(o.id, true); later(() => objPane.querySelector('input')?.focus(), 30); },
             onkeydown: e => hierKey(e, o.id),
             onpointerdown: e => rowDragStart(e, o.id),
@@ -1698,7 +1799,7 @@ defineApp({
         const n = objs[clamp(i + (e.key === 'ArrowDown' ? 1 : -1), 0, objs.length - 1)];
         select(n.id, true);
         hierList.querySelector('.is-on .stu-hrow__main')?.focus();
-      } else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); if (S.sel !== id) select(id, true); removeSelected(); }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); if (!isSel(id)) select(id, true); removeSelected(); }
     }
 
     /* drag a row up or down the list to change what is drawn in front */
@@ -1799,6 +1900,8 @@ defineApp({
         S.images.set(a.id, im);
       }
       for (const id of [...S.images.keys()]) if (!keep.has(id)) S.images.delete(id);
+      S.sheets = new Map();
+      for (const a of S.p?.assets || []) if (a.kind === 'image' && a.sheet) S.sheets.set(a.id, a.sheet);
     }
 
     let audioEl = null;
@@ -1953,12 +2056,16 @@ defineApp({
     async function importFiles(files) {
       if (!S.p) return;
       let added = 0;
+      /* sheet data goes last, so it finds the picture imported with it */
+      files = [...files].sort((a, b) => (/\.json$/i.test(a.name) ? 1 : 0) - (/\.json$/i.test(b.name) ? 1 : 0));
       for (const f of files) {
+        if (/\.json$/i.test(f.name) || f.type === 'application/json') { if (added) await reloadAssets(); await importSheetJson(f); continue; }
         const kind = /^image\//.test(f.type) ? 'image' : /^audio\//.test(f.type) ? 'audio' : null;
         if (!kind) { toast(`“${f.name}” was skipped`, 'Studio imports images and sounds.', 'alert'); continue; }
         if (kind === 'audio' && f.size > 3 * 1024 * 1024) { toast(`“${f.name}” is too big`, 'Sounds up to 3 MB fit in a game file. Try a shorter clip.', 'alert'); continue; }
         try {
-          const dataUrl = kind === 'image' ? await imageDataUrl(f) : await readAsDataUrl(f);
+          /* a sprite sheet comes with its .json, whose frame boxes only fit the picture at full size */
+          const dataUrl = kind === 'image' ? await imageDataUrl(f, files.some(x => /\.json$/i.test(x.name)) ? 4096 : 512) : await readAsDataUrl(f);
           S.selfWrite++;
           try { await P.addAsset(S.p.id, { name: f.name, kind, dataUrl }); } finally { S.selfWrite--; }
           added++;
@@ -1968,6 +2075,339 @@ defineApp({
       await reloadAssets();
       if (S.kind === 'scene' && S.mode === 'scene') { snapshot(`Imported ${plural(added, 'asset')}`); touched(); }
       toast(`Imported ${plural(added, 'file')}`, S.mode === 'scene' ? 'Select an object and press Use to make it a sprite.' : 'Press Insert to put code that uses it into your game.', 'upload');
+    }
+
+    /* ================================================================
+       Levels: scene.objects / events are level 1; scene.levels holds the rest.
+       While another level is open for editing its contents are swapped into
+       scene.objects / events (S.scene._at says which), and plain() puts them
+       back before anything is saved, composed or sent.
+       ================================================================ */
+    const lvIndex = () => (S.scene && S.scene._at) || 0;
+    const levelCount = () => 1 + (S.scene?.levels?.length || 0);
+    function swapLevel(sc, i) {
+      const l = sc.levels?.[i - 1];
+      if (!l) return;
+      [sc.objects, l.objects] = [l.objects, sc.objects];
+      [sc.events, l.events] = [l.events, sc.events];
+    }
+    function unswap(sc) {
+      const i = sc._at || 0;
+      if (i > 0) swapLevel(sc, i);
+      delete sc._at;
+      return sc;
+    }
+    /** a copy of the scene as it goes into the game file: level 1 in objects / events */
+    function plain(sc) {
+      if (!sc) return sc;
+      if (!sc._at) { if (!('_at' in sc)) return sc; const c = { ...sc }; delete c._at; return c; }
+      return unswap(JSON.parse(JSON.stringify(sc)));
+    }
+    function enterLevel(sc, i) {
+      unswap(sc);
+      if (i > 0) { swapLevel(sc, i); sc._at = i; }
+    }
+    function goLevel(i) {
+      if (!S.scene || i === lvIndex() || i < 0 || i >= levelCount()) return;
+      enterLevel(S.scene, i);
+      S.sel = null; S.multi = new Set();
+      S.paint = { on: false, erase: false };
+      paintHier(); paintRight(); paintStageTools(); paintLevelBar(); fitStage(); drawStage();
+      announce(`Level ${i + 1} of ${levelCount()}`);
+    }
+    const cloneObjects = list => {
+      const idMap = new Map();
+      const copies = JSON.parse(JSON.stringify(list)).map(o => { const id = R.newId('o'); idMap.set(o.id, id); o.id = id; return o; });
+      for (const c of copies) for (const b of c.behaviours || []) if (b.type === 'spawner' && idMap.has(b.what)) b.what = idMap.get(b.what);
+      return { copies, idMap };
+    };
+    const remapRef = (ref, idMap) => (typeof ref === 'string' && ref.startsWith('id:') && idMap.has(ref.slice(3)) ? `id:${idMap.get(ref.slice(3))}` : ref);
+    function addLevel(kind) {
+      if (!S.scene) return;
+      const cur = lvIndex();
+      edit(kind === 'copy' ? `Copied level ${cur + 1}` : 'Added a level', sc => {
+        let objects, events = [];
+        if (kind === 'copy') {
+          const r = cloneObjects(sc.objects);
+          objects = r.copies;
+          events = JSON.parse(JSON.stringify(sc.events)).map(ev => ({ ...ev, id: R.newId('e'), a: remapRef(ev.a, r.idMap), b: remapRef(ev.b, r.idMap) }));
+        } else {
+          /* a fresh level starts with the player(s), some ground and a goal */
+          const players = sc.objects.filter(o => (o.behaviours || []).some(b => b.type === 'platformer' || b.type === 'topdown'));
+          const r = cloneObjects(players);
+          const w = worldOf(sc.settings);
+          const topdown = players.some(o => (o.behaviours || []).some(b => b.type === 'topdown'));
+          objects = [
+            ...(topdown ? [] : [{ id: R.newId('o'), name: 'Ground', group: 'ground', x: 0, y: w.h - 40, w: w.w, h: 40, color: '#3b4a6e', shape: 'rect', sprite: null, text: '', solid: true, visible: true, layer: 0, behaviours: [] }]),
+            { id: R.newId('o'), name: 'Flag', group: 'goal', x: w.w - 60, y: topdown ? 40 : w.h - 88, w: 24, h: 48, color: '#4ade80', shape: 'rect', sprite: null, text: '', solid: false, visible: true, layer: 0, behaviours: [beh('goal')] },
+            ...r.copies,
+          ];
+        }
+        unswap(sc);
+        sc.levels = [...(sc.levels || []), { id: R.newId('l'), name: '', objects, events }];
+        const at = sc.levels.length;
+        swapLevel(sc, at);
+        sc._at = at;
+      }, { hier: true, insp: true });
+      S.sel = null; S.multi = new Set();
+      paintStageTools(); paintLevelBar(); fitStage(); paintHier(); paintRight();
+      announce(`Level ${lvIndex() + 1} added`);
+    }
+    async function deleteLevel() {
+      if (!S.scene || levelCount() < 2) return;
+      const at = lvIndex();
+      const ok = await api.confirm({ title: `Delete level ${at + 1}?`, message: 'Its objects and events are removed from the game. Undo brings them back until you close Studio.', ok: 'Delete', danger: true });
+      if (!ok || S.dead) return;
+      edit(`Deleted level ${at + 1}`, sc => {
+        unswap(sc);
+        const all = [{ objects: sc.objects, events: sc.events }, ...(sc.levels || [])];
+        all.splice(at, 1);
+        sc.objects = all[0].objects; sc.events = all[0].events;
+        if (all.length > 1) sc.levels = all.slice(1).map((l, i) => ({ id: l.id || R.newId('l'), name: l.name || '', objects: l.objects, events: l.events })); else delete sc.levels;
+        const to = Math.min(at, all.length - 1);
+        if (to > 0) { swapLevel(sc, to); sc._at = to; }
+      }, { hier: true, insp: true });
+      S.sel = null; S.multi = new Set();
+      paintStageTools(); paintLevelBar(); fitStage(); paintHier(); paintRight();
+    }
+    function paintLevelBar() {
+      clear(levelBar);
+      levelBar.hidden = !S.scene || S.mode !== 'scene';
+      if (levelBar.hidden) return;
+      const n = levelCount();
+      if (n > 1) levelBar.append(h('span.stu-lv__l', { text: 'Level' }));
+      for (let i = 0; i < n; i++) {
+        levelBar.append(h(`button.stu-lv${i === lvIndex() ? '.is-on' : ''}`, { type: 'button', 'aria-pressed': String(i === lvIndex()), 'aria-label': `Edit level ${i + 1}`, title: `Edit level ${i + 1}`, onclick: () => goLevel(i) }, h('span', { text: String(i + 1) })));
+      }
+      levelBar.append(h('button.stu-lv.stu-lv--add', { type: 'button', 'aria-label': 'Add a level', title: 'Add a level', 'aria-haspopup': 'menu', onclick: e => {
+        const r = e.currentTarget.getBoundingClientRect();
+        api.menu([
+          { label: 'New level (player, ground and a flag)', icon: 'plus', onClick: () => addLevel('new') },
+          { label: `Copy of level ${lvIndex() + 1}`, icon: 'copy', onClick: () => addLevel('copy') },
+        ], r.left, r.bottom + 4);
+      } }, icon('plus'), n > 1 ? null : h('span', { text: 'Level' })));
+    }
+
+    /* ---------- sprite sheets: frames, clips and the animation settings ---------- */
+    function animFromSheet(sh) {
+      const g = Sheet.guessClips(sh);
+      const a = {};
+      if (g.idle) a.idle = g.idle;
+      if (g.walk) a.walk = g.walk;
+      a.fps = sh.fps || 8;
+      return a;
+    }
+    function framesCount(o, asset) {
+      const sh = S.sheets.get(asset.id);
+      if (sh?.frames?.length) return sh.frames.length;
+      const im = S.images.get(asset.id), an = o.anim || {};
+      if (!im || !im.naturalWidth || !an.fw || !an.fh) return 0;
+      return Math.max(1, Math.floor(im.naturalWidth / an.fw)) * Math.max(1, Math.floor(im.naturalHeight / an.fh));
+    }
+    function animSection(o, asset, set) {
+      const sh = S.sheets.get(asset.id);
+      const kids = [sectionH('Animation')];
+      if (!o.anim) {
+        kids.push(h('div.stu-f__h.stu-pad', { text: sh ? `This is a sprite sheet with ${plural(sh.frames.length, 'frame')}${sh.tags?.length ? ` and ${plural(sh.tags.length, 'clip')} (${sh.tags.map(t => t.name).join(', ')})` : ''}. Turn animation on to play it.` : 'If this picture is a sprite sheet (frames side by side), turn animation on and say how big one frame is. Import the sheet’s .json from Asset Lab and Studio knows already.' }));
+        kids.push(h('button.stu-mini', { type: 'button', onclick: () => {
+          const im = S.images.get(asset.id);
+          set(`Animated ${o.name}`, x => {
+            x.anim = sh ? animFromSheet(sh) : { fw: Math.max(1, im?.naturalHeight || 16), fh: Math.max(1, im?.naturalHeight || 16), fps: 8 };
+          }, { insp: true });
+        } }, icon('play'), h('span', { text: 'Animate this sprite' })));
+        return kids;
+      }
+      const an = o.anim;
+      const total = framesCount(o, asset);
+      kids.push(h('div.stu-f__h.stu-pad', { text: total ? `${plural(total, 'frame')}. Frames are counted from 0.` : 'Set the frame size to cut the sheet into frames.' }));
+      if (!sh) {
+        kids.push(h('div.stu-grid2',
+          field('Frame width', numIn(an.fw || 16, v => set(`Changed ${o.name}'s frame size`, x => { x.anim.fw = Math.max(1, Math.round(v)); }, { merge: `afw:${o.id}`, insp: true }), { min: 1, max: 4096, label: 'Frame width' })),
+          field('Frame height', numIn(an.fh || 16, v => set(`Changed ${o.name}'s frame size`, x => { x.anim.fh = Math.max(1, Math.round(v)); }, { merge: `afh:${o.id}`, insp: true }), { min: 1, max: 4096, label: 'Frame height' }))));
+      }
+      kids.push(field('Speed (frames a second)', numIn(an.fps || sh?.fps || 8, v => set(`Changed ${o.name}'s animation speed`, x => { x.anim.fps = clamp(v, 0.5, 60); }, { merge: `afps:${o.id}` }), { min: 0.5, max: 60, step: 0.5, label: 'Animation speed' })));
+      for (const [key, title, hint] of [['idle', 'Standing still', 'Frames shown when it is not moving. Leave empty to play every frame.'], ['walk', 'Moving', 'Frames shown while it moves. Leave empty to use the standing clip.']]) {
+        const r = an[key];
+        const row = [];
+        if (sh?.tags?.length) {
+          row.push(selIn(r ? (sh.tags.find(t => t.from === r[0] && t.to === r[1])?.name || '') : '', [['', 'Pick a clip…'], ...sh.tags.map(t => [t.name, `${t.name} (${t.from}–${t.to})`])],
+            v => set(`Set ${o.name}'s ${title.toLowerCase()} clip`, x => { const t = sh.tags.find(z => z.name === v); if (t) x.anim[key] = [t.from, t.to]; else delete x.anim[key]; }, { insp: true }), { 'aria-label': `${title} clip` }));
+        }
+        row.push(h('div.stu-grid2',
+          h('label.stu-xy', h('span', { text: 'From' }), numIn(r ? r[0] : 0, v => set(`Set ${o.name}'s ${title.toLowerCase()} frames`, x => { const to = x.anim[key] ? x.anim[key][1] : Math.max(0, total - 1); x.anim[key] = [Math.max(0, Math.round(v)), Math.max(Math.max(0, Math.round(v)), to)]; }, { merge: `a${key}:${o.id}` }), { min: 0, max: 4095, label: `${title}: first frame` })),
+          h('label.stu-xy', h('span', { text: 'To' }), numIn(r ? r[1] : Math.max(0, total - 1), v => set(`Set ${o.name}'s ${title.toLowerCase()} frames`, x => { const from = x.anim[key] ? x.anim[key][0] : 0; x.anim[key] = [from, Math.max(from, Math.round(v))]; }, { merge: `a${key}:${o.id}` }), { min: 0, max: 4095, label: `${title}: last frame` }))));
+        kids.push(field(title, h('div.stu-clip', row), hint));
+      }
+      kids.push(h('button.stu-mini', { type: 'button', onclick: () => set(`Stopped animating ${o.name}`, x => { delete x.anim; }, { insp: true }) }, icon('square'), h('span', { text: 'Stop animating' })));
+      return kids;
+    }
+
+    /* ---------- importing a sheet's .json next to its picture ---------- */
+    async function importSheetJson(file) {
+      let text = '';
+      try { text = await file.text(); } catch (err) { toast(`Could not read “${file.name}”`, err.message, 'alert'); return false; }
+      const r = Sheet.readSheet(text);
+      if (!r.ok) { toast(`“${file.name}” was skipped`, r.error, 'alert'); return false; }
+      let j = {};
+      try { j = JSON.parse(text); } catch (err) { j = {}; }
+      const stem = s => String(s || '').toLowerCase().replace(/\.[a-z0-9]+$/, '').replace(/-(sheet|grid)$/, '').replace(/@\dx$/, '');
+      const imgs = (S.p?.assets || []).filter(a => a.kind === 'image');
+      const want = [j.image, file.name].map(stem);
+      /* the picture it names, else the one with the same name, else the newest picture */
+      const target = imgs.find(a => stem(a.name) === want[0] && j.image) || imgs.find(a => stem(a.name) === want[1]) || imgs[imgs.length - 1];
+      if (!target) { toast(`“${file.name}” needs its picture`, 'Import the sprite sheet’s PNG first, then its .json.', 'alert'); return false; }
+      /* a picture that was made smaller on import: the frame boxes shrink with it */
+      let sheet = r.sheet;
+      try {
+        const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = target.dataUrl; });
+        const sw = Math.max(...sheet.frames.map(f => f[0] + f[2])), sh = Math.max(...sheet.frames.map(f => f[1] + f[3]));
+        const kx = im.naturalWidth / sw, ky = im.naturalHeight / sh;
+        if (sw > 0 && sh > 0 && (Math.abs(kx - 1) > 0.01 || Math.abs(ky - 1) > 0.01) && Math.abs(kx - ky) < 0.05) {
+          sheet = { ...sheet, fw: Math.max(1, Math.round(sheet.fw * kx)), fh: Math.max(1, Math.round(sheet.fh * ky)),
+            frames: sheet.frames.map(f => [Math.round(f[0] * kx), Math.round(f[1] * ky), Math.max(1, Math.round(f[2] * kx)), Math.max(1, Math.round(f[3] * ky))]) };
+        }
+      } catch (err) { /* keep the boxes as they are */ }
+      S.selfWrite++;
+      try { await P.setAssetSheet(S.p.id, target.id, sheet); } finally { S.selfWrite--; }
+      await reloadAssets();
+      toast('Sprite sheet read', `${target.name}: ${plural(r.sheet.frames.length, 'frame')}${r.sheet.tags.length ? `, clips ${r.sheet.tags.map(t => t.name).join(', ')}` : ''}. Select an object that uses it and turn on Animate.`, 'play');
+      return true;
+    }
+
+    /* ---------- the Game tab's extra sections ---------- */
+    function sectionWorld(st, setS) {
+      const wd = worldOf(st), big = wd.w > st.width || wd.h > st.height;
+      return [
+        sectionH('World and camera'),
+        h('div.stu-f__h.stu-pad', { text: big ? 'The world is bigger than the screen, so the camera follows the first player. The dashed box on the stage is the first screen.' : 'Make the world bigger than the screen and the camera follows the player round it. Left alone, the world is just the screen.' }),
+        h('div.stu-grid2',
+          field('World width', numIn(wd.w, v => { setS('Changed the world size', s => { if (Math.round(v) <= s.width) delete s.worldWidth; else s.worldWidth = Math.round(v); }, { merge: 'worldw' }); fitStage(); }, { min: 120, max: 20000, label: 'World width' })),
+          field('World height', numIn(wd.h, v => { setS('Changed the world size', s => { if (Math.round(v) <= s.height) delete s.worldHeight; else s.worldHeight = Math.round(v); }, { merge: 'worldh' }); fitStage(); }, { min: 120, max: 20000, label: 'World height' }))),
+        big ? h('button.stu-mini', { type: 'button', onclick: () => { setS('Made the world one screen', s => { delete s.worldWidth; delete s.worldHeight; }, { insp: true }); fitStage(); } }, icon('minus'), h('span', { text: 'Same as the screen' })) : null,
+      ];
+    }
+    function sectionLevels() {
+      const n = levelCount();
+      const kids = [sectionH('Levels', h('button.stu-mini', { type: 'button', 'aria-label': 'Add a level', onclick: e => {
+        const r = e.currentTarget.getBoundingClientRect();
+        api.menu([
+          { label: 'New level (player, ground and a flag)', icon: 'plus', onClick: () => addLevel('new') },
+          { label: `Copy of level ${lvIndex() + 1}`, icon: 'copy', onClick: () => addLevel('copy') },
+        ], r.left, r.bottom + 4);
+      } }, icon('plus'), h('span', { text: 'Add' })))];
+      kids.push(h('div.stu-f__h.stu-pad', { text: n > 1
+        ? `This game has ${n} levels. A Goal takes the player to the next one (the last one wins), and an event can use “Go to the next level”. Score and lives carry over.`
+        : 'One level so far. Add more and the Goal (or an event) takes the player on to the next one.' }));
+      if (n > 1) {
+        kids.push(h('div.stu-lvlist', Array.from({ length: n }, (_, i) => h(`button.stu-lvrow${i === lvIndex() ? '.is-on' : ''}`, { type: 'button', 'aria-pressed': String(i === lvIndex()), onclick: () => goLevel(i) }, h('b', { text: `Level ${i + 1}` }), h('span', { text: i === lvIndex() ? 'editing' : '' })))));
+        kids.push(h('button.stu-mini.stu-danger', { type: 'button', onclick: deleteLevel }, icon('trash'), h('span', { text: `Delete level ${lvIndex() + 1}` })));
+      }
+      return kids;
+    }
+    function sectionVars(st, setS) {
+      const vars = st.vars || {};
+      const names = Object.keys(vars);
+      const nameIn = h('input.stu-in', { type: 'text', placeholder: 'name, like keys', maxlength: '24', 'aria-label': 'New variable name', spellcheck: 'false' });
+      const add = () => {
+        const nm = nameIn.value.trim();
+        if (!R.VAR_RE.test(nm) || R.BAD_VARS.includes(nm) || ['score', 'lives', 'time', 'level'].includes(nm) || vars[nm] !== undefined) { toast('That name can’t be used', 'Use letters, numbers and _ (starting with a letter), not one that is already taken.', 'alert'); return; }
+        setS(`Added the variable ${nm}`, s => { s.vars = { ...(s.vars || {}), [nm]: 0 }; }, { insp: true });
+      };
+      return [
+        sectionH('Your variables'),
+        h('div.stu-f__h.stu-pad', { text: 'Numbers the game keeps, like keys or coins. Events can set and change them, and text objects show them with {name}.' }),
+        ...names.map(nm => h('div.stu-varrow',
+          h('code', { text: `{${nm}}` }),
+          h('span.stu-f__h', { text: 'starts at' }),
+          numIn(vars[nm], v => setS(`Changed ${nm}`, s => { s.vars[nm] = v; }, { merge: `var:${nm}` }), { label: `${nm} starts at` }),
+          h('button.stu-tb.stu-tb--icon', { type: 'button', 'aria-label': `Remove the variable ${nm}`, onclick: () => setS(`Removed the variable ${nm}`, s => { delete s.vars[nm]; if (!Object.keys(s.vars).length) delete s.vars; }, { insp: true }) }, icon('x')))),
+        h('div.stu-varadd', nameIn, h('button.stu-mini', { type: 'button', onclick: add }, icon('plus'), h('span', { text: 'Add' }))),
+      ];
+    }
+    function sectionScreens(st, setS) {
+      const imgs = (S.p?.assets || []).filter(a => a.kind === 'image');
+      const imgOpts = [['', 'No picture'], ...imgs.map(a => [a.id, a.name])];
+      const block = (key, title, defTitle, defText, defColor) => [
+        h('div.stu-f__l.stu-scr', { text: title }),
+        field('Big words', txtIn(st[`${key}Title`] || '', v => setS(`Changed the ${title.toLowerCase()}`, s => { if (v) s[`${key}Title`] = v.slice(0, 80); else delete s[`${key}Title`]; }, { merge: `${key}t` }), { maxlength: '80', placeholder: defTitle })),
+        field('Smaller words', txtIn(st[`${key}Text`] || '', v => setS(`Changed the ${title.toLowerCase()}`, s => { if (v) s[`${key}Text`] = v.slice(0, 200); else delete s[`${key}Text`]; }, { merge: `${key}x` }), { maxlength: '200', placeholder: defText }), '{score}, {lives}, {time} and your variables fill in.'),
+        field('Colour', colorIn(st[`${key}Color`] || defColor, v => setS(`Changed the ${title.toLowerCase()}`, s => { s[`${key}Color`] = v; }, { merge: `${key}c` }), `${title} colour`)),
+        imgs.length ? field('Picture', selIn(st[`${key}Image`] || '', imgOpts, v => setS(`Changed the ${title.toLowerCase()}`, s => { if (v) s[`${key}Image`] = v; else delete s[`${key}Image`]; }, { insp: true }), { 'aria-label': `${title} picture` })) : null,
+      ];
+      return [
+        sectionH('Win and game-over screens'),
+        h('div.stu-f__h.stu-pad', { text: 'What the player sees when the game ends. Leave the words empty for the usual “You win!” and “Game over”.' }),
+        ...block('win', 'Win screen', 'You win!', 'Score {score}', '#86efac'),
+        ...block('lose', 'Game-over screen', 'Game over', 'Score {score}', '#fca5a5'),
+      ].filter(Boolean);
+    }
+    function sectionMusic(st, setS) {
+      const sounds = (S.p?.assets || []).filter(a => a.kind === 'audio');
+      const wavs = Music.wavFiles(api.vfs);
+      const kids = [
+        sectionH('Music'),
+        field('Game music', selIn(st.music || '', [['', sounds.length ? 'No music' : 'No sounds yet'], ...sounds.map(a => [a.id, a.name])], v => setS(v ? 'Set the game music' : 'Removed the game music', s => { if (v) s.music = v; else delete s.music; }, { insp: true }), { 'aria-label': 'Game music' }),
+          'Plays on a loop once the player presses a key or taps. It stops when the game ends or is paused.'),
+      ];
+      if (st.music) kids.push(field('Volume', numIn(Math.round((st.musicVolume ?? 0.5) * 100), v => setS('Changed the music volume', s => { s.musicVolume = clamp(v / 100, 0, 1); }, { merge: 'musicv' }), { min: 0, max: 100, label: 'Music volume' }), 'Percent.'));
+      kids.push(h('div.stu-f__l', { text: 'From your Static Beats exports' }));
+      if (!wavs.length) {
+        kids.push(h('div.stu-f__h.stu-pad', { text: 'No WAV files in your Music folder yet. Make a beat in Static Beats and use Export; it lands there.' }));
+        if (api.getApp?.('beats')) kids.push(h('button.stu-mini', { type: 'button', onclick: () => api.openApp('beats') }, icon('music'), h('span', { text: 'Open Static Beats' })));
+      } else {
+        kids.push(h('div.stu-wavs', wavs.map(w => h('div.stu-wav',
+          icon('music'),
+          h('span.stu-wav__n', { text: w.name, title: w.name }),
+          h('small', { text: `${Math.max(1, Math.round(w.bytes / 1024))} KB` }),
+          h('button.stu-mini', { type: 'button', 'aria-label': `Use ${w.name} as the game music`, onclick: () => useWavAsMusic(w) }, h('span', { text: 'Use as music' }))))));
+        kids.push(h('div.stu-f__h.stu-pad', { text: 'The game gets its own copy, shrunk to mono at 22 kHz so it stays small. Your original is not changed.' }));
+      }
+      return kids;
+    }
+    async function useWavAsMusic(w) {
+      if (!S.p || !S.scene) return;
+      try {
+        const blob = await media.blobOf(w.path);
+        if (!blob) { toast(`Could not read ${w.name}`, 'The file has no sound data.', 'alert'); return; }
+        const buf = await blob.arrayBuffer();
+        const small = Music.shrinkWav(buf);
+        if (!small) { toast(`${w.name} can’t be used`, 'Studio reads 16-bit WAV files, like the ones Static Beats exports.', 'alert'); return; }
+        if (small.to > 6 * 1024 * 1024) { toast(`${w.name} is too long`, `Even shrunk it is ${Math.round(small.to / 1048576)} MB. Export a shorter loop from Static Beats.`, 'alert'); return; }
+        const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(r.error); r.readAsDataURL(new Blob([small.buffer], { type: 'audio/wav' })); });
+        S.selfWrite++;
+        let a;
+        try { a = await P.addAsset(S.p.id, { name: w.name, kind: 'audio', dataUrl }); } finally { S.selfWrite--; }
+        await reloadAssets();
+        if (a) edit('Set the game music', sc => { sc.settings.music = a.id; }, { insp: true });
+        toast('Music set', `${w.name} plays on a loop (${Math.round(small.seconds)} s, ${Math.max(1, Math.round(small.to / 1024))} KB in the game).${small.to > 60000 ? ' That is too big for a share link; Export still carries it.' : ''}`, 'music');
+      } catch (err) { toast('Could not use that file', err.message || String(err), 'alert'); }
+    }
+    function sectionCheck() {
+      const res = S.check;
+      const kids = [sectionH('Check my game', h('button.stu-mini', { type: 'button', onclick: () => runCheck(true) }, icon('check-circle'), h('span', { text: res ? 'Check again' : 'Check' })))];
+      if (!res) {
+        kids.push(h('div.stu-f__h.stu-pad', { text: 'Looks for things that will stop the game working: no player, nothing that can win, a coin walled in or out of reach, a missing picture.' }));
+        return kids;
+      }
+      if (!res.length) { kids.push(h('div.stu-check.stu-check--ok', icon('check-circle'), h('span', { text: 'Nothing found. It still needs playing, but nothing obvious is wrong.' }))); return kids; }
+      for (const r of res) {
+        const go = r.id ? () => { if (r.level - 1 !== lvIndex()) goLevel(r.level - 1); select(r.id, true); drawStage(); } : null;
+        kids.push(h(`div.stu-check.stu-check--${r.sev}`, { role: 'listitem' }, icon(r.sev === 'tip' ? 'info' : 'alert'),
+          h('span', { text: r.text }),
+          go ? h('button.stu-mini', { type: 'button', onclick: go }, h('span', { text: 'Show me' })) : null));
+      }
+      return kids;
+    }
+    function runCheck(announceIt) {
+      if (!S.scene) return [];
+      const code = S.mode === 'scene' ? (R.readDoc(S.baseHtml).code || '') : '';
+      S.check = checkGame(plain(S.scene), { assets: S.p?.assets || [], code });
+      if (announceIt) {
+        const e = S.check.filter(r => r.sev === 'error').length, w = S.check.filter(r => r.sev === 'warn').length;
+        announce(S.check.length ? `${plural(e, 'problem')}, ${plural(w, 'warning')}, ${plural(S.check.length - e - w, 'tip')}` : 'Nothing found');
+      }
+      if (S.right === 'game') paintGameSettings();
+      return S.check;
     }
 
     /* ================================================================
@@ -1986,11 +2426,11 @@ defineApp({
         cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
         cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
       }
-      const st = S.scene.settings;
+      const wd = worldOf(S.scene.settings);
       const pad = S.tiny ? 14 : 34;
-      SG.s = Math.max(0.05, Math.min((cw - pad * 2) / st.width, (ch - pad * 2 - 18) / st.height));
-      SG.ox = Math.round((cw - st.width * SG.s) / 2);
-      SG.oy = Math.round((ch - st.height * SG.s) / 2 - 4);
+      SG.s = Math.max(0.05, Math.min((cw - pad * 2) / wd.w, (ch - pad * 2 - 18) / wd.h));
+      SG.ox = Math.round((cw - wd.w * SG.s) / 2);
+      SG.oy = Math.round((ch - wd.h * SG.s) / 2 - 4);
       drawStage();
     }
     function drawStage() {
@@ -2010,15 +2450,16 @@ defineApp({
       g.setTransform(SG.dpr, 0, 0, SG.dpr, 0, 0);
       g.clearRect(0, 0, SG.cw, SG.ch);
       g.setTransform(SG.dpr * SG.s, 0, 0, SG.dpr * SG.s, SG.dpr * SG.ox, SG.dpr * SG.oy);
+      const wd = worldOf(st);
       g.save();
-      g.beginPath(); g.rect(0, 0, st.width, st.height); g.clip();
-      paintScene(g, S.scene, { images: S.images, grid: prefs().grid === false ? 0 : 32, px: 1 / SG.s, paths: true, sel: S.sel });
+      g.beginPath(); g.rect(0, 0, wd.w, wd.h); g.clip();
+      paintScene(g, S.scene, { images: S.images, sheets: S.sheets, grid: prefs().grid === false ? 0 : 32, px: 1 / SG.s, paths: true, sel: S.sel, multi: S.multi, ghosts: true });
       g.restore();
       /* objects that stick out of the game area, faintly */
       g.save();
       g.globalAlpha = 0.35;
       for (const o of S.scene.objects) {
-        if (o.x >= 0 && o.y >= 0 && o.x + o.w <= st.width && o.y + o.h <= st.height) continue;
+        if (o.tiles || (o.x >= 0 && o.y >= 0 && o.x + o.w <= wd.w && o.y + o.h <= wd.h)) continue;
         g.fillStyle = o.color || '#888';
         g.fillRect(o.x, o.y, o.w, o.h);
       }
@@ -2027,7 +2468,16 @@ defineApp({
       /* game-area frame */
       g.strokeStyle = 'rgba(255,255,255,.16)';
       g.lineWidth = 1;
-      g.strokeRect(SG.ox - 0.5, SG.oy - 0.5, st.width * SG.s + 1, st.height * SG.s + 1);
+      g.strokeRect(SG.ox - 0.5, SG.oy - 0.5, wd.w * SG.s + 1, wd.h * SG.s + 1);
+      /* a world bigger than the screen: the first screen is where the camera starts */
+      if (wd.w > st.width || wd.h > st.height) {
+        g.save();
+        g.setLineDash([6, 4]);
+        g.strokeStyle = 'rgba(124,196,255,.8)';
+        g.strokeRect(SG.ox - 0.5, SG.oy - 0.5, st.width * SG.s + 1, st.height * SG.s + 1);
+        g.restore();
+        label(g, 'Screen: the camera follows the player', SG.ox, SG.oy + st.height * SG.s + 24, 'rgba(20,20,28,.85)', '#bfe3ff');
+      }
       const accent = getComputedStyle(app).getPropertyValue('--accent').trim() || '#ff456d';
       const hv = SG.hover && SG.hover !== S.sel && S.scene.objects.find(o => o.id === SG.hover);
       if (hv) {
@@ -2036,6 +2486,18 @@ defineApp({
         g.strokeRect(SG.ox + hv.x * SG.s - 0.5, SG.oy + hv.y * SG.s - 0.5, hv.w * SG.s + 1, hv.h * SG.s + 1);
         g.setLineDash([]);
         label(g, hv.name, SG.ox + hv.x * SG.s, SG.oy + hv.y * SG.s, 'rgba(20,20,28,.85)', '#fff');
+      }
+      /* the other objects of a multiple selection */
+      if (S.multi.size > 1) {
+        g.strokeStyle = accent; g.lineWidth = 1.5; g.setLineDash([4, 3]);
+        for (const m of selObjs()) if (m.id !== S.sel) g.strokeRect(SG.ox + m.x * SG.s - 1, SG.oy + m.y * SG.s - 1, m.w * SG.s + 2, m.h * SG.s + 2);
+        g.setLineDash([]);
+      }
+      if (SG.marq) {
+        const m = SG.marq;
+        g.fillStyle = 'rgba(124,196,255,.14)'; g.strokeStyle = 'rgba(124,196,255,.9)'; g.lineWidth = 1;
+        g.fillRect(SG.ox + m.x0 * SG.s, SG.oy + m.y0 * SG.s, (m.x1 - m.x0) * SG.s, (m.y1 - m.y0) * SG.s);
+        g.strokeRect(SG.ox + m.x0 * SG.s, SG.oy + m.y0 * SG.s, (m.x1 - m.x0) * SG.s, (m.y1 - m.y0) * SG.s);
       }
       const o = selObj();
       if (o) {
@@ -2046,7 +2508,7 @@ defineApp({
         if (o.locked) g.setLineDash([5, 3]);
         g.strokeRect(x - 1, y - 1, o.w * SG.s + 2, o.h * SG.s + 2);
         g.setLineDash([]);
-        if (!o.locked) {
+        if (!o.locked && !o.tiles && !S.multi.size) {
           for (const [, hx, hy] of handlesOf(o)) {
             g.fillStyle = '#fff';
             g.fillRect(hx - 4, hy - 4, 8, 8);
@@ -2054,9 +2516,9 @@ defineApp({
             g.strokeRect(hx - 4.5, hy - 4.5, 9, 9);
           }
         }
-        label(g, `${o.locked ? 'Locked · ' : ''}${o.name}  ${Math.round(o.x)}, ${Math.round(o.y)}  ${Math.round(o.w)}×${Math.round(o.h)}`, x, y, accent, '#fff');
+        label(g, S.multi.size > 1 ? `${S.multi.size} objects selected` : `${o.locked ? 'Locked · ' : ''}${o.name}${o.spawnOnly ? ' (spawned)' : ''}  ${Math.round(o.x)}, ${Math.round(o.y)}  ${Math.round(o.w)}×${Math.round(o.h)}`, x, y, accent, '#fff');
       }
-      stageInfo.textContent = `${st.width} × ${st.height} · ${plural(S.scene.objects.length, 'object')} · ${Math.round(SG.s * 100)}%`;
+      stageInfo.textContent = `${wd.w > st.width || wd.h > st.height ? `World ${wd.w} × ${wd.h}, screen ${st.width} × ${st.height}` : `${st.width} × ${st.height}`} · ${plural(S.scene.objects.length, 'object')} · ${Math.round(SG.s * 100)}%${levelCount() > 1 ? ` · level ${lvIndex() + 1} of ${levelCount()}` : ''}`;
       stageEmpty.hidden = S.scene.objects.length > 0;
     }
     function label(g, text, x, y, bg, fg) {
@@ -2080,6 +2542,14 @@ defineApp({
       snapBtn.title = snap ? `Snapping to ${SNAP} px (hold Alt to move freely)` : 'Snapping is off';
       gridBtn.setAttribute('aria-pressed', String(grid));
       gridBtn.classList.toggle('is-on', grid);
+      const tm = selObj();
+      const hasTiles = !!(tm && tm.tiles);
+      if (!hasTiles) S.paint = { on: false, erase: false };
+      brushBtn.hidden = eraseBtn.hidden = !hasTiles;
+      brushBtn.setAttribute('aria-pressed', String(S.paint.on && !S.paint.erase));
+      eraseBtn.setAttribute('aria-pressed', String(S.paint.on && S.paint.erase));
+      brushBtn.classList.toggle('is-on', S.paint.on && !S.paint.erase);
+      eraseBtn.classList.toggle('is-on', S.paint.on && S.paint.erase);
     }
 
     const toScene = e => {
@@ -2091,12 +2561,16 @@ defineApp({
     function objAt(x, y) {
       const list = S.scene.objects.map((o, i) => [o, i]).sort((a, b) => (b[0].layer || 0) - (a[0].layer || 0) || b[1] - a[1]);
       const tol = 3 / SG.s;
-      for (const [o] of list) if (!o.locked && x >= o.x - tol && x <= o.x + o.w + tol && y >= o.y - tol && y <= o.y + o.h + tol) return o;
+      for (const [o] of list) {
+        if (o.locked) continue;
+        if (o.tiles) { const c = tileCell(o, x, y); if (c && o.tiles.rows[c.r][c.c] === '#') return o; continue; }
+        if (x >= o.x - tol && x <= o.x + o.w + tol && y >= o.y - tol && y <= o.y + o.h + tol) return o;
+      }
       return null;
     }
     function handleAt(sx, sy) {
       const o = selObj();
-      if (!o || o.locked) return null;
+      if (!o || o.locked || o.tiles || S.multi.size) return null;
       const x = SG.ox + o.x * SG.s, y = SG.oy + o.y * SG.s, w = o.w * SG.s, hh = o.h * SG.s;
       /* on a thin or small object the grab zones would cover all of it, so
          from inside it they only count right on the handle: the rest moves it */
@@ -2110,6 +2584,44 @@ defineApp({
       }
       return null;
     }
+    /* ---- selection: one primary object (S.sel, what the Object tab shows) and, when
+       several are picked, S.multi (always includes the primary) ---- */
+    const selIds = () => (S.multi.size ? [...S.multi] : (S.sel ? [S.sel] : []));
+    const isSel = id => (S.multi.size ? S.multi.has(id) : S.sel === id);
+    const selObjs = () => (S.scene ? selIds().map(id => S.scene.objects.find(o => o.id === id)).filter(Boolean) : []);
+    function setSelection(ids, primary) {
+      const list = [...new Set(ids)].filter(id => S.scene?.objects.some(o => o.id === id));
+      S.multi = new Set(list.length > 1 ? list : []);
+      S.sel = list.length ? (list.includes(primary) ? primary : list[list.length - 1]) : null;
+      if (S.sel && S.right !== 'object' && S.right !== 'ai') S.right = 'object';
+      paintHier(); paintRight(); paintAssets(); paintStageTools(); drawStage();
+    }
+    function toggleSelect(id) {
+      const cur = selIds();
+      setSelection(cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id], id);
+      announce(`${selIds().length} selected`);
+    }
+
+    /* ---- the tile painter: a tilemap object is a grid of ground, drawn on the stage ---- */
+    function tilesFit(o) {
+      const { w, h: hh } = worldOf(S.scene.settings), sz = o.tiles.size || 32;
+      const cols = Math.ceil(w / sz), rows = Math.ceil(hh / sz);
+      const old = o.tiles.rows || [];
+      o.tiles.rows = Array.from({ length: rows }, (_, r) => { const row = String(old[r] || ''); return row.length >= cols ? row.slice(0, cols) : row + '.'.repeat(cols - row.length); });
+      o.x = 0; o.y = 0; o.w = cols * sz; o.h = rows * sz;
+    }
+    function tileCell(o, x, y) {
+      const sz = o.tiles.size || 32, c = Math.floor((x - o.x) / sz), r = Math.floor((y - o.y) / sz);
+      return c >= 0 && r >= 0 && r < o.tiles.rows.length && c < o.tiles.rows[r].length ? { c, r } : null;
+    }
+    function setTile(o, c, r, on) {
+      const row = o.tiles.rows[r];
+      const ch = on ? '#' : '.';
+      if (row[c] === ch) return false;
+      o.tiles.rows[r] = row.slice(0, c) + ch + row.slice(c + 1);
+      return true;
+    }
+
     const CURSOR = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' };
     const snapV = (v, e) => (prefs().snap !== false && !e.altKey ? Math.round(v / SNAP) * SNAP : Math.round(v));
 
@@ -2117,17 +2629,55 @@ defineApp({
       if (e.button !== 0 || !S.scene) return;
       cv.focus({ preventScroll: true });
       const pt = toScene(e);
+      const tm = selObj();
+      /* painting tiles: the pointer is a brush while it is on */
+      if (S.paint.on && tm && tm.tiles && !tm.locked) {
+        tilesFit(tm);
+        const erase = S.paint.erase !== (e.altKey || e.shiftKey);
+        SG.drag = { kind: 'tiles', id: tm.id, erase, moved: false, snapped: false };
+        cv.setPointerCapture(e.pointerId);
+        paintTileAt(SG.drag, pt);
+        return;
+      }
       const dir = handleAt(pt.sx, pt.sy);
       if (dir) {
         const o = selObj();
         SG.drag = { kind: 'resize', dir, id: o.id, start: { x: o.x, y: o.y, w: o.w, h: o.h }, px: pt.x, py: pt.y, moved: false };
       } else {
         const o = objAt(pt.x, pt.y);
-        select(o ? o.id : null, false);
-        if (o) SG.drag = { kind: 'move', id: o.id, start: { x: o.x, y: o.y }, px: pt.x, py: pt.y, moved: false };
+        if (o && (e.shiftKey || e.ctrlKey || e.metaKey)) { toggleSelect(o.id); return; }
+        if (o) {
+          if (!isSel(o.id) || !S.multi.size) select(o.id, false);
+          else if (S.sel !== o.id) { S.sel = o.id; paintHier(); paintRight(); drawStage(); }
+          const group = selObjs().filter(x => !x.locked && !x.tiles);
+          if (!o.tiles) SG.drag = { kind: 'move', id: o.id, start: { x: o.x, y: o.y }, px: pt.x, py: pt.y, moved: false, group: group.map(x => ({ id: x.id, x: x.x, y: x.y })) };
+        } else {
+          /* empty space: a marquee to pick several; a plain click picks nothing */
+          if (!(e.shiftKey || e.ctrlKey || e.metaKey)) select(null, false);
+          SG.drag = { kind: 'marquee', px: pt.x, py: pt.y, x: pt.x, y: pt.y, moved: false, add: e.shiftKey || e.ctrlKey || e.metaKey, base: selIds() };
+        }
       }
       if (SG.drag) cv.setPointerCapture(e.pointerId);
     });
+    function paintTileAt(d, pt) {
+      const o = S.scene.objects.find(x => x.id === d.id);
+      if (!o || !o.tiles) return;
+      const cell = tileCell(o, pt.x, pt.y);
+      if (!cell) return;
+      /* a straight line of cells between this and the last one, so a quick drag leaves no gaps */
+      const from = d.last || cell;
+      const steps = Math.max(Math.abs(cell.c - from.c), Math.abs(cell.r - from.r), 1);
+      let changed = false;
+      for (let i = 0; i <= steps; i++) {
+        const c = Math.round(from.c + (cell.c - from.c) * i / steps), r = Math.round(from.r + (cell.r - from.r) * i / steps);
+        if (r < 0 || r >= o.tiles.rows.length || c < 0 || c >= o.tiles.rows[r].length) continue;
+        if (o.tiles.rows[r][c] === (d.erase ? '.' : '#')) continue;
+        if (!d.snapped) { snapshot(d.erase ? 'Erased tiles' : 'Painted tiles', `tiles:${o.id}`); d.snapped = true; }
+        changed = setTile(o, c, r, !d.erase) || changed;
+      }
+      d.last = cell;
+      if (changed) { d.moved = true; drawStage(); }
+    }
     cv.addEventListener('pointermove', e => {
       if (!S.scene) return;
       const pt = toScene(e);
@@ -2135,9 +2685,19 @@ defineApp({
       if (!d) {
         const dir = handleAt(pt.sx, pt.sy);
         const o = dir ? null : objAt(pt.x, pt.y);
-        cv.style.cursor = dir ? CURSOR[dir] : o ? 'move' : 'default';
+        const tm = selObj();
+        cv.style.cursor = S.paint.on && tm && tm.tiles ? 'crosshair' : dir ? CURSOR[dir] : o ? (o.tiles ? 'pointer' : 'move') : 'default';
         const hv = o ? o.id : null;
         if (hv !== SG.hover) { SG.hover = hv; drawStage(); }
+        return;
+      }
+      if (d.kind === 'tiles') { paintTileAt(d, pt); return; }
+      if (d.kind === 'marquee') {
+        d.x = pt.x; d.y = pt.y;
+        if (!d.moved && Math.hypot((d.x - d.px) * SG.s, (d.y - d.py) * SG.s) < 4) return;
+        d.moved = true;
+        SG.marq = { x0: Math.min(d.px, d.x), y0: Math.min(d.py, d.y), x1: Math.max(d.px, d.x), y1: Math.max(d.py, d.y) };
+        drawStage();
         return;
       }
       const o = S.scene.objects.find(x => x.id === d.id);
@@ -2146,11 +2706,17 @@ defineApp({
       if (!d.moved) {
         if (Math.hypot(dx * SG.s, dy * SG.s) < 3) return;
         d.moved = true;
-        snapshot(d.kind === 'move' ? `Moved ${o.name}` : `Resized ${o.name}`);
+        const many = d.kind === 'move' && d.group.length > 1;
+        snapshot(d.kind === 'move' ? (many ? `Moved ${d.group.length} objects` : `Moved ${o.name}`) : `Resized ${o.name}`);
       }
       if (d.kind === 'move') {
-        o.x = snapV(d.start.x + dx, e);
-        o.y = snapV(d.start.y + dy, e);
+        if (o.locked) { return; }
+        const nx = snapV(d.start.x + dx, e), ny = snapV(d.start.y + dy, e);
+        for (const g of d.group) {
+          const t = S.scene.objects.find(x => x.id === g.id);
+          if (t) { t.x = g.x + (nx - d.start.x); t.y = g.y + (ny - d.start.y); }
+        }
+        if (!d.group.some(g => g.id === o.id)) { o.x = nx; o.y = ny; }
       } else {
         const s = d.start;
         let x = s.x, y = s.y, w = s.w, hh = s.h;
@@ -2168,7 +2734,17 @@ defineApp({
     const endDrag = () => {
       const d = SG.drag;
       SG.drag = null;
-      if (d?.moved) { touched(); paintRight(); }
+      if (d?.kind === 'marquee') {
+        const m = SG.marq;
+        SG.marq = null;
+        if (d.moved && m) {
+          const hit = S.scene.objects.filter(o => !o.locked && !o.tiles && o.visible !== false && o.x < m.x1 && o.x + o.w > m.x0 && o.y < m.y1 && o.y + o.h > m.y0).map(o => o.id);
+          setSelection(d.add ? [...d.base, ...hit] : hit);
+          if (hit.length) announce(`${hit.length} selected`);
+        } else drawStage();
+        return;
+      }
+      if (d?.moved) { touched(); paintRight(); if (d.kind === 'move' && d.group.length > 1) paintHier(); }
     };
     cv.addEventListener('pointerup', endDrag);
     cv.addEventListener('pointercancel', endDrag);
@@ -2178,21 +2754,69 @@ defineApp({
       const o = objAt(pt.x, pt.y);
       if (o) { select(o.id, false); showRight('object'); later(() => objPane.querySelector('input')?.focus(), 30); }
     });
+
+    /* ---- copy, cut and paste ---- */
+    function copySelected(cut) {
+      const objs = selObjs();
+      if (!objs.length) return false;
+      CLIP = { objects: JSON.parse(JSON.stringify(objs)), at: Date.now() };
+      try { navigator.clipboard?.writeText?.(`staticos-studio:${JSON.stringify(CLIP.objects)}`).catch(() => {}); } catch (err) { /* the in-app copy is enough */ }
+      announce(`Copied ${plural(objs.length, 'object')}`);
+      if (cut) removeSelected();
+      return true;
+    }
+    function pasteClip() {
+      if (!CLIP || !CLIP.objects.length || !S.scene) { announce('Nothing copied yet'); return; }
+      const idMap = new Map();
+      const copies = CLIP.objects.map(o => {
+        const c = JSON.parse(JSON.stringify(o));
+        const id = R.newId('o');
+        idMap.set(o.id, id);
+        c.id = id;
+        delete c.locked;
+        return c;
+      });
+      /* a pasted spawner copies the pasted template when both came along */
+      for (const c of copies) for (const b of c.behaviours || []) if (b.type === 'spawner' && idMap.has(b.what)) b.what = idMap.get(b.what);
+      const n = (CLIP.pasted = (CLIP.pasted || 0) + 1);
+      edit(`Pasted ${plural(copies.length, 'object')}`, sc => {
+        for (const c of copies) {
+          c.name = uniqueName(c.name.replace(/\s+\d+$/, ''));
+          c.x += 16 * n; c.y += 16 * n;
+          sc.objects.push(c);
+        }
+      });
+      setSelection(copies.map(c => c.id), copies[copies.length - 1].id);
+      announce(`Pasted ${plural(copies.length, 'object')}`);
+    }
+
     cv.addEventListener('keydown', e => {
       const o = selObj();
       const mod = e.ctrlKey || e.metaKey;
       const bracket = e.code === 'BracketRight' ? ']' : e.code === 'BracketLeft' ? '[' : e.key === '}' ? ']' : e.key === '{' ? '[' : e.key;
-      if (e.key.startsWith('Arrow') && o && o.locked) { e.preventDefault(); lockedNote(o, 'move'); }
-      else if (e.key.startsWith('Arrow') && o) {
+      const sel = selObjs();
+      if (e.key.startsWith('Arrow') && sel.length && sel.every(x => x.locked)) { e.preventDefault(); lockedNote(sel[0], 'move'); }
+      else if (e.key.startsWith('Arrow') && sel.length) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
         const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-        edit(`Moved ${o.name}`, () => { o.x += dx; o.y += dy; }, { merge: `nudge:${o.id}`, hier: false, insp: false });
-        syncGeom(o);
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && o) { e.preventDefault(); removeSelected(); }
-      else if (mod && e.key.toLowerCase() === 'd' && o) { e.preventDefault(); duplicateSelected(); }
-      else if (e.key === 'Escape' && o) { e.preventDefault(); select(null, false); }
+        const movable = sel.filter(x => !x.locked && !x.tiles);
+        if (!movable.length) return;
+        const label = movable.length > 1 ? `Moved ${movable.length} objects` : `Moved ${movable[0].name}`;
+        edit(label, () => { for (const x of movable) { x.x += dx; x.y += dy; } }, { merge: `nudge:${movable.map(x => x.id).join(',')}`, hier: false, insp: false });
+        for (const x of movable) syncGeom(x);
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && sel.length) { e.preventDefault(); removeSelected(); }
+      else if (mod && e.key.toLowerCase() === 'd' && sel.length) { e.preventDefault(); duplicateSelected(); }
+      else if (mod && e.key.toLowerCase() === 'c' && sel.length) { e.preventDefault(); copySelected(false); }
+      else if (mod && e.key.toLowerCase() === 'x' && sel.length) { e.preventDefault(); copySelected(true); }
+      else if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteClip(); }
+      else if (mod && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setSelection(S.scene.objects.filter(x => !x.locked && !x.tiles).map(x => x.id));
+        announce(`${plural(selIds().length, 'object')} selected`);
+      }
+      else if (e.key === 'Escape' && sel.length) { e.preventDefault(); select(null, false); }
       /* Ctrl+] / Ctrl+[ forward / backward, with Shift all the way */
       else if (mod && (bracket === ']' || bracket === '[') && o) {
         e.preventDefault();
@@ -2209,12 +2833,15 @@ defineApp({
     });
 
     function select(id, fromList) {
-      if (S.sel === id) { if (id && S.right === 'game') showRight('object'); return; }
+      if (S.sel === id && !S.multi.size) { if (id && S.right === 'game') showRight('object'); return; }
       S.sel = id;
+      S.multi = new Set();
+      if (S.live.on) liveSendSel();
       if (id && S.right !== 'object' && S.right !== 'ai') S.right = 'object';
       paintHier();
       paintRight();
       paintAssets();
+      paintStageTools();
       drawStage();
       if (fromList && S.narrow) toggleDrawer('left', false);
     }
@@ -2240,8 +2867,11 @@ defineApp({
       let base;
       if (presetId === 'sprite' && asset) {
         const im = S.images.get(asset.id);
-        const k = im && im.naturalWidth ? Math.min(1, 64 / Math.max(im.naturalWidth, im.naturalHeight)) : 1;
-        base = { name: varName(asset.name).replace(/^./, c => c.toUpperCase()) || 'Sprite', group: R.groupOf(asset.name.replace(/\.[a-z0-9]+$/i, '')), w: im?.naturalWidth ? Math.round(im.naturalWidth * k) : 48, h: im?.naturalHeight ? Math.round(im.naturalHeight * k) : 48, color: '#8b93a7', sprite: asset.id };
+        const sh = S.sheets.get(asset.id);
+        const fw = sh?.fw || im?.naturalWidth, fh = sh?.fh || im?.naturalHeight;
+        const k = fw ? Math.min(1, 64 / Math.max(fw, fh)) : 1;
+        base = { name: varName(asset.name).replace(/^./, c => c.toUpperCase()) || 'Sprite', group: R.groupOf(asset.name.replace(/\.[a-z0-9]+$/i, '')), w: fw ? Math.round(fw * k) : 48, h: fh ? Math.round(fh * k) : 48, color: '#8b93a7', sprite: asset.id };
+        if (sh) base.anim = animFromSheet(sh);
       } else base = (PRESETS.find(p => p.id === presetId) || PRESETS[0]).make();
       const n = S.scene.objects.length;
       const o = {
@@ -2250,35 +2880,55 @@ defineApp({
         w: base.w, h: base.h, color: base.color || '#8b93a7', shape: base.shape || 'rect', sprite: base.sprite || null,
         text: base.text || '', solid: !!base.solid, visible: true, layer: base.layer || 0, behaviours: base.behaviours || [],
       };
-      o.x = snapV(o.x, {}); o.y = snapV(o.y, {});
+      if (base.anim) o.anim = base.anim;
+      if (base.tiles) {
+        o.tiles = JSON.parse(JSON.stringify(base.tiles));
+        tilesFit(o);
+        /* start with a strip of ground along the bottom so there is something to see */
+        for (let r = o.tiles.rows.length - 2; r < o.tiles.rows.length; r++) o.tiles.rows[r] = '#'.repeat(o.tiles.rows[r].length);
+        o.solid = true;
+        S.paint = { on: true, erase: false };
+      } else { o.x = snapV(o.x, {}); o.y = snapV(o.y, {}); }
       edit(`Added ${o.name}`, sc => { sc.objects.push(o); });
       select(o.id, false);
       showRight('object');
       cv.focus({ preventScroll: true });
     }
     function removeSelected() {
-      const o = selObj();
-      if (!o) return;
-      if (o.locked) { lockedNote(o, 'delete'); return; }
-      const refs = S.scene.events.filter(ev => ev.a === `id:${o.id}` || ev.b === `id:${o.id}`);
-      edit(`Removed ${o.name}`, sc => {
-        sc.objects = sc.objects.filter(x => x.id !== o.id);
+      const all = selObjs();
+      if (!all.length) return;
+      const objs = all.filter(o => !o.locked);
+      if (!objs.length) { lockedNote(all[0], 'delete'); return; }
+      const ids = new Set(objs.map(o => o.id));
+      const refs = S.scene.events.filter(ev => [ev.a, ev.b].some(r => r && r.startsWith('id:') && ids.has(r.slice(3))));
+      const label = objs.length > 1 ? `Removed ${objs.length} objects` : `Removed ${objs[0].name}`;
+      edit(label, sc => {
+        sc.objects = sc.objects.filter(x => !ids.has(x.id));
         if (refs.length) sc.events = sc.events.filter(ev => !refs.includes(ev));
       });
-      S.sel = null;
+      S.sel = null; S.multi = new Set();
       paintHier(); paintRight(); drawStage();
-      if (refs.length) toast(`Removed ${o.name}`, `${plural(refs.length, 'event')} that pointed at it went too. Undo brings both back.`, 'trash');
+      if (refs.length) toast(label, `${plural(refs.length, 'event')} that pointed at ${objs.length > 1 ? 'them' : 'it'} went too. Undo brings both back.`, 'trash');
+      if (objs.length < all.length) announce(`${all.length - objs.length} locked ${all.length - objs.length === 1 ? 'object was' : 'objects were'} kept`);
       cv.focus({ preventScroll: true });
     }
     function duplicateSelected() {
-      const o = selObj();
-      if (!o) return;
-      const c = JSON.parse(JSON.stringify(o));
-      c.id = R.newId('o');
-      c.name = uniqueName(o.name.replace(/\s+\d+$/, ''));
-      c.x += 16; c.y += 16;
-      edit(`Duplicated ${o.name}`, sc => { sc.objects.splice(sc.objects.indexOf(o) + 1, 0, c); });
-      select(c.id, false);
+      const objs = selObjs();
+      if (!objs.length) return;
+      const idMap = new Map();
+      const copies = objs.map(o => {
+        const c = JSON.parse(JSON.stringify(o));
+        c.id = R.newId('o');
+        idMap.set(o.id, c.id);
+        c.name = uniqueName(o.name.replace(/\s+\d+$/, ''));
+        c.x += 16; c.y += 16;
+        return c;
+      });
+      for (const c of copies) for (const b of c.behaviours || []) if (b.type === 'spawner' && idMap.has(b.what)) b.what = idMap.get(b.what);
+      edit(objs.length > 1 ? `Duplicated ${objs.length} objects` : `Duplicated ${objs[0].name}`, sc => {
+        copies.forEach((c, i) => sc.objects.splice(sc.objects.indexOf(objs[objs.length - 1]) + 1 + i, 0, c));
+      });
+      setSelection(copies.map(c => c.id), copies[copies.length - 1].id);
     }
 
     /* ================================================================
@@ -2364,6 +3014,22 @@ defineApp({
       }
       const set = (label, fn, opts = {}) => edit(label, () => fn(o), { merge: opts.merge, hier: !!opts.hier, insp: !!opts.insp });
 
+      if (S.multi.size > 1) {
+        const objs = selObjs();
+        add(
+          h('div.stu-ohead',
+            h('span.stu-sw.stu-sw--lg.stu-sw--text', { text: String(objs.length) }),
+            h('div.stu-ohead__t', h('b', { text: `${objs.length} objects selected` }), h('span', { text: 'Drag one to move them all, or nudge with the arrow keys (Shift for 10 px).' }))),
+          h('div.stu-multi',
+            h('button.stu-mini', { type: 'button', onclick: () => copySelected(false) }, icon('copy'), h('span', { text: 'Copy' })),
+            h('button.stu-mini', { type: 'button', onclick: () => duplicateSelected() }, icon('layers'), h('span', { text: 'Duplicate' })),
+            h('button.stu-mini.stu-danger', { type: 'button', onclick: () => removeSelected() }, icon('trash'), h('span', { text: 'Delete' }))),
+          sectionH('Selected'),
+          h('div.stu-multilist', objs.map(x => h('button.stu-multirow', { type: 'button', onclick: () => select(x.id, true) }, h('span.stu-sw', { style: { background: x.color } }), h('span', { text: x.name }))))
+        );
+        return;
+      }
+
       /* identity */
       const spriteAsset = o.sprite && !o.text ? (S.p?.assets || []).find(a => a.id === o.sprite && a.kind === 'image') : null;
       add(
@@ -2385,13 +3051,22 @@ defineApp({
           'Events can target every object in a group, like all coins.'),
         dl);
 
+      if (o.tiles) {
+        add(sectionH('Tiles'),
+          h('div.stu-f__h.stu-pad', { text: 'A grid of solid ground. Turn on Paint and drag over the stage to add tiles; hold Shift (or choose Erase) to take them away. Each tile is solid for players and enemies.' }),
+          h('div.stu-multi',
+            h('button.stu-mini' + (S.paint.on && !S.paint.erase ? '.is-on' : ''), { type: 'button', 'aria-pressed': String(S.paint.on && !S.paint.erase), onclick: () => { S.paint = { on: !(S.paint.on && !S.paint.erase), erase: false }; paintStageTools(); paintRight(); drawStage(); } }, icon('edit-3'), h('span', { text: 'Paint' })),
+            h('button.stu-mini' + (S.paint.on && S.paint.erase ? '.is-on' : ''), { type: 'button', 'aria-pressed': String(S.paint.on && S.paint.erase), onclick: () => { S.paint = { on: !(S.paint.on && S.paint.erase), erase: true }; paintStageTools(); paintRight(); drawStage(); } }, icon('x'), h('span', { text: 'Erase' })),
+            h('button.stu-mini', { type: 'button', onclick: () => set(`Cleared the tiles of ${o.name}`, x => { x.tiles.rows = x.tiles.rows.map(r => '.'.repeat(r.length)); }, { insp: true }) }, icon('trash'), h('span', { text: 'Clear all' }))),
+          h('div.stu-f__h.stu-pad', { text: `${o.tiles.rows.reduce((n, r) => n + (r.match(/#/g) || []).length, 0)} tiles, each ${o.tiles.size} px. The grid covers the whole world.` }));
+      }
       const gx = numIn(o.x, v => set(`Moved ${o.name}`, x => { x.x = v; }, { merge: `pos:${o.id}` }), { label: 'X' });
       const gy = numIn(o.y, v => set(`Moved ${o.name}`, x => { x.y = v; }, { merge: `pos:${o.id}` }), { label: 'Y' });
       const gw = numIn(o.w, v => set(`Resized ${o.name}`, x => { x.w = Math.max(1, v); }, { merge: `size:${o.id}` }), { min: 1, max: 4000, label: 'Width' });
       const gh = numIn(o.h, v => set(`Resized ${o.name}`, x => { x.h = Math.max(1, v); }, { merge: `size:${o.id}` }), { min: 1, max: 4000, label: 'Height' });
       geomRefs = { id: o.id, x: gx, y: gy, w: gw, h: gh };
       if (o.locked) for (const el of [gx, gy, gw, gh]) el.disabled = true;
-      add(
+      if (!o.tiles) add(
         sectionH('Position and size'),
         h('div.stu-grid4',
           h('label.stu-xy', h('span', { text: 'X' }), gx), h('label.stu-xy', h('span', { text: 'Y' }), gy),
@@ -2405,20 +3080,23 @@ defineApp({
       add(
         sectionH('Look'),
         field('Colour', colorIn(o.color, v => set(`Recoloured ${o.name}`, x => { x.color = v; }, { merge: `color:${o.id}`, hier: true }), 'Colour')),
-        o.text ? null : h('div.stu-f', h('span.stu-f__l', { text: 'Shape' }),
+        o.text || o.tiles ? null : h('div.stu-f', h('span.stu-f__l', { text: 'Shape' }),
           h('div.seg.stu-seg--full', { role: 'group', 'aria-label': 'Shape' },
             [['rect', 'Box'], ['ellipse', 'Round']].map(([v, l]) => h(`button${o.shape === v ? '.is-on' : ''}`, {
               type: 'button', 'aria-pressed': String(o.shape === v), text: l,
               onclick: () => set(`Made ${o.name} ${l.toLowerCase()}`, x => { x.shape = v; }, { hier: true, insp: true }),
             })))),
-        o.text ? null : field('Sprite', selIn(o.sprite || '', spriteOpts, v => set(`Changed ${o.name}'s sprite`, x => { x.sprite = v || null; }, { hier: true, insp: true })),
+        o.text || o.tiles ? null : field('Sprite', selIn(o.sprite || '', spriteOpts, v => set(`Changed ${o.name}'s sprite`, x => { x.sprite = v || null; if (!v) delete x.anim; else { const sh = S.sheets.get(v); if (sh && !x.anim) x.anim = animFromSheet(sh); } }, { hier: true, insp: true })),
           imgs.length ? 'A sprite is drawn stretched to the object’s size.' : 'Import an image in Assets to use it as a sprite.'),
-        field('Text', txtIn(o.text, v => set(`Changed ${o.name}'s text`, x => { x.text = v.slice(0, 200); }, { merge: `text:${o.id}`, hier: true }), { maxlength: '200', placeholder: 'Empty — draws a shape' }),
-          'Shows text instead of a shape. {score}, {lives} and {time} fill in live.'));
+        o.tiles ? null : field('Text', txtIn(o.text, v => set(`Changed ${o.name}'s text`, x => { x.text = v.slice(0, 200); }, { merge: `text:${o.id}`, hier: true }), { maxlength: '200', placeholder: 'Empty — draws a shape' }),
+          'Shows text instead of a shape. {score}, {lives}, {time}, {level} and your own variables fill in live.'));
+      if (spriteAsset) add(...animSection(o, spriteAsset, set));
 
       add(
         sectionH('Physics'),
-        swRow('Solid', o.solid, v => set(v ? `Made ${o.name} solid` : `Made ${o.name} pass-through`, x => { x.solid = v; }, { insp: true }), 'Players and enemies can’t move through it.'));
+        o.tiles ? null : swRow('Solid', o.solid, v => set(v ? `Made ${o.name} solid` : `Made ${o.name} pass-through`, x => { x.solid = v; }, { insp: true }), 'Players and enemies can’t move through it.'),
+        o.tiles ? null : swRow('Only appears when spawned', !!o.spawnOnly, v => set(v ? `Made ${o.name} spawn-only` : `Made ${o.name} part of the level`, x => { if (v) x.spawnOnly = true; else delete x.spawnOnly; }, { hier: true, insp: true }),
+          'Not in the game from the start. A Timer spawner or a “Spawn a copy” action makes copies of it. It shows dashed on the stage.'));
 
       /* layer: what is drawn in front, hide, lock */
       const D = drawOrder(), at = D.indexOf(o);
@@ -2427,6 +3105,8 @@ defineApp({
         sectionH('Layer'),
         swRow('Visible', o.visible !== false, v => set(v ? `Showed ${o.name}` : `Hid ${o.name}`, x => { x.visible = v; }, { hier: true, insp: true })),
         swRow('Locked', !!o.locked, v => { if (v !== !!o.locked) toggleLock(o); }, 'The stage will not pick, move, resize or delete it. Its settings here still work.'),
+        o.tiles ? null : swRow('Stays on screen', !!o.fixed, v => set(v ? `Pinned ${o.name} to the screen` : `Unpinned ${o.name}`, x => { if (v) x.fixed = true; else delete x.fixed; }, { insp: true }),
+          'It does not scroll with the camera, like a score or key counter.'),
         h('div.stu-f', h('span.stu-f__l', { text: `Arrange · ${at + 1 === D.length ? 'in front of everything' : at === 0 ? 'behind everything' : `${D.length - at} of ${D.length} from the front`}` }),
           h('div.stu-arrange', { role: 'group', 'aria-label': 'Arrange' },
             arrBtn('backward', 'arrow-down', 'Backward', 'Send backward (Ctrl+[)', at === 0),
@@ -2437,6 +3117,7 @@ defineApp({
           'Higher numbers are drawn on top; Arrange sets this for you.'));
 
       /* behaviours */
+      if (o.tiles) { add(h('div.stu-foot', h('small', { text: `id: ${o.id}` }))); return; }
       add(sectionH('Behaviours'));
       const bs = o.behaviours || [];
       if (!bs.length) add(h('div.stu-f__h.stu-pad', { text: 'No behaviours: it just sits there. Add one to make it a player, an enemy, a pickup…' }));
@@ -2471,6 +3152,12 @@ defineApp({
         return field(lbl, numIn(b[pd.k], v => set(`Changed ${name} of ${o.name}`, () => { b[pd.k] = v; }, { merge: `beh:${o.id}:${b.type}:${pd.k}` }), { min: pd.min, max: pd.max, label: pd.label }));
       }
       if (pd.kind === 'bool') return swRow(pd.label, !!b[pd.k], v => set(`Changed ${name} of ${o.name}`, () => { b[pd.k] = v; }, { insp: true }));
+      if (pd.kind === 'object') {
+        const others = S.scene.objects.filter(x => x.id !== o.id && !x.tiles);
+        const opts = [['', others.length ? 'Pick an object…' : 'No other objects'], ...others.map(x => [x.id, x.spawnOnly ? `${x.name} (spawned)` : x.name])];
+        if (b[pd.k] && !others.some(x => x.id === b[pd.k])) opts.push([b[pd.k], '(missing object)']);
+        return field(lbl, selIn(b[pd.k] || '', opts, v => set(`Changed ${name} of ${o.name}`, () => { b[pd.k] = v; }, { insp: true })));
+      }
       if (pd.kind === 'select') return field(lbl, selIn(b[pd.k], pd.options, v => set(`Changed ${name} of ${o.name}`, () => { b[pd.k] = v; })));
       const sounds = (S.p?.assets || []).filter(a => a.kind === 'audio');
       return field(lbl, selIn(b[pd.k] || '', [['', sounds.length ? 'No sound' : 'No sounds imported yet'], ...sounds.map(a => [a.id, a.name])],
@@ -2486,6 +3173,7 @@ defineApp({
       const setS = (label, fn, opts = {}) => edit(label, () => fn(st), { merge: opts.merge, hier: false, insp: !!opts.insp });
       const SIZES = [['800x450', '800 × 450 (wide)'], ['960x540', '960 × 540 (wide, bigger)'], ['640x480', '640 × 480 (classic)'], ['480x640', '480 × 640 (tall)'], ['custom', 'Custom']];
       const cur = `${st.width}x${st.height}`;
+      gamePane.append(...sectionCheck());
       gamePane.append(
         sectionH('Game'),
         field('Title', txtIn(sc.title, v => edit('Renamed the game', () => { sc.title = v.slice(0, 80); }, { merge: 'title', hier: false, insp: false }), { maxlength: '80' })),
@@ -2502,6 +3190,7 @@ defineApp({
         field('Gravity', numIn(st.gravity, v => setS('Changed gravity', s => { s.gravity = v; }, { merge: 'gravity' }), { min: 0, max: 6000, step: 50, label: 'Gravity' }),
           'How hard platformer players fall (px/s²). 0 = none, for top-down games.'),
         swRow('Show score and lives', st.hud !== false, v => setS(v ? 'Showed the HUD' : 'Hid the HUD', s => { s.hud = v; }, { insp: true })));
+      gamePane.append(...sectionWorld(st, setS), ...sectionLevels());
 
       gamePane.append(
         sectionH('Variables'),
@@ -2514,6 +3203,7 @@ defineApp({
         h('div.stu-f__h.stu-pad', { text: 'Timer 0 means no timer.' }),
         field('Win at score', numIn(st.winScore, v => setS('Changed the winning score', s => { s.winScore = v; }, { merge: 'winScore' }), { min: 0, label: 'Winning score' }),
           '0 = off. Goals and events can also win the game.'));
+      gamePane.append(...sectionVars(st, setS), ...sectionScreens(st, setS), ...sectionMusic(st, setS));
 
       /* events */
       gamePane.append(sectionH('Events', h('button.stu-mini', { type: 'button', onclick: addEvent }, icon('plus'), h('span', { text: 'Add' }))));
@@ -2527,16 +3217,37 @@ defineApp({
           const def = R.actionDef(a.do);
           const opts = R.ACTIONS.map(x => [x.do, x.do === 'destroyA' ? `Remove ${nameOf(ev.a)}` : x.do === 'destroyB' ? `Remove ${nameOf(ev.b)}` : x.label]);
           const sounds = (S.p?.assets || []).filter(x => x.kind === 'audio');
+          const objOpts = [['', 'Pick an object…'], ...S.scene.objects.filter(x => !x.tiles).map(x => [x.id, x.spawnOnly ? `${x.name} (spawned)` : x.name])];
+          if (a.obj && !objOpts.some(x => x[0] === a.obj)) objOpts.push([a.obj, '(missing object)']);
+          const vnames = ['score', 'lives', ...Object.keys(st.vars || {})];
+          const vid = `stu-vars-${i}-${j}`;
           return h('div.stu-act',
             h('span.stu-act__arrow', { text: '→' }),
             selIn(a.do, opts, v => edit('Changed an event', () => {
               const d = R.actionDef(v);
-              ev.actions[j] = { do: v, ...(d.n ? { n: d.def } : {}), ...(d.sound ? { sound: '' } : {}) };
+              ev.actions[j] = { do: v, ...(d.n ? { n: d.def } : {}), ...(d.sound ? { sound: '' } : {}), ...(d.text ? { text: 'Hello!' } : {}), ...(d.varName ? { name: Object.keys(st.vars || {})[0] || '' } : {}), ...(d.obj ? { obj: '' } : {}), ...(d.at ? { at: 'b' } : {}) };
             }, { hier: false, insp: true }), { 'aria-label': `Event ${i + 1} action ${j + 1}` }),
-            def?.n ? numIn(a.n ?? def.def, v => edit('Changed an event', () => { a.n = v; }, { merge: `ev:${ev.id}:${j}`, hier: false, insp: false }), { label: 'Amount' }) : null,
+            def?.varName ? h('span.stu-act__v', h('input.stu-in', { type: 'text', value: a.name || '', list: vid, placeholder: 'variable', maxlength: '24', 'aria-label': 'Variable name', spellcheck: 'false',
+              oninput: e => edit('Changed an event', () => { a.name = e.target.value.trim(); }, { merge: `evn:${ev.id}:${j}`, hier: false, insp: false }) }),
+              h('datalist', { id: vid }, vnames.map(v => h('option', { value: v })))) : null,
+            def?.n ? numIn(a.n ?? def.def, v => edit('Changed an event', () => { a.n = v; }, { merge: `ev:${ev.id}:${j}`, hier: false, insp: false }), { label: def.varName ? 'Value' : 'Amount' }) : null,
+            def?.text ? h('input.stu-in', { type: 'text', value: a.text || '', placeholder: 'What to say', maxlength: '200', 'aria-label': 'Message', spellcheck: 'false',
+              oninput: e => edit('Changed an event', () => { a.text = e.target.value; }, { merge: `evt:${ev.id}:${j}`, hier: false, insp: false }) }) : null,
+            def?.obj ? selIn(a.obj || '', objOpts, v => edit('Changed an event', () => { a.obj = v; }, { hier: false, insp: true }), { 'aria-label': a.do === 'teleport' ? 'Move to' : 'Object to copy' }) : null,
+            def?.at ? selIn(a.at || 'b', [['b', `at ${nameOf(ev.b)}`], ['a', `at ${nameOf(ev.a)}`]], v => edit('Changed an event', () => { a.at = v; }, { hier: false, insp: false }), { 'aria-label': 'Where to spawn it' }) : null,
             def?.sound ? selIn(a.sound || '', [['', sounds.length ? 'Pick a sound' : 'No sounds yet'], ...sounds.map(x => [x.id, x.name])], v => edit('Changed an event', () => { a.sound = v; }, { hier: false, insp: false }), { 'aria-label': 'Sound' }) : null,
             h('button.stu-tb.stu-tb--icon', { type: 'button', 'aria-label': 'Remove this action', onclick: () => edit('Changed an event', () => { ev.actions.splice(j, 1); }, { hier: false, insp: true }) }, icon('x')));
         });
+        /* "only if keys is at least 1" */
+        const cond = ev.if;
+        const condRow = cond
+          ? h('div.stu-if', h('span.stu-ev__when', { text: 'only if' }),
+            h('input.stu-in', { type: 'text', value: cond.v, list: `stu-ifvars-${i}`, 'aria-label': `Event ${i + 1}: variable`, maxlength: '24', spellcheck: 'false', oninput: e => edit('Changed an event', () => { cond.v = e.target.value.trim() || 'score'; }, { merge: `evif:${ev.id}`, hier: false, insp: false }) }),
+            h('datalist', { id: `stu-ifvars-${i}` }, ['score', 'lives', 'time', ...Object.keys(st.vars || {})].map(v => h('option', { value: v }))),
+            selIn(cond.op, R.IF_OPS, v => edit('Changed an event', () => { cond.op = v; }, { hier: false, insp: false }), { 'aria-label': `Event ${i + 1}: comparison` }),
+            numIn(cond.n, v => edit('Changed an event', () => { cond.n = v; }, { merge: `evifn:${ev.id}`, hier: false, insp: false }), { label: `Event ${i + 1}: number` }),
+            h('button.stu-tb.stu-tb--icon', { type: 'button', 'aria-label': 'Remove the condition', onclick: () => edit('Changed an event', () => { delete ev.if; }, { hier: false, insp: true }) }, icon('x')))
+          : h('button.stu-mini.stu-ev__add', { type: 'button', onclick: () => edit('Changed an event', () => { ev.if = { v: Object.keys(st.vars || {})[0] || 'score', op: '>=', n: 1 }; }, { hier: false, insp: true }) }, icon('plus'), h('span', { text: 'Only if…' }));
         gamePane.append(h('div.stu-ev',
           h('div.stu-ev__head',
             h('span.stu-ev__when', { text: 'When' }),
@@ -2544,6 +3255,7 @@ defineApp({
             h('span.stu-ev__when', { text: 'touches' }),
             selIn(ev.b, withRef(subjects, ev.b), v => edit('Changed an event', () => { ev.b = v; }, { hier: false, insp: true }), { 'aria-label': `Event ${i + 1}: second object` }),
             h('button.stu-tb.stu-tb--icon.stu-danger', { type: 'button', 'aria-label': `Remove event ${i + 1}`, onclick: () => edit('Removed an event', () => { sc.events.splice(i, 1); }, { hier: false, insp: true }) }, icon('trash'))),
+          condRow,
           actRows,
           h('button.stu-mini.stu-ev__add', { type: 'button', onclick: () => edit('Changed an event', () => { ev.actions.push({ do: 'score', n: 10 }); }, { hier: false, insp: true }) }, icon('plus'), h('span', { text: 'Add an action' }))));
       });
@@ -2817,7 +3529,7 @@ defineApp({
       aiFeed,
       h('div.stu-ai__composer',
         h('div.stu-ai__bar', aiIn, aiSend),
-        h('div.stu-ai__foot', { text: `${LLM.MODEL_LABEL}, free via ${LLM.HOST}. Your game’s code is sent to answer (images and sounds are not). It can be wrong — nothing changes until you press Apply.` })));
+        h('div.stu-ai__foot', { text: `${AIM.describe().name}, via ${AIM.describe().host}. Your game’s code is sent to answer (images and sounds are not). It can be wrong — nothing changes until you press Apply.` })));
 
     function paintAIActions() {
       if (aiPane.hidden) return;
@@ -3148,8 +3860,8 @@ defineApp({
         t.err = err.name === 'AbortError' ? '' : (err.message || 'Something went wrong.');
         /* 502/503/504/524: the free service gave up waiting, usually because it is busy */
         const gw = String(err.message || '').match(/HTTP (502|503|504|524)\b/);
-        if (gw) t.err = `The free model took too long to answer (HTTP ${gw[1]} from ${LLM.HOST}); it is probably busy. Try again in a minute.`;
-        else if (/HTTP 402\b/.test(String(err.message || ''))) t.err = `The free model service turned the request down (HTTP 402 from ${LLM.HOST}); its free allowance for this network may be used up for now. Try again later.`;
+        if (gw) t.err = `The model took too long to answer (HTTP ${gw[1]} from ${AIM.describe().host}); it is probably busy. Try again in a minute.`;
+        else if (/HTTP 402\b/.test(String(err.message || ''))) t.err = `The free model service turned the request down (HTTP 402 from ${AIM.describe().host}); its free allowance for this network may be used up for now. Try again later.`;
         if (t.part > 1 && err.name !== 'AbortError') t.err = `It stopped answering part-way through the new version (part ${t.part}). ${t.err}`;
         t.code = err.code || '';
         if (t.kind === 'explain' && err.name === 'AbortError') t.err = 'Stopped. Nothing was changed.';
@@ -3290,6 +4002,292 @@ defineApp({
     }
 
     /* ================================================================
+       Share link: the whole game inside a link (core/sharelink.js, the same
+       "creation" share sheet Forge uses, with its QR code). The link carries
+       the SAVED version, so with unsaved changes you choose.
+       ================================================================ */
+    function sceneArt(scene) {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 320; c.height = 180;
+        const g = c.getContext('2d');
+        const wd = worldOf(scene.settings), k = Math.min(320 / wd.w, 180 / wd.h);
+        g.fillStyle = '#0b0b10'; g.fillRect(0, 0, 320, 180);
+        g.setTransform(k, 0, 0, k, (320 - wd.w * k) / 2, (180 - wd.h * k) / 2);
+        paintScene(g, scene, { px: 1 / k });
+        return c.toDataURL('image/jpeg', 0.7);
+      } catch (err) { return null; }
+    }
+    function emitShare(p) {
+      let art = null;
+      try { const d = R.readDoc(P.current(p)); if (d.scene) art = sceneArt(d.scene); } catch (err) { art = null; }
+      bus.emit('share:open', { kind: 'creation', id: p.id, title: p.published?.title || p.name, art });
+    }
+    function shareProject(p, anchor) {
+      if (!p) return;
+      const here = S.view === 'editor' && S.p?.id === p.id;
+      if (!here || !isDirty()) { emitShare(p); return; }
+      const r = (anchor && anchor.isConnected ? anchor : shareBtn).getBoundingClientRect();
+      api.menu([
+        { header: true, label: 'A share link carries a saved version' },
+        { label: S.mode === 'scene' ? 'Build, then share' : 'Save, then share', hint: 'with your changes', icon: 'package', onClick: async () => { await save(); if (!S.dead && !isDirty()) emitShare(S.p); } },
+        { label: `Share the saved version (v${p.head + 1})`, hint: 'without them', icon: 'clock', onClick: () => emitShare(p) },
+      ], r.left, r.bottom + 4);
+    }
+
+    /* ================================================================
+       Watch live: a friend sees your scene as you edit it, read-only
+       (core/pair.js room 'studio'; studio/live.js packs the scene)
+       ================================================================ */
+    const LIVE_ERR = {
+      invalid: 'That is not a room code. Codes are 6 letters and numbers, like K7QM2X.',
+      nobody: 'No Studio room answered that code. Check it, and that your friend still has the room open.',
+      full: 'That room already has someone watching.',
+      insecure: 'Live rooms need a secure (https) page.',
+    };
+    function liveStart() {
+      liveStop(false);
+      if (!S.scene) return;
+      S.live.note = '';
+      const room = openPair({ kind: Live.KIND, role: 'host', types: Live.checkers, rtc: true });
+      if (room.phase === 'closed') { S.live.note = LIVE_ERR[room.error] || LIVE_ERR.nobody; fillLive(); return; }
+      S.live.room = room; S.live.on = true; S.live.last = ''; S.live.phase = room.phase;
+      S.live.offs = [room.on((type, data) => {
+        if (S.dead || S.live.room !== room) return;
+        if (type === 'phase') S.live.phase = data;
+        if (type === 'peer' || type === 'link' || (type === 'phase' && data === 'paired')) { S.live.last = ''; liveSend(true); }
+        if (type === 'left') { S.live.note = `${data.peer?.name || 'Your friend'} ${data.reason === 'quiet' ? 'went quiet' : 'left'}.`; S.live.last = ''; }
+        fillLive(); paintLiveBtn();
+      })];
+      fillLive(); paintLiveBtn();
+    }
+    function liveStop(paint = true) {
+      (S.live.offs || []).forEach(f => f());
+      S.live.offs = [];
+      clearTimeout(S.live.t);
+      const room = S.live.room;
+      S.live.room = null; S.live.on = false; S.live.phase = ''; S.live.last = '';
+      if (room) { try { room.leave(); } catch (err) { /* gone */ } }
+      if (paint) { fillLive(); paintLiveBtn(); }
+    }
+    /* called after every edit: sends the scene at most every half second, and only when it changed */
+    function liveSoon() {
+      if (!S.live.on || S.live.room?.phase !== 'paired') return;
+      clearTimeout(S.live.t);
+      S.live.t = setTimeout(() => liveSend(false), 450);
+    }
+    async function liveSend(force) {
+      const room = S.live.room;
+      if (!room || room.phase !== 'paired' || !S.scene || S.live.sending) return;
+      const sc = JSON.parse(JSON.stringify(plain(S.scene)));
+      const text = JSON.stringify(sc);
+      if (!force && text === S.live.last) { liveSendSel(); return; }
+      S.live.sending = true;
+      try {
+        const pk = await Live.pack(sc);
+        if (!pk) { S.live.note = 'This scene is too big to share live.'; fillLive(); return; }
+        if (S.live.room !== room) return;
+        S.live.last = text;
+        for (const part of pk.parts) room.send('scn', part);
+        liveSendSel(true);
+      } finally { S.live.sending = false; }
+      if (JSON.stringify(plain(S.scene)) !== S.live.last) liveSoon();
+    }
+    function liveSendSel() {
+      const room = S.live.room;
+      if (room && room.phase === 'paired') room.send('sel', { id: S.sel || '' });
+    }
+    function paintLiveBtn() {
+      const on = S.live.on;
+      liveBtn.classList.toggle('is-on', on);
+      liveBtn.setAttribute('aria-pressed', String(on));
+      clear(liveBtn);
+      liveBtn.append(icon('users'), h('span.stu-hide-tiny', { text: on ? (S.live.room?.phase === 'paired' ? 'Live: watched' : 'Live: waiting') : 'Watch live' }));
+    }
+    let livePop = null;
+    const onLiveDown = e => { if (livePop && !livePop.contains(e.target) && !liveBtn.contains(e.target)) closeLive(); };
+    function closeLive() {
+      if (!livePop) return;
+      livePop.remove(); livePop = null;
+      liveBtn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('pointerdown', onLiveDown, true);
+    }
+    function toggleLive(anchor) {
+      if (livePop) { closeLive(); return; }
+      livePop = h('div.stu-pop.stu-livepop', { role: 'dialog', 'aria-label': 'Watch live' });
+      fillLive();
+      app.appendChild(livePop);
+      const r = anchor.getBoundingClientRect(), a = app.getBoundingClientRect();
+      livePop.style.top = `${r.bottom - a.top + 6}px`;
+      livePop.style.left = `${clamp(r.left - a.left - 160, 8, Math.max(8, a.width - 348))}px`;
+      liveBtn.setAttribute('aria-expanded', 'true');
+      document.addEventListener('pointerdown', onLiveDown, true);
+      livePop.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeLive(); liveBtn.focus(); } });
+    }
+    function fillLive() {
+      if (!livePop) return;
+      clear(livePop);
+      const room = S.live.room;
+      const kids = [h('div.stu-pop__head', h('b', { text: 'Watch live' }), h('button.stu-tb.stu-tb--icon', { type: 'button', 'aria-label': 'Close', onclick: closeLive }, icon('x')))];
+      if (!room) {
+        kids.push(h('p.stu-live__p', { text: 'Open a room and a friend with the code sees your scene change as you edit it. They can only watch: they cannot change anything. They do not get your sprites, sounds or code.' }));
+        if (S.live.note) kids.push(h('p.stu-live__err', { role: 'alert', text: S.live.note }));
+        kids.push(h('button.btn.btn--primary.btn--sm.stu-live__start', { type: 'button', onclick: () => liveStart() }, icon('users'), h('span', { text: 'Open a room' })));
+      } else {
+        kids.push(h('p.stu-live__p', { text: 'Your room code' }),
+          h('div.stu-live__code', { 'aria-label': `Room code ${spaced(room.code)}`, dataset: { code: room.code } }, [...room.code].map(c => h('span', { text: c, 'aria-hidden': 'true' }))),
+          h('p.stu-live__p', { role: 'status', text: room.phase === 'paired' ? `${room.peer?.name || 'A friend'} is watching.${room.link === 'direct' ? ' (direct link)' : ''}` : 'Waiting for a friend to type the code…' }),
+          h('div.stu-live__row',
+            h('button.btn.btn--sm', { type: 'button', onclick: () => copyLiveInvite(room.code) }, icon('copy'), h('span', { text: 'Copy invite' })),
+            h('button.btn.btn--sm', { type: 'button', onclick: () => liveStop() }, icon('square'), h('span', { text: 'Stop sharing' }))));
+        if (S.live.note) kids.push(h('p.stu-live__err', { role: 'status', text: S.live.note }));
+      }
+      kids.push(h('p.stu-live__fine', { text: 'Rooms run over StaticOS’s live connection, a free public server. What is sent is sealed with the room code, but anyone who has the code can join, so treat it like a password. A direct link, when one works, shows each of you the other’s network address.' }));
+      livePop.append(...kids);
+    }
+    async function copyLiveInvite(code) {
+      const text = `Watch my game being made in Static Studio. Room code ${code}`;
+      try { await navigator.clipboard.writeText(text); toast('Invite copied', `Room code ${code}.`, 'copy'); }
+      catch (err) { toast(`Room code ${code}`, 'Copying was blocked here. Read the code out instead.', 'info'); }
+    }
+
+    /* ---- the other side: watching a friend ---- */
+    const watchCanvas = h('canvas.stu-wcv', { 'aria-label': 'Your friend’s scene, read-only', role: 'img' });
+    const watchList = h('div.stu-wlist', { role: 'list', 'aria-label': 'Objects in the scene' });
+    const watchStatus = h('div.stu-wstatus', { role: 'status', 'aria-live': 'polite' });
+    const watchTitle = h('b.stu-wtitle');
+    const watchView = h('div.stu-watch',
+      h('header.stu-top', h('button.stu-tb.stu-tb--icon', { type: 'button', 'aria-label': 'Stop watching', title: 'Stop watching', onclick: () => watchStop(true) }, icon('chevron-left')),
+        h('div.stu-top__name', watchTitle, h('span.stu-status', { text: 'Read-only: you can watch, not change' })),
+        h('div.stu-top__grow'),
+        h('button.btn.btn--sm', { type: 'button', onclick: () => watchStop(true) }, icon('x'), h('span', { text: 'Stop watching' }))),
+      h('div.stu-wmain', h('div.stu-wstage', watchCanvas, watchStatus), h('aside.stu-wside', h('div.stu-sec__head', h('span.stu-sec__title', { text: 'Objects' })), watchList,
+        h('p.stu-live__fine', { text: 'Sprites and sounds are not shared, so pictures show as their colour. You see the scene, not the code.' }))));
+    app.appendChild(watchView);
+
+    function watchStart(raw) {
+      const code = normalizeCode(raw).slice(0, 6);
+      if (!code || code.length < 6) { return LIVE_ERR.invalid; }
+      watchStop(false);
+      const room = openPair({ kind: Live.KIND, role: 'guest', code, types: Live.checkers, rtc: true });
+      if (room.phase === 'closed') return LIVE_ERR[room.error] || LIVE_ERR.nobody;
+      const W = S.watch;
+      W.room = room; W.scene = null; W.sel = ''; W.note = ''; W.name = ''; W.asm = Live.assembler(); W.phase = room.phase;
+      S.view = 'watch';
+      app.dataset.view = 'watch';
+      watchTitle.textContent = 'Joining…';
+      W.offs = [room.on(async (type, data) => {
+        if (S.dead || W.room !== room) return;
+        if (type === 'phase') {
+          W.phase = data;
+          if (data === 'closed') {
+            if (room.error) { watchStop(true, LIVE_ERR[room.error] || LIVE_ERR.nobody); return; }
+            W.note = W.note || 'The room closed. You still see the last version.';
+          }
+        } else if (type === 'peer') W.name = data?.name || 'your friend';
+        else if (type === 'left') { W.note = `${data.peer?.name || 'Your friend'} ${data.reason === 'quiet' ? 'went quiet' : 'closed the room'}. You still see the last version.`; }
+        else if (type === 'msg') {
+          if (data.t === 'scn') {
+            const sc = await W.asm.add(data.m);
+            if (sc && W.room === room) { W.scene = sc; watchPaint(); }
+          } else if (data.t === 'sel') { W.sel = data.m.id; watchPaint(); }
+        }
+        watchPaintStatus();
+      })];
+      watchPaint();
+      return '';
+    }
+    function watchStop(back, note = '') {
+      const W = S.watch;
+      (W.offs || []).forEach(f => f());
+      W.offs = [];
+      const room = W.room;
+      W.room = null; W.scene = null;
+      if (room) { try { room.leave(); } catch (err) { /* gone */ } }
+      if (back && S.view === 'watch') {
+        S.view = 'home'; app.dataset.view = 'home';
+        paintHome().then(() => { if (note) toast('Stopped watching', note, 'info'); });
+      }
+    }
+    function watchPaintStatus() {
+      const W = S.watch;
+      watchStatus.textContent = W.note || (W.scene ? '' : W.phase === 'paired' ? 'Connected. Waiting for the scene…' : 'Joining the room…');
+    }
+    function watchPaint() {
+      const W = S.watch;
+      watchPaintStatus();
+      watchTitle.textContent = W.scene ? `Watching ${W.name || 'a friend'}: ${W.scene.title}` : 'Watching a friend';
+      clear(watchList);
+      if (!W.scene) { return; }
+      const objs = W.scene.objects;
+      for (const o of objs.slice().reverse()) {
+        watchList.append(h(`div.stu-hrow${o.id === W.sel ? '.is-on' : ''}`, { role: 'listitem' },
+          h('span.stu-sw', { style: { background: o.color } }), h('span.stu-hrow__name', { text: o.name })));
+      }
+      const wrap = watchCanvas.parentElement;
+      const r = wrap.getBoundingClientRect();
+      const wd = worldOf(W.scene.settings);
+      const cw = Math.max(200, Math.floor(r.width) - 24), ch = Math.max(150, Math.floor(r.height) - 24);
+      const k = Math.min(cw / wd.w, ch / wd.h), dpr = Math.min(2, window.devicePixelRatio || 1);
+      watchCanvas.width = Math.round(wd.w * k * dpr); watchCanvas.height = Math.round(wd.h * k * dpr);
+      watchCanvas.style.width = Math.round(wd.w * k) + 'px'; watchCanvas.style.height = Math.round(wd.h * k) + 'px';
+      const g = watchCanvas.getContext('2d');
+      g.setTransform(k * dpr, 0, 0, k * dpr, 0, 0);
+      paintScene(g, W.scene, { px: 1 / k, paths: true, sel: W.sel });
+      const so = W.scene.objects.find(o => o.id === W.sel);
+      if (so) { g.strokeStyle = '#7cc4ff'; g.lineWidth = 2 / k; g.strokeRect(so.x - 1, so.y - 1, so.w + 2, so.h + 2); }
+    }
+    function watchJoinRow() {
+      const input = h('input.stu-in.stu-wjoin__in', { type: 'text', maxlength: '80', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'Friend’s room code', 'aria-label': 'Room code from your friend' });
+      const err = h('p.stu-live__err', { role: 'alert', hidden: true });
+      const go = () => { const m = watchStart(input.value); err.hidden = !m; err.textContent = m; };
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+      return h('div.stu-wjoin', h('div.stu-wjoin__row', input, h('button.btn.btn--sm', { type: 'button', onclick: go }, icon('users'), h('span', { text: 'Watch' }))), err);
+    }
+
+    /* ================================================================
+       Blocks: block coding that writes the game's own code
+       ================================================================ */
+    const blocksEd = createBlocksEditor({
+      h, icon, clear,
+      lookups: () => {
+        const sc = S.scene;
+        const groups = [...new Set((sc?.objects || []).map(o => o.group).filter(Boolean))].sort();
+        const used = new Set(Object.keys(sc?.settings?.vars || {}));
+        const walk = list => { for (const b of list || []) { if ((b.type === 'setVar' || b.type === 'changeVar') && b.args?.name) used.add(b.args.name); walk(b.body); walk(b.else); } };
+        walk(blocksEd.program().scripts);
+        return {
+          refs: [['player', 'the player'], ['any', 'anything'], ['@A', 'the first (from “when…”)'], ['@B', 'the second (from “when…”)'],
+            ...groups.map(g => [g, `any ${g}`]), ...(sc?.objects || []).filter(o => !o.tiles).map(o => [o.name, o.name])]
+            .filter((x, i, arr) => arr.findIndex(y => y[0] === x[0]) === i),
+          sounds: (S.p?.assets || []).filter(a => a.kind === 'audio').map(a => [a.name, a.name]),
+          vars: [...used].filter(v => !['score', 'lives', 'time'].includes(v)),
+        };
+      },
+      onChange: (program, label) => {
+        if (!S.p || S.mode !== 'scene') return;
+        const d = R.readDoc(S.baseHtml);
+        const next = Blocks.writeBlocks(d.code ?? R.DEFAULT_CODE, program);
+        const html = R.setBlock(S.baseHtml, 'game-code', next);
+        if (html === null) { toast('Blocks need the game-code script', 'This game file has no <script id="game-code"> to put them in.', 'alert'); return; }
+        S.baseHtml = html;
+        S.dirty = true;
+        if (!(S.draftLabels || []).includes('Edited blocks')) S.draftLabels = [...(S.draftLabels || []), 'Edited blocks'];
+        scheduleDraft();
+        paintTop();
+        markRunStale();
+        refreshHistory();
+      },
+    });
+    function loadBlocks() {
+      const d = R.readDoc(S.baseHtml);
+      const r = Blocks.readBlocks(d.code || '');
+      if (!r) blocksEd.load({ v: 1, scripts: [] });
+      else if (r.error) blocksEd.load({ v: 1, scripts: [] }, `${r.error} Adding a block starts a new set and replaces that part of the code.`);
+      else blocksEd.load(r.program);
+    }
+
+    /* ================================================================
        Keys, bus, reopen, teardown
        ================================================================ */
     root.addEventListener('keydown', e => {
@@ -3354,8 +4352,11 @@ defineApp({
 
     win.onReopen?.(o => { if (o) handleOpts(o); });
     function handleOpts(o) {
-      if (o.project) openProject(o.project);
-      else if (o.template) newFromTemplate(o.template);
+      if (o.project) {
+        /* o.line: Forge's "Open in Studio at that line" lands on the line an error came from */
+        const line = Math.floor(Number(o.line));
+        openProject(o.project).then(() => { if (line > 0 && S.mode === 'code' && !S.dead) later(() => gotoLine(line, true), 90); });
+      } else if (o.template) newFromTemplate(o.template);
     }
 
     paintStageTools();
@@ -3382,6 +4383,10 @@ defineApp({
       if (SG.raf) cancelAnimationFrame(SG.raf);
       document.removeEventListener('pointerdown', onDocDown, true);
       histPop?.remove();
+      livePop?.remove();
+      document.removeEventListener('pointerdown', onLiveDown, true);
+      liveStop(false);
+      watchStop(false);
       try { if (audioEl) { audioEl.pause(); audioEl.removeAttribute('src'); audioEl.load(); } } catch (err) { /* nothing playing */ }
       audioEl = null;
     };

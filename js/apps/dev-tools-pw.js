@@ -146,6 +146,42 @@ export function passphraseEntropy(opts, wordCount) {
   return n * Math.log2(wordCount) + (opts.number ? Math.log2(10) : 0);
 }
 
+/* ---------------- pronounceable ------------------------------------
+   Syllables of one consonant and one vowel ("ba", "ku", "ze"), each
+   consonant and vowel drawn uniformly, so the output can be said out
+   loud. That shape is what makes it weaker per letter than a random
+   password: the attacker knows every other letter is one of 5 vowels.
+   The entropy here counts exactly that: syllables x log2(16 x 5), plus
+   log2(100) for two digits. Hyphens between pairs and a capital first
+   letter are fixed by the settings, so they add nothing.
+   The consonants leave out c, q, w, x and y, which are the hardest to
+   spell from hearing them; the digits, when asked for, come last. */
+export const P_CONS = 'bdfghjklmnprstvz';
+export const P_VOWELS = 'aeiou';
+export const MIN_SYL = 3;
+export const MAX_SYL = 20;
+export function generatePronounceable(opts, rng = cryptoSource()) {
+  const n = Math.floor(+opts.syllables);
+  if (!(n >= MIN_SYL && n <= MAX_SYL)) throw new RangeError(`Use from ${MIN_SYL} to ${MAX_SYL} syllables.`);
+  const syl = [];
+  for (let i = 0; i < n; i++) syl.push(P_CONS[randomInt(P_CONS.length, rng)] + P_VOWELS[randomInt(P_VOWELS.length, rng)]);
+  let s = '';
+  syl.forEach((x, i) => { s += (opts.hyphens && i && i % 2 === 0 ? '-' : '') + x; });
+  if (opts.capitalise) s = s[0].toUpperCase() + s.slice(1);
+  if (opts.digits) s += (opts.hyphens ? '-' : '') + String(randomInt(100, rng)).padStart(2, '0');
+  return s;
+}
+export function pronounceableEntropy(opts) {
+  const n = Math.floor(+opts.syllables);
+  if (!(n >= 1)) return 0;
+  return n * Math.log2(P_CONS.length * P_VOWELS.length) + (opts.digits ? Math.log2(100) : 0);
+}
+/** What a fully random password of the same letters and digits would have, for comparison. */
+export function sameLengthRandom(opts) {
+  const n = Math.floor(+opts.syllables);
+  return 2 * n * Math.log2(26) + (opts.digits ? 2 * Math.log2(10) : 0);
+}
+
 /* a plain description of a number of bits, from commonly quoted ranges.
    It is a label for the number, not a prediction. */
 export function strengthWord(bits) {

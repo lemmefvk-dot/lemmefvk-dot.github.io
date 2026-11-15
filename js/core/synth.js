@@ -37,6 +37,7 @@ export const RANGES = {
   lfoRate: [0.1, 20, 5], lfoPitch: [0, 100, 0], lfoFilter: [0, 2400, 0],
   delayTime: [0.02, 1, 0.3], delayFb: [0, 0.85, 0.3], delayMix: [0, 1, 0],
   volume: [0, 1, 0.7],
+  reverbMix: [0, 1, 0], chorusMix: [0, 1, 0], glide: [0, 1, 0],
 };
 export const BASE = {
   o1wave: 'sawtooth', o2wave: 'sawtooth', filter: 'lowpass', lfoWave: 'sine',
@@ -94,7 +95,8 @@ function softCurve() {
  */
 export function createSynth(ac, opts = {}) {
   let patch = cleanPatch(opts.patch || PRESETS[0].p);
-  let maxVoices = clamp(Math.round(opts.maxVoices || 8), 1, 32);
+  const VCAP = opts.offline ? 2048 : 32;      /* an offline render schedules every note up front */
+  let maxVoices = clamp(Math.round(opts.maxVoices || 8), 1, VCAP);
 
   const voicesBus = ac.createGain();
   const dry = ac.createGain();
@@ -107,6 +109,9 @@ export function createSynth(ac, opts = {}) {
   const lfo = ac.createOscillator();
   const lfoPitch = ac.createGain();
   const lfoFilter = ac.createGain();
+  const reverb = ac.createConvolver(), revWet = ac.createGain();
+  const chorus = ac.createDelay(0.1), chLfo = ac.createOscillator(), chDepth = ac.createGain(), chWet = ac.createGain();
+  const bendSrc = ac.createConstantSource();
   limiter.threshold.value = -4; limiter.knee.value = 0; limiter.ratio.value = 20;
   limiter.attack.value = 0.001; limiter.release.value = 0.12;
   clip.curve = softCurve();
@@ -115,12 +120,24 @@ export function createSynth(ac, opts = {}) {
   master.connect(limiter); limiter.connect(clip); clip.connect(opts.destination || ac.destination);
   lfo.connect(lfoPitch); lfo.connect(lfoFilter);
   lfo.start();
+  /* reverb: a convolver on a decaying-noise impulse; chorus: a short delay swept by a slow oscillator */
+  {
+    const len = Math.floor(ac.sampleRate * 1.8), ir = ac.createBuffer(2, len, ac.sampleRate);
+    for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); let seed = 12345 + c * 777; for (let i = 0; i < len; i++) { seed = (seed * 1664525 + 1013904223) >>> 0; d[i] = ((seed / 4294967296) * 2 - 1) * Math.pow(1 - i / len, 2.6); } }
+    reverb.buffer = ir;
+  }
+  voicesBus.connect(reverb); reverb.connect(revWet); revWet.connect(master);
+  chorus.delayTime.value = 0.022; chLfo.frequency.value = 0.8; chDepth.gain.value = 0.006;
+  chLfo.connect(chDepth); chDepth.connect(chorus.delayTime);
+  voicesBus.connect(chorus); chorus.connect(chWet); chWet.connect(master);
+  revWet.gain.value = 0; chWet.gain.value = 0;
+  chLfo.start(); bendSrc.offset.value = 0; bendSrc.start();
 
   const all = new Set();                 /* every sounding voice, oldest first */
   const heldBy = new Map();              /* note -> Set(src) */
   const sounding = new Map();            /* note -> the voice that key is holding */
   const pedalHeld = new Set();           /* notes let go of while the pedal was down */
-  let pedal = false, gone = false, seq = 0;
+  let pedal = false, gone = false, seq = 0, lastNote = null;
 
   function applyShared() {
     const t = ac.currentTime;
@@ -133,6 +150,8 @@ export function createSynth(ac, opts = {}) {
     lfo.frequency.setTargetAtTime(patch.lfoRate, t, 0.02);
     lfoPitch.gain.setTargetAtTime(patch.lfoPitch, t, 0.02);
     lfoFilter.gain.setTargetAtTime(patch.lfoFilter, t, 0.02);
+    revWet.gain.setTargetAtTime(patch.reverbMix * 2.4, t, 0.02);
+    chWet.gain.setTargetAtTime(patch.chorusMix * 0.7, t, 0.02);
   }
   applyShared();
   master.gain.value = patch.volume * patch.volume;
@@ -157,6 +176,11 @@ export function createSynth(ac, opts = {}) {
     const mk = (wave, oct, cents, level) => {
       const o = ac.createOscillator();
       o.type = wave; o.frequency.value = f * Math.pow(2, oct); o.detune.value = cents;
+      if (p.glide > 0.001 && lastNote != null && lastNote !== note) {      /* slide from the last note's pitch */
+        o.frequency.setValueAtTime(freqOf(lastNote) * Math.pow(2, oct), t);
+        o.frequency.exponentialRampToValueAtTime(f * Math.pow(2, oct), t + p.glide);
+      }
+      bendSrc.connect(o.detune);
       const g = ac.createGain(); g.gain.value = level;
       o.connect(g); g.connect(filt);
       lfoPitch.connect(o.detune);
@@ -177,6 +201,8 @@ export function createSynth(ac, opts = {}) {
     all.delete(v);
     if (sounding.get(v.note) === v) sounding.delete(v.note);
     for (const n of v.oscs) { try { n.disconnect(); } catch (e) { /* done */ } }
+    try { bendSrc.disconnect(v.o1.detune); } catch (e) { /* done */ }
+    if (v.o2) { try { bendSrc.disconnect(v.o2.detune); } catch (e) { /* done */ } }
     try { lfoPitch.disconnect(v.o1.detune); } catch (e) { /* done */ }
     if (v.o2) { try { lfoPitch.disconnect(v.o2.detune); } catch (e) { /* done */ } }
     try { lfoFilter.disconnect(v.filt.detune); } catch (e) { /* done */ }
@@ -228,6 +254,7 @@ export function createSynth(ac, opts = {}) {
     if (old) { release(old, t, false); sounding.delete(note); }
     steal();
     const v = build(note, vel, t);
+    lastNote = note;
     all.add(v);
     sounding.set(note, v);
   }
@@ -256,7 +283,9 @@ export function createSynth(ac, opts = {}) {
   }
   function setPatch(next) { patch = cleanPatch(next); applyShared(); }
   function set(key, value) { setPatch({ ...patch, [key]: value }); }
-  function setMaxVoices(n) { maxVoices = clamp(Math.round(n) || 1, 1, 32); }
+  function setMaxVoices(n) { maxVoices = clamp(Math.round(n) || 1, 1, VCAP); }
+  /** Pitch wheel: -1..1 is two semitones either way, on every sounding note. */
+  function bend(v) { bendSrc.offset.setTargetAtTime(clamp(Number(v) || 0, -1, 1) * 200, ac.currentTime, 0.01); }
   function dispose() {
     if (gone) return;
     gone = true;
@@ -264,13 +293,13 @@ export function createSynth(ac, opts = {}) {
       for (const o of [v.o1, v.o2]) if (o) { try { o.stop(); } catch (e) { /* ok */ } }
       tidy(v);
     }
-    try { lfo.stop(); } catch (e) { /* ok */ }
-    for (const n of [lfo, lfoPitch, lfoFilter, voicesBus, dry, delay, fb, wet, master, limiter, clip]) { try { n.disconnect(); } catch (e) { /* ok */ } }
+    try { lfo.stop(); chLfo.stop(); bendSrc.stop(); } catch (e) { /* ok */ }
+    for (const n of [lfo, chLfo, chDepth, chorus, chWet, reverb, revWet, bendSrc, lfoPitch, lfoFilter, voicesBus, dry, delay, fb, wet, master, limiter, clip]) { try { n.disconnect(); } catch (e) { /* ok */ } }
     heldBy.clear(); sounding.clear(); pedalHeld.clear();
   }
 
   return {
-    noteOn, noteOff, sustain, allNotesOff, setPatch, set, setMaxVoices, dispose,
+    noteOn, noteOff, sustain, allNotesOff, setPatch, set, setMaxVoices, bend, dispose,
     patch: () => ({ ...patch }),
     voices: () => all.size,
     maxVoices: () => maxVoices,
@@ -281,4 +310,44 @@ export function createSynth(ac, opts = {}) {
   };
 }
 
-export default { createSynth, cleanPatch, PRESETS, RANGES, BASE, KEYMAP, freqOf, velGain };
+/* ---- arpeggiator: the order notes are played in ---- */
+export const ARP_MODES = [['up', 'Up'], ['down', 'Down'], ['updown', 'Up and down'], ['random', 'Random'], ['played', 'As played']];
+/**
+ * arpSequence(notes, mode, octaves) -> the notes in the order the arpeggiator plays them, round and round.
+ * notes: midi numbers in the order they were pressed. 'random' returns them low to high; the player picks
+ * from the list at random each step (pass rnd to arpPick).
+ */
+export function arpSequence(notes, mode = 'up', octaves = 1) {
+  const list = [...new Set(notes.map(n => Math.round(n)))].filter(n => n >= 0 && n <= 127);
+  if (!list.length) return [];
+  const oct = clamp(Math.round(octaves) || 1, 1, 4);
+  const spread = base => { const out = []; for (let o = 0; o < oct; o++) for (const n of base) if (n + 12 * o <= 127) out.push(n + 12 * o); return out; };
+  const up = spread([...list].sort((a, b) => a - b));
+  if (mode === 'down') return up.slice().reverse();
+  if (mode === 'updown') return up.length < 3 ? up.concat(up.slice().reverse().slice(0, Math.max(0, up.length - 1))) : up.concat(up.slice(1, -1).reverse());
+  if (mode === 'played') return spread(list);
+  return up;
+}
+export const arpPick = (seq, i, mode, rnd = Math.random) => (mode === 'random' ? seq[Math.floor(rnd() * seq.length)] : seq[i % seq.length]);
+
+/** A patch made up at random, always audible and inside every range. rnd is injectable for tests. */
+export function randomPatch(rnd = Math.random, keep = {}) {
+  const pick = a => a[Math.floor(rnd() * a.length)];
+  const between = (lo, hi) => lo + rnd() * (hi - lo);
+  const logBetween = (lo, hi) => lo * Math.pow(hi / lo, rnd());
+  const bass = rnd() < 0.3;
+  const filter = pick(['lowpass', 'lowpass', 'lowpass', 'bandpass', 'highpass']);   /* a high-pass or band-pass up high would leave nothing to hear */
+  return cleanPatch({
+    ...BASE,
+    o1wave: pick(WAVES), o2wave: pick(WAVES), o1oct: bass ? -1 : pick([-1, 0, 0, 0, 1]), o2oct: pick([-1, 0, 0, 1, 2]),
+    o2level: between(0, 0.9), o2detune: between(-25, 25),
+    a: logBetween(0.003, 0.8), d: logBetween(0.08, 1.5), s: between(0.25, 1), r: logBetween(0.08, 1.8),
+    filter, cutoff: filter === 'lowpass' ? logBetween(400, 9000) : logBetween(200, 1800), res: between(0.5, 9), fenv: between(0, 3.5), fdecay: logBetween(0.08, 1.2),
+    lfoWave: pick(WAVES), lfoRate: logBetween(0.3, 9), lfoPitch: rnd() < 0.5 ? between(0, 25) : 0, lfoFilter: rnd() < 0.4 ? between(0, 1500) : 0,
+    delayTime: between(0.12, 0.6), delayFb: between(0.1, 0.5), delayMix: rnd() < 0.5 ? between(0.05, 0.35) : 0,
+    reverbMix: rnd() < 0.5 ? between(0.05, 0.4) : 0, chorusMix: rnd() < 0.3 ? between(0.1, 0.5) : 0, glide: 0,
+    volume: keep.volume ?? 0.7,
+  });
+}
+
+export default { createSynth, arpSequence, arpPick, randomPatch, ARP_MODES, cleanPatch, PRESETS, RANGES, BASE, KEYMAP, freqOf, velGain };

@@ -54,11 +54,15 @@ const B = (slug, title, cats, _plays, _rating) => ({
   cats, tags: [], plays: 0, rating: 0, note: '', playable: true,
 });
 
-export const GAMES = [
+const ALL_GAMES = [
   G('Subway Surfers',        'subway-surfers',                      ['action', 'featured'],            ['runner', 'endless'],      1240000, 4.6),
   G('Geometry Dash',         'geometry-dash',                       ['platformer', 'action', 'featured'], ['rhythm', 'hard'],      1180000, 4.8),
   G('Smash Karts',           'https://smashkarts.io',               ['racing', 'io', 'featured'],      ['karts', 'multiplayer'],   1010000, 4.7, 'Favourite'),
-  G('Poly Track',            'https://polytrack.com/', ['racing', 'featured'], ['track', '3d'], 940000, 4.7),
+  /* Kodub's own game. Its page only lets kodub.com, webgamer.io and kongregate.com frame it, so it opens on
+     kodub.com in a new tab; the cover is Kodub's own picture, shown from there and never copied. */
+  { ...G('PolyTrack', 'https://www.kodub.com/apps/polytrack', ['racing', 'featured'], ['track', '3d'], 0, 0),
+    id: 'poly-track', art: 'https://www.kodub.com/apps/polytrack/image',
+    desc: 'A low-poly racing game with loops, jumps and high speeds, where every millisecond counts.' },
   G('Shadow Fight 2',        'shadow-fight-2',                      ['action', 'fighting'],            ['ninja', 'rpg'],            880000, 4.6),
   G('Stick War: Legacy',     'stick-war-legacy',                    ['strategy', 'featured'],          ['army', 'tower'],           850000, 4.7),
   G('Granny',                'granny',                              ['horror'],                        ['escape', 'scary'],         790000, 4.3),
@@ -168,6 +172,35 @@ export const GAMES = [
   B("cafe-racer",                                  "Cafe Racer",                              ["racing"],                                   737701, 4.4),
   B("fantasy-dragon-simulator-animal-survival-game", "Fantasy Dragon Simulator",                ["sandbox"],                                  542544, 4.2),
 ];
+
+/* Hosts that only let their own site run their games. A game on one of them (and nowhere else) opens there in
+   a new tab. `listed: false` means StaticOS leaves such a game out of every list; Kodub's PolyTrack stays,
+   because it is one game the owner wants, opened on its own site. */
+export const OWN_SITE_HOSTS = {
+  'madkidgames.com': { label: 'MadKidGames', listed: false },
+  'kodub.com': { label: 'Kodub', listed: true },
+};
+/** The OWN_SITE_HOSTS entry for a URL's host (or a parent domain of it), or null. */
+export const ownSiteHost = url => {
+  try {
+    const host = new URL(url).hostname;
+    const key = Object.keys(OWN_SITE_HOSTS).find(k => host === k || host.endsWith(`.${k}`));
+    return key ? { host: key, ...OWN_SITE_HOSTS[key] } : null;
+  } catch (e) { return null; }
+};
+/* Copies of a game that its maker's own page replaces, never listed again even if a feed brings them back.
+   Empty for now: PolyTrack on CrazyGames is CrazyGames' own build (Kodub publishes there), the one way
+   to play the real game inside StaticOS, so it stays listed beside the Kodub entry. */
+const REHOSTS = new Set([]);
+/** True when this row is not listed: it only plays on a host StaticOS no longer lists (a MadKidGames-only game), or is a rehost. */
+export const isUnlisted = g => {
+  if (!g) return false;
+  if (REHOSTS.has(g.id)) return true;
+  const own = ownSiteHost(g.embed);
+  return !!own && !own.listed && !(g.alts || []).some(x => x && x.embed && !ownSiteHost(x.embed));
+};
+
+export const GAMES = ALL_GAMES.filter(g => !isUnlisted(g));
 
 export const GAME_CATEGORIES = [
   { id: 'all',        name: 'All',        icon: 'grid-9' },

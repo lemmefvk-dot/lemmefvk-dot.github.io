@@ -1,0 +1,68 @@
+/* feat-spotlight.css — the bulk update's Spotlight, notifications, lock screen
+   and phone additions. Everything here is scoped to its own class. */
+
+/* ---- Spotlight ---- */
+.spot__recent-h{display:flex;align-items:center;gap:var(--sp-3)}
+.spot__clear{margin-left:auto;font-size:var(--fs-10);color:var(--ink-3);background:none;border:0;cursor:pointer;padding:2px 6px;border-radius:var(--r-sm);text-transform:none;letter-spacing:0;font-weight:560}
+.spot__clear:hover,.spot__clear:focus-visible{color:var(--ink-0);background:var(--fill-1)}
+.spot__hint{padding:var(--sp-3) var(--sp-5);font-size:var(--fs-11);color:var(--ink-3)}
+.spot__hint kbd,.spot__hint code{font-family:var(--mono);font-size:var(--fs-10);color:var(--ink-2)}
+
+/* ---- notification toasts: Mute 1 h ---- */
+.toast__more{display:flex;margin-top:var(--sp-2);opacity:0;transition:opacity var(--t-fast)}
+.toast:hover .toast__more,.toast:focus-within .toast__more{opacity:1}
+.toast__mute{background:none;border:0;padding:2px 0;font-size:var(--fs-10);color:var(--ink-3);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.toast__mute:hover,.toast__mute:focus-visible{color:var(--ink-0)}
+body.is-mobile .toast__more{opacity:1}
+
+/* ---- notification centre: search, snooze, Do Not Disturb menu ---- */
+.noti__filters{display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--sp-2) var(--sp-5) 0}
+.noti__filters[hidden]{display:none}
+.noti__filters .row{gap:var(--sp-2)}
+.noti__q{flex:1 1 auto;min-width:0}
+.noti__app{flex:0 0 auto;max-width:42%}
+.noti__held{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-11);color:var(--ink-2)}
+.noti__held[hidden]{display:none}
+.noti__link{background:none;border:0;padding:0;font-size:var(--fs-11);color:var(--accent-soft);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.noti__snzn{font-size:var(--fs-10)}
+.noti__snz{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)}
+.noti__unmute{cursor:pointer}
+.noti__dndmore{margin-left:-4px}
+.noti__dndmenu{position:absolute;right:var(--sp-5);top:calc(var(--sp-4) + 34px);z-index:2;min-width:220px;display:flex;flex-direction:column;
+  padding:var(--sp-2);border-radius:var(--r-md);background:var(--glass-3);border:1px solid var(--line-1);box-shadow:var(--sh-3)}
+.noti__mi{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;padding:var(--sp-3) var(--sp-4);border:0;border-radius:var(--r-sm);background:none;color:var(--ink-0);font-size:var(--fs-12);cursor:pointer}
+.noti__mi:hover,.noti__mi:focus-visible{background:var(--fill-1)}
+.noti__mi small{font-size:var(--fs-10)}
+
+/* ---- Settings: Do Not Disturb exceptions, text snippets ---- */
+.dndx{display:flex;flex-direction:column;gap:var(--sp-3)}
+.dndx__chips{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.dndx__chip{cursor:pointer}
+.snip{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4);border:1px solid var(--line-1);border-radius:var(--r-md);background:var(--glass-2,transparent)}
+.snip .row{gap:var(--sp-3);align-items:flex-start}
+.snip__code{width:120px;flex:0 0 auto;font-family:var(--mono)}
+.snip__text{flex:1 1 auto;min-width:0;min-height:56px;resize:vertical}
+
+/* ---- lock screen: clock looks, its own wallpaper, held count ---- */
+.lock__wp{position:absolute;inset:0;overflow:hidden;z-index:0}
+.lock--paper{background:#000;-webkit-backdrop-filter:none;backdrop-filter:none}
+.lock--paper .lock__wp::after{content:"";position:absolute;inset:0;background:rgba(6,2,4,.42)}
+.lock__inner{position:relative;z-index:1}
+.lock__held{font-size:var(--fs-12);color:#fff;padding:var(--sp-2) var(--sp-4);border-radius:var(--r-pill);background:rgba(255,255,255,.14);text-align:center}
+.lock__held[hidden]{display:none}
+.lock[data-clock="bold"] .lock__time{font-weight:760;letter-spacing:-2px}
+.lock[data-clock="stacked"] .lock__time{display:flex;flex-direction:column;align-items:center;font-size:calc(96px * var(--fs-kd,1));font-weight:700;line-height:.92;letter-spacing:-4px}
+.lock[data-clock="stacked"] .lock__mm{color:var(--accent-soft)}
+.lock[data-clock="stacked"] .lock__ap{margin:var(--sp-2) 0 0;font-size:var(--fs-15);letter-spacing:0}
+.lock[data-clock="stacked"] .lock__inner--pin .lock__time{font-size:calc(60px * var(--fs-kd,1))}
+.lock[data-clock="analog"] .lock__time{line-height:0;text-shadow:none}
+.lock__analog{display:block;filter:drop-shadow(0 4px 24px rgba(0,0,0,.5))}
+
+/* ---- screensaver: clock and next event ---- */
+.ssaver__clock{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;pointer-events:none;text-shadow:0 2px 24px rgba(0,0,0,.7);padding:0 var(--sp-5);max-width:92vw}
+.ssaver__time{font-size:clamp(56px,11vw,150px);font-weight:200;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+.ssaver__ap{font-size:.22em;font-weight:600;letter-spacing:0;margin-left:.3em;opacity:.7}
+.ssaver__date{font-size:clamp(14px,1.8vw,22px);opacity:.78;margin-top:.4em}
+.ssaver__next{margin-top:1.4em;font-size:clamp(13px,1.5vw,19px);opacity:.9;padding:.55em 1.1em;border-radius:999px;background:rgba(255,255,255,.12);display:inline-block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ssaver__next b{font-weight:640}
+.ssaver__next[hidden]{display:none}

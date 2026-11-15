@@ -1,0 +1,42 @@
+/* System Monitor additions — .mon__* (the base look is in features.css) */
+.mon__head{display:flex;align-items:flex-end;gap:var(--sp-3);flex:0 0 auto;border-bottom:1px solid var(--line-1);padding-right:var(--sp-4)}
+.mon__head .mon__tabs{flex:1 1 auto;min-width:0;border-bottom:0}
+.mon__ctl{display:flex;align-items:center;gap:var(--sp-3);padding-bottom:6px;flex:none}
+.mon__held{font-size:var(--fs-10);color:var(--ink-3)}
+.mon__pause.is-on{background:rgba(var(--accent-rgb)/.18);border-color:rgba(var(--accent-rgb)/.45)}
+.mon__pauseic{display:inline-flex}
+
+.mon__slow{flex:0 0 auto;display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);flex-wrap:wrap;
+  background:rgba(251,191,36,.10);border-bottom:1px solid rgba(251,191,36,.32);color:var(--ink-1)}
+.mon__slow[hidden]{display:none}
+.mon__slow > .icon{flex:none;color:#fcd34d}
+.mon__slowt{flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:1px}
+.mon__slowt b{font-size:var(--fs-12);color:var(--ink-0)}
+.mon__slowt small{font-size:var(--fs-11);color:var(--ink-2);line-height:1.45}
+.mon__slowt small b{font-size:inherit}
+:root[data-theme="light"] .mon__slow > .icon{color:#a16207}
+
+/* the Windows table with its action buttons, and sortable headings */
+.mon__procs--act .mon__prochead,.mon__procs--act .mon__proc{grid-template-columns:minmax(80px,1fr) minmax(0,1.4fr) 82px 82px 170px}
+.mon__acts{display:flex;gap:4px;justify-content:flex-end;overflow:visible!important}
+.mon__sort{display:inline-flex;align-items:center;gap:4px;padding:0;background:none;border:0;color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer}
+.mon__sort:hover,.mon__sort.is-on{color:var(--ink-0)}
+.mon__sort i{font-style:normal;font-size:var(--fs-10)}
+@media (max-width:620px){
+  .mon__procs--act .mon__prochead,.mon__procs--act .mon__proc{grid-template-columns:minmax(70px,1fr) minmax(0,1fr) 150px}
+  .mon__procs--act .mon__prochead > :nth-child(3),.mon__procs--act .mon__prochead > :nth-child(4),
+  .mon__procs--act .mon__proc > :nth-child(3),.mon__procs--act .mon__proc > :nth-child(4){display:none}
+}
+
+/* recording */
+.mon__recbar{height:6px;border-radius:99px;background:var(--fill-1);overflow:hidden;margin:var(--sp-2) 0 var(--sp-3)}
+.mon__recbar i{display:block;height:100%;background:var(--accent);transition:width .4s linear}
+.mon__recacts{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)}
+.mon__rec{margin-bottom:var(--sp-3)}
+
+/* low-battery tips */
+.mon__tipswrap{margin-top:var(--sp-3);padding-top:var(--sp-3);border-top:1px solid var(--line-1);font-size:var(--fs-11)}
+.mon__tipswrap > b{display:block;color:var(--ink-0);margin-bottom:var(--sp-2)}
+.mon__tips{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--sp-2)}
+.mon__tip{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);color:var(--ink-2);line-height:1.45}
+.mon__tip .btn{flex:none}

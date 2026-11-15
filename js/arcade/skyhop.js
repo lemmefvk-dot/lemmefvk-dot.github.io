@@ -13,6 +13,14 @@
    of the screen. Tilt: press T (or tap "Tilt" on a phone) — only if
    the device asks for and is granted permission.
 
+   Spring combo: springs hit one after another, with no ordinary bounce
+   between, launch harder each time — ×1.12, ×1.24, up to ×1.36 from the
+   fourth — and the screen says which one it is. Any other landing ends
+   the combo.
+
+   Themes (ctx.settings.theme, Options; how it looks, not how it plays):
+   Day (the blue sky as it always was), Sunset and Space.
+
    Physics: a fixed 1/120-second step. Only a falling hopper can land,
    and only when its feet pass down through a cloud's top between two
    steps while it is over the cloud, so it can't be caught from below.
@@ -25,24 +33,33 @@ const VW = 400, VH = 640;
 const G = 1400, BOUNCE = 700, SPRING = 1150, DT = 1 / 120;
 const PW = 70, PH = 12, HALF = 15, MAX_VX = 300;
 const px = 10;                                  /* pixels per metre */
+const COMBO_STEP = 0.12, COMBO_MAX = 4;
+/* the looks: sky gradient (hue, sat, light at the top and bottom, and how far it shifts with height), stars, cloud colours */
+const THEMES = {
+  day: { top: [225, 70, 18], bot: [200, 75, 55], shift: [-15, -12, -20, -35], star: '255,255,255', clouds: { normal: ['#ffffff', '#b9d4ee'], moving: ['#b9f0ff', '#58b8e0'], breaking: ['#d9b48a', '#8a6038'] } },
+  sunset: { top: [265, 55, 22], bot: [22, 90, 62], shift: [-10, -10, -12, -30], star: '255,230,200', clouds: { normal: ['#fff1e3', '#f3a98a'], moving: ['#ffd9f0', '#d97bb5'], breaking: ['#c99a7a', '#7a4a32'] } },
+  space: { top: [240, 60, 6], bot: [255, 55, 18], shift: [0, 0, 0, -8], star: '220,230,255', clouds: { normal: ['#c9d6ff', '#7d8fd6'], moving: ['#9ff5e6', '#3fb8a6'], breaking: ['#b9a0ff', '#5a3fa8'] } },
+};
 
 export default {
   mount(el, ctx) {
     const reduced = !!ctx.reduced;
     const snd = sounder(ctx);
-    let rand = rng(randomSeed());
+    let rand = rng(Number.isInteger(ctx.seed) ? ctx.seed >>> 0 : randomSeed());   /* ctx.seed: the shell's, so a seed is a sky of clouds */
     let dead = false;
     const S = {
       state: 'ready',                      /* ready | play | over */
       paused: false, frozen: false, time: 0,
       x: VW / 2, y: 60, vx: 0, vy: 0, face: 1,                  /* y is height above the start: up is positive */
       cam: 0, top: 0, score: 0,
-      plats: [], bounces: 0, breaks: 0, springs: 0,
+      plats: [], bounces: 0, breaks: 0, springs: 0, combo: 0, maxCombo: 0, comboT: -9,
       keyL: false, keyR: false, ptrL: new Set(), ptrR: new Set(), tilt: null, tiltOn: false,
       parts: [], over: false, lastTop: 0,
     };
     const sf = surface(el, 'Sky Hop', () => draw());
     let V = fitView(sf, VW, VH, 4);
+    /* the look picked in Options (read live, so a change shows when the round resumes) */
+    const theme = () => THEMES[ctx.settings?.theme] || THEMES.day;
 
     /* ------------------------------ the clouds ------------------------------ */
     let prevKind = 'normal';
@@ -71,7 +88,7 @@ export default {
     }
     function newRound() {
       S.plats = []; S.parts = []; prevKind = 'normal';
-      Object.assign(S, { state: 'ready', x: VW / 2, y: 60, vx: 0, vy: 0, cam: -100, top: 0, score: 0, bounces: 0, breaks: 0, springs: 0, over: false, lastTop: 0 });
+      Object.assign(S, { state: 'ready', x: VW / 2, y: 60, vx: 0, vy: 0, cam: -100, top: 0, score: 0, bounces: 0, breaks: 0, springs: 0, combo: 0, maxCombo: 0, comboT: -9, over: false, lastTop: 0 });
       addPlatform(0, 'normal', VW / 2 - PW / 2);
       S.plats[0].start = true;
       fill(VH * 1.6);
@@ -115,8 +132,14 @@ export default {
           if (f0 >= top && f1 <= top && S.x + HALF * 0.7 > p.x && S.x - HALF * 0.7 < p.x + PW) {
             if (p.kind === 'breaking') { p.broken = true; S.breaks++; burst(S.x, top, 30, 10); snd.blip(140, 0.18, 'sawtooth', 0.7, 60); continue; }
             S.y = top + 18;
-            if (p.spring && S.x > p.x + PW * 0.25 && S.x < p.x + PW * 0.75) { S.vy = SPRING; p.springT = S.time; S.springs++; snd.blip(300, 0.2, 'triangle', 0.9, 900); }
-            else { S.vy = BOUNCE; snd.blip(330, 0.07, 'triangle', 0.7, 520); }
+            if (p.spring && S.x > p.x + PW * 0.25 && S.x < p.x + PW * 0.75) {
+              /* springs one after another launch harder */
+              S.combo = Math.min(S.combo + 1, 99); S.maxCombo = Math.max(S.maxCombo, S.combo);
+              S.vy = SPRING * (1 + COMBO_STEP * (Math.min(S.combo, COMBO_MAX) - 1));
+              p.springT = S.time; S.springs++; if (S.combo > 1) S.comboT = S.time;
+              snd.blip(300 + (S.combo - 1) * 60, 0.2, 'triangle', 0.9, 900 + (S.combo - 1) * 120);
+            }
+            else { S.vy = BOUNCE; S.combo = 0; snd.blip(330, 0.07, 'triangle', 0.7, 520); }
             S.bounces++;
             burst(S.x, top, 190, 5);
             break;
@@ -136,7 +159,9 @@ export default {
       if (S.state !== 'play') return;
       S.state = 'over'; S.over = true;
       snd.blip(300, 0.5, 'sawtooth', 0.9, 60);
-      if (!S.fuzz) setTimeout(() => { if (!dead) ctx.onEnd({ score: S.score, detail: `You climbed ${S.score} m with ${S.bounces} bounces${S.springs ? ` and ${S.springs} spring${S.springs === 1 ? '' : 's'}` : ''}.` }); }, reduced ? 300 : 800);
+      /* the round as it ended (a test that puts the hopper back in play cancels it) */
+      const detail = `You climbed ${S.score} m with ${S.bounces} bounces${S.springs ? ` and ${S.springs} spring${S.springs === 1 ? '' : 's'}` : ''}${S.maxCombo > 1 ? `, best spring combo ×${S.maxCombo}` : ''}.`;
+      if (!S.fuzz) setTimeout(() => { if (!dead && S.over) ctx.onEnd({ score: S.score, detail }); }, reduced ? 300 : 800);
     }
     function begin() { if (S.state === 'ready') { S.state = 'play'; S.vy = BOUNCE; snd.blip(330, 0.07, 'triangle', 0.7, 520); } }
 
@@ -156,14 +181,27 @@ export default {
       g.save();
       g.translate(V.ox, V.oy); g.scale(V.s, V.s);
       g.beginPath(); g.rect(0, 0, VW, VH); g.clip();
-      /* the sky darkens with height */
+      /* the sky (the theme's) darkens with height */
+      const TH = theme();
       const k = clamp(S.cam / 8000, 0, 1);
       const bg = g.createLinearGradient(0, 0, 0, VH);
-      bg.addColorStop(0, hsl(225 - 15 * k, 70, 18 - 12 * k)); bg.addColorStop(1, hsl(200 - 20 * k, 75, 55 - 35 * k));
+      bg.addColorStop(0, hsl(TH.top[0] + TH.shift[0] * k, TH.top[1], Math.max(3, TH.top[2] + TH.shift[1] * k)));
+      bg.addColorStop(1, hsl(TH.bot[0] + TH.shift[2] * k, TH.bot[1], Math.max(8, TH.bot[2] + TH.shift[3] * k)));
       g.fillStyle = bg; g.fillRect(0, 0, VW, VH);
-      g.fillStyle = 'rgba(255,255,255,.5)';
-      for (let i = 0; i < 40; i++) { const sx = (i * 97) % VW, syy = ((i * 61 + S.cam * (0.05 + (i % 3) * 0.03) * (reduced ? 0 : 1)) % VH); g.globalAlpha = 0.15 + k * 0.6 * ((i % 4) / 4); g.fillRect(sx, VH - syy, 1.6, 1.6); }
+      g.fillStyle = `rgba(${TH.star},.5)`;
+      const many = TH === THEMES.space ? 90 : 40, bright = TH === THEMES.space ? 0.55 : 0.15;
+      for (let i = 0; i < many; i++) { const sx = (i * 97 + (i > 40 ? 31 : 0)) % VW, syy = ((i * 61 + S.cam * (0.05 + (i % 3) * 0.03) * (reduced ? 0 : 1)) % VH); g.globalAlpha = bright + k * 0.6 * ((i % 4) / 4); g.fillRect(sx, VH - syy, 1.6, 1.6); }
       g.globalAlpha = 1;
+      if (TH === THEMES.sunset) {             /* a low sun that sinks as you climb */
+        const sunY = VH - 90 + Math.min(200, S.cam * 0.02);
+        const sun = g.createRadialGradient(VW * 0.7, sunY, 4, VW * 0.7, sunY, 70);
+        sun.addColorStop(0, 'rgba(255,236,170,.95)'); sun.addColorStop(0.35, 'rgba(255,170,90,.5)'); sun.addColorStop(1, 'rgba(255,120,80,0)');
+        g.fillStyle = sun; g.fillRect(0, 0, VW, VH);
+      } else if (TH === THEMES.space) {        /* a ringed planet far off */
+        const py = 140 + ((S.cam * 0.03) % (VH + 200));
+        g.fillStyle = 'rgba(150,120,255,.55)'; g.beginPath(); g.arc(VW * 0.22, py, 26, 0, 7); g.fill();
+        g.strokeStyle = 'rgba(220,200,255,.5)'; g.lineWidth = 2; g.beginPath(); g.ellipse(VW * 0.22, py, 44, 9, -0.3, 0, 7); g.stroke();
+      }
       /* clouds */
       for (const p of S.plats) {
         const y = sy(p.y);
@@ -186,6 +224,12 @@ export default {
       g.translate(V.ox, V.oy); g.scale(V.s, V.s);
       g.textBaseline = 'top'; g.textAlign = 'left'; g.font = `800 24px ${FONT}`; g.fillStyle = '#fff'; g.shadowBlur = 6; g.shadowColor = 'rgba(0,0,0,.6)';
       g.fillText(`${S.score} m`, 14, 12);
+      /* a spring combo, for a moment after each spring in a row */
+      if (S.combo > 1 && S.time - S.comboT < 1.4) {
+        g.textAlign = 'center'; g.font = `800 20px ${FONT}`;
+        g.fillStyle = `rgba(255,120,150,${clamp(1.4 - (S.time - S.comboT), 0, 1)})`;
+        g.fillText(`Spring combo ×${S.combo}`, VW / 2, 52);
+      }
       g.restore();
       if (S.state === 'ready') prompt(g, sf, coarse() ? 'Touch left or right to start' : 'Press ← or → to start', 'Steer the hopper from cloud to cloud', 195, sf.h * 0.55);
       if (S.paused) prompt(g, sf, 'Paused', null, 195);
@@ -199,7 +243,7 @@ export default {
     function cloud(g, x, y, w, kind, tilt) {
       const hh = PH;
       g.save(); g.translate(x + w / 2, y); g.rotate(tilt);
-      const base = kind === 'breaking' ? ['#d9b48a', '#8a6038'] : kind === 'moving' ? ['#b9f0ff', '#58b8e0'] : ['#ffffff', '#b9d4ee'];
+      const base = theme().clouds[kind === 'breaking' ? 'breaking' : kind === 'moving' ? 'moving' : 'normal'];
       const gr = g.createLinearGradient(0, -hh / 2, 0, hh / 2); gr.addColorStop(0, base[0]); gr.addColorStop(1, base[1]);
       g.fillStyle = gr; rr(g, -w / 2, -hh / 2, w, hh, 6); g.fill();
       g.beginPath(); g.arc(-w * 0.22, -hh / 2, 7, 0, 7); g.arc(w * 0.05, -hh / 2 - 2, 9, 0, 7); g.arc(w * 0.3, -hh / 2, 6.5, 0, 7); g.fill();
@@ -296,6 +340,7 @@ export default {
       peek: () => ({
         state: S.state, paused: S.paused, time: S.time, score: S.score, x: S.x, y: S.y, vx: S.vx, vy: S.vy, cam: S.cam, top: S.top,
         bounces: S.bounces, breaks: S.breaks, springs: S.springs, tiltOn: S.tiltOn, axis: axis(), bounceSpeed: BOUNCE, springSpeed: SPRING,
+        combo: S.combo, maxCombo: S.maxCombo, theme: Object.keys(THEMES).find(k => THEMES[k] === theme()),
         plats: S.plats.map(p => ({ x: p.x, y: p.y, kind: p.kind, broken: p.broken, spring: p.spring })), over: S.over, w: VW, plat: PW,
       }),
       /* test hook — nothing in the game calls it:

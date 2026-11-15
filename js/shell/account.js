@@ -13,7 +13,7 @@
    Honest limits, also why nothing sensitive may ever sit behind this:
    everything runs in the page, so someone with DevTools can edit
    storage and call themselves signed in. It is a front door, not a
-   vault. Widgets are gated on it because that was asked for; the
+   vault. Widgets are gated on having a profile because that was asked for; the
    developer account unlocks conveniences, never secrets.
 
    Exposes: current(), signOut(), and bus 'account:open' (tab) to
@@ -26,6 +26,7 @@ import { bus } from '../core/bus.js';
 import * as L from '../core/layers.js';
 import { normPicture, builtinSvg } from '../core/avatar.js';
 import { earlyAccessCard } from '../core/earlyaccess.js';
+import { t } from '../core/i18n.js';
 
 const ACCOUNTS = 'portal.accounts';
 const SESSION = 'session.user';
@@ -118,11 +119,11 @@ export function mountAccount(host) {
   const corner = h('button.acct', { type: 'button', 'aria-haspopup': 'dialog' });
   const lock = h('div.wg-lock', { role: 'note' },
     h('div.wg-lock__ic', icon('lock')),
-    h('b', { text: 'Widgets are for signed-in users' }),
-    h('small', { text: 'Clock, weather, calendar and system monitor appear here once you sign in.' }),
+    h('b', { text: t('Make a profile to use widgets') }),
+    h('small', { text: t('A profile is a name and password kept in this browser, not on a server. Your widgets appear here once you have one.') }),
     h('div.wg-lock__acts',
-      h('button.btn.btn--primary.btn--sm', { type: 'button', onclick: () => openSheet('in') }, 'Sign in'),
-      h('button.btn.btn--sm', { type: 'button', onclick: () => openSheet('up') }, 'Create account')));
+      h('button.btn.btn--primary.btn--sm', { type: 'button', onclick: () => openSheet('up') }, t('Make a profile')),
+      h('button.btn.btn--sm', { type: 'button', onclick: () => openSheet('in') }, t('Sign in'))));
   host.append(lock, corner);
 
   let menu = null;
@@ -134,7 +135,7 @@ export function mountAccount(host) {
     if (!u) delete document.body.dataset.user;
     corner.replaceChildren(...(u
       ? [avatar(u), h('span.acct__name', { text: u.name })]
-      : [icon('user'), h('span.acct__name', { text: 'Sign in' })]));
+      : [icon('user'), h('span.acct__name', { text: t('Sign in') })]));
     corner.setAttribute('aria-label', u ? `Account: ${u.name}` : 'Sign in or create an account');
     const showLock = !u && store.get('prefs.widgetsVisible') !== false;
     lock.hidden = !showLock;
@@ -153,24 +154,24 @@ export function mountAccount(host) {
       h('div.acct-menu__who',
         avatar(u, '.acct__av--lg'),
         h('div', h('b', { text: u.name }), h('small', { text: '@' + u.username })),
-        u.dev ? h('span.badge.badge--accent', { text: 'Developer' }) : null),
-      item('user', 'Your profile', () => window.StaticAPI?.openApp('profile')),
-      item('bookmark', 'Library & achievements', () => window.StaticAPI?.openApp('aether-library')),
+        u.dev ? h('span.badge.badge--accent', { text: t('Developer') }) : null),
+      item('user', t('Your profile'), () => window.StaticAPI?.openApp('profile')),
+      item('bookmark', t('Library & achievements'), () => window.StaticAPI?.openApp('aether-library')),
       item('users', 'Switch user…', () => bus.emit('users:open')),
       h('div.acct-menu__sep'),
-      u.dev ? h('div.acct-menu__cap', { text: 'Developer' }) : null,
-      u.dev ? item('zap', 'Admin abuse', () => window.StaticAPI?.openApp('devroom', { tab: 'admin' })) : null,
-      u.dev ? item('wrench', 'Developer Room', () => window.StaticAPI?.openApp('devroom')) : null,
-      u.dev && !onBeta() ? item('sparkles', 'Early access', () => openSheet('early')) : null,
-      u.dev ? item('terminal', 'Talk to Claude remotely…', remoteHelp) : null,
-      u.dev ? item('refresh', 'Reload, skipping the cache', () => location.reload()) : null,
-      u.dev ? item('hard-drive', 'Show the boot menu next time', () => {
+      u.dev ? h('div.acct-menu__cap', { text: t('Developer') }) : null,
+      u.dev ? item('zap', t('Admin abuse'), () => window.StaticAPI?.openApp('devroom', { tab: 'admin' })) : null,
+      u.dev ? item('wrench', t('Developer Room'), () => window.StaticAPI?.openApp('devroom')) : null,
+      u.dev && !onBeta() ? item('sparkles', t('Early access'), () => openSheet('early')) : null,
+      u.dev ? item('terminal', t('Talk to Claude remotely…'), remoteHelp) : null,
+      u.dev ? item('refresh', t('Reload, skipping the cache'), () => location.reload()) : null,
+      u.dev ? item('hard-drive', t('Show the boot menu next time'), () => {
         store.set('prefs', { ...store.get('prefs', {}), bootSkip: false });
-        bus.emit('noti:push', { app: 'Account', icon: 'hard-drive', title: 'Boot menu is back', message: 'It will show on the next load.', timeout: 4000 });
+        bus.emit('noti:push', { app: 'Account', icon: 'hard-drive', title: t('Boot menu is back'), message: t('It will show on the next load.'), timeout: 4000 });
       }) : null,
-      u.dev ? item('download', 'Export state (JSON)', exportState) : null,
+      u.dev ? item('download', t('Export state (JSON)'), exportState) : null,
       h('div.acct-menu__sep'),
-      item('lock', 'Sign out', signOut, '.is-danger'));
+      item('lock', t('Sign out'), signOut, '.is-danger'));
     host.appendChild(menu);
     document.addEventListener('pointerdown', outside, true);
   }
@@ -208,9 +209,9 @@ export function mountAccount(host) {
     const err = h('div.acct-sheet__err', { role: 'alert' });
     const body = h('div.acct-sheet__body');
     const tabs = h('div.acct-sheet__tabs', { role: 'tablist' });
-    const card = h('div.acct-sheet__card', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Account', tabindex: '-1' },
-      h('button.acct-sheet__x', { type: 'button', 'aria-label': 'Close', onclick: closeSheet }, icon('x')),
-      h('div.acct-sheet__brand', h('span.acct-sheet__logo', icon('diamond')), h('b', { text: 'StaticOS account' })),
+    const card = h('div.acct-sheet__card', { role: 'dialog', 'aria-modal': 'true', 'aria-label': t('Account'), tabindex: '-1' },
+      h('button.acct-sheet__x', { type: 'button', 'aria-label': t('Close'), onclick: closeSheet }, icon('x')),
+      h('div.acct-sheet__brand', h('span.acct-sheet__logo', icon('diamond')), h('b', { text: t('StaticOS account') })),
       tabs, body, err);
     sheet = h('div.acct-sheet', { onclick: e => { if (e.target === sheet) closeSheet(); } }, card);
     window.addEventListener('keydown', onEsc, true);
@@ -229,27 +230,27 @@ export function mountAccount(host) {
       body.replaceChildren();
 
       if (which === 'remote') { body.append(...remoteBody()); card.focus(); return; }
-      if (which === 'early') { body.append(h('div.acct-sheet__title', { text: 'Early access' }), earlyAccessCard(h, icon)); card.focus(); return; }
+      if (which === 'early') { body.append(h('div.acct-sheet__title', { text: t('Early access') }), earlyAccessCard(h, icon)); card.focus(); return; }
 
       const busy = h('span.acct-sheet__spin');
       let fields;
       let run;
       if (which === 'in') {
-        fields = [field('Username', { autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false' }),
-          field('Password', { type: 'password', autocomplete: 'current-password' })];
+        fields = [field(t('Username'), { autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false' }),
+          field(t('Password'), { type: 'password', autocomplete: 'current-password' })];
         run = () => signIn({ username: fields[0].input.value, password: fields[1].input.value });
       } else if (which === 'up') {
-        fields = [field('Display name', { autocomplete: 'nickname', placeholder: 'optional' }),
-          field('Username', { autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false' }),
-          field('Password', { type: 'password', autocomplete: 'new-password' }),
-          field('Confirm password', { type: 'password', autocomplete: 'new-password' })];
+        fields = [field(t('Display name'), { autocomplete: 'nickname', placeholder: 'optional' }),
+          field(t('Username'), { autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false' }),
+          field(t('Password'), { type: 'password', autocomplete: 'new-password' }),
+          field(t('Confirm password'), { type: 'password', autocomplete: 'new-password' })];
         run = () => signUp({ name: fields[0].input.value, username: fields[1].input.value, password: fields[2].input.value, confirm: fields[3].input.value });
       } else {
-        fields = [field('Developer password', { type: 'password', autocomplete: 'off' })];
+        fields = [field(t('Developer password'), { type: 'password', autocomplete: 'off' })];
         run = () => signInDev(fields[0].input.value);
       }
       const submit = h('button.btn.btn--primary.acct-sheet__go', { type: 'submit' },
-        h('span', { text: which === 'up' ? 'Create account' : 'Sign in' }), busy);
+        h('span', { text: which === 'up' ? t('Create account') : t('Sign in') }), busy);
       const form = h('form.acct-sheet__form', {
         onsubmit: async e => {
           e.preventDefault();
@@ -259,7 +260,7 @@ export function mountAccount(host) {
           try {
             const u = await run();
             closeSheet();
-            bus.emit('noti:push', { app: 'Account', icon: u.dev ? 'terminal' : 'user', title: `Signed in as ${u.name}`, message: u.dev ? 'Developer tools are in the account menu, bottom right.' : 'Your widgets are back.', timeout: 4000 });
+            bus.emit('noti:push', { app: 'Account', icon: u.dev ? 'terminal' : 'user', title: t('Signed in as {name}', { name: u.name }), message: u.dev ? t('Developer tools are in the account menu, bottom right.') : t('Your widgets are back.'), timeout: 4000 });
           } catch (x) {
             err.textContent = x.message;
             card.classList.remove('is-busy');
@@ -269,8 +270,8 @@ export function mountAccount(host) {
       }, fields.map(f => f.el), submit);
       body.append(form,
         h('p.acct-sheet__note', { text: which === 'dev'
-          ? 'For the owner of this StaticOS. The password is checked against a one-way hash — it is not stored anywhere.'
-          : 'Accounts live in this browser only. StaticOS has no server, so an account made here does not exist on another computer, and clearing site data removes it.' }));
+          ? t('For the owner of this StaticOS. The password is checked against a one-way hash — it is not stored anywhere.')
+          : t('Accounts live in this browser only. StaticOS has no server, so an account made here does not exist on another computer, and clearing site data removes it.') }));
       setTimeout(() => fields[0].input.focus(), 30);
     }
 
@@ -278,15 +279,15 @@ export function mountAccount(host) {
       const step = (n, title, ...rest) => h('li.acct-steps__li', h('b', { text: `${n}. ${title}` }), ...rest);
       const code = t => h('code.acct-code', { text: t });
       return [
-        h('div.acct-sheet__title', { text: 'Talk to Claude from anywhere' }),
-        h('p.acct-sheet__p', { text: 'Claude Code has this built in: Remote Control. Your home computer keeps the session running; you drive it from claude.ai/code on any browser or the Claude phone app, signed in to your own Claude account.' }),
+        h('div.acct-sheet__title', { text: t('Talk to Claude from anywhere') }),
+        h('p.acct-sheet__p', { text: t('Claude Code has this built in: Remote Control. Your home computer keeps the session running; you drive it from claude.ai/code on any browser or the Claude phone app, signed in to your own Claude account.') }),
         h('ol.acct-steps',
-          step(1, 'At home, start it', h('div', { text: 'In a terminal in your project: ' }), code('claude --remote-control'), h('div', { text: 'or type ' }), code('/remote-control'), h('div', { text: ' inside a running session.' })),
-          step(2, 'Leave that computer on', h('div', { text: 'The session only lives while the claude process runs and the computer is awake and online.' })),
-          step(3, 'From anywhere', h('div', { text: 'Open claude.ai/code and pick the session. Needs a Pro, Max, Team or Enterprise plan.' }))),
+          step(1, t('At home, start it'), h('div', { text: t('In a terminal in your project: ') }), code('claude --remote-control'), h('div', { text: t('or type ') }), code('/remote-control'), h('div', { text: t(' inside a running session.') })),
+          step(2, t('Leave that computer on'), h('div', { text: t('The session only lives while the claude process runs and the computer is awake and online.') })),
+          step(3, t('From anywhere'), h('div', { text: t('Open claude.ai/code and pick the session. Needs a Pro, Max, Team or Enterprise plan.') }))),
         h('div.acct-sheet__row',
-          h('button.btn.btn--primary', { type: 'button', onclick: () => window.open('https://claude.ai/code', '_blank', 'noopener') }, icon('external-link'), 'Open claude.ai/code')),
-        h('p.acct-sheet__note', { text: 'If claude.ai is blocked on this network, it will not load here either — sign-in pages do not survive the proxy.' }),
+          h('button.btn.btn--primary', { type: 'button', onclick: () => window.open('https://claude.ai/code', '_blank', 'noopener') }, icon('external-link'), t('Open claude.ai/code'))),
+        h('p.acct-sheet__note', { text: t('If claude.ai is blocked on this network, it will not load here either — sign-in pages do not survive the proxy.') }),
       ];
     }
 

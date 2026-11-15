@@ -24,6 +24,16 @@
    last move, once per round. When the board locks up while the undo
    is still unused, a card offers it before the round ends.
 
+   BOARDS AND HARD MODE: 3×3, 4×4, 5×5 or 6×6 (the target grows with
+   the board: 512, 2048, 4096, 8192), and Hard, where there is no undo
+   and each new tile lands where it hurts most: every empty square and
+   both values are tried, and the one that leaves your best next move
+   the worst board is the one dealt (worstSpawn below). Only the
+   standard 4×4 game counts for the Arcade's best; every other mode
+   keeps its own best here (portal.arcadePuzzles.g2048). A shared round
+   (a Beat-this link, the weekly challenge) and the online race are
+   always the standard game.
+
    ONLINE RACE (ctx.online, from the Arcade's room): both players
    start from the same seed, so the new tiles come from the same
    random sequence — the same luck for the same moves. Three minutes,
@@ -34,9 +44,23 @@
    that does not change their board voids the race.
    ============================================================ */
 
+import { load as loadSaved, save as saveSaved } from './puzzlekit.js';
+
 const HUE = 35;
 const N = 4;
 const WIN = 2048;
+export const SIZES = [3, 4, 5, 6];
+/* the tile to reach, by board */
+export const TARGET = { 3: 512, 4: 2048, 5: 4096, 6: 8192 };
+const modeKey = (n, hard) => `${n}${hard ? '-hard' : ''}`;
+const MODE_CSS = `
+.arc-g2k{position:absolute;top:12px;left:12px;z-index:2;display:flex;flex-wrap:wrap;gap:6px;align-items:center;max-width:calc(100% - 160px)}
+.arc-g2k button{height:30px;padding:0 10px;border-radius:var(--r-pill,999px);font:700 11px/1 Inter,ui-sans-serif,system-ui,sans-serif;color:#ffe7c2;cursor:pointer;
+  background:rgba(20,12,4,.78);border:1px solid hsla(35,100%,65%,.3)}
+.arc-g2k button[aria-pressed="true"]{background:hsla(35,100%,55%,.32);border-color:hsla(35,100%,70%,.8);color:#fff}
+.arc-g2k button:focus-visible{outline:2px solid hsl(35 100% 70%);outline-offset:2px}
+.arc-g2k small{font:600 11px/1.2 Inter,ui-sans-serif,system-ui,sans-serif;color:rgba(255,231,194,.75);padding:0 4px}
+`;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const hsl = (h, s, l, a = 1) => `hsla(${h},${s}%,${l}%,${a})`;
@@ -76,30 +100,55 @@ export function rng32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const lineCells = (dir, i) => {
+/* (the board's size is its grid's length: 4 unless a mode says otherwise) */
+const lineCells = (dir, i, n = N) => {
   const out = [];
-  for (let j = 0; j < N; j++) {
+  for (let j = 0; j < n; j++) {
     if (dir === 'left') out.push([i, j]);
-    else if (dir === 'right') out.push([i, N - 1 - j]);
+    else if (dir === 'right') out.push([i, n - 1 - j]);
     else if (dir === 'up') out.push([j, i]);
-    else out.push([N - 1 - j, i]);
+    else out.push([n - 1 - j, i]);
   }
   return out;
 };
 /* empty cells in reading order, then one draw for the cell and one for 2-or-4 */
 function spawnValue(grid, rnd) {
-  const free = [];
-  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!grid[r][c]) free.push([r, c]);
+  const n = grid.length, free = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (!grid[r][c]) free.push([r, c]);
   if (!free.length) return null;
   const [r, c] = free[Math.floor(rnd() * free.length)];
   const v = rnd() < 0.9 ? 2 : 4;
   return { r, c, v };
 }
+/* Hard mode's tile: of every empty square and both values, the one after which
+   your best move leaves the worst board (fewest empty squares, then the least
+   gained; a board with no move at all is the worst of all). Ties: rnd. */
+export function worstSpawn(grid, rnd) {
+  const n = grid.length;
+  let worst = Infinity, picks = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    if (grid[r][c]) continue;
+    for (const v of [2, 4]) {
+      const g = grid.map(row => row.slice());
+      g[r][c] = v;
+      let best = -1;
+      for (const dir of ['left', 'right', 'up', 'down']) {
+        const res = slideValues(g, dir);
+        if (!res.moved) continue;
+        const free = res.grid.flat().filter(x => !x).length;
+        best = Math.max(best, free * 1000 + res.gained);
+      }
+      if (best < worst) { worst = best; picks = [{ r, c, v }]; } else if (best === worst) picks.push({ r, c, v });
+    }
+  }
+  return picks.length ? picks[Math.floor(rnd() * picks.length)] : null;
+}
 export function slideValues(grid, dir) {
-  const next = Array.from({ length: N }, () => Array(N).fill(0));
+  const n = grid.length;
+  const next = Array.from({ length: n }, () => Array(n).fill(0));
   let moved = false, gained = 0;
-  for (let i = 0; i < N; i++) {
-    const cells = lineCells(dir, i);
+  for (let i = 0; i < n; i++) {
+    const cells = lineCells(dir, i, n);
     const line = cells.map(([r, c]) => ({ v: grid[r][c], r, c })).filter(t => t.v);
     let k = 0;
     for (let j = 0; j < line.length; k++) {
@@ -111,10 +160,11 @@ export function slideValues(grid, dir) {
   }
   return { grid: next, moved, gained };
 }
-const stuckValues = grid => {
-  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+export const stuckValues = grid => {
+  const n = grid.length;
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
     const v = grid[r][c];
-    if (!v || (c + 1 < N && grid[r][c + 1] === v) || (r + 1 < N && grid[r + 1][c] === v)) return false;
+    if (!v || (c + 1 < n && grid[r][c + 1] === v) || (r + 1 < n && grid[r + 1][c] === v)) return false;
   }
   return true;
 };
@@ -145,7 +195,16 @@ export default {
     const snd = sounder(ctx);
     const now = () => performance.now() / 1000;
     const NET = ctx.online && typeof ctx.online.send === 'function' ? ctx.online : null;
-    const rnd = NET ? rng32(NET.seed) : Math.random;
+    /* an online race's shared seed, else the shell's (ctx.seed: the same moves get the same tiles) */
+    const rnd = NET ? rng32(NET.seed) : Number.isInteger(ctx.seed) ? rng32(ctx.seed) : Math.random;
+    /* the board and Hard: the standard 4×4 for a race, a shared round or a set-up board */
+    const fixed = !!NET || !!ctx.shared || Array.isArray(ctx.board);
+    const saved = loadSaved('g2048');
+    const bests = { ...(saved.best && typeof saved.best === 'object' ? saved.best : {}) };
+    let N = fixed || !SIZES.includes(saved.size) ? 4 : saved.size;
+    let hard = !fixed && saved.hard === true;
+    let WIN = TARGET[N];
+    const standard = () => N === 4 && !hard;
     const S = {
       grid: Array.from({ length: N }, () => Array(N).fill(null)),
       ghosts: [], nextId: 1,
@@ -153,7 +212,7 @@ export default {
       over: false, overAt: 0, ended: false,
       animEnd: 0, shake: 0, overlay: null, shakeAt: -1,
       winTimer: 0, focusTimer: 0,
-      undoLeft: NET ? 0 : 1, prev: null, moves: '', undoAt: -1,
+      undoLeft: NET || hard ? 0 : 1, prev: null, moves: '', undoAt: -1,
     };
     /* the race: their game, replayed here from their moves */
     const R = NET ? { t0: performance.now(), them: newRace(NET.seed), voided: false, lastNeed: 0, lastReply: 0, beat: 0, off: null, shown: -1 } : null;
@@ -169,10 +228,58 @@ export default {
       el.appendChild(undoBtn);
     }
 
+    /* the board and mode chooser (not in a race or a shared round) */
+    const modeEl = fixed ? null : mk('div', 'arc-g2k');
+    const modeCss = fixed ? null : document.createElement('style');
+    const sizeBtns = [], modeBest = mk('small', '', '');
+    let hardBtn = null;
+    if (modeEl) {
+      modeCss.textContent = MODE_CSS;
+      el.appendChild(modeCss);
+      for (const n of SIZES) {
+        const b = mk('button', '', `${n}×${n}`);
+        b.type = 'button'; b.dataset.size = n; b.title = `A ${n}×${n} board, to ${TARGET[n]}`;
+        b.addEventListener('click', () => { setMode(n, hard); refocus(); });
+        sizeBtns.push(b); modeEl.appendChild(b);
+      }
+      hardBtn = mk('button', '', 'Hard');
+      hardBtn.type = 'button'; hardBtn.dataset.act = 'hard';
+      hardBtn.title = 'Hard: no undo, and each new tile lands where it hurts most';
+      hardBtn.addEventListener('click', () => { setMode(N, !hard); refocus(); });
+      modeEl.append(hardBtn, modeBest);
+      el.appendChild(modeEl);
+    }
+    const refocus = () => el.closest('[tabindex]')?.focus({ preventScroll: true });
+    function paintModes() {
+      if (!modeEl) return;
+      sizeBtns.forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.size) === N)));
+      hardBtn.setAttribute('aria-pressed', String(hard));
+      const b = bests[modeKey(N, hard)];
+      modeBest.textContent = standard() ? '' : b ? `Best here ${b}` : 'Its own best';
+      modeEl.setAttribute('aria-label', `Board ${N} by ${N}${hard ? ', hard' : ''}`);
+    }
+    /* a new board of another size or mode, in the same round */
+    function setMode(n, h2) {
+      if (S.ended || (n === N && h2 === hard)) return;
+      N = n; hard = h2; WIN = TARGET[N];
+      saveSaved('g2048', { size: N, hard });
+      clearTimeout(S.winTimer); clearTimeout(S.focusTimer);
+      S.overlay?.remove();
+      Object.assign(S, {
+        grid: Array.from({ length: N }, () => Array(N).fill(null)), ghosts: [], score: 0, won: false, keepGoing: false,
+        over: false, overAt: 0, animEnd: 0, shake: 0, overlay: null, shakeAt: -1, undoLeft: hard ? 0 : 1, prev: null, moves: '', undoAt: -1,
+      });
+      spawn(now()); spawn(now());
+      ctx.onScore(0);
+      paintUndo(); paintModes();
+      kick(now() + POP + 0.05);
+    }
+
     if (NET || !loadBoard(ctx.board)) { spawn(now()); spawn(now()); }
     else if (!canMove()) { S.over = true; S.overAt = now() + POP + 0.6; }
     ctx.onScore(0);
     paintUndo();
+    paintModes();
 
     /* ------------------------------ rules ------------------------------ */
     function loadBoard(b) {
@@ -198,9 +305,10 @@ export default {
       return out;
     }
 
-    /* the same draws as spawnValue(), so a race's replay sees the same tiles */
+    /* the same draws as spawnValue(), so a race's replay sees the same tiles; Hard picks the worst one */
     function spawn(at) {
-      const t = spawnValue(S.grid.map(row => row.map(x => (x ? x.v : 0))), rnd);
+      const vals = S.grid.map(row => row.map(x => (x ? x.v : 0)));
+      const t = hard ? worstSpawn(vals, rnd) : spawnValue(vals, rnd);
       if (!t) return;
       S.grid[t.r][t.c] = { id: S.nextId++, v: t.v, r: t.r, c: t.c, fr: t.r, fc: t.c, t0: at, kind: 'new' };
       S.animEnd = Math.max(S.animEnd, at + POP);
@@ -333,9 +441,9 @@ export default {
       if (!undoBtn) return;
       const can = S.undoLeft > 0 && !!S.prev && !S.ended;
       undoBtn.disabled = !can;
-      undoTxt.textContent = S.undoLeft > 0 ? 'Undo · 1 left' : 'Undo used';
-      undoBtn.title = S.undoLeft > 0 ? (S.prev ? 'Take back your last move (Z). You get one undo per round.' : 'Make a move first. You get one undo per round.') : 'You’ve used this round’s undo.';
-      undoBtn.setAttribute('aria-label', S.undoLeft > 0 ? 'Undo the last move (Z). One undo left this round.' : 'Undo used this round');
+      undoTxt.textContent = hard ? 'No undo (Hard)' : S.undoLeft > 0 ? 'Undo · 1 left' : 'Undo used';
+      undoBtn.title = hard ? 'Hard has no undo.' : S.undoLeft > 0 ? (S.prev ? 'Take back your last move (Z). You get one undo per round.' : 'Make a move first. You get one undo per round.') : 'You’ve used this round’s undo.';
+      undoBtn.setAttribute('aria-label', hard ? 'No undo in Hard' : S.undoLeft > 0 ? 'Undo the last move (Z). One undo left this round.' : 'Undo used this round');
       undoBtn.hidden = S.ended;
     }
     /* stuck with the undo unused: offer it before the round ends */
@@ -411,7 +519,18 @@ export default {
       paintUndo();
       let top = 0;
       for (const row of S.grid) for (const t of row) if (t) top = Math.max(top, t.v);
-      if (!R) { ctx.onEnd({ score: S.score, won: S.won, detail: detail || `Biggest tile ${top}` }); return; }
+      if (!R) {
+        if (modeEl) modeEl.hidden = true;
+        if (standard()) { ctx.onEnd({ score: S.score, won: S.won, detail: detail || `Biggest tile ${top}` }); return; }
+        /* any other board keeps its own best, here */
+        const k = modeKey(N, hard), prev = bests[k];
+        if (!prev || S.score > prev) { bests[k] = S.score; saveSaved('g2048', { best: { ...bests } }); }
+        ctx.onEnd({
+          score: S.score, won: S.won, assisted: `Only the standard 4×4 game changes your Arcade best; ${N}×${N}${hard ? ' Hard' : ''} keeps its own`,
+          detail: `${N}×${N}${hard ? ' Hard' : ''} · ${detail || `biggest tile ${top}`}${!prev || S.score > prev ? ' · its best yet' : ` · its best ${prev}`}`,
+        });
+        return;
+      }
       /* the last move message may have been lost: say how many moves there were, a few times */
       beat();
       setTimeout(beat, 700);
@@ -429,15 +548,15 @@ export default {
       const stopBtn = mk('button', 'arc-ov__btn', 'Finish');
       keep.type = stopBtn.type = 'button';
       const card = mk('div', 'arc-ov__card',
-        mk('div', 'arc-ov__big', '2048!'),
-        mk('p', 'arc-ov__text', 'You made the 2048 tile. Keep going for a bigger one, or finish the round with this score.'),
+        mk('div', 'arc-ov__big', `${WIN}!`),
+        mk('p', 'arc-ov__text', `You made the ${WIN} tile. Keep going for a bigger one, or finish the round with this score.`),
         mk('div', 'arc-ov__row', keep, stopBtn));
       const ov = mk('div', 'arc-ov', card);
       ov.setAttribute('role', 'dialog');
-      ov.setAttribute('aria-label', 'You made 2048');
+      ov.setAttribute('aria-label', `You made ${WIN}`);
       ov.style.setProperty('--h', HUE);
       keep.addEventListener('click', () => { S.keepGoing = true; closeWin(); });
-      stopBtn.addEventListener('click', () => { closeWin(); finish('Reached 2048'); });
+      stopBtn.addEventListener('click', () => { closeWin(); finish(`Reached ${WIN}`); });
       el.appendChild(ov);
       S.overlay = ov;
       snd.blip(660, 0.35, 'triangle', 1, 1320);
@@ -475,10 +594,12 @@ export default {
     function layout() {
       const pad = Math.max(12, Math.min(sf.w, sf.h) * 0.05);
       if (!R) {
-        const size = Math.max(120, Math.min(sf.w, sf.h) - pad * 2);
-        const gap = size * 0.028;
+        /* room at the top for the board chooser and the undo */
+        const top = modeEl && !modeEl.hidden ? Math.max(pad, 50) : pad;
+        const size = Math.max(120, Math.min(sf.w - pad * 2, sf.h - top - pad));
+        const gap = size * (N > 4 ? 0.022 : 0.028);
         const cell = (size - gap * (N + 1)) / N;
-        return { size, gap, cell, ox: (sf.w - size) / 2, oy: (sf.h - size) / 2 };
+        return { size, gap, cell, ox: (sf.w - size) / 2, oy: top + Math.max(0, (sf.h - top - pad - size) / 2) };
       }
       /* the race: the friend's board beside yours, or above it */
       const kB = 1.42, kA = 1.3;
@@ -738,6 +859,7 @@ export default {
         clearTimeout(S.winTimer);
         clearTimeout(S.focusTimer);
         undoBtn?.remove();
+        modeEl?.remove(); modeCss?.remove();
         window.removeEventListener('keydown', onKey);
         sf.cv.removeEventListener('pointerdown', onDown);
         sf.cv.removeEventListener('pointerup', onUp);
@@ -752,6 +874,7 @@ export default {
         score: S.score, won: S.won, keepGoing: S.keepGoing, over: S.over, ended: S.ended, card: !!S.overlay,
         stuckCard: !!S.overlay?.classList.contains('is-stuck'),
         undo: { left: S.undoLeft, ready: S.undoLeft > 0 && !!S.prev }, moves: S.moves,
+        n: N, hard, target: WIN, chooser: !!modeEl && !modeEl.hidden, bests: { ...bests },
         race: R ? { them: R.them.score, theirMoves: R.them.moves.length, theirOver: R.them.over, theirGrid: R.them.grid.map(r => r.slice()), left: timeLeft(), voided: R.voided } : null,
       }),
     };

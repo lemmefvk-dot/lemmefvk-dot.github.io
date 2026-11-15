@@ -1,5 +1,6 @@
 /* ============================================================
-   js/sheets/chart.js — bar, line and pie charts on a <canvas>.
+   js/sheets/chart.js — bar, line, pie, stacked bar, stacked area
+   and scatter charts on a <canvas>.
 
    chartData(book, sid, range, show) reads a range the way people lay
    data out: a text column on the left names the categories, a text
@@ -16,17 +17,30 @@
    a 2px gap; lines are 2px with 8px markers; a legend whenever there
    are two or more series (a single series is named by the title); the
    pie's legend carries each slice's share as text.
-   ============================================================ */
 
-export const TYPES = ['bar', 'line', 'pie'];
-export const TYPE_NAMES = { bar: 'Bar', line: 'Line', pie: 'Pie' };
+   Stacked bar and stacked area add each series on top of the ones
+   before it (an empty cell adds nothing). Scatter reads the first
+   column of numbers as x and every other one as a y series, and draws
+   each series' least-squares line (js/core/stats.js fitLine) with its
+   equation and r² in the legend — or says why there is no line.
+   Axis titles (x and y) are drawn when the chart has them.
+   ============================================================ */
+import { fitLine, lineText, fmt as statFmt } from '../core/stats.js';
+
+export const TYPES = ['bar', 'line', 'pie', 'stacked', 'area', 'scatter'];
+export const TYPE_NAMES = { bar: 'Bar', line: 'Line', pie: 'Pie', stacked: 'Stacked bar', area: 'Stacked area', scatter: 'Scatter' };
+export const TYPE_ICONS = { bar: 'bar-chart', line: 'line-chart', pie: 'pie-chart', stacked: 'bar-chart', area: 'line-chart', scatter: 'trending-up' };
+const AXES = new Set(['bar', 'line', 'stacked', 'area', 'scatter']);
+export const hasAxes = type => AXES.has(type);
 const MAX_SERIES = 8;
 const MAX_CATS = 400;
 
 const isText = v => typeof v === 'string' && v.trim() !== '';
 
-/** → { labels: [text], series: [{ name, values: [number|null] }], note? } */
-export function chartData(book, sid, g, show) {
+/** → { labels: [text], series: [{ name, values: [number|null] }], note? }
+    (a scatter: { xy: true, xName, labels: [], series: [{ name, pts: [[x, y]], fit }] }) */
+export function chartData(book, sid, g, show, type) {
+  if (type === 'scatter') return scatterData(book, sid, g, show);
   const ext = book.extentOf(sid);
   const r2 = Math.min(g.r2, ext.r), c2 = Math.min(g.c2, ext.c);
   if (r2 < g.r1 || c2 < g.c1) return { labels: [], series: [] };
@@ -68,6 +82,35 @@ export function chartData(book, sid, g, show) {
     labelHead: labelCol && head ? S(0, 0) : '',
     note: [R - start > MAX_CATS ? `first ${MAX_CATS} of ${R - start} rows` : '', folded ? `${folded} more series not shown` : ''].filter(Boolean).join(' · '),
   };
+}
+/* x, y data: a header row names the columns; the first column with numbers
+   in it is x, each later one a y series. A row counts when both are numbers. */
+function scatterData(book, sid, g, show) {
+  const ext = book.extentOf(sid);
+  const r2 = Math.min(g.r2, ext.r), c2 = Math.min(g.c2, ext.c);
+  const none = { xy: true, labels: [], series: [], xName: '' };
+  if (r2 < g.r1 || c2 < g.c1) return none;
+  const V = (r, c) => book.valueIn(sid, r, c);
+  const num = v => typeof v === 'number' && Number.isFinite(v);
+  const cols = [];
+  for (let c = g.c1; c <= c2; c++) {
+    let n = 0;
+    for (let r = g.r1; r <= r2; r++) if (num(V(r, c))) n++;
+    if (n) cols.push(c);
+  }
+  if (cols.length < 2) return { ...none, note: cols.length ? 'a scatter needs two columns of numbers: x, then y' : '' };
+  const head = cols.some(c => isText(V(g.r1, c)));
+  const start = head ? g.r1 + 1 : g.r1;
+  const name = c => (head && isText(V(g.r1, c)) ? show(g.r1, c) : `Column ${colLetters(c)}`);
+  const xc = cols[0];
+  const series = [];
+  for (const yc of cols.slice(1, 1 + MAX_SERIES)) {
+    const pts = [];
+    for (let r = start; r <= r2 && pts.length < 4000; r++) { const x = V(r, xc), y = V(r, yc); if (num(x) && num(y)) pts.push([x, y]); }
+    if (pts.length) series.push({ name: name(yc), pts, fit: fitLine(pts) });
+  }
+  const folded = Math.max(0, cols.length - 1 - MAX_SERIES);
+  return { xy: true, labels: [], series, xName: name(xc), note: folded ? `${folded} more series not shown` : '' };
 }
 function colLetters(c) {
   let s = '';
@@ -151,7 +194,8 @@ export function drawChart(g, W, H, spec, T) {
     g.restore();
     return out;
   };
-  if (!series.length || !data.labels.length) return message('No numbers in this range to chart');
+  if (data.xy && !series.length) return message(data.note ? `No points: ${data.note}` : 'No x, y pairs in this range to chart');
+  if (!data.xy && (!series.length || !data.labels.length)) return message('No numbers in this range to chart');
 
   /* ---------------- pie ---------------- */
   if (type === 'pie') {
@@ -194,11 +238,21 @@ export function drawChart(g, W, H, spec, T) {
     return out;
   }
 
-  /* ---------------- bar / line ---------------- */
+  /* ---------------- scatter ---------------- */
+  if (type === 'scatter') return drawScatter(g, W, H, spec, T, top, pad, font, out);
+
+  /* ---------------- bar / line / stacked bar / stacked area ---------------- */
+  const stacked = type === 'stacked' || type === 'area';
   const cats = data.labels.length;
   let lo = Infinity, hi = -Infinity;
-  for (const s of series) for (const v of s.values) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-  if (type === 'bar') { lo = Math.min(0, lo); hi = Math.max(0, hi); }
+  if (stacked) {
+    for (let i = 0; i < cats; i++) {
+      let up = 0, down = 0;
+      for (const s of series) { const v = s.values[i]; if (v == null) continue; if (v >= 0 || type === 'area') up += v; else down += v; }
+      lo = Math.min(lo, down, up); hi = Math.max(hi, up, down);
+    }
+  } else for (const s of series) for (const v of s.values) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  if (type === 'bar' || stacked) { lo = Math.min(0, lo); hi = Math.max(0, hi); }
   const { ticks, step, min, max } = niceTicks(lo, hi);
 
   /* legend row (two or more series) */
@@ -220,8 +274,9 @@ export function drawChart(g, W, H, spec, T) {
 
   g.font = font(10);
   const yLabW = Math.max(...ticks.map(t => g.measureText(tickText(t, step)).width)) + 8;
-  const left = pad + yLabW, right = W - pad;
-  const bottom = H - pad - 16;
+  const yTitle = spec.yLabel ? 16 : 0, xTitle = spec.xLabel ? 16 : 0;
+  const left = pad + yTitle + yLabW, right = W - pad;
+  const bottom = H - pad - 16 - xTitle;
   const plotH = Math.max(10, bottom - top - 6), plotTop = bottom - plotH;
   const y = v => plotTop + (1 - (v - min) / (max - min || 1)) * plotH;
 
@@ -246,6 +301,7 @@ export function drawChart(g, W, H, spec, T) {
     g.fillStyle = T.ink2;
     g.fillText(fit(g, data.labels[i], Math.max(band * every - 6, 24)), left + (i + 0.5) * band, bottom + 4);
   }
+  axisTitles(g, spec, T, font, { left: pad, right, top: plotTop, bottom, plotLeft: left, H, pad });
 
   const zero = y(Math.max(min, Math.min(max, 0)));
   if (type === 'bar') {
@@ -259,6 +315,40 @@ export function drawChart(g, W, H, spec, T) {
         const x = left + i * band + (band - groupW) / 2 + k * (bw + gap);
         bar(g, x, zero, bw, y(v), 4);
       });
+    });
+  } else if (type === 'stacked') {
+    /* each series sits on the ones before it; the outermost segment gets the rounded end */
+    const bw = Math.max(1, band * 0.6);
+    for (let i = 0; i < cats; i++) {
+      const x = left + i * band + (band - bw) / 2;
+      const vals = series.map(s => s.values[i]);
+      const lastUp = vals.reduce((m, v, k) => (v != null && v > 0 ? k : m), -1);
+      const lastDown = vals.reduce((m, v, k) => (v != null && v < 0 ? k : m), -1);
+      let up = 0, down = 0;
+      vals.forEach((v, k) => {
+        if (v == null || v === 0) return;
+        const from = v > 0 ? up : down, to = from + v;
+        if (v > 0) up = to; else down = to;
+        g.fillStyle = T.colors[k];
+        if (k === (v > 0 ? lastUp : lastDown)) bar(g, x, y(from), bw, y(to), 4);
+        else { const y0 = y(from), y1 = y(to); g.fillRect(x, Math.min(y0, y1), bw, Math.abs(y1 - y0)); }
+        g.fillStyle = T.surface; g.fillRect(x, Math.round(y(to)) - 0.5, bw, 1);       /* a 1px gap between segments */
+      });
+    }
+  } else if (type === 'area') {
+    const base = new Array(cats).fill(0);
+    const xs = i => left + (i + 0.5) * band;
+    series.forEach((s, k) => {
+      const tops = s.values.map((v, i) => base[i] + (v == null ? 0 : v));
+      g.beginPath();
+      tops.forEach((v, i) => (i ? g.lineTo(xs(i), y(v)) : g.moveTo(xs(i), y(v))));
+      for (let i = cats - 1; i >= 0; i--) g.lineTo(xs(i), y(base[i]));
+      g.closePath();
+      g.globalAlpha = 0.55; g.fillStyle = T.colors[k]; g.fill(); g.globalAlpha = 1;
+      g.beginPath();
+      tops.forEach((v, i) => (i ? g.lineTo(xs(i), y(v)) : g.moveTo(xs(i), y(v))));
+      g.strokeStyle = T.colors[k]; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
+      for (let i = 0; i < cats; i++) base[i] = tops[i];
     });
   } else {
     series.forEach((s, k) => {
@@ -288,14 +378,102 @@ export function drawChart(g, W, H, spec, T) {
   return out;
 }
 
+/* the x title under the axis, the y title turned up the left side */
+function axisTitles(g, spec, T, font, L) {
+  g.save();
+  g.font = font(10.5, 600); g.fillStyle = T.ink1;
+  if (spec.xLabel) {
+    g.textAlign = 'center'; g.textBaseline = 'bottom';
+    g.fillText(fit(g, spec.xLabel, L.right - L.plotLeft), (L.plotLeft + L.right) / 2, L.H - L.pad + 2);
+  }
+  if (spec.yLabel) {
+    g.translate(L.left + 6, (L.top + L.bottom) / 2);
+    g.rotate(-Math.PI / 2);
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(fit(g, spec.yLabel, Math.max(30, L.bottom - L.top)), 0, 0);
+  }
+  g.restore();
+}
+
+function drawScatter(g, W, H, spec, T, top, pad, font, out) {
+  const { data } = spec;
+  const series = data.series;
+  const trend = spec.trend !== false;
+  /* legend: one row per series, with its line when there is one */
+  g.font = font(11); g.textBaseline = 'middle'; g.textAlign = 'left';
+  let ly = top + 6;
+  series.forEach((s, k) => {
+    g.fillStyle = T.colors[k];
+    g.beginPath(); g.arc(pad + 4, ly, 4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = T.ink1;
+    const eq = trend ? (s.fit.ok ? `  ${lineText(s.fit)}${s.fit.r2 == null ? '' : ` · r² ${statFmt(Number(s.fit.r2.toPrecision(3)))}`}` : '  no line: needs two different x values') : '';
+    g.fillText(fit(g, `${s.name}${eq}`, W - pad * 2 - 14), pad + 14, ly);
+    ly += 16;
+  });
+  top = ly + 2;
+  let lox = Infinity, hix = -Infinity, loy = Infinity, hiy = -Infinity;
+  for (const s of series) for (const [x, y] of s.pts) { lox = Math.min(lox, x); hix = Math.max(hix, x); loy = Math.min(loy, y); hiy = Math.max(hiy, y); }
+  const X = niceTicks(lox, hix), Y = niceTicks(loy, hiy);
+  g.font = font(10);
+  const yLabW = Math.max(...Y.ticks.map(t => g.measureText(tickText(t, Y.step)).width)) + 8;
+  const xTitle = spec.xLabel || data.xName;
+  const left = pad + (spec.yLabel ? 16 : 0) + yLabW, right = W - pad, bottom = H - pad - 16 - (xTitle ? 16 : 0);
+  const plotH = Math.max(10, bottom - top - 6), plotTop = bottom - plotH;
+  const px = v => left + (v - X.min) / (X.max - X.min || 1) * (right - left);
+  const py = v => plotTop + (1 - (v - Y.min) / (Y.max - Y.min || 1)) * plotH;
+  g.lineWidth = 1;
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (const t of Y.ticks) {
+    const yy = Math.round(py(t)) + 0.5;
+    g.strokeStyle = t === 0 ? T.axis : T.line;
+    g.beginPath(); g.moveTo(left, yy); g.lineTo(right, yy); g.stroke();
+    g.fillStyle = T.ink2; g.fillText(tickText(t, Y.step), left - 6, yy);
+  }
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  const xw = Math.max(...X.ticks.map(t => g.measureText(tickText(t, X.step)).width)) + 10;
+  const every = Math.max(1, Math.ceil(xw / ((right - left) / Math.max(1, X.ticks.length - 1))));
+  X.ticks.forEach((t, i) => {
+    const xx = Math.round(px(t)) + 0.5;
+    g.strokeStyle = t === 0 ? T.axis : T.line;
+    g.beginPath(); g.moveTo(xx, plotTop); g.lineTo(xx, bottom); g.stroke();
+    if (!(i % every)) { g.fillStyle = T.ink2; g.fillText(tickText(t, X.step), xx, bottom + 4); }
+  });
+  axisTitles(g, { ...spec, xLabel: xTitle }, T, font, { left: pad, right, top: plotTop, bottom, plotLeft: left, H, pad });
+  out.pts = [];
+  series.forEach((s, k) => {
+    if (trend && s.fit.ok) {
+      g.save();
+      g.beginPath(); g.rect(left, plotTop, right - left, plotH); g.clip();
+      g.strokeStyle = T.colors[k]; g.lineWidth = 2; g.setLineDash([6, 4]);
+      g.beginPath(); g.moveTo(px(X.min), py(s.fit.slope * X.min + s.fit.intercept)); g.lineTo(px(X.max), py(s.fit.slope * X.max + s.fit.intercept)); g.stroke();
+      g.restore();
+    }
+    for (const [x, y] of s.pts) {
+      const a = px(x), b = py(y);
+      g.beginPath(); g.arc(a, b, 4, 0, Math.PI * 2);
+      g.fillStyle = T.colors[k]; g.fill();
+      g.lineWidth = 1.5; g.strokeStyle = T.surface; g.stroke();
+      if (out.pts.length < 4000) out.pts.push({ x: a, y: b, vx: x, vy: y, k });
+    }
+  });
+  out.plot = { left, right, top: plotTop, bottom };
+  g.restore();
+  return out;
+}
+
 /** one sentence a screen reader can read in place of the picture */
 export function describe(spec, fmt = v => String(v)) {
   const { type, title, data } = spec;
   const kind = `${TYPE_NAMES[type] || 'Bar'} chart`;
+  const axes = `${spec.xLabel ? `, x axis ${spec.xLabel}` : ''}${spec.yLabel ? `, y axis ${spec.yLabel}` : ''}`;
+  if (data.xy) {
+    if (!data.series.length) return `${kind}${title ? ` “${title}”` : ''}: no x, y pairs in its range.`;
+    return `${kind}${title ? ` “${title}”` : ''}${axes}, x is ${data.xName}: ${data.series.map(s => `${s.name}, ${s.pts.length} point${s.pts.length === 1 ? '' : 's'}${spec.trend === false ? '' : s.fit.ok ? `, trend line ${lineText(s.fit)}${s.fit.r2 == null ? '' : `, r² ${statFmt(Number(s.fit.r2.toPrecision(3)))}`}` : ', no trend line'}`).join('; ')}.`;
+  }
   if (!data.series.length || !data.labels.length) return `${kind}${title ? ` “${title}”` : ''}: no numbers in its range.`;
   const s = data.series;
   const pts = data.labels.slice(0, 12).map((l, i) => `${l} ${s.slice(0, 3).map(x => (x.values[i] == null ? '—' : fmt(x.values[i]))).join(' / ')}`);
-  return `${kind}${title ? ` “${title}”` : ''}, ${s.length === 1 ? s[0].name : s.map(x => x.name).join(', ')}: ${pts.join('; ')}${data.labels.length > 12 ? `; and ${data.labels.length - 12} more` : ''}.`;
+  return `${kind}${title ? ` “${title}”` : ''}${axes}, ${s.length === 1 ? s[0].name : s.map(x => x.name).join(', ')}: ${pts.join('; ')}${data.labels.length > 12 ? `; and ${data.labels.length - 12} more` : ''}.`;
 }
 
-export default { TYPES, TYPE_NAMES, chartData, readTheme, drawChart, describe };
+export default { TYPES, TYPE_NAMES, TYPE_ICONS, hasAxes, chartData, readTheme, drawChart, describe };

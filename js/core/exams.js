@@ -4,11 +4,14 @@
 
    Saved in store('portal.exams') as
      { v: 1, exams: [{ id, subject, date, time, topics, busy, perDay,
-                       perTopic, remind, late, sched, created }] }
+                       perTopic, remind, late, sched, created, score }] }
    date is 'YYYY-MM-DD'; time is 'HH:MM' or '' (the exam is on until the
-   end of that day); topics is [{ id, text, done }]; busy is the days
-   you cannot study; perDay and perTopic are minutes YOU said (0 = not
-   said); remind is null, 'eve' or 'daily'.
+   end of that day); topics is [{ id, text, done, rate }]; busy is the
+   days you cannot study; perDay and perTopic are minutes YOU said (0 =
+   not said); remind is null, 'eve' or 'daily'. rate is how well you
+   know a topic, as you rated it: 1 weak, 2 OK, 3 strong, 0 not rated.
+   score is what you got, as you typed it ("87%", "42/50", "B+"), once
+   it is over. Exams saved before rate and score existed have neither.
 
    THE COUNTDOWN counts calendar days, not 24-hour blocks: both dates
    are read as local year/month/day and subtracted as plain day
@@ -20,6 +23,11 @@
    promise a study day then), skipping the days marked busy.
      · Topics keep your order; ones that were planned for a day that
        has gone by without being ticked come first ("carried over").
+       Then the ones you rated weak, then unrated and OK ones, then the
+       strong ones last.
+     · A weak topic gets a second go ("again") on a later day when there
+       are free days that would otherwise have nothing planned — never
+       by squeezing a day that already has a topic.
      · The split is even: each free day gets the same number of topics
        give or take one, earlier days taking the extra. With fewer
        topics than days, one a day on the first days and the rest left
@@ -67,10 +75,14 @@ export const todayOf = (now = Date.now()) => ymd(new Date(now));
 export const daysBetween = (from, to) => dayNumber(to) - dayNumber(from);
 
 /* ---------- the data ---------- */
+export const RATES = [[1, 'Weak'], [2, 'OK'], [3, 'Strong']];
 export function normTopic(t) {
   const o = typeof t === 'string' ? { text: t } : t && typeof t === 'object' ? t : {};
   const tx = text(o.text, 120);
-  return tx ? { id: String(o.id || uid('t')).slice(0, 60), text: tx, done: !!o.done } : null;
+  if (!tx) return null;
+  const out = { id: String(o.id || uid('t')).slice(0, 60), text: tx, done: !!o.done };
+  if ([1, 2, 3].includes(o.rate)) out.rate = o.rate;
+  return out;
 }
 export function normExam(e) {
   const o = e && typeof e === 'object' ? e : {};
@@ -93,6 +105,7 @@ export function normExam(e) {
     remind: REMIND.some(([v]) => v === o.remind) ? o.remind : null,
     late: [...new Set((Array.isArray(o.late) ? o.late : []).filter(id => seen.has(id)))],
     sched, created: Number(o.created) || Date.now(),
+    score: text(o.score, 12),
   };
 }
 export function normalize(raw) {
@@ -162,7 +175,9 @@ export function plan(e, now = Date.now()) {
   if (!open.length) return { ...base, status: 'finished', notes: ['Every topic is ticked off.'] };
   const lateIds = new Set(e.late);
   const carried = open.filter(t => lateIds.has(t.id));
-  const order = [...carried, ...open.filter(t => !lateIds.has(t.id))];
+  /* weak first, strong last; a stable sort keeps your order among equals */
+  const rank = t => (t.rate === 1 ? 0 : t.rate === 3 ? 2 : 1);
+  const order = [...carried, ...open.filter(t => !lateIds.has(t.id)).sort((a, b) => rank(a) - rank(b))];
   const days = studyDays(e, now);
   const free = days.filter(d => !d.busy);
   const out = { ...base, carried, open: open.length, freeDays: free.length };
@@ -191,16 +206,20 @@ export function plan(e, now = Date.now()) {
       out.notes.push(`Not enough time: ${plural(open.length, 'topic')} at ${e.perTopic} min is ${need} min, and ${plural(free.length, 'free day')} at ${e.perDay} min is ${have} min. ${plural(out.unplanned.length, 'topic')} will not fit. Add time, drop a topic, or free up a day.`);
     }
   }
-  const per = spread(planned, free.length);
+  /* a second go at weak topics, only on free days that would be empty */
+  const again = out.unplanned.length ? [] : planned.filter(t => t.rate === 1).slice(0, Math.max(0, free.length - planned.length)).map(t => ({ ...t, again: true }));
+  const per = spread([...planned, ...again], free.length);
+  out.again = again.length;
   let k = 0;
   out.days = days.map(d => {
     if (d.busy) return { ...d, topics: [], minEach: 0 };
-    const topics = per[k++].map(t => ({ id: t.id, text: t.text }));
+    const topics = per[k++].map(t => (t.again ? { id: t.id, text: t.text, again: true } : { id: t.id, text: t.text }));
     return { ...d, topics, minEach: e.perDay && topics.length ? Math.floor(e.perDay / topics.length) : 0 };
   });
   out.status = out.unplanned.length ? 'short' : 'ok';
   if (!out.unplanned.length && out.freeDays < open.length && !e.perDay) out.notes.push(`${plural(open.length, 'topic')} over ${plural(out.freeDays, 'free day')}: some days have more than one.`);
   if (carried.length) out.notes.push(`${plural(carried.length, 'topic')} from a day that went by ${carried.length === 1 ? 'is' : 'are'} carried over, listed first.`);
+  if (again.length) out.notes.push(`${plural(again.length, 'weak topic')} ${again.length === 1 ? 'gets' : 'get'} a second go on a later free day.`);
   return out;
 }
 
@@ -208,7 +227,7 @@ export function plan(e, now = Date.now()) {
 export function stamp(e, now = Date.now()) {
   const p = plan(e, now);
   const sched = {};
-  for (const d of p.days) for (const t of d.topics) sched[t.id] = d.day;
+  for (const d of p.days) for (const t of d.topics) if (!t.again && !sched[t.id]) sched[t.id] = d.day;
   return sched;
 }
 /** Bring an exam up to the clock: topics planned for a day that has gone by and are still open become "late"; then re-stamp. */
@@ -273,4 +292,19 @@ export function init() {
   bus.on('tick:5s', tick);
 }
 
-export default { KEY, REMIND, read, write, normalize, countdown, plan, advance, remindersFor, syncReminders, refresh, init, daysBetween, dayNumber, spread };
+/** A typed score as a percentage: "87", "87%", "42/50" -> 87, 84; a letter -> null. */
+export function scorePercent(score) {
+  const g = String(score || '').trim();
+  let m = /^(\d+(?:\.\d+)?)\s*%?$/.exec(g);
+  if (m) { const n = Number(m[1]); return n <= 200 ? n : null; }
+  m = /^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/.exec(g);
+  return m && Number(m[2]) > 0 ? Math.round(Number(m[1]) / Number(m[2]) * 10000) / 100 : null;
+}
+/** Past exams with a score, newest first, and the mean of the ones that are numbers. */
+export function scores(data = read(), now = Date.now()) {
+  const list = data.exams.filter(e => e.score && isPast(e, now)).sort((a, b) => examAt(b) - examAt(a));
+  const pcts = list.map(e => scorePercent(e.score)).filter(x => x !== null);
+  return { list, avg: pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length * 10) / 10 : null, n: pcts.length };
+}
+
+export default { KEY, REMIND, RATES, read, write, scores, scorePercent, normalize, countdown, plan, advance, remindersFor, syncReminders, refresh, init, daysBetween, dayNumber, spread };

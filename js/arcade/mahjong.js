@@ -6,9 +6,12 @@
    is open (rules in ./mahjong-rules.js). Equal faces match; any flower
    matches any flower and any season any season.
 
-   · Three layouts: Turtle (the classic 144 tiles), Pyramid and Fortress.
-     Every deal is solvable: it is dealt backwards from an empty board
-     (see mahjong-rules.js), so there is always a way to clear it.
+   · Five layouts: Turtle (the classic 144 tiles), Pyramid, Fortress,
+     Courtyard and Butterfly. Every deal is solvable: it is dealt
+     backwards from an empty board and its way out is replayed with the
+     rules before it is shown, or it is dealt again (mahjong-rules.js).
+   · No hints: a board cleared without pressing Hint earns its layout a
+     "no hints" mark (the tick on its button), with its own best time.
    · Click or tap a free tile, then its partner. A blocked tile shakes and
      says why. Keyboard: arrows move between free tiles, Enter / Space
      pick, H hint, U / Z / Backspace undo, S shuffle.
@@ -24,6 +27,7 @@
      winds, dragons, flowers and seasons, all made for StaticOS.
    ============================================================ */
 import { h } from '../core/dom.js';
+import { icon } from '../core/icons.js';
 import { store } from '../core/store.js';
 import { surface, ownsKey, sounder, looper, rr } from './boardkit.js';
 import * as M from './mahjong-rules.js';
@@ -36,9 +40,13 @@ const ASPECT = 1.3;
 const readPrefs = () => {
   let p = null;
   try { p = store.get(PREF, null); } catch (err) { p = null; }
-  const best = {};
-  for (const id of M.layoutIds) best[id] = Number.isFinite(p?.best?.[id]) && p.best[id] > 0 ? p.best[id] : null;
-  return { layout: M.LAYOUTS[p?.layout] ? p.layout : 'turtle', best };
+  const best = {}, clean = {};
+  for (const id of M.layoutIds) {
+    best[id] = Number.isFinite(p?.best?.[id]) && p.best[id] > 0 ? p.best[id] : null;
+    /* the best time of a board cleared without a hint: the "no hints" mark */
+    clean[id] = Number.isFinite(p?.clean?.[id]) && p.clean[id] > 0 ? p.clean[id] : null;
+  }
+  return { layout: M.LAYOUTS[p?.layout] ? p.layout : 'turtle', best, clean };
 };
 const writePrefs = p => { try { store.set(PREF, p); } catch (err) { /* a convenience */ } };
 const randomSeed = () => crypto.getRandomValues(new Uint32Array(1))[0] >>> 0;
@@ -51,6 +59,8 @@ const CSS = `
 .arx-mj__bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 8px;flex:0 0 auto}
 .arx-mj__chip,.arx-mj__btn{display:inline-flex;align-items:center;gap:6px;font:600 12px/1 var(--font,system-ui);color:var(--ink-1,#ddd);background:var(--fill-1,rgba(255,255,255,.06));border:1px solid var(--line-1,rgba(255,255,255,.08));padding:8px 11px;border-radius:var(--r-md,11px);cursor:pointer;white-space:nowrap}
 .arx-mj__chip[aria-pressed="true"]{background:var(--fill-3,rgba(255,255,255,.16));color:var(--ink-0,#fff);border-color:var(--ink-3,#888)}
+.arx-mj__chip .arx-mj__nh{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;background:#2fae7a;color:#fff}
+.arx-mj__chip .arx-mj__nh svg,.arx-mj__chip .arx-mj__nh .icon{width:11px;height:11px}
 .arx-mj__btn:disabled{opacity:.45;cursor:default}
 .arx-mj__btn.is-go{background:rgba(255,200,80,.22);border-color:rgba(255,210,100,.7);color:#fff}
 @media (hover:hover){.arx-mj__chip:hover,.arx-mj__btn:not(:disabled):hover{background:var(--fill-2,rgba(255,255,255,.1));color:var(--ink-0,#fff)}}
@@ -164,7 +174,7 @@ export default {
     let dead = false;
     const S = {
       layout: P.layout, seed: 0, tiles: [], faces: [], order: [], gone: null, removedAt: [], undo: [], sel: -1, cursor: -1, hint: null, hintT: 0,
-      shake: { i: -1, t: 0 }, refused: 0, moves: 0, shuffles: 0, banked: 0, since: 0, paused: false, over: false, ended: false, endT: 0,
+      shake: { i: -1, t: 0 }, refused: 0, moves: 0, shuffles: 0, hints: 0, banked: 0, since: 0, paused: false, over: false, ended: false, endT: 0,
       geo: { a: 0, ox: 0, oy: 0 }, sorted: [], fresh: 0,
     };
 
@@ -174,6 +184,14 @@ export default {
     const info = h('div.arx-mj__info', { role: 'status' });
     const layBtns = M.layoutIds.map(id => h('button.arx-mj__chip', { type: 'button', title: M.LAYOUTS[id].blurb, dataset: { layout: id }, 'aria-pressed': String(id === S.layout),
       onclick: () => { setLayout(id); refocus(); } }, M.LAYOUTS[id].name));
+    /* the "no hints" mark on a layout's button */
+    const paintMarks = () => layBtns.forEach(b => {
+      const id = b.dataset.layout, t = P.clean[id];
+      b.querySelector('.arx-mj__nh')?.remove();
+      b.title = `${M.LAYOUTS[id].blurb}${t ? ` · cleared without hints, best ${fmt(t)}` : ''}`;
+      b.dataset.clean = t ? 'true' : 'false';
+      if (t) b.append(h('span.arx-mj__nh', { 'aria-label': 'cleared without hints' }, icon('check')));
+    });
     const hintBtn = h('button.arx-mj__btn', { type: 'button', title: 'Show a pair (H)', onclick: () => { hint(); refocus(); } }, 'Hint');
     const undoBtn = h('button.arx-mj__btn', { type: 'button', title: 'Take back the last pair (U)', onclick: () => { undo(); refocus(); } }, 'Undo');
     const shuffleBtn = h('button.arx-mj__btn', { type: 'button', title: `Deal the tiles left again — adds ${PENALTY} seconds (S)`, onclick: () => { shuffle(); refocus(); } }, 'Shuffle remaining');
@@ -194,12 +212,12 @@ export default {
     const pairs = () => M.availablePairs(S.tiles, S.faces, S.gone);
 
     function deal(layout, seed) {
-      const d = M.deal(layout, seed);
+      const d = M.deal(layout, seed) || M.deal(layout, (seed ^ 0xa5a5a5a5) >>> 0);
       clearTimeout(S.endT);
       S.layout = layout; S.seed = seed;
       S.tiles = d.tiles; S.faces = d.faces; S.order = d.order.map(p => p.slice());
       S.gone = new Uint8Array(d.tiles.length);
-      Object.assign(S, { removedAt: [], undo: [], sel: -1, cursor: -1, hint: null, moves: 0, shuffles: 0, banked: 0, since: performance.now(), over: false, ended: false, refused: 0, fresh: 0 });
+      Object.assign(S, { removedAt: [], undo: [], sel: -1, cursor: -1, hint: null, moves: 0, shuffles: 0, hints: 0, banked: 0, since: performance.now(), over: false, ended: false, refused: 0, fresh: 0 });
       S.sorted = d.tiles.map((_, i) => i).sort((a, b) => { const p = S.tiles[a], q = S.tiles[b]; return p.z - q.z || p.y - q.y || p.x - q.x; });
       S.cursor = M.freeList(S.tiles, S.gone)[0] ?? -1;
       ctx.onScore(0);
@@ -277,7 +295,8 @@ export default {
       S.hint = best || av[0];
       S.hintT = performance.now();
       S.sel = -1;
-      say('Hint: the two lit tiles match.');
+      S.hints++;
+      say(S.hints === 1 ? 'Hint: the two lit tiles match. (This board won’t earn the no-hints mark now.)' : 'Hint: the two lit tiles match.');
       loop.kick(2.6);
       paint();
     }
@@ -305,8 +324,15 @@ export default {
       const t = Math.max(1, Math.round(S.banked));
       const prev = P.best[S.layout];
       const nb = prev === null || t < prev;
-      if (nb) { P.best[S.layout] = t; writePrefs(P); }
-      ctx.onEnd({ score: t, won: true, detail: `${M.LAYOUTS[S.layout].name} cleared in ${fmt(t)}${S.shuffles ? ` with ${S.shuffles} shuffle${S.shuffles > 1 ? 's' : ''}` : ''}${nb ? ' — your best for this layout.' : `. Best here: ${fmt(prev)}.`}` });
+      if (nb) P.best[S.layout] = t;
+      /* no hints: the layout's mark, with its own best */
+      const clean = S.hints === 0, prevClean = P.clean[S.layout];
+      const firstClean = clean && prevClean === null;
+      if (clean && (prevClean === null || t < prevClean)) P.clean[S.layout] = t;
+      writePrefs(P);
+      paintMarks();
+      const help = [S.shuffles ? `${S.shuffles} shuffle${S.shuffles > 1 ? 's' : ''}` : '', S.hints ? `${S.hints} hint${S.hints > 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ');
+      ctx.onEnd({ score: t, won: true, detail: `${M.LAYOUTS[S.layout].name} cleared in ${fmt(t)}${help ? ` with ${help}` : ''}${clean ? ` · no hints${firstClean ? ': this layout earns its no-hints mark' : ''}` : ''}${nb ? ' — your best for this layout.' : `. Best here: ${fmt(prev)}.`}` });
     }
 
     function paint() {
@@ -317,7 +343,8 @@ export default {
       info.classList.toggle('is-alert', stuck);
       if (S.over) info.replaceChildren('Cleared in ', h('b', { text: fmt(S.banked) }));
       else if (stuck) info.textContent = 'No pairs left. Shuffle remaining (adds 30 s).';
-      else info.replaceChildren(h('b', { text: String(left()) }), ' tiles · ', h('b', { text: String(av.length) }), ` pair${av.length === 1 ? '' : 's'} free · time `, h('b', { text: fmt(elapsed()) }), best ? ` · best here ${fmt(best)}` : '');
+      else info.replaceChildren(h('b', { text: String(left()) }), ' tiles · ', h('b', { text: String(av.length) }), ` pair${av.length === 1 ? '' : 's'} free · time `, h('b', { text: fmt(elapsed()) }), best ? ` · best here ${fmt(best)}` : '',
+        S.hints ? ` · ${S.hints} hint${S.hints > 1 ? 's' : ''}` : ' · no hints');
       shuffleBtn.classList.toggle('is-go', stuck);
       undoBtn.disabled = !S.undo.length || S.over;
       hintBtn.disabled = S.over || !av.length;
@@ -443,6 +470,7 @@ export default {
     window.addEventListener('keydown', onKey);
     sf.cv.addEventListener('pointerdown', onDown);
 
+    paintMarks();
     deal(S.layout, randomSeed());
 
     return {
@@ -467,7 +495,7 @@ export default {
         return {
           layout: S.layout, seed: S.seed, total: S.tiles.length, remaining: left(), paused: S.paused, over: S.over, ended: S.ended,
           time: Math.round(elapsed() * 10) / 10, banked: S.banked, moves: S.moves, shuffles: S.shuffles, refused: S.refused, sel: S.sel, hint: S.hint, cursor: S.cursor,
-          pairs: S.over ? 0 : pairs().length, undoable: S.undo.length, order: S.order.map(p => p.slice()), best: { ...P.best },
+          pairs: S.over ? 0 : pairs().length, undoable: S.undo.length, order: S.order.map(p => p.slice()), best: { ...P.best }, clean: { ...P.clean }, hints: S.hints,
           tiles: S.tiles.map((t, i) => { const b = box(i, L); return { i, x: t.x, y: t.y, z: t.z, face: S.faces[i], gone: !!S.gone[i], free: !S.gone[i] && fr.has(i), cx: b.x + b.w / 2, cy: b.y + b.h / 2 }; }),
           stage: { x: stageBox.x, y: stageBox.y },
         };

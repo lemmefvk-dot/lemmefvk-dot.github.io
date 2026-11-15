@@ -76,6 +76,13 @@
    to Friends announces nothing on the public channel. The public
    "Add friend" here became Star — a local marker, not a friendship.
 
+   Hide a message (its menu) takes it out of the conversation and keeps it in
+   Room options > Hidden messages, where it can be shown again. A link to a
+   game, an anime or a Roblox page in a message gets a small card (js/core/
+   linkcards.js) with this device's own title and an Open button. Save to
+   Notes keeps one message as a note. When you send too fast, the line under
+   the composer counts down to when you can send again.
+
    js/portal/party.js is optional: it is imported lazily, once, and
    every party feature hides when it is not there. "Join party" calls
    party.join(code) and brings the Party window up at once — it shows
@@ -92,6 +99,9 @@ import { measured } from '../core/quickplay.js';   /* are a row's play counts re
 import * as POLL from '../core/polls.js';
 import { pollCard, pollForm } from './pollcard.js';
 import { friendsView } from './social-friends.js';
+import * as FR from '../core/friends.js';
+import * as LC from '../core/linkcards.js';
+import * as NF from '../core/notesfmt.js';
 
 if (typeof document !== 'undefined' && !document.getElementById('feat-social-css')) {
   const l = document.createElement('link');
@@ -124,6 +134,9 @@ const TICK_MS = 15_000;
 
 const K_FRIENDS = 'portal.social.friends';   /* [{ id, name }] */
 const K_MUTED = 'portal.social.muted';       /* [{ id, name }] */
+const K_HIDDEN = 'portal.social.hidden';      /* [{ id, name, text, room, at }] messages you hid, kept so you can review them */
+const MAX_HIDDEN = 100;
+const K_EVERYONE = 'portal.social.everyone';  /* true: the public rooms and Looking for players also show people who are not friends */
 
 const ID_RE = /^[a-z0-9]{8,32}$/;
 const MID_RE = /^[a-z0-9]{6,24}$/;
@@ -449,11 +462,103 @@ defineApp({
     let mutedSet = null;
     const friends = () => readList(K_FRIENDS);
     const isFriend = id => friends().some(f => f.id === id);
+    /* Public rooms and Looking for players show only your Friends by default.
+       A switch (room options) shows everyone, strangers included. */
+    const showEveryone = () => store.get(K_EVERYONE) === true;
+    const canSee = id => id === myId || showEveryone() || FR.isFriendId(id);
     const isMuted = id => {
       if (!mutedSet) mutedSet = new Set(readList(K_MUTED).map(x => x.id));
       return mutedSet.has(id);
     };
     const nameFor = p => safeName(p.name) || `Player-${p.id.slice(0, 4)}`;
+
+    /* ---------------- hidden messages ---------------- */
+    const hideId = m => (m.mid ? `m:${m.mid}` : m.seen || null);
+    let hiddenSet = null;
+    const hiddenList = () => {
+      const v = store.get(K_HIDDEN);
+      return Array.isArray(v) ? v.filter(x => x && typeof x.id === 'string' && /^[ma]:[A-Za-z0-9:_-]{1,80}$/.test(x.id)) : [];
+    };
+    const isHidden = m => {
+      if (!hiddenSet) hiddenSet = new Set(hiddenList().map(x => x.id));
+      const id = hideId(m);
+      return !!id && hiddenSet.has(id);
+    };
+    function writeHidden(list) {
+      store.set(K_HIDDEN, list.slice(-MAX_HIDDEN));
+      hiddenSet = null;
+      rendered.key = null;
+      soon('log');
+    }
+    function hideMsg(m) {
+      const id = hideId(m);
+      if (!id || isHidden(m)) return;
+      writeHidden([...hiddenList(), { id, name: safeName(m.name), text: cleanText(m.text, 300), room: S.view, at: m.at }]);
+      note({ icon: 'eye-off', title: 'Message hidden', message: 'Room options › Hidden messages shows it again.' });
+    }
+    function unhideMsg(id) { writeHidden(hiddenList().filter(x => x.id !== id)); }
+    function roomLabel(key) {
+      if (key === 'lobby') return 'Lobby';
+      if (key.startsWith('g:')) { const g = gameOfKey(key); return g ? gTitle(g) : 'A game room'; }
+      if (key.startsWith('dm:')) return 'A direct message';
+      return 'Social';
+    }
+    function openHidden(anchor) {
+      if (popFor(anchor)) { closePop(); return; }
+      const listEl = h('div.so-hidden__list');
+      const box = h('div.so-pop.so-hidden', { role: 'dialog', 'aria-label': 'Hidden messages' },
+        h('b.so-info__t', { text: 'Hidden messages' }), listEl,
+        h('small.dim', { text: 'Only on this device. Show again puts a message back if it is still in this session’s conversation.' }));
+      const paint = () => {
+        clear(listEl);
+        const list = hiddenList().slice().reverse();
+        if (!list.length) { listEl.append(h('p.dim', { text: 'Nothing is hidden.' })); return; }
+        for (const x of list) {
+          listEl.append(h('div.so-hidden__row', { dataset: { id: x.id } },
+            h('div.grow', h('b', { text: x.name || 'Someone' }), h('small', { text: ` · ${roomLabel(x.room)} · ${ago(x.at)}` }), h('div.so-hidden__t', { text: x.text })),
+            btn('Show again', 'eye', () => { unhideMsg(x.id); paint(); }, { act: 'unhide' })));
+        }
+      };
+      paint();
+      openPop(box, anchor);
+    }
+
+    /* ---------------- save one message to Notes ---------------- */
+    function saveToNotes(m) {
+      const text = cleanText(m.text, MAX_TEXT);
+      if (!text) return;
+      const first = text.split('\n').find(l => l.trim()) || 'Message';
+      const title = oneLine(first, 40);
+      const body = NF.fromPlain(`${text}\n\nFrom ${m.name} in ${roomLabel(S.view)}, ${new Date(m.at).toLocaleString()}. Saved from Static Social; names there aren’t verified.`);
+      const cur = store.get('notes');
+      const noteId = `note-${Date.now().toString(36)}-social`;
+      store.set('notes', [...(Array.isArray(cur) ? cur : []), { id: noteId, title, body, fmt: NF.FMT, mtime: new Date().toISOString() }]);
+      note({ icon: 'sticky-note', title: 'Saved to Notes', message: title, actions: has('notes') ? [{ label: 'Open', onClick: () => api.openApp('notes', { noteId }) }] : [] });
+    }
+
+    /* ---------------- link cards ---------------- */
+    const cardCache = new Map();           /* "kind:id" -> card | null */
+    function cardsFor(m) {
+      const links = LC.findLinks(m.text);
+      if (!links.length) return null;
+      const box = h('div.so-lcards', { hidden: true });
+      for (const l of links) {
+        const key = `${l.kind}:${l.id}`;
+        const spot = h('div.so-lcards__one');          /* keeps the links in the order they were written, however fast each one resolves */
+        box.append(spot);
+        const done = c => {
+          if (dead || !c) return;
+          box.hidden = false;
+          const open = () => { try { api.openApp(c.app, { url: c.url }); } catch (err) { /* no such app */ } };
+          spot.append(h('div.so-lcard', { dataset: { kind: c.kind, id: c.id } }, icon({ game: 'gamepad', anime: 'star', roblox: 'box' }[c.kind] || 'link'),
+            h('span.grow', h('b', { text: c.title }), h('small', { text: ` · ${c.where}` })),
+            has(c.app) ? btn('Open', 'external-link', open, { act: 'open-card', aria: `Open ${c.title}` }) : h('small.dim', { text: `${c.where} isn’t installed` })));
+        };
+        if (cardCache.has(key)) { done(cardCache.get(key)); continue; }
+        LC.resolve(l).then(c => { cardCache.set(key, c); done(c); }).catch(() => {});
+      }
+      return box;
+    }
     function toggleFriend(p) {
       const cur = friends();
       if (cur.some(f => f.id === p.id)) store.set(K_FRIENDS, cur.filter(f => f.id !== p.id));
@@ -530,7 +635,7 @@ defineApp({
       formSlot, postList);
     /* Friends: private, drawn by social-friends.js; its counts feed the rail */
     let friendCount = { requests: 0, online: 0 };
-    const fv = friendsView({ api, onCount: c => { friendCount = c; soon('rail'); } });
+    const fv = friendsView({ api, onCount: c => { friendCount = c; soon('rail', 'foot'); } });
     fv.el.hidden = true;
     const bodyEl = h('div.so-body', logEl, newPill, board, fv.el);
 
@@ -558,7 +663,9 @@ defineApp({
     const footDot = h('span.so-foot__dot', { 'aria-hidden': 'true' });
     const footState = h('span.so-foot__state', { role: 'status' });
     const footCount = h('span.so-foot__count');
-    const foot = h('footer.app__bar.app__bar--foot.so-foot', footDot, footState, footCount, h('div.grow'),
+    const footFriends = h('span.so-foot__friends');
+    const footOff = h('button.so-foot__off', { type: 'button', 'data-act': 'appear-offline', onclick: () => { presence.setAppearOffline(!presence.appearingOffline()); soon('me', 'foot', 'people', 'head'); } });
+    const foot = h('footer.app__bar.app__bar--foot.so-foot', footDot, footState, footCount, footFriends, h('div.grow'), footOff,
       h('span.so-foot__note', { title: FOOT_NOTE },
         h('span.so-foot__long', { text: FOOT_NOTE }), h('span.so-foot__short', { text: FOOT_SHORT })));
 
@@ -730,7 +837,7 @@ defineApp({
       const dm = key.startsWith('dm:') ? peerOf(key.slice(3)) : null;
       const dmOn = dm ? onlineOf(dm.id) : null;
       const code = party ? party.code() : null;
-      const sig = JSON.stringify([key, catReady, S.formOpen, key === 'lfp' ? livePosts() : 0, code, has('aether-games'),
+      const sig = JSON.stringify([key, showEveryone(), catReady, S.formOpen, key === 'lfp' ? livePosts() : 0, code, has('aether-games'),
         dm && [dm.name, dm.color, isFriend(dm.id), isMuted(dm.id)], dmOn && [dmOn.status, dmOn.playing]]);
       if (sig === headSig) return;
       headSig = sig;
@@ -744,19 +851,19 @@ defineApp({
           headSub.textContent = 'Private · only people you accept see you here';
         } else if (key === 'lobby') {
           headArt.append(hglyph('message-circle'));
-          headSub.textContent = 'Public room · talk about anything on StaticOS';
+          headSub.textContent = showEveryone() ? 'Public room · strangers included' : 'Public room · friends only';
           headActs.append(moreBtn('Room options', e => roomMenu(e)));
         } else if (key === 'lfp') {
           title = 'Looking for players';
           headArt.append(hglyph('users'));
           const n = livePosts();
-          headSub.textContent = `${n ? `${n} live post${n === 1 ? '' : 's'}` : 'No live posts'} · each one disappears 15 minutes after it’s posted`;
-          headActs.append(btn(S.formOpen ? 'Close' : 'New post', S.formOpen ? 'x' : 'plus', () => setForm(!S.formOpen), { primary: !S.formOpen, act: 'post' }));
+          headSub.textContent = `${n ? `${n} live post${n === 1 ? '' : 's'}` : 'No live posts'} · ${showEveryone() ? 'everyone, strangers included' : 'friends only'} · each one disappears after 15 minutes`;
+          headActs.append(btn(S.formOpen ? 'Close' : 'New post', S.formOpen ? 'x' : 'plus', () => setForm(!S.formOpen), { primary: !S.formOpen, act: 'post' }), moreBtn('Room options', e => roomMenu(e)));
         } else if (key.startsWith('g:')) {
           const g = gameOfKey(key);
           title = g ? gTitle(g) : 'Game room';
           if (g) headArt.append(thumb(g, '.so-thumb--head'));
-          headSub.textContent = 'Public room about this game';
+          headSub.textContent = showEveryone() ? 'Public room about this game · strangers included' : 'Public room about this game · friends only';
           const ref = g ? { kind: 'web', id: g.id, title, g } : null;
           headActs.append(
             btn('Play', 'play', () => play(ref), { primary: true, disabled: !canPlay(ref), act: 'play', tip: canPlay(ref) ? `Play ${title}` : 'Static Games isn’t installed' }),
@@ -796,13 +903,18 @@ defineApp({
       return !!mentionRe && mentionRe.test(text);
     }
 
+    const whoNote = () => (showEveryone()
+      ? 'Showing everyone, strangers included, and anyone can use any name. Room options › Show only friends turns that off.'
+      : 'Showing only people on your Friends list. Room options › Show everyone adds strangers, who can use any name.');
+
     function intro(key) {
       const noteLine = (ic, text) => h('p.so-intro__note', icon(ic), h('span', { text }));
       if (key === 'lobby') {
         return h('div.so-intro', hglyph('message-circle'),
           h('div.grow', h('h3', { text: 'Welcome to the Lobby' }),
             h('p', { text: 'Talk about anything on StaticOS — games, parties, what you’re making. Each game in the room list has its own room.' }),
-            noteLine('clock', NO_HISTORY)));
+            noteLine('clock', NO_HISTORY),
+            noteLine('users', whoNote())));
       }
       if (key.startsWith('g:')) {
         const g = gameOfKey(key);
@@ -817,7 +929,8 @@ defineApp({
             h('div.so-intro__acts',
               btn('Play', 'play', () => play(ref), { primary: true, disabled: !canPlay(ref) }),
               btn('Find players', 'users', () => startPost(ref))),
-            noteLine('clock', NO_HISTORY)));
+            noteLine('clock', NO_HISTORY),
+            noteLine('users', whoNote())));
       }
       const p = peerOf(key.slice(3));
       return h('div.so-intro', avatar(p, 'lg'),
@@ -840,7 +953,7 @@ defineApp({
       const time = clock(m.at);
       const text = m.poll ? pollEl(m.poll) : h('div.so-msg__t', { text: m.text });
       const more = moreBtn('Message options', e => msgMenu(e, m));
-      const extra = m.partyCode ? inviteChip(m) : null;
+      const extra = m.partyCode ? inviteChip(m) : cardsFor(m);
       const row = cont
         ? h('div.so-msg.is-cont', { dataset: { seq: String(m.seq) } },
           h('time.so-msg__ct', { dateTime: iso(m.at), text: time }),
@@ -891,7 +1004,7 @@ defineApp({
         rendered.lastSeq = last;
         let mineAdded = false, shown = 0;
         for (const m of fresh) {
-          if (isMuted(m.from)) continue;
+          if (isMuted(m.from) || !canSee(m.from) || isHidden(m)) continue;
           appendMsg(m);
           shown++;
           if (m.mine) mineAdded = true;
@@ -909,7 +1022,7 @@ defineApp({
       clear(logEl);
       logEl.appendChild(intro(key));
       rendered = { key, lastSeq: last, lastFrom: null, lastAt: 0, stale: false };
-      const visible = arr.filter(m => !isMuted(m.from));
+      const visible = arr.filter(m => !isMuted(m.from) && (key.startsWith('dm:') || canSee(m.from)) && !isHidden(m));
       const unread = S.unread.get(key) || 0;
       const divAt = unread > 0 && unread < visible.length ? visible.length - unread : -1;
       visible.forEach((m, i) => {
@@ -943,6 +1056,30 @@ defineApp({
       timers.delete(hintT);
       hintT = later(() => { hintHeld = false; hintEl.classList.remove('is-warn'); paintComposer(); }, 3800);
     }
+    /** "Slow down" with a live count: the line under the composer (or `write`) says how long is left until sending works again. */
+    const counters = new Set();
+    function countdown(ms, write, done) {
+      const until = Date.now() + ms;
+      const t = setInterval(step, 250);
+      counters.add(t);
+      function step() {
+        const left = Math.ceil((until - Date.now()) / 1000);
+        if (left <= 0 || dead) { clearInterval(t); counters.delete(t); if (done) done(); return; }
+        write(`Slow down — you can send again in ${left} s.`);
+      }
+      step();
+      return () => { clearInterval(t); counters.delete(t); };
+    }
+    let stopSlow = null;
+    function slowDown(ms) {
+      if (stopSlow) stopSlow();
+      clearTimeout(hintT);
+      timers.delete(hintT);
+      hintHeld = true;
+      stopSlow = countdown(ms, t => { hintEl.textContent = t; hintEl.classList.add('is-warn'); },
+        () => { stopSlow = null; hintHeld = false; hintEl.classList.remove('is-warn'); paintComposer(); });
+    }
+    const sendHint = r => { if (r && r.wait) slowDown(r.wait); else flashHint(sendNote(r)); };
     function autosize() {
       /* measured only while the box is rendered: a hidden composer (the
          board is showing, or a phone's inactive sheet) reads 0 and would
@@ -1018,7 +1155,7 @@ defineApp({
         autosize();
         paintComposer();
       } else if (r === 'offline') flashHint('Not sent — the live channel isn’t connected. Your message is still here.');
-      else if (r && r.wait) flashHint(`Slow down — you can send again in ${Math.max(1, Math.ceil(r.wait / 1000))} s.`);
+      else if (r && r.wait) slowDown(r.wait);
     }
 
     /* ============================ polls ============================ */
@@ -1069,7 +1206,7 @@ defineApp({
       const probe = { ...P, votes: new Map(P.votes) };
       if (POLL.applyVote(probe, { id: myId, name: me().name }, vote) !== 'ok') return;
       const r = pollSend(P.room, { vote });
-      if (typeof r === 'string' || r.wait) { flashHint(sendNote(r)); return; }
+      if (typeof r === 'string' || r.wait) { sendHint(r); return; }
       P.myN = n;
       POLL.applyVote(P, { id: myId, name: me().name }, vote);
       repaintPoll(P);
@@ -1077,7 +1214,7 @@ defineApp({
     function closePoll(P) {
       if (P.from !== myId || P.closed) return;
       const r = pollSend(P.room, { close: { pid: P.pid } });
-      if (typeof r === 'string' || r.wait) { flashHint(sendNote(r)); return; }
+      if (typeof r === 'string' || r.wait) { sendHint(r); return; }
       POLL.applyClose(P, myId);
       repaintPoll(P);
     }
@@ -1123,7 +1260,7 @@ defineApp({
 
     function onRoom(key, text) {
       const p = parseBase(text);
-      if (!p) return;
+      if (!p || !canSee(p.who.id)) return;
       if (p.raw.poll || p.raw.vote || p.raw.close) { onPollMsg(key, p); return; }
       const m = chatFrom(p);
       if (!m || !firstSight(`${key}|${m.seen}`) || flooded(m.from)) return;
@@ -1157,6 +1294,7 @@ defineApp({
     function onDm(text) {
       const m = parseDm(text, myId);
       if (!m || m.from === myId) return;
+      if (m.partyCode && !canSee(m.from)) m.partyCode = null;      /* party codes come from friends */
       const key = `dm:${m.from}`;
       if (!firstSight(`${key}|${m.seen}`) || flooded(m.from)) return;
       m.mine = false;
@@ -1183,7 +1321,7 @@ defineApp({
 
     /* ============================ looking for players ============================ */
     const boardPosts = () => [...S.posts.values()]
-      .filter(p => expiresAt(p) > Date.now() && !isMuted(p.from))
+      .filter(p => expiresAt(p) > Date.now() && !isMuted(p.from) && canSee(p.from))
       .sort((a, b) => b.at - a.at);
 
     function onPost(text) {
@@ -1195,6 +1333,7 @@ defineApp({
         return;
       }
       if (p.from === myId) return;                     /* my own post, echoed back */
+      if (!canSee(p.from)) return;                      /* friends only, unless you chose to see everyone */
       if (S.posts.has(p.key)) return;                  /* a re-share of a post already here */
       if (flooded(p.from)) return;
       const theirs = [...S.posts.values()].filter(q => q.from === p.from).sort((a, b) => a.at - b.at);
@@ -1263,6 +1402,7 @@ defineApp({
 
     /** The post form. -> { el, cat, refresh } — refresh() updates the bits that
         depend on your party without rebuilding (so typing never loses focus). */
+    let stopPostSlow = null;
     function postForm() {
       if (!catReady) {
         return { el: h('div.so-form', h('div.so-rail__wait', h('div.spinner'), h('span', { text: 'Loading the game list…' }))), cat: false, refresh() {} };
@@ -1296,7 +1436,7 @@ defineApp({
         if (!ref) { status.textContent = 'Pick a game first.'; return; }
         if (live.status() !== 'live') { status.textContent = 'Not posted — the live channel isn’t connected.'; return; }
         const budget = sendBudget();
-        if (!budget.ok) { status.textContent = `Slow down — try again in ${Math.max(1, Math.ceil(budget.wait / 1000))} s.`; return; }
+        if (!budget.ok) { if (stopPostSlow) stopPostSlow(); stopPostSlow = countdown(budget.wait, t => { status.textContent = t; }, () => { stopPostSlow = null; status.textContent = ''; }); return; }
         const m = me();
         const post = { id: m.id, name: m.name, color: m.color, game: { kind: ref.kind, id: ref.id, title: ref.title }, text: oneLine(noteIn.value, MAX_NOTE), at: Date.now(), mid: rid() };
         const c = party ? party.code() : null;
@@ -1370,6 +1510,7 @@ defineApp({
         if (!mp && !posts.length) {
           postList.appendChild(h('div.empty.so-empty', icon('users'),
             h('b', { text: 'No posts yet' }),
+            showEveryone() ? null : h('small', { text: 'Only posts from people on your Friends list show here. Room options › Show everyone adds strangers.' }),
             h('small', { text: 'Posts only reach people who have Social open, so you’ll see the ones made while you’re here. Post one — anyone who opens Social in the next 15 minutes will see it, as long as you keep Social open.' }),
             S.formOpen ? null : btn('Post one', 'plus', () => setForm(true), { primary: true })));
         } else {
@@ -1428,8 +1569,11 @@ defineApp({
             peopleList.appendChild(h('div.so-pgroup', h('div.side__label', { text: `Starred · ${on.length} online` }),
               on.map(p => personRow(p, true)), off.map(p => personRow(p, false))));
           }
-          const others = online.filter(p => !fIds.has(p.id));
-          if (others.length) {
+          const others = showEveryone() ? online.filter(p => !fIds.has(p.id)) : [];
+          if (!showEveryone()) {
+            peopleList.appendChild(h('div.empty.so-empty', icon('lock'), h('b', { text: 'Friends only' }),
+              h('small', { text: 'People who are not your friends are hidden. Room options › Show everyone lists strangers too.' })));
+          } else if (others.length) {
             peopleList.appendChild(h('div.so-pgroup', h('div.side__label', { text: fl.length ? 'Everyone else' : 'Everyone' }), others.slice(0, 200).map(p => personRow(p, true))));
           } else if (!online.length) {
             peopleList.appendChild(h('div.empty.so-empty', icon('users'), h('b', { text: 'No one else is online' }),
@@ -1460,6 +1604,10 @@ defineApp({
       const n = onlineNow().length;
       const inv = me().status === 'invisible';
       footCount.textContent = st !== 'live' ? '' : `· ${n === 0 ? 'no one else online' : n === 1 ? '1 other person online' : `${n} other people online`}${inv ? ' · you’re invisible' : ''}`;
+      footFriends.textContent = friendCount.online > 0 ? `· ${friendCount.online} ${friendCount.online === 1 ? 'friend' : 'friends'} online` : '';
+      footOff.textContent = inv ? 'Appearing offline · show me' : 'Appear offline';
+      footOff.setAttribute('aria-pressed', String(inv));
+      footOff.title = inv ? 'You look offline to everyone. Press to show your status again.' : 'Look offline to everyone, public and friends, until you switch it off';
     }
 
     /* ============================ cards & menus ============================ */
@@ -1571,6 +1719,9 @@ defineApp({
         label: 'Copy text', icon: 'copy',
         onClick: () => { try { navigator.clipboard.writeText(m.text).catch(() => {}); } catch (err) { /* no clipboard here */ } },
       }];
+      items.push(
+        { label: 'Save to Notes', icon: 'sticky-note', disabled: !has('notes'), onClick: () => saveToNotes(m) },
+        { label: 'Hide message', icon: 'eye-off', disabled: !hideId(m), onClick: () => hideMsg(m) });
       if (!m.mine && m.from !== myId) {
         items.push('-');
         if (S.view !== `dm:${m.from}`) items.push({ label: `Message ${m.name}`, icon: 'message-circle', onClick: () => openDm(who) });
@@ -1578,6 +1729,18 @@ defineApp({
         items.push({ label: `Mute ${m.name}`, icon: 'volume-x', onClick: () => toggleMute(who) });
       }
       menuAt(e, items);
+    }
+
+    /* Flip who the public rooms and Looking for players show. Turning it on says plainly what it means. */
+    function toggleEveryone() {
+      const on = !showEveryone();
+      store.set(K_EVERYONE, on);
+      rendered.key = null;
+      headSig = '';
+      peopleSig = '';
+      soon('log', 'board', 'head', 'people', 'rail');
+      note({ title: on ? 'Showing everyone' : 'Showing only friends',
+        message: on ? 'You may see strangers here, and anyone can use any name.' : 'Only people on your Friends list appear in the public rooms now.' });
     }
 
     function roomMenu(e) {
@@ -1592,6 +1755,14 @@ defineApp({
           { label: 'Save to a collection…', icon: 'bookmark', onClick: () => import('../core/collections.js').then(C => C.pickMenu(api, item, r.left, r.bottom + 4)).catch(() => {}) },
           '-');
       }
+      if (!key.startsWith('dm:')) {
+        items.push({
+          label: showEveryone() ? 'Show only friends' : 'Show everyone (strangers too)', icon: showEveryone() ? 'lock' : 'users',
+          onClick: () => toggleEveryone(),
+        }, '-');
+      }
+      const anchor = e.currentTarget;
+      items.push({ label: `Hidden messages${hiddenList().length ? ` (${hiddenList().length})` : ''}…`, icon: 'eye-off', onClick: () => openHidden(anchor) });
       items.push({
         label: 'Clear what you’ve seen here', icon: 'trash', disabled: !(S.logs.get(key) || []).length,
         onClick: () => { S.logs.delete(key); rendered.key = null; soon('log'); },
@@ -1602,8 +1773,10 @@ defineApp({
     function dmMenu(e, p) {
       const mu = isMuted(p.id);
       const r = e.currentTarget.getBoundingClientRect();
+      const anchor = e.currentTarget;
       api.menu([
         { label: mu ? 'Unmute' : 'Mute', icon: mu ? 'volume-2' : 'volume-x', onClick: () => toggleMute(p) },
+        { label: `Hidden messages${hiddenList().length ? ` (${hiddenList().length})` : ''}…`, icon: 'eye-off', onClick: () => openHidden(anchor) },
         { label: 'Clear this conversation', icon: 'trash', disabled: !(S.logs.get(`dm:${p.id}`) || []).length, onClick: () => { S.logs.delete(`dm:${p.id}`); rendered.key = null; soon('log'); } },
         { label: 'Close this conversation', icon: 'x', onClick: () => { S.dms.delete(p.id); S.logs.delete(`dm:${p.id}`); S.unread.delete(`dm:${p.id}`); S.drafts.delete(`dm:${p.id}`); taKey = null; go('lobby'); } },
       ], r.left, r.bottom + 4);
@@ -1783,7 +1956,7 @@ defineApp({
         return;
       }
       if (o.friends || typeof o.friend === 'string' || typeof o.night === 'string') {
-        friendsOpts = { friend: typeof o.friend === 'string' ? o.friend : undefined, night: typeof o.night === 'string' ? o.night : undefined };
+        friendsOpts = { friend: typeof o.friend === 'string' ? o.friend : undefined, night: typeof o.night === 'string' ? o.night : undefined, animeNight: o.animeNight && typeof o.animeNight === 'object' ? o.animeNight : undefined };
         go('friends');
         return;
       }
@@ -1906,6 +2079,8 @@ defineApp({
       clearInterval(tick);
       timers.forEach(t => clearTimeout(t));
       timers.clear();
+      counters.forEach(t => clearInterval(t));
+      counters.clear();
       saveDraft();
       offs.splice(0).forEach(off => { try { off(); } catch (err) { /* already gone */ } });
     };

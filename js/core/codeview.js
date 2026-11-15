@@ -1,7 +1,7 @@
 /* ============================================================
    codeview.js — the Python pane in Code's preview column.
 
-   pyPane({ h, icon, clear }) -> { el, run({ files, main, dir, known, reveal }), stop(), dispose(), running }
+   pyPane({ h, icon, clear }) -> { el, run({ files, main, dir, known, reveal }), stop(), dispose(), running, board }
 
    · Nothing is downloaded until the first Run. Then a real progress
      bar counts the engine's bytes (core/pyrun.js), "Starting Python…"
@@ -13,7 +13,10 @@
    · Stop ends the program wherever it is — even  while True: pass —
      by removing the sealed frame its worker lives in.
    · Everything Python prints is added as text, never as HTML.
+   · A program that uses `draw` (core/pydraw.js) gets a canvas beside
+     its output; each Run starts with it put away again.
    ============================================================ */
+import { drawBoard } from './pydraw.js';
 
 const MAX_OUT = 300000;          /* characters kept on screen */
 const FLUSH_MAX = 120000;        /* characters one frame will paint: a program that prints forever cannot freeze the page */
@@ -33,8 +36,9 @@ export function pyPane({ h, icon, clear }) {
   const inRow = h('form.cpy__inrow', { hidden: true, onsubmit: e => { e.preventDefault(); sendInput(); } },
     icon('chevron-right'), inField,
     h('button.btn.btn--sm', { type: 'submit' }, h('span', { text: 'Send' })));
-  const note = h('p.cpy__note', { text: 'Python runs in a sealed worker. It can read a copy of this folder’s text files and use the standard library; it can’t see your other files, saved data or settings, and nothing it writes is kept. Stop ends it.' });
-  const el = h('div.cpy', h('div.cpy__head', icon('terminal'), h('b', { text: 'Python' }), status, h('div.grow'), clearBtn, stopBtn), prog, out, inRow, note);
+  const note = h('p.cpy__note', { text: 'Python runs in a sealed worker. It can read a copy of this folder’s text files and use the standard library; it can’t see your other files, saved data or settings, and nothing it writes is kept. Stop ends it. “from draw import *” draws lines, circles, rectangles and text beside the output.' });
+  const board = drawBoard({ h });
+  const el = h('div.cpy', h('div.cpy__head', icon('terminal'), h('b', { text: 'Python' }), status, h('div.grow'), clearBtn, stopBtn), prog, h('div.cpy__body', board.el, out), inRow, note);
 
   const S = { eng: null, seq: 0, running: false, cur: null, chars: 0, queue: [], raf: 0, errBuf: '', errT: 0, known: () => false, reveal: null, cut: false, dead: false };
 
@@ -161,6 +165,7 @@ export function pyPane({ h, icon, clear }) {
     S.reveal = reveal || null;
     if (S.eng && S.eng.state === 'running') killEngine();
     clearOut();
+    board.reset();
     inRow.hidden = true;
     setRunning(true);
     const P = await import('./pyrun.js');
@@ -189,6 +194,7 @@ export function pyPane({ h, icon, clear }) {
         onOut: (kind, text) => queue(kind, text),
         onInput: () => { if (S.dead || !S.running) return; flushNow(); inRow.hidden = false; inField.focus({ preventScroll: true }); setStatus('Waiting for your input'); },
         onStage: t => { if (my === S.seq) { progLabel.textContent = t; } },
+        onDraw: cmds => { if (!S.dead) board.add(cmds); },
       });
       S.eng = eng;
       try { await eng.boot(assets); }
@@ -213,7 +219,8 @@ export function pyPane({ h, icon, clear }) {
     stop,
     get running() { return S.running; },
     get engine() { return S.eng; },
-    dispose() { S.dead = true; S.seq++; cancelAnimationFrame(S.raf); clearTimeout(S.errT); killEngine(); },
+    board,
+    dispose() { S.dead = true; S.seq++; cancelAnimationFrame(S.raf); clearTimeout(S.errT); killEngine(); board.dispose(); },
     /** drop the engine (frees its memory) without any message */
     release() { stop(false); },
   };

@@ -1,8 +1,7 @@
 /* ============================================================
-   feat-party.css — Static Party (js/apps/party.js) and the party
-   pill beside the Dock (js/shell/partybar.js).
+   feat-party.css — Static Party (js/apps/party.js).
 
-   Self-injected by both (guard id: feat-party-css). Tokens only,
+   Self-injected by it (guard id: feat-party-css). Tokens only,
    plus two local signal colours (ready green, caution amber) that
    are redefined for light mode. The window folds with container
    queries on .pt: three columns (party · stage · chat), then two
@@ -10,14 +9,14 @@
    the stage first — so a narrow window and a phone both work.
    ============================================================ */
 
-.pt,.pt-live,.ptb{
+.pt,.pt-live{
   --pt-ok:#34d399;      --pt-ok-rgb:52 211 153;
   --pt-warn:#fbbf24;    --pt-warn-rgb:251 191 36;
   --pt-bad:#ff8c9f;
   --pt-ring:#1b0c12;    /* ring around avatar dots: about the window's glass */
   --pt-solid:#1a0b11;   /* an opaque stand-in for the window surface */
 }
-html[data-theme=light] :is(.pt,.pt-live,.ptb){
+html[data-theme=light] :is(.pt,.pt-live){
   --pt-ok:#059669;      --pt-ok-rgb:5 150 105;
   --pt-warn:#b45309;    --pt-warn-rgb:180 83 9;
   --pt-bad:#c81e3c;
@@ -542,66 +541,75 @@ html[data-theme=light] .pt-msg.is-mine .pt-msg__head b{color:var(--accent)}
 }
 
 /* ================================================================ *
- *  the party pill beside the Dock (js/shell/partybar.js)
- *
- *  Mirrors the account button on the other side: bottom-left, at
- *  Dock height and on the Dock's layer, so it never covers a window
- *  (windows end above the Dock) and sits nowhere near the centred
- *  desktop clock. When the Dock is wide enough to reach it, the
- *  script adds .is-raised and it steps up just above the Dock line.
- * ================================================================ */
-.ptb{
-  position:absolute;left:var(--sp-5);bottom:calc(var(--sp-3) + 13px);z-index:var(--z-dock);
-  display:flex;align-items:center;gap:7px;height:34px;padding:0 12px 0 5px;border-radius:var(--r-pill);
-  background:var(--glass-2);border:1px solid var(--line-1);box-shadow:var(--sh-2);color:var(--ink-1);
-  -webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);
-  font-size:var(--fs-11);white-space:nowrap;cursor:pointer;
-  transition:background var(--t-fast),transform var(--t-fast) var(--spring),bottom var(--t-med) var(--ease);
-  animation:ptb-in .34s var(--ease-out) both;
-}
-.ptb[hidden],.ptb [hidden]{display:none}
-.ptb:hover{background:var(--glass-3);color:var(--ink-0)}
-.ptb:active{transform:scale(.97)}
-.ptb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.ptb.is-raised{bottom:calc(var(--dock-h) + var(--sp-4))}
-@keyframes ptb-in{from{opacity:0;transform:translateY(8px) scale(.96)}}
-
-.ptb__faces{display:flex;align-items:center;padding-left:1px}
-.ptb__faces .pt-av{--s:24px;box-shadow:0 0 0 2px var(--pt-ring)}
-.ptb__faces .pt-av + .pt-av{margin-left:-8px}
-.ptb__faces .pt-av__i{font-size:calc(10.5px * var(--fs-k,1))}
-.ptb__plus{
-  display:grid;place-items:center;height:24px;min-width:24px;padding:0 4px;margin-left:-8px;border-radius:var(--r-pill);
-  background:var(--fill-2);box-shadow:0 0 0 2px var(--pt-ring);font-size:calc(9.5px * var(--fs-k,1));font-weight:700;color:var(--ink-1);
-}
-.ptb__dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--ink-4)}
-.ptb[data-s=live] .ptb__dot{background:var(--pt-ok)}
-.ptb[data-s=connecting] .ptb__dot{background:var(--pt-warn);animation:pulse 1.2s ease-in-out infinite}
-.ptb[data-s=offline] .ptb__dot{background:var(--pt-bad)}
-.ptb__code{font:700 var(--fs-12)/1 var(--mono);font-variant-ligatures:none;letter-spacing:.12em;color:var(--ink-0)}
-.ptb__sep{width:1px;height:14px;background:var(--line-2);flex:0 0 auto}
-.ptb__n{display:inline-flex;align-items:center;gap:4px;font-weight:620;font-variant-numeric:tabular-nums;color:var(--ink-2)}
-.ptb__n .icon{width:12px;height:12px}
-.ptb__n.is-ready{color:var(--pt-ok)}
-.ptb__n.is-off{color:var(--pt-bad);font-weight:600}
-
-/* a phone: above the bottom nav, and only on the home grid — an app
-   sheet fills the screen, and a pill over it would cover the app */
-body.is-mobile .ptb{left:12px;bottom:calc(var(--mob-nav-h,56px) + 12px)}
-body.is-mobile.mob-has-win .ptb{display:none}
-/* the Labs FPS meter lives in the same corner (the same offset raised or
-   not, so measuring against the Dock can't flip the pill back and forth) */
-body:has(.lab-fps) .ptb{left:96px}
-
-/* ================================================================ *
  *  motion: the OS switch and the system one
  * ================================================================ */
 @media (prefers-reduced-motion:reduce){
-  .pt-live__dot,.pt-go,.pt-go.is-all,.ptb,.ptb__dot,.pt .is-flash::after{animation:none!important}
-  .pt-tile__art,.pt-ready,.pt-go,.pt-crew__face,.pt-art img,.ptb{transition:none}
+  .pt-live__dot,.pt-go,.pt-go.is-all,.pt .is-flash::after{animation:none!important}
+  .pt-tile__art,.pt-ready,.pt-go,.pt-crew__face,.pt-art img{transition:none}
   .pt-tile:hover .pt-tile__art{transform:none}
 }
-body.reduce-motion :is(.pt-live__dot,.pt-go,.ptb,.ptb__dot),
+body.reduce-motion :is(.pt-live__dot,.pt-go),
 body.reduce-motion .pt .is-flash::after{animation:none!important}
-body.reduce-motion :is(.pt-tile__art,.pt-ready,.pt-go,.pt-crew__face,.pt-art img,.ptb){transition:none}
+body.reduce-motion :is(.pt-tile__art,.pt-ready,.pt-go,.pt-crew__face,.pt-art img){transition:none}
 body.reduce-motion .pt-tile:hover .pt-tile__art{transform:none}
+
+/* ================================================================ *
+ *  one place to start: Party Hub and Squad in the lobby
+ * ================================================================ */
+.pt-locals{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4) var(--sp-5);border-radius:var(--r-lg);background:var(--fill-0);border:1px solid var(--line-0)}
+.pt-locals__head{display:flex;flex-direction:column;gap:var(--sp-1)}
+.pt-locals__head b{font-size:var(--fs-12);font-weight:650;color:var(--ink-0)}
+.pt-locals__head small{font-size:var(--fs-11);color:var(--ink-3);line-height:1.5}
+.pt-locals__list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--sp-2)}
+.pt-local{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) 0}
+.pt-local__ic{display:grid;place-items:center;width:28px;height:28px;border-radius:var(--r-md);background:var(--fill-1);color:var(--ink-2);flex:0 0 auto}
+.pt-local__ic .icon{width:14px;height:14px}
+.pt-local b{display:block;font-size:var(--fs-12);font-weight:640;color:var(--ink-0)}
+.pt-local small{display:block;font-size:var(--fs-11);color:var(--ink-3);line-height:1.4}
+@media (max-width:560px){.pt-local{flex-wrap:wrap}.pt-local .grow{flex:1 1 180px}}
+
+/* ---- the party sidebar: invite link, friends, switches ---- */
+.pt-code__more{display:flex;gap:var(--sp-2);margin-top:var(--sp-2)}
+.pt-code__more .btn{flex:1;justify-content:center}
+.pt-switches{display:flex;flex-direction:column;gap:var(--sp-3);margin-bottom:var(--sp-3)}
+.pt-switch{display:flex;align-items:flex-start;gap:var(--sp-3);cursor:pointer}
+.pt-switch .switch{flex:0 0 auto;margin-top:2px}
+.pt-switch b{display:block;font-size:var(--fs-11);font-weight:640;color:var(--ink-1)}
+.pt-switch small{display:block;font-size:var(--fs-10);color:var(--ink-3);line-height:1.4}
+
+/* ---- banners: countdown and the lock state ---- */
+.pt-banner--cd{background:rgba(var(--accent-rgb)/.14);border-color:var(--line-accent)}
+.pt-cd__n{display:grid;place-items:center;min-width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;font:720 var(--fs-20)/1 var(--font);font-variant-numeric:tabular-nums}
+.pt-banner--lock{background:var(--fill-0)}
+.pt-banner--lock > .icon{color:var(--ink-3)}
+
+/* ---- host row, panels ---- */
+.pt-hostrow{display:flex;flex-wrap:wrap;justify-content:center;gap:var(--sp-2)}
+.pt-hostrow[hidden]{display:none}
+.pt-extras{display:flex;flex-direction:column;gap:var(--sp-4)}
+.pt-panel{display:flex;flex-direction:column;gap:var(--sp-3);padding:var(--sp-4) var(--sp-5);border-radius:var(--r-lg);background:var(--fill-0);border:1px solid var(--line-0)}
+.pt-panel__head{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-12);color:var(--ink-0)}
+.pt-panel__head .icon{width:14px;height:14px;color:var(--ink-3)}
+.pt-panel__head .pt-count{margin-left:auto}
+.pt-panel__empty,.pt-panel__fine{margin:0;font-size:var(--fs-11);color:var(--ink-3);line-height:1.5}
+.pt-panel__fine{font-size:var(--fs-10)}
+.pt-panel__acts{display:flex;flex-wrap:wrap;gap:var(--sp-2);justify-content:flex-end}
+.pt-queue,.pt-played,.pt-board__rows{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--sp-1)}
+.pt-queue__it,.pt-played__it,.pt-board__row{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-1) 0;font-size:var(--fs-12);color:var(--ink-1)}
+.pt-queue__n,.pt-board__n{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--fill-1);font-size:var(--fs-10);font-weight:650;font-variant-numeric:tabular-nums;flex:0 0 auto}
+.pt-queue__t,.pt-played__t,.pt-board__who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pt-queue__acts{display:flex;gap:2px}
+.pt-played__it{flex-wrap:wrap}
+.pt-played__t{font-weight:640;color:var(--ink-0)}
+.pt-board + .pt-board{margin-top:var(--sp-2)}
+.pt-board__t{display:flex;align-items:baseline;gap:var(--sp-2);margin-bottom:var(--sp-1)}
+.pt-board__t b{font-size:var(--fs-12);color:var(--ink-0)}
+.pt-board__t small{font-size:var(--fs-10);color:var(--ink-3)}
+.pt-board__row.is-you .pt-board__who{font-weight:640;color:var(--ink-0)}
+.pt-board__s{font-variant-numeric:tabular-nums;color:var(--ink-0)}
+
+/* ---- the picker's mode switch ---- */
+.pt-modes{display:inline-flex;gap:2px;padding:2px;border-radius:var(--r-md);background:var(--fill-1)}
+.pt-modes[hidden]{display:none}
+.pt-mode{border:0;background:none;color:var(--ink-2);font:600 var(--fs-11)/1 var(--font);padding:6px 10px;border-radius:calc(var(--r-md) - 2px);cursor:pointer}
+.pt-mode.is-on{background:var(--fill-2, var(--fill-1));color:var(--ink-0);box-shadow:inset 0 0 0 1px var(--line-2)}

@@ -5,9 +5,13 @@
    adds a size-keyed sprite cache and a few table helpers.
 
      const book = cardBook(dprGetter);
-     book.face(card, w, h) -> canvas     book.back(w, h, hue) -> canvas
+     book.face(card, w, h, big?) -> canvas
+     book.back(w, h, hue, pattern?) -> canvas
      book.clear()                        (when the size or DPR changes)
      SUIT_GLYPHS · suitColor(s)          '♣♦♥♠' and the ink for each
+
+   The Table look (back pattern and colour, felt, larger cards,
+   left-handed) is ./cardlook.js, shared with the solitaires.
    ============================================================ */
 import { drawFace, drawBack, suitPath } from './cards.js';
 
@@ -31,8 +35,8 @@ export function cardBook(getDpr) {
     return s;
   };
   return {
-    face: (c, w, h) => make(`f${c.r}.${c.s}`, w, h, g => drawFace(g, w, h, c.r, c.s)),
-    back: (w, h, hue = 350) => make(`b${hue}`, w, h, g => drawBack(g, w, h, hue)),
+    face: (c, w, h, big = false) => make(`f${c.r}.${c.s}${big ? 'B' : ''}`, w, h, g => drawFace(g, w, h, c.r, c.s, big)),
+    back: (w, h, hue = 350, pattern = 'lattice') => make(`b${hue}${pattern}`, w, h, g => drawBack(g, w, h, hue, pattern)),
     clear: () => m.clear(),
   };
 }

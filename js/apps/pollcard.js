@@ -4,9 +4,9 @@
    Everything shown is set with textContent; nothing from another
    person's message ever reaches innerHTML.
    ============================================================ */
-import { LIMITS, isOpen, tally } from '../core/polls.js';
+import { LIMITS, TEMPLATES, isOpen, tally, resultsText } from '../core/polls.js';
 
-export const ANON_NOTE = 'Anonymous only hides names in this window. Votes travel on the same shared public channel as everything else, so it is about display, not secrecy.';
+export const ANON_NOTE = 'Hidden on screen, not from the room. This only changes what is displayed: votes travel on the same shared public channel as everything else, so anyone in the room could still see who voted.';
 const DURS = [['Until I end it', 0], ['5 minutes', 5 * 60e3], ['1 hour', 3600e3], ['1 day', 86400e3]];
 
 function left(ms) {
@@ -14,10 +14,25 @@ function left(ms) {
   return m >= 1440 ? `${Math.round(m / 1440)} d` : m >= 60 ? `${Math.round(m / 60)} h` : `${Math.max(1, m)} min`;
 }
 
-/** The card for one poll. ctx: { myId, vote(P, choices), close(P) }. `el.repaint()` redraws it. */
+/* the results as columns: the height is the count, the label is the option */
+function chart({ h }, P, t) {
+  const top = Math.max(1, ...t.counts);
+  return h('div.so-poll__chart', { role: 'img', 'aria-label': `Bar chart. ${P.opts.map((o, i) => `${o}: ${t.counts[i]}`).join('. ')}` },
+    ...P.opts.map((o, i) => h('div.so-poll__col', { 'data-col': String(i) },
+      h('span.so-poll__cn', { text: String(t.counts[i]) }),
+      h('i.so-poll__colbar', { style: { height: `${Math.round((t.counts[i] / top) * 100)}%` }, 'aria-hidden': 'true' }),
+      h('span.so-poll__cl', { text: o }))));
+}
+
+function copyOut(text) {
+  try { return Promise.resolve(navigator.clipboard.writeText(text)).then(() => true, () => false); } catch (e) { return Promise.resolve(false); }
+}
+
+/** The card for one poll. ctx: { myId, vote(P, choices), close(P), copy?(text) }. `el.repaint()` redraws it. */
 export function pollCard({ h, icon }, P, ctx) {
   const el = h('div.so-poll', { dataset: { poll: P.pid } });
   el.poll = P;
+  let charted = false, copied = '';
   el.repaint = () => {
     const open = isOpen(P);
     const t = tally(P);
@@ -46,6 +61,18 @@ export function pollCard({ h, icon }, P, ctx) {
         !P.anon && t.who[i].length ? h('small.so-poll__who', { text: t.who[i].join(', ') }) : null));
     });
     el.appendChild(list);
+    if (charted) el.appendChild(chart({ h }, P, t));
+    el.appendChild(h('div.so-poll__tools',
+      h('button.btn.btn--sm', { type: 'button', 'data-act': 'poll-chart', 'aria-pressed': charted ? 'true' : 'false',
+        onclick: () => { charted = !charted; el.repaint(); } }, icon('bar-chart'), h('span', { text: charted ? 'Hide chart' : 'Show chart' })),
+      h('button.btn.btn--sm', { type: 'button', 'data-act': 'poll-copy', onclick: async () => {
+        const text = resultsText(P);
+        const done = ctx.copy ? (ctx.copy(text), true) : await copyOut(text);
+        copied = done ? 'Results copied.' : 'Copying was blocked.';
+        el.repaint();
+        setTimeout(() => { copied = ''; if (el.isConnected) el.repaint(); }, 2500);
+      } }, icon('copy'), h('span', { text: 'Copy results' })),
+      copied ? h('span.so-poll__tot', { role: 'status', text: copied }) : null));
     el.appendChild(h('div.so-poll__foot',
       h('span.so-poll__tot', { text: `${t.voters} ${t.voters === 1 ? 'person' : 'people'} voted (counted from votes this device received)` }),
       open && P.from === ctx.myId ? h('button.btn.btn--sm', { type: 'button', 'data-act': 'end-poll', text: 'End poll', onclick: () => ctx.close(P) }) : null));
@@ -55,8 +82,9 @@ export function pollCard({ h, icon }, P, ctx) {
   return el;
 }
 
-/** The "new poll" form. -> element; submit gets { q, opts, multi, anon, dur } or a returned error string. */
-export function pollForm({ h, icon }, submit) {
+/** The "new poll" form. -> element; submit gets { q, opts, multi, anon, dur } or a returned error string.
+    `start` ({ q, opts }) fills it in. */
+export function pollForm({ h, icon }, submit, start = null) {
   const q = h('input', { type: 'text', maxlength: String(LIMITS.Q), placeholder: 'Ask a question', 'aria-label': 'Poll question', 'data-f': 'q' });
   const optsBox = h('div.so-pf__opts');
   const inputs = [];
@@ -70,6 +98,15 @@ export function pollForm({ h, icon }, submit) {
     add.hidden = inputs.length >= LIMITS.MAX;
   }
   addOpt(); addOpt();
+  /* a template (or a /poll line) fills the question and as many options as it has */
+  function fill(tpl) {
+    q.value = tpl.q;
+    while (inputs.length < Math.min(tpl.opts.length, LIMITS.MAX)) addOpt();
+    inputs.forEach((i, n) => { i.value = tpl.opts[n] || ''; });
+  }
+  if (start) fill(start);
+  const tpls = h('div.so-pf__tpls', { role: 'group', 'aria-label': 'Poll templates' },
+    ...TEMPLATES.map(t => h('button.chip', { type: 'button', 'data-tpl': t.name, onclick: () => fill(t) }, t.name)));
   const multi = h('input', { type: 'checkbox', 'data-f': 'multi' });
   const anon = h('input', { type: 'checkbox', 'data-f': 'anon' });
   const dur = h('select.select', { 'aria-label': 'Poll length', 'data-f': 'dur' }, DURS.map(([l, v]) => h('option', { value: String(v), text: l })));
@@ -81,9 +118,9 @@ export function pollForm({ h, icon }, submit) {
     status.textContent = typeof err === 'string' ? err : '';
   };
   return h('div.so-pop.so-pf', { role: 'group', 'aria-label': 'New poll' },
-    q, optsBox, add,
+    tpls, q, optsBox, add,
     h('label.so-form__attach', multi, h('span', { text: 'Allow more than one choice' })),
-    h('label.so-form__attach', anon, h('span', { text: 'Anonymous (hide names on screen)' })),
+    h('label.so-form__attach', anon, h('span', { text: 'Hidden on screen, not from the room' })),
     h('small.dim', { text: ANON_NOTE }),
     h('div.so-form__row', h('label.so-form__l', { text: 'Ends' }), dur),
     h('div.so-form__foot', status, h('div.grow'), h('button.btn.btn--sm.btn--primary', { type: 'button', 'data-act': 'make-poll', onclick: go }, icon('send'), h('span', { text: 'Post poll' }))));

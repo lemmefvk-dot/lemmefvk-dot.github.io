@@ -2,8 +2,9 @@
    arcade/lettergridlogic.js — Letter Grid's rules. Pure: no DOM.
 
    A grid is rolled from 25 dice of six letters each (4×4 uses 16 of
-   them, 5×5 all 25); the dice are our own, drawn once from English
-   letter frequencies and fixed here. A word is a chain of cells that
+   them, 5×5 all 25, 6×6 those and 11 more); the dice are our own,
+   drawn once from English letter frequencies and fixed here. A round
+   is three minutes, or one in the sprint. A word is a chain of cells that
    touch (sides or corners), each cell used at most once, 3 letters or
    more, and in the word list. Longer words score more.
 
@@ -25,6 +26,18 @@ export const DICE = (() => {
   for (let d = 0; d < 25; d++) dice.push(bag.slice(d * 6, d * 6 + 6).join(''));
   return dice;
 })();
+/* eleven more dice for the 6×6 grid (36 in all), drawn the same way from the same
+   frequencies with a seed of their own; the first 25 above are untouched */
+export const DICE_6 = (() => {
+  const bag = [];
+  for (const [ch, n] of Object.entries(FACES)) for (let i = 0; i < n; i++) bag.push(ch);
+  const r = rng(0x6e77e36);
+  for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
+  const dice = [];
+  for (let d = 0; d < 11; d++) dice.push(bag.slice(d * 6, d * 6 + 6).join(''));
+  return dice;
+})();
+const ALL_DICE = [...DICE, ...DICE_6];
 
 export const MIN_LEN = 3;
 export const MAX_LEN = 16;
@@ -33,8 +46,11 @@ export const MAX_LEN = 16;
 export const SIZES = {
   4: { n: 4, dice: 16, min: { words: 40, familiar: 24, long: 6 } },
   5: { n: 5, dice: 25, min: { words: 110, familiar: 60, long: 25 } },
+  6: { n: 6, dice: 36, min: { words: 200, familiar: 110, long: 55 } },
 };
 export const ROUND_SECONDS = 180;
+/* the sprint: one minute instead of three */
+export const SPRINT_SECONDS = 60;
 
 /** points for a word: 3 letters 1, 4 → 2, 5 → 4, 6 → 6, 7 → 9, then 12 and 3 more for each extra letter */
 export function wordPoints(len) {
@@ -131,7 +147,7 @@ export function makeGrid(lex, size, seed, maxRolls = 200) {
   for (let rolls = 1; rolls <= maxRolls; rolls++) {
     const order = Array.from({ length: S.dice }, (_, i) => i);
     for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-    const cells = order.map(d => DICE[d][Math.floor(r() * 6)]);
+    const cells = order.map(d => ALL_DICE[d][Math.floor(r() * 6)]);
     const found = solveGrid(lex, cells, S.n);
     const g = grade(lex, found);
     const out = { size, n: S.n, seed, cells, found, grade: g, rolls, ok: meetsMinimum(g, size) };

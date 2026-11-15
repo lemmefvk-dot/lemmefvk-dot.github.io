@@ -36,6 +36,9 @@ import * as L from '../core/layers.js';
 import { roving } from '../core/roving.js';
 import * as KM from '../core/keymap.js';
 import * as TABS from '../core/wintabs.js';
+import * as WL from '../core/winlayouts.js';
+import { store } from '../core/store.js';
+import { t } from '../core/i18n.js';
 
 const isPhone = () => document.body.classList.contains('is-mobile');
 
@@ -113,11 +116,11 @@ export function mountA11y(host) {
     href: '#', text: label,
     onclick: e => { e.preventDefault(); if (!fn()) say(`Nothing to go to: ${label.replace(/^Skip to /, '')}`); },
   });
-  const skips = h('nav.skips', { 'aria-label': 'Skip links' },
-    skip('Skip to the front window', focusWindow),
-    skip('Skip to the dock', focusDock),
-    skip('Skip to the top bar', focusBar),
-    skip('Skip to the desktop', focusDesktop));
+  const skips = h('nav.skips', { 'aria-label': t('Skip links') },
+    skip(t('Skip to the front window'), focusWindow),
+    skip(t('Skip to the dock'), focusDock),
+    skip(t('Skip to the top bar'), focusBar),
+    skip(t('Skip to the desktop'), focusDesktop));
   host.prepend(skips);
 
   /* the desktop can take focus (from the skip link) so Shift+F10 / the
@@ -178,23 +181,29 @@ export function mountA11y(host) {
     const name = w.el.getAttribute('aria-label') || w.app.name;
     const tabs = TABS.tabsOf(w).length;
     api.menu([
-      { label: w.max ? 'Restore' : 'Maximize', icon: w.max ? 'minimize-2' : 'maximize-2', hint: kh('win.max'), onClick: () => { wm.toggleMax(w); say(w.max ? `${name} maximized` : `${name} restored`); } },
-      { label: 'Minimize', icon: 'minus', onClick: () => { wm.minimize(w); say(`${name} minimized`); } },
-      { label: 'Keep on Top', icon: 'pin', checked: !!w.pinned, hint: kh('win.pin'), disabled: isPhone(), onClick: () => pin(w) },
+      { label: w.max ? t('Restore') : t('Maximize'), icon: w.max ? 'minimize-2' : 'maximize-2', hint: kh('win.max'), onClick: () => { wm.toggleMax(w); say(w.max ? `${name} maximized` : `${name} restored`); } },
+      { label: t('Minimize'), icon: 'minus', onClick: () => { wm.minimize(w); say(`${name} minimized`); } },
+      { label: t('Keep on Top'), icon: 'pin', checked: !!w.pinned, hint: kh('win.pin'), disabled: isPhone(), onClick: () => pin(w) },
       '-',
-      { label: 'Move', icon: 'move', disabled: isPhone(), onClick: () => startMode(w, 'move') },
-      { label: 'Size', icon: 'maximize', disabled: isPhone() || w.app.win.resizable === false, onClick: () => startMode(w, 'size') },
+      { label: t('Move'), icon: 'move', disabled: isPhone(), onClick: () => startMode(w, 'move') },
+      { label: t('Size'), icon: 'maximize', disabled: isPhone() || w.app.win.resizable === false, onClick: () => startMode(w, 'size') },
       '-',
-      { label: 'Snap Left', icon: 'sidebar', hint: kh('snap.left'), disabled: isPhone(), onClick: () => { wm.snap(w, 'left'); say(`${name} snapped left`); } },
-      { label: 'Snap Right', icon: 'sidebar', hint: kh('snap.right'), disabled: isPhone(), onClick: () => { wm.snap(w, 'right'); say(`${name} snapped right`); } },
+      { label: t('Snap Left'), icon: 'sidebar', hint: kh('snap.left'), disabled: isPhone(), onClick: () => { wm.snap(w, 'left'); say(`${name} snapped left`); } },
+      { label: t('Snap Right'), icon: 'sidebar', hint: kh('snap.right'), disabled: isPhone(), onClick: () => { wm.snap(w, 'right'); say(`${name} snapped right`); } },
+      '-',
+      isPhone() ? null : WL.transparencyItem(w),
+      { label: t('Hide Others'), icon: 'eye-off', disabled: isPhone() || !wm.onDesktop().some(x => x !== w && !x.min && !x.tabHidden && !(w.group && w.group.tabs.includes(x))), onClick: () => WL.hideOthers(w) },
+      /* Feedback opens with this window's app picked; the person still presses Send */
+      w.appId === 'feedback' ? null : { label: t('Report a Problem…'), icon: 'bug', onClick: () => api.openApp('feedback', { type: 'bug', app: w.appId }) },
       '-',
       ...(tabs > 1 ? [
-        { label: 'Next Tab', icon: 'chevron-right', hint: KM.keysText('Ctrl+Tab'), onClick: () => TABS.step(w, 1) },
-        { label: 'Move Tab to New Window', icon: 'external-link', onClick: () => TABS.detach(w) },
+        { label: t('Next Tab'), icon: 'chevron-right', hint: KM.keysText('Ctrl+Tab'), onClick: () => TABS.step(w, 1) },
+        { label: t('Rename Tab…'), icon: 'edit-3', onClick: () => TABS.rename(w) },
+        { label: t('Move Tab to New Window'), icon: 'external-link', onClick: () => TABS.detach(w) },
         '-',
       ] : []),
-      { label: tabs > 1 ? 'Close Tab' : 'Close', icon: 'x', danger: true, hint: kh('win.close.alt'), onClick: () => wm.close(w.id) },
-    ], Math.round(at ? at.x : r.left), Math.round(at ? at.y : r.bottom + 4), { label: `${name} window` });
+      { label: tabs > 1 ? t('Close Tab') : t('Close'), icon: 'x', danger: true, hint: kh('win.close.alt'), onClick: () => wm.close(w.id) },
+    ], Math.round(at ? at.x : r.left), Math.round(at ? at.y : r.bottom + 4), { label: t('{name} window', { name }) });
   }
   offs.push(bus.on('win:menu', ({ win, anchor, x, y } = {}) => windowMenu(win, anchor, Number.isFinite(x) ? { x, y } : null)));
   /* a right-click on a title bar or a tab (not on its buttons or fields):
@@ -219,8 +228,8 @@ export function mountA11y(host) {
     if (!w || w.min) return;
     wm.focus(w);
     const hint = h('div.win-kbd', { 'aria-hidden': 'true' },   /* say() reads it out instead */
-      h('b', { text: kind === 'move' ? 'Move' : 'Size' }),
-      h('span', { text: 'arrow keys · Shift for bigger steps · Enter to keep · Esc to undo' }));
+      h('b', { text: kind === 'move' ? t('Move') : t('Size') }),
+      h('span', { text: t('arrow keys · Shift for bigger steps · Enter to keep · Esc to undo') }));
     w.el.appendChild(hint);
     w.el.classList.add('is-kbd');
     mode = { w, kind, start: { ...w.rect }, hint };
@@ -293,6 +302,18 @@ export function mountA11y(host) {
       if (L.depth()) return;
       focusWindow() || focusDock();
     }, 0);
+  }));
+  /* Do Not Disturb, from anywhere: the bell, the Control Centre, a timer, the
+     schedule. A button that flips silently is no use to a screen reader.
+     New notifications are announced by the toast stack itself (a polite live
+     region, js/shell/notifications.js) — and, like the pop-up, not at all
+     while Do Not Disturb holds them back. */
+  let dnd = !!store.get('prefs.dnd');
+  offs.push(store.sub('prefs.dnd', () => {
+    const now = !!store.get('prefs.dnd');
+    if (now === dnd) return;
+    dnd = now;
+    say(now ? 'Do Not Disturb on. Notifications are held back.' : 'Do Not Disturb off');
   }));
   /* a surface that closed with focus inside it asks for focus to go home */
   offs.push(bus.on('a11y:refocus', () => setTimeout(() => {

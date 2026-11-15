@@ -13,10 +13,32 @@
             board games (Chess, Connect Four, Reversi, Checkers,
             Tic-Tac-Toe, Dots and Boxes, Go, Gomoku): the board as characters, the
             line to highlight, the status text, the two players' names
+     pits   { k:'pits', b:[14 counts], bs, turn, pl, txt, over, ow }
+            Mancala: b[0..5] the first player's pits, b[6] their store,
+            b[7..12] and b[13] the second's; bs = the side at the bottom
+     fleet  { k:'fleet', own, shots, ph, turn, pl, txt, over }
+            Battleship, the player's OWN side only: their sea (100
+            characters: . sea, o a miss on it, S a ship, x hit, # sunk)
+            and their shots at the other sea (. o x #) — what the answers
+            said, never where the other fleet lies
+     snakes { k:'snakes', w, h, sn:[{ b, a, c }], f, sc, pl, txt, over }
+            Snake and Snake Battle: each body as cell indices, two base-36
+            digits each, head first; f the apple's cell (−1: none)
+     hockey { k:'hockey', pk:[x,y]|null, m:[[x,y],[x,y]], sc, pl, txt, over }
+            Air Hockey: whole units of the 800 × 440 table, the player's
+            mallet first and on the left, as on their screen
+     bricks { k:'bricks', h, wall, pad:[x,w], ball:[x,y], lv, lives, score, txt, over }
+            Breakout: the 8 × 10 wall as hits left ('0' gone), the table
+            800 wide and h tall
+     flap   { k:'flap', y, cd, p:[[ahead, top, bottom]], sc, txt, over }
+            Flap: the bird's height and the pipes by distance ahead of it
      score  { k:'score', score, unit, st, txt }
             every other game: its score so far and whether it is over
+   The live kinds (snakes, hockey, bricks, flap) go out at most every
+   FAST_GAP instead of SEND_GAP, so a watcher sees them move; the
+   watcher draws them on a canvas with no input and eases between two.
    Never sent: the room code, your device id, saved data, clips, hidden
-   information (Battleship shows score only, never a fleet).
+   information (Battleship never sends the other fleet).
 
    TRANSPORT. Topic pair/watch/<24 hex> on StaticOS's live connection
    (a free PUBLIC MQTT broker). The code is stretched (PBKDF2) into an
@@ -71,6 +93,7 @@ const REPEAT_EVERY = 2000;
 export const WATCHER_GONE = 14000;       /* a watcher silent this long drops off the player's list */
 export const QUIET_MS = 9000;            /* the player silent this long: the watcher says so */
 const SEND_GAP = 220;
+export const FAST_GAP = 120;             /* live kinds: about eight pictures a second */
 const ID_RE = /^[a-z0-9]{10}$/;
 const GAME_RE = /^[a-z0-9-]{1,24}$/;
 const CELLS_RE = /^[A-Za-z0-9.+|\- =_]*$/;
@@ -80,9 +103,70 @@ const rand = n => { const a = new Uint8Array(n); crypto.getRandomValues(a); retu
 const sessionId = () => [...rand(10)].map(b => (b % 36).toString(36)).join('');
 const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 
+/* the live kinds: positions that move between moves, sent more often (FAST_GAP) */
+export const LIVE_KINDS = new Set(['snakes', 'hockey', 'bricks', 'flap']);
+const FLEET_RE = /^[.oSx#]{100}$/;
+const SHOTS_RE = /^[.ox#]{100}$/;
+const WALL_RE = /^[0-3]{80}$/;
+const PAIRS_RE = /^(?:[0-9a-z]{2})*$/;
+const names = (pl, n) => (Array.isArray(pl) ? pl : []).slice(0, n).map(p => ({ n: safeName(p?.n) || 'Player' }));
+const xy = (a, x0, x1, y0, y1) => (Array.isArray(a) && a.length === 2 && int(a[0], x0, x1) && int(a[1], y0, y1) ? [a[0], a[1]] : null);
+const ints = (a, n0, n1, lo, hi) => Array.isArray(a) && a.length >= n0 && a.length <= n1 && a.every(v => int(v, lo, hi));
+/* the new kinds, each checked field by field; null when anything is off */
+function cleanLive(s) {
+  const txt = cleanText(s.txt, 120), over = !!s.over;
+  if (s.k === 'pits') {                                          /* Mancala: 14 counts, b[6] and b[13] the stores */
+    if (!ints(s.b, 14, 14, 0, 96) || !int(s.bs, 0, 1) || !int(s.turn, -1, 1)) return null;
+    return { k: 'pits', b: s.b.slice(), bs: s.bs, turn: s.turn, pl: names(s.pl, 2), txt, over, ow: s.ow === true };
+  }
+  if (s.k === 'fleet') {                                         /* Battleship: the player's own side only */
+    if (typeof s.own !== 'string' || !FLEET_RE.test(s.own) || typeof s.shots !== 'string' || !SHOTS_RE.test(s.shots)) return null;
+    return { k: 'fleet', own: s.own, shots: s.shots, ph: ['place', 'play', 'over'].includes(s.ph) ? s.ph : 'play', turn: s.turn === 1 || s.turn === -1 ? s.turn : 0, pl: names(s.pl, 2), txt, over };
+  }
+  if (s.k === 'snakes') {                                        /* Snake, Snake Battle: bodies as base-36 cell pairs */
+    if (!int(s.w, 4, 60) || !int(s.h, 4, 60) || !Array.isArray(s.sn) || s.sn.length < 1 || s.sn.length > 2) return null;
+    const cells = s.w * s.h;
+    const sn = [];
+    for (const q of s.sn) {
+      if (!q || typeof q.b !== 'string' || q.b.length > 2 * Math.min(cells, 700) || !PAIRS_RE.test(q.b) || !int(q.c, 0, 1)) return null;
+      for (let i = 0; i < q.b.length; i += 2) if (parseInt(q.b.slice(i, i + 2), 36) >= cells) return null;
+      sn.push({ b: q.b, a: q.a !== false, c: q.c });
+    }
+    if (!int(s.f, -1, cells - 1) || !ints(s.sc, 0, 2, 0, 99999)) return null;
+    return { k: 'snakes', w: s.w, h: s.h, sn, f: s.f, sc: s.sc.slice(), pl: names(s.pl, 2), txt, over };
+  }
+  if (s.k === 'hockey') {                                        /* Air Hockey: an 800 × 440 table */
+    const pk = s.pk === null ? null : xy(s.pk, -200, 1000, -200, 640);
+    if (pk === null && s.pk !== null) return null;
+    if (!Array.isArray(s.m) || s.m.length !== 2) return null;
+    const m = s.m.map(q => xy(q, -50, 850, -50, 490));
+    if (m.some(q => !q) || !ints(s.sc, 2, 2, 0, 99)) return null;
+    return { k: 'hockey', pk, m, sc: s.sc.slice(), pl: names(s.pl, 2), txt, over };
+  }
+  if (s.k === 'bricks') {                                        /* Breakout: an 800-wide table, 600–900 tall */
+    if (!int(s.h, 400, 1000) || typeof s.wall !== 'string' || !WALL_RE.test(s.wall)) return null;
+    const pad = Array.isArray(s.pad) && s.pad.length === 2 && int(s.pad[0], -100, 900) && int(s.pad[1], 10, 400) ? [s.pad[0], s.pad[1]] : null;
+    const ball = xy(s.ball, -100, 900, -100, 1100);
+    if (!pad || !ball || !int(s.lv, 1, 9999) || !int(s.lives, 0, 9) || !(Number.isFinite(s.score) && s.score >= 0 && s.score < 1e9)) return null;
+    return { k: 'bricks', h: s.h, wall: s.wall, pad, ball, lv: s.lv, lives: s.lives, score: Math.round(s.score), txt, over };
+  }
+  if (s.k === 'flap') {                                          /* Flap: a 600-tall world, pipes by distance ahead */
+    if (!int(s.y, -100, 700) || !int(s.cd, 0, 1e8) || !Array.isArray(s.p) || s.p.length > 8 || !int(s.sc, 0, 99999)) return null;
+    const p = [];
+    for (const q of s.p) {
+      if (!Array.isArray(q) || q.length !== 3 || !int(q[0], -1000, 3000) || !int(q[1], 0, 600) || !int(q[2], 0, 600) || q[1] >= q[2]) return null;
+      p.push([q[0], q[1], q[2]]);
+    }
+    return { k: 'flap', y: s.y, cd: s.cd, p, sc: s.sc, txt, over };
+  }
+  return undefined;
+}
+
 /** A snapshot from the wire, cleaned — or null. The receiver never trusts a field it did not check. */
 export function cleanSnap(s) {
   if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+  const live = cleanLive(s);
+  if (live !== undefined) return live;
   if (s.k === 'score') {
     const score = s.score === null ? null : Number.isFinite(s.score) && Math.abs(s.score) < 1e9 ? s.score : undefined;
     if (score === undefined) return null;
@@ -167,8 +251,9 @@ export function openBroadcast({ game }) {
     if (!latest || !watchers.size || B.phase !== 'open') return;
     const text = JSON.stringify(latest);
     const now = performance.now();
+    const gap = LIVE_KINDS.has(latest.k) ? FAST_GAP : SEND_GAP;
     if (!force && text === lastText && now - lastSent < REPEAT_EVERY - 50) return;
-    if (!force && now - lastSent < SEND_GAP) { clearTimeout(timer); timer = setTimeout(() => send(), SEND_GAP - (now - lastSent) + 5); return; }
+    if (!force && now - lastSent < gap) { clearTimeout(timer); timer = setTimeout(() => send(), gap - (now - lastSent) + 5); return; }
     lastText = text; lastSent = now;
     C.wire('snap', { g: B.game, q: ++seq, s: latest, n: myName(), ids: [...watchers.keys()], w: list() });
   }

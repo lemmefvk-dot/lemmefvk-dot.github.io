@@ -18,6 +18,7 @@
 import * as SEASON from '../core/season.js';
 import * as WINTER from '../core/winter.js';
 import * as HW from '../core/halloween.js';
+import { t as tr } from '../core/i18n.js';
 
 export function pane(kit) {
   const { api, caption, group, srow, note, btn, tabs, prefSwitch, pref, repaint } = kit;
@@ -30,18 +31,18 @@ export function pane(kit) {
   if (season) {
     const left = SEASON.christmas(now);
     const when = left.passed
-      ? (now.getMonth() === 11 && now.getDate() === 25 ? 'Merry Christmas!' : 'Happy holidays!')
-      : left.days >= 2 ? `${left.days} days to Christmas.`
-        : left.days === 1 ? '1 day to Christmas.'
-          : 'Christmas starts at midnight.';
+      ? (now.getMonth() === 11 && now.getDate() === 25 ? tr('Merry Christmas!') : tr('Happy holidays!'))
+      : left.days >= 2 ? tr('{days} days to Christmas.', { days: left.days })
+        : left.days === 1 ? tr('1 day to Christmas.')
+          : tr('Christmas starts at midnight.');
     out.push(h('div.st-winter' + (on ? '' : '.is-off'),
       h('div.st-winter__art', { 'aria-hidden': 'true' }, icon('snowflake')),
       h('div.st-winter__t',
-        h('b', { text: 'Winter' }),
+        h('b', { text: tr('Winter') }),
         h('small', { text: on
-          ? `On until the end of January 1. ${when}`
-          : 'Off. StaticOS looks the way it does the rest of the year.' })),
-      h('span.badge.st-winter__state' + (on ? '.badge--accent' : ''), { text: on ? 'On' : 'Off' })));
+          ? tr('On until the end of January 1. {when}', { when })
+          : tr('Off. StaticOS looks the way it does the rest of the year.') })),
+      h('span.badge.st-winter__state' + (on ? '.badge--accent' : ''), { text: on ? tr('On') : tr('Off') })));
 
     /* the parts: dimmed and inert while the season is switched off */
     const part = (id, ctrl) => {
@@ -54,9 +55,9 @@ export function pane(kit) {
     };
     const opened = WINTER.openedCount();
     out.push(
-      caption('The season'),
+      caption(tr('The season')),
       group(srow('winterTheme', prefSwitch('winterTheme'))),
-      caption('Extras'),
+      caption(tr('Extras')),
       group(
         part('winterWallpaper', prefSwitch('winterWallpaper')),
         part('winterCountdown', prefSwitch('winterCountdown')),
@@ -64,20 +65,20 @@ export function pane(kit) {
         part('winterAdvent', prefSwitch('winterAdvent')),
       ),
       on && pref('winterCountdown') && !store.get('session.user')
-        ? note('Desktop widgets are for signed-in accounts, so the countdown appears once you sign in (bottom-right corner).', 'user') : null,
+        ? note(tr('Desktop widgets need a profile on this device, so the countdown appears once you make one (bottom-right corner).'), 'user') : null,
       on && pref('winterSnow') && kit.reducedMotion()
-        ? note('Reduce motion is on, so the snow stays away.', 'activity') : null,
+        ? note(tr('Reduce motion is on, so the snow stays away.'), 'activity') : null,
       on && pref('winterSnow') && !kit.reducedMotion() && kit.motionOff()
-        ? note('Wallpaper motion is off on this machine, so the snow is paused with it.', 'gauge') : null,
-      caption('Advent calendar'),
+        ? note(tr('Wallpaper motion is off on this machine, so the snow is paused with it.'), 'gauge') : null,
+      caption(tr('Advent calendar')),
       group(srow('wn.advent',
-        h('span.badge', { text: `${opened} of ${WINTER.DOOR_COUNT} open` }),
-        on && pref('winterAdvent') ? btn('gift', 'Open the calendar', () => api.bus.emit('winter:advent')) : null)),
+        h('span.badge', { text: tr('{opened} of {DOOR_COUNT} open', { opened, DOOR_COUNT: WINTER.DOOR_COUNT }) }),
+        on && pref('winterAdvent') ? btn('gift', tr('Open the calendar'), () => api.bus.emit('winter:advent')) : null)),
     );
   } else {
     out.push(note(WINTER.ownsAny()
-      ? 'Winter comes back on December 1. The treats from your advent calendar keep working all year — they are all below.'
-      : 'Winter comes back on December 1.', 'snowflake'));
+      ? tr('Winter comes back on December 1. The treats from your advent calendar keep working all year — they are all below.')
+      : tr('Winter comes back on December 1.'), 'snowflake'));
   }
 
   /* ---- your treats ---- */
@@ -88,28 +89,28 @@ export function pane(kit) {
   const sounds = WINTER.ownedList('sound');
   const wearing = pref('cursorSkin');
   const tone = pref('notiTone');
-  out.push(caption('Your treats'));
+  out.push(caption(tr('Your treats')));
   if (!cursors.length && !stickers.length && !walls.length && !sounds.length) {
-    out.push(note('Nothing yet — each door of the advent calendar gives a wallpaper, a cursor, a sticker or a notification sound.', 'gift'));
+    out.push(note(tr('Nothing yet — each door of the advent calendar gives a wallpaper, a cursor, a sticker or a notification sound.'), 'gift'));
     return out.filter(Boolean);
   }
   out.push(group(
-    cursors.length ? srow('wn.cursor', tabs('Winter cursor',
-      [['none', 'Normal'], ...cursors.map(c => [c.id, c.name.replace(/ pointer$/, '')])],
+    cursors.length ? srow('wn.cursor', tabs(tr('Winter cursor'),
+      [['none', tr('Normal')], ...cursors.map(c => [c.id, c.name.replace(/ pointer$/, '')])],
       WINTER.owns('cursor', wearing) ? wearing : 'none',
       v => { WINTER.setCursor(v); })) : null,
     stickers.length ? srow('wn.stickers',
       h('div.st-wn__row', stickers.map(t => h('button.st-wn__pick', {
-        type: 'button', 'aria-label': `Put a ${t.name} sticker on the desktop`, title: t.name,
+        type: 'button', 'aria-label': tr('Put a {name} sticker on the desktop', { name: t.name }), title: t.name,
         onclick: () => HW.placeSticker(t.id),
       }, thumb('sticker', t.id))))) : null,
     walls.length ? srow('wn.walls',
       h('div.st-wn__row', walls.map(t => h('button.st-wn__pick.st-wn__pick--wide', {
-        type: 'button', 'aria-label': `Use the ${t.name} wallpaper`, title: t.name,
+        type: 'button', 'aria-label': tr('Use the {name} wallpaper', { name: t.name }), title: t.name,
         onclick: () => { WINTER.useWallpaper(t.id); repaint(); },
       }, thumb('wallpaper', t.id))))) : null,
-    sounds.length ? srow('notiTone', tabs('Notification sound',
-      [['none', 'Usual'], ...sounds.map(t => [t.id, t.name])],
+    sounds.length ? srow('notiTone', tabs(tr('Notification sound'),
+      [['none', tr('Usual')], ...sounds.map(t => [t.id, t.name])],
       WINTER.owns('sound', tone) ? tone : 'none',
       v => { WINTER.setTone(v); if (v !== 'none') import('../core/sfx.js').then(m => { m.unlock(); m.previewTone(v); }).catch(() => {}); })) : null,
   ));

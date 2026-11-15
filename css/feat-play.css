@@ -667,3 +667,23 @@ html[data-theme="light"] .sp-dym__go{color:color-mix(in srgb,var(--accent) 80%,v
   background:radial-gradient(55% 90% at 12% 0%,rgba(255,138,42,.12),transparent 70%),radial-gradient(40% 70% at 88% 10%,rgba(150,90,255,.08),transparent 70%)}
 .sp-sec--halloween .sp-sec__title .icon{color:#ff9a3c}
 html[data-theme="light"] .sp-sec--halloween .sp-sec__title .icon{color:#c25400}
+
+/* ---------- today's puzzle, weekly goals, best scores ---------- */
+.sp-daily{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap;padding:var(--sp-3) var(--sp-5);margin:var(--sp-3) 0;border-radius:var(--r-lg);border:1px solid var(--line-1);background:var(--fill-0)}
+.sp-daily[data-solved="1"]{border-color:var(--line-accent);background:var(--fill-accent)}
+.sp-daily__ic{display:grid;place-items:center;width:40px;height:40px;border-radius:var(--r-md);background:var(--fill-1);color:var(--accent-soft)}
+.sp-daily__b{flex:1 1 220px;min-width:0}
+.sp-daily__b .sp-sec__title{display:flex;align-items:center;gap:var(--sp-2)}
+.sp-daily__tick{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff}
+.sp-daily__tick .icon{width:12px;height:12px}
+.sp-goals__n{margin-left:var(--sp-3);font-size:var(--fs-10);font-weight:600;color:var(--ink-3)}
+.sp-goals__list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--sp-3)}
+.sp-goal{display:flex;flex-direction:column;gap:6px;padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md);border:1px solid var(--line-1);background:var(--fill-0)}
+.sp-goal__t{display:flex;align-items:center;gap:6px;font-size:var(--fs-11);font-weight:600;color:var(--ink-0)}
+.sp-goal__t .icon{width:13px;height:13px;color:var(--accent-soft)}
+.sp-goal__bar{height:6px;border-radius:3px;background:var(--fill-1);overflow:hidden}
+.sp-goal__bar i{display:block;height:100%;background:var(--accent)}
+.sp-goal small{font-size:var(--fs-10);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.sp-goal.is-done{border-color:var(--line-accent)}
+.sp-chip--best{color:var(--accent-soft)}
+.sp-chip--best .icon{width:11px;height:11px}

@@ -3,6 +3,13 @@
    search (apps + files) · pinned grid · all-apps sheet ·
    recents · user footer. Opens on bus 'launcher:toggle',
    closes on 'launcher:close', Escape or an outside pointerdown.
+
+   Two looks, chosen in Settings > Dock (prefs.launcherStyle):
+     panel  the default: pinned grid, with an All apps sheet
+     start  a Start menu: every app in a list down the left, the
+            pinned grid and recent files on the right, opening from
+            the bottom-left corner above the Dock or taskbar
+   Same search, same keys, same apps; only the arrangement differs.
    ============================================================ */
 import { bus } from '../core/bus.js';
 import { store } from '../core/store.js';
@@ -11,6 +18,9 @@ import { listApps, categories } from '../core/registry.js';
 import * as L from '../core/layers.js';
 import { roving } from '../core/roving.js';
 import { appTile } from '../core/appart.js';
+import { addAppToDesktop } from '../core/shortcuts.js';
+import * as WNB from '../core/wnbadge.js';
+import { t as tr } from '../core/i18n.js';
 
 const { h, icon, vfs, fmt, on, clear } = api;
 
@@ -57,18 +67,19 @@ export function mountLauncher(host) {
   }
 
   const launch = fn => { closePanel(); fn(); };
+  const startStyle = () => store.get('prefs.launcherStyle') === 'start';
 
   /* ---------------- chrome ---------------- */
   function build() {
     input = h('input', {
-      type: 'search', placeholder: 'Search apps, settings, files…',
-      spellcheck: 'false', 'aria-label': 'Search apps, settings and files',
+      type: 'search', placeholder: tr('Search apps, settings, files…'),
+      spellcheck: 'false', 'aria-label': tr('Search apps, settings and files'),
       role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-controls': 'launcher-results',
       oninput: e => { S.q = e.target.value; S.sel = 0; paint(); },
       onkeydown: onKey,
     });
     scroll = h('div.launcher__scroll');
-    return h('section.launcher', { role: 'dialog', 'aria-label': 'Launcher' },
+    return h(`section.launcher${startStyle() ? '.launcher--start' : ''}`, { role: 'dialog', 'aria-label': startStyle() ? tr('Start menu') : tr('Launcher') },
       h('div.field.launcher__search', icon('search'), input),
       scroll,
       foot());
@@ -98,11 +109,11 @@ export function mountLauncher(host) {
     return h('div.launcher__foot',
       h('button.avatar', { 'aria-label': `${user.name || 'User'} account`, onclick: openSettings },
         user.initials || 'A'),
-      h('button.launcher__user', { text: user.name || 'Static', onclick: openSettings }),
+      h('button.launcher__user', { text: user.name || tr('Static'), onclick: openSettings }),
       h('div.launcher__acts',
-        act('camera', 'Screenshot', () => { closePanel(); shoot(); }),
+        act('camera', tr('Screenshot'), () => { closePanel(); shoot(); }),
         act('lock', 'Lock', () => { closePanel(); bus.emit('power:lock'); }),
-        act('power', 'Power', powerMenu)));
+        act('power', tr('Power'), powerMenu)));
   }
 
   /** Same as Spotlight's "Take Screenshot": a real PNG of this tab, taken
@@ -120,11 +131,11 @@ export function mountLauncher(host) {
   function powerMenu(e) {
     const r = e.currentTarget.getBoundingClientRect();
     api.menu([
-      { label: 'Sleep', icon: 'moon', onClick: () => { closePanel(); bus.emit('power:sleep'); } },
-      { label: 'Restart', icon: 'refresh', onClick: () => { closePanel(); bus.emit('power:restart'); } },
+      { label: tr('Sleep'), icon: 'moon', onClick: () => { closePanel(); bus.emit('power:sleep'); } },
+      { label: tr('Restart'), icon: 'refresh', onClick: () => { closePanel(); bus.emit('power:restart'); } },
       '-',
-      { label: 'Shut Down', icon: 'power', danger: true,
-        onClick: () => { closePanel(); bus.emit('power:restart'); } },
+      { label: tr('Shut Down'), icon: 'power', danger: true,
+        onClick: () => { closePanel(); bus.emit('power:shutdown'); } },
     ], r.left, r.top);
   }
 
@@ -139,44 +150,69 @@ export function mountLauncher(host) {
     else paintHome();
   }
 
+  /* the Start menu: all the apps on the left, pinned and recent on the right */
+  function paintStartHome() {
+    const apps = listApps().filter(a => !a.hidden).slice().sort((a, b) => a.name.localeCompare(b.name));
+    const list = h('div.stm__list', { role: 'group', 'aria-label': tr('All apps') });
+    let letter = '';
+    for (const app of apps) {
+      const l = (app.name[0] || '#').toUpperCase();
+      if (l !== letter) { letter = l; list.appendChild(h('div.stm__letter', { text: /[A-Z]/.test(l) ? l : '#' })); }
+      list.appendChild(h('button.allapps__row', {
+        style: { textAlign: 'left' },
+        onclick: () => launch(() => api.openApp(app.id)),
+        oncontextmenu: e => pinMenu(e, app),
+      }, appTile(app), h('div.grow.col', h('b.trunc', { text: app.name }))));
+    }
+    roving(list, { items: '.allapps__row', orientation: 'vertical', wrap: false });
+    scroll.append(h('div.stm',
+      h('div.stm__apps', h('div.label', { text: tr('All apps · {length}', { length: apps.length }) }), list),
+      h('div.stm__side',
+        h('div.launcher__head', h('div.label', { text: tr('Pinned') })),
+        pinGrid(4),
+        h('div.launcher__head', h('div.label', { text: tr('Recommended') })),
+        recGrid())));
+  }
+
   function paintHome() {
+    if (startStyle()) { paintStartHome(); return; }
     scroll.append(
       h('div.launcher__head',
-        h('div.label', { text: 'Pinned' }),
+        h('div.label', { text: tr('Pinned') }),
         h('button.launcher__all', { onclick: () => { S.all = true; paint(); } },
-          'All', icon('chevron-right'))),
+          tr('All'), icon('chevron-right'))),
       pinGrid(),
-      h('div.launcher__head', h('div.label', { text: 'Recommended' })),
+      h('div.launcher__head', h('div.label', { text: tr('Recommended') })),
       recGrid());
   }
 
-  function pinGrid() {
-    const grid = h('div.launcher__grid', { role: 'group', 'aria-label': 'Pinned apps' });
+  function pinGrid(cols = 5) {
+    const grid = h('div.launcher__grid', { role: 'group', 'aria-label': tr('Pinned apps') });
     for (const app of listApps().filter(a => a.pinned)) {
       grid.appendChild(h('button.pin', {
         'aria-label': app.name,
         onclick: () => launch(() => api.openApp(app.id)),
         oncontextmenu: e => pinMenu(e, app),
-      }, appTile(app), h('div.pin__name', { text: app.name })));
+      }, appTile(app), h('div.pin__name', { text: app.name }, app.id === 'whatsnew' ? WNB.mark(h) : null)));
     }
-    if (!grid.children.length) grid.appendChild(h('small.dim', { text: 'Nothing pinned yet.' }));
+    if (!grid.children.length) grid.appendChild(h('small.dim', { text: tr('Nothing pinned yet.') }));
     /* one Tab stop, arrows in two dimensions — five to a row (shell.css) */
-    roving(grid, { items: '.pin', orientation: 'grid', columns: () => 5 });
+    roving(grid, { items: '.pin', orientation: 'grid', columns: () => cols });
     return grid;
   }
 
   function recGrid() {
-    const box = h('div.launcher__recs', { role: 'group', 'aria-label': 'Recent files' });
+    const box = h('div.launcher__recs', { role: 'group', 'aria-label': tr('Recent files') });
     for (const r of vfs.recent(6)) {
       box.appendChild(h('button.rec', {
-        'aria-label': `Open ${r.node.name}`, style: { textAlign: 'left' },
+        'aria-label': tr('Open {name}', { name: r.node.name }), style: { textAlign: 'left' },
         onclick: () => launch(() => api.openFile(r.path)),
       }, flat(vfs.iconFor(r.node)),
         h('div.rec__t.grow',
           h('div.rec__n', { text: r.node.name }),
           h('div.rec__m', { text: fmt.fmtAgo(r.node.mtime) }))));
     }
-    if (!box.children.length) box.appendChild(h('small.dim', { text: 'No recent files.' }));
+    if (!box.children.length) box.appendChild(h('small.dim', { text: tr('No recent files.') }));
     roving(box, { items: '.rec', orientation: 'grid', columns: () => 2 });
     return box;
   }
@@ -184,10 +220,10 @@ export function mountLauncher(host) {
   function paintAll() {
     scroll.appendChild(h('div.launcher__head',
       h('button.launcher__all', { onclick: () => { S.all = false; paint(); } },
-        icon('chevron-left'), 'Back'),
+        icon('chevron-left'), tr('Back')),
       h('div.label', { text: `${listApps().length} apps` })));
 
-    const sheet = h('div.allapps', { role: 'group', 'aria-label': 'All apps' });
+    const sheet = h('div.allapps', { role: 'group', 'aria-label': tr('All apps') });
     for (const cat of categories()) {
       const list = h('div.allapps__list');
       for (const app of listApps({ category: cat })) {
@@ -197,7 +233,7 @@ export function mountLauncher(host) {
           oncontextmenu: e => pinMenu(e, app),
         }, appTile(app),
           h('div.grow.col',
-            h('b.trunc', { text: app.name }),
+            h('b.trunc', { text: app.name }, app.id === 'whatsnew' ? WNB.mark(h) : null),
             h('small.trunc', { text: app.desc || cat }))));
       }
       sheet.appendChild(h('div.allapps__cat', h('div.label', { text: cat }), list));
@@ -211,12 +247,12 @@ export function mountLauncher(host) {
     S.hits = findHits(S.q.trim());
     if (!S.hits.length) {
       scroll.appendChild(h('div.empty', icon('search'),
-        h('b', { text: 'No results' }),
+        h('b', { text: tr('No results') }),
         h('small', { text: `Nothing matches “${S.q.trim()}”.` })));
       return;
     }
     S.sel = Math.min(Math.max(S.sel, 0), S.hits.length - 1);
-    const list = h('div.allapps__list#launcher-results', { role: 'listbox', 'aria-label': 'Results' });
+    const list = h('div.allapps__list#launcher-results', { role: 'listbox', 'aria-label': tr('Results') });
     S.hits.forEach((hit, i) => list.appendChild(hitRow(hit, i)));
     scroll.appendChild(list);
     input?.setAttribute('aria-expanded', 'true');
@@ -263,7 +299,7 @@ export function mountLauncher(host) {
       .sort((x, y) => y.s - x.s || x.a.name.localeCompare(y.a.name))
       .map(x => x.a)
       .slice(0, 8)
-      .map(app => ({ app, name: app.name, sub: `${app.category} · App`, icon: app.icon,
+      .map(app => ({ app, name: app.name, sub: tr('{category} · App', { category: app.category }), icon: app.icon,
         run: () => launch(() => api.openApp(app.id)) }));
 
     for (const f of vfs.search(q, { limit: 8 })) {
@@ -278,13 +314,14 @@ export function mountLauncher(host) {
     const dock = store.get('dock') || [];
     const inDock = dock.includes(app.id);
     api.menu([
-      { label: 'Open', icon: 'external-link', onClick: () => launch(() => api.openApp(app.id)) },
-      { label: inDock ? 'Remove from Dock' : 'Add to Dock', icon: 'pin',
+      { label: tr('Open'), icon: 'external-link', onClick: () => launch(() => api.openApp(app.id)) },
+      { label: inDock ? tr('Remove from Dock') : tr('Add to Dock'), icon: 'pin',
         onClick: () => store.set('dock', inDock ? dock.filter(id => id !== app.id) : [...dock, app.id]) },
+      { label: tr('Add to Desktop'), icon: 'monitor', onClick: () => addAppToDesktop(app.id) },
       '-',
       /* a toggle, not a disabled row: right-clicking an unpinned app in the
          all-apps sheet was a dead end with no way back */
-      { label: app.pinned ? 'Unpin' : 'Pin to Launcher', icon: app.pinned ? 'x' : 'star',
+      { label: app.pinned ? tr('Unpin') : tr('Pin to Launcher'), icon: app.pinned ? 'x' : 'star',
         onClick: () => { app.pinned = !app.pinned; paint(); } },
     ], e.clientX, e.clientY);
   }

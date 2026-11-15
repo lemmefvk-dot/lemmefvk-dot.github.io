@@ -14,6 +14,16 @@
                the last full stop counts as a sentence.
    Paragraphs: non-empty lines (every Enter starts one).
    Times:      READ_WPM and SPEAK_WPM below.
+   Readability: the Flesch–Kincaid grade level (Kincaid et al., 1975),
+                0.39 × (words ÷ sentences) + 11.8 × (syllables ÷ words) − 15.59,
+                a US school grade. Words and sentences are the counts
+                above; syllables are counted by a rule for English
+                (groups of vowels, a silent final e, -es and -ed that add
+                no syllable), which is right for most words but not all,
+                so the grade is for English text and is approximate.
+   Most-used:  words compared without capitals, with the punctuation at
+               their ends taken off ("Cat," and "cat" are one word);
+               the little words in COMMON can be left out.
    ============================================================ */
 import { CASES } from './textcase.js';
 
@@ -65,6 +75,47 @@ export function stats(text) {
     reading: duration(words, READ_WPM),
     speaking: duration(words, SPEAK_WPM),
   };
+}
+
+/* ---------- readability ---------- */
+/** Syllables in one English word, by rule (see the top of this file). */
+export function syllables(word) {
+  let w = String(word).toLowerCase().replace(/[^a-z]/g, '');
+  if (!w) return 0;
+  if (w.length <= 3) return 1;
+  let extra = 0;
+  if (/[^aeiouy]le$/.test(w)) { w = w.slice(0, -2); extra = 1; }   /* ta-ble: the -le is its own syllable */
+  else if (/(?:[^aeiouy]es|[^aeiouy]ed)$/.test(w) && !/(?:[cgsxz]|ch|sh)es$|[td]ed$/.test(w)) w = w.slice(0, -2);   /* jumped, makes (but box-es, want-ed) */
+  else if (/[^aeiouy]e$/.test(w)) w = w.slice(0, -1);              /* a silent final e: make */
+  w = w.replace(/^y/, '');
+  const groups = w.match(/[aeiouy]+/g);
+  return Math.max(1, (groups ? groups.length : 0) + extra);
+}
+/** -> { words, sentences, syllables, grade } or null when there is no sentence to measure. */
+export function readability(text) {
+  const t = String(text);
+  const list = t.split(/\s+/).filter(x => /[\p{L}\p{N}]/u.test(x));
+  const sentences = countSentences(t);
+  if (!list.length || !sentences) return null;
+  const syl = list.reduce((s, x) => s + syllables(x), 0);
+  const grade = 0.39 * (list.length / sentences) + 11.8 * (syl / list.length) - 15.59;
+  return { words: list.length, sentences, syllables: syl, grade };
+}
+
+/* ---------- most-used words ---------- */
+export const COMMON = new Set(('a an the and or but nor so yet if then than of to in on at by for with from into onto over under about as is am are was were be been being it its '
+  + 'this that these those he she they we you i me him her them us my your his their our there here not no do does did have has had will would can could shall should may might '
+  + 'must just also very what which who whom whose when where why how all any each some such up out off s t').split(' '));
+/** The words used most, most first: [{ word, count }]. Ties go in the order the words first appear. */
+export function topWords(text, { skipCommon = true, max = 10 } = {}) {
+  const counts = new Map();
+  for (const raw of String(text).split(/\s+/)) {
+    const w = raw.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').replace(/[’]/g, "'");
+    if (!w || !/[\p{L}]/u.test(w)) continue;
+    if (skipCommon && COMMON.has(w)) continue;
+    counts.set(w, (counts.get(w) || 0) + 1);
+  }
+  return [...counts].map(([word, count]) => ({ word, count })).sort((a, b) => b.count - a.count).slice(0, max);
 }
 
 export const convertCase = (text, kind) => (CASES[kind] ? CASES[kind](text) : String(text));

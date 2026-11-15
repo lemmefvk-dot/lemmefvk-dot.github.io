@@ -28,7 +28,13 @@ export const TRACKS = [
   { id: 'harbour', name: 'Harbour Loop', hue: 200, pts: [[500, 100], [820, 110], [920, 260], [800, 380], [900, 520], [620, 570], [420, 470], [250, 560], [90, 440], [140, 260], [300, 180]] },
   { id: 'ridge', name: 'Ridge Run', hue: 28, pts: [[110, 110], [400, 80], [540, 190], [420, 290], [700, 330], [880, 200], [930, 480], [640, 570], [330, 470], [140, 570], [60, 340]] },
   { id: 'sprint', name: 'Switchback Sprint', hue: 330, pts: [[120, 100], [480, 70], [640, 170], [470, 250], [330, 330], [500, 400], [700, 330], [880, 250], [930, 500], [700, 580], [420, 560], [180, 520], [70, 320]] },
+  /* the second cup */
+  { id: 'dock', name: 'Dockside Hairpin', hue: 175, pts: [[150, 90], [520, 80], [870, 110], [920, 280], [760, 330], [600, 290], [470, 360], [640, 450], [880, 470], [860, 580], [520, 575], [200, 570], [80, 420], [110, 250]] },
+  { id: 'mesa', name: 'Mesa Esses', hue: 45, pts: [[100, 320], [160, 110], [360, 90], [440, 240], [560, 110], [760, 80], [920, 200], [850, 330], [930, 480], [760, 566], [560, 470], [400, 566], [200, 550]] },
+  { id: 'ring', name: 'Night Ring', hue: 265, pts: [[500, 70], [800, 100], [930, 320], [800, 550], [500, 572], [330, 515], [260, 400], [130, 560], [70, 320], [180, 120]] },
 ];
+/* a cup: three circuits, one lap each (the Arcade's modes) */
+export const CUPS = { cup: ['harbour', 'ridge', 'sprint'], cup2: ['dock', 'mesa', 'ring'] };
 
 function spline(pts, step = 6) {
   const n = pts.length, out = [];
@@ -205,6 +211,85 @@ export function ghostProgress(tr, g) {
   }
   return out;
 }
+/* ------------------------------ a ghost as a code ------------------------------
+   A friend's ghost travels as text they paste in: "LR1.<circuit>.<data>".
+   The data is base64url of: the lap time and the sample count, the first
+   sample, then each sample's change from the last (zigzag varints: a car
+   moves a few px each 1/20 s, so most changes are one byte), and a
+   32-bit FNV-1a checksum of all of that, so a code cut short or mistyped
+   is caught. A code that decodes is still checked like a saved ghost
+   (readGhost) and then against the circuit itself (checkLap): it must
+   start on the line, stay near the road, never go faster than the car
+   can, and make it all the way round. What replays is exactly the lap
+   the friend drove, sample for sample. */
+const fnv = bytes => { let hh = 0x811c9dc5; for (const b of bytes) { hh ^= b; hh = Math.imul(hh, 0x01000193) >>> 0; } return hh >>> 0; };
+const zig = n => (n >= 0 ? n * 2 : -n * 2 - 1), unzig = n => (n & 1 ? -(n + 1) / 2 : n / 2);
+function putVar(out, n) { while (n >= 0x80) { out.push((n & 0x7f) | 0x80); n = Math.floor(n / 128); } out.push(n); }
+function b64(bytes) { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function unb64(s) {
+  if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
+  try { const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)); return Uint8Array.from(bin, c => c.charCodeAt(0)); } catch (err) { return null; }
+}
+export function ghostCode(trackId, g) {
+  const out = [];
+  putVar(out, g.t); putVar(out, g.n);
+  putVar(out, zig(g.x[0])); putVar(out, zig(g.y[0])); putVar(out, g.h[0]);
+  for (let i = 1; i < g.n; i++) {
+    let dh = g.h[i] - g.h[i - 1];
+    if (dh > 314) dh -= 629; else if (dh < -314) dh += 629;
+    putVar(out, zig(g.x[i] - g.x[i - 1])); putVar(out, zig(g.y[i] - g.y[i - 1])); putVar(out, zig(dh));
+  }
+  const c = fnv(out);
+  out.push(c >>> 24, (c >>> 16) & 255, (c >>> 8) & 255, c & 255);
+  return `LR1.${trackId}.${b64(out)}`;
+}
+/* text → { track, g } or { error } (a sentence to show) */
+export function readGhostCode(text) {
+  const m = /^LR1\.([a-z0-9]{2,12})\.([A-Za-z0-9_-]{8,})$/.exec(String(text || '').replace(/\s+/g, ''));
+  if (!m) return { error: 'That isn’t a Lap Rush ghost code: it starts with LR1.' };
+  const tr = TRACKS.find(t => t.id === m[1]);
+  if (!tr) return { error: 'That code is for a circuit this Lap Rush doesn’t have.' };
+  const bytes = unb64(m[2]);
+  if (!bytes || bytes.length < 12) return { error: 'That code is cut short or has a mistake in it.' };
+  const body = bytes.subarray(0, bytes.length - 4), sum = bytes.subarray(bytes.length - 4);
+  const want = ((sum[0] << 24) | (sum[1] << 16) | (sum[2] << 8) | sum[3]) >>> 0;
+  if (fnv(body) !== want) return { error: 'That code is cut short or has a mistake in it.' };
+  let i = 0;
+  const get = () => { let n = 0, k = 1; for (;;) { if (i >= body.length) throw new Error('short'); const b = body[i++]; n += (b & 0x7f) * k; if (b < 0x80) return n; k *= 128; if (k > 2 ** 35) throw new Error('long'); } };
+  let g;
+  try {
+    const t = get(), n = get();
+    if (n < 3 || n > MAX_SAMPLES) return { error: 'That code’s lap is too short or too long to be one lap.' };
+    const x = [unzig(get())], y = [unzig(get())], h = [get()];
+    for (let k = 1; k < n; k++) {
+      x.push(x[k - 1] + unzig(get())); y.push(y[k - 1] + unzig(get()));
+      h.push((((h[k - 1] + unzig(get())) % 629) + 629) % 629);
+    }
+    if (i !== body.length) return { error: 'That code is cut short or has a mistake in it.' };
+    g = readGhost({ t, n, x, y, h });
+  } catch (err) { return { error: 'That code is cut short or has a mistake in it.' }; }
+  if (!g) return { error: 'That code doesn’t hold a lap Lap Rush can replay.' };
+  const why = checkLap(circuit(tr.id), g);
+  if (why) return { error: why };
+  return { track: tr.id, g };
+}
+/* Is this ghost one real lap of this circuit? null if so, else why not */
+export function checkLap(tr, g) {
+  const s = tr.start;
+  if (Math.hypot(g.x[0] / 2 - s.x, g.y[0] / 2 - s.y) > 30) return 'That lap doesn’t start on this circuit’s line.';
+  /* the fastest the car can go, with a little room for the sampling */
+  const step = (CAR.vmax * 1.15) / GHOST_HZ * 2;
+  let near = 0;
+  for (let i = 0; i < g.n; i++) {
+    if (i && Math.hypot(g.x[i] - g.x[i - 1], g.y[i] - g.y[i - 1]) > step + 1) return 'That lap goes faster than a Lap Rush car can.';
+    near = locate(tr, near, g.x[i] / 2, g.y[i] / 2, i ? 14 : tr.N).idx;
+    if (locate(tr, near, g.x[i] / 2, g.y[i] / 2).off > HALF * 3) return 'That lap leaves the circuit.';
+  }
+  const gp = ghostProgress(tr, g);
+  if (gp[gp.length - 1] < tr.N - 3) return 'That isn’t a whole lap of this circuit.';
+  return null;
+}
+
 /* seconds into its lap at which the ghost had made `prog` progress; null if it never did */
 export function ghostTimeAt(g, gp, prog) {
   if (prog <= 0) return 0;

@@ -23,6 +23,7 @@ import { roving } from '../core/roving.js';
 import * as DESK from '../core/desktops.js';
 import * as WP from '../portal/wallpapers.js';
 import * as KM from '../core/keymap.js';
+import { t } from '../core/i18n.js';
 
 const PAD = 28;   /* gutter around the grid            */
 const GAP = 18;   /* gap between cells                 */
@@ -39,22 +40,34 @@ export function mountOverview(host) {
   const { h, icon } = api;
 
   /* cancelRename: set while a desktop's name is being edited */
-  const S = { open: false, release: null, renaming: null, cancelRename: null };
-  const strip = h('div.overview__desks', { role: 'list', 'aria-label': 'Desktops' });
-  const grid = h('div.overview__grid', { role: 'group', 'aria-label': 'Open windows' });
+  const S = { open: false, release: null, renaming: null, cancelRename: null, query: '' };
+  const strip = h('div.overview__desks', { role: 'list', 'aria-label': t('Desktops') });
+  const grid = h('div.overview__grid', { role: 'group', 'aria-label': t('Open windows') });
   /* one Tab stop; arrows move around the grid (this desktop's windows) in reading order */
   roving(grid, { items: '.overview__item', orientation: 'grid', columns: () => colsFor(wm.onDesktop().filter(seen).length) });
   const kbd = t => h('span.kbd', { text: t });
+  /* type anywhere to narrow the windows to the ones whose title or app matches */
+  const find = h('input.overview__find', { type: 'search', placeholder: t('Type to filter windows'), 'aria-label': t('Filter windows'), spellcheck: 'false', autocomplete: 'off' });
+  const none = h('div.overview__none', { role: 'status' });
   const hint = h('div.overview__hint',
     h('div.row', kbd('esc'), h('span', { text: 'close' })),
-    h('div.row', kbd('click'), h('span', { text: 'a window to focus' })),
-    h('div.row', kbd('←↑↓→'), kbd('↵'), h('span', { text: 'choose with the keyboard' })),
-    h('div.row', kbd('drag'), h('span', { text: 'a window onto a desktop to move it' })),
-    h('div.row', kbd('⌃← ⌃→'), h('span', { text: 'switch desktop' })),
+    h('div.row', kbd('type'), h('span', { text: t('to filter') })),
+    h('div.row', kbd('click'), h('span', { text: t('a window to focus') })),
+    h('div.row', kbd('←↑↓→'), kbd('↵'), h('span', { text: t('choose with the keyboard') })),
+    h('div.row', kbd('drag'), h('span', { text: t('a window onto a desktop to move it') })),
+    h('div.row', kbd('⌃← ⌃→'), h('span', { text: t('switch desktop') })),
   );
-  const wrap = h('div.overview', { role: 'dialog', 'aria-label': 'Window overview',
+  const wrap = h('div.overview', { role: 'dialog', 'aria-label': t('Window overview'),
     onmousedown: e => { if (e.target === wrap || e.target === grid || e.target === strip) close(); },
-  }, strip, grid, hint);
+  }, strip, find, grid, none, hint);
+
+  /* a window shows when its title or its app's name has every word typed */
+  const matches = w => {
+    const q = S.query.trim().toLowerCase();
+    if (!q) return true;
+    const hay = `${titleOf(w)} ${w.app.name} ${w.tabName || ''}`.toLowerCase();
+    return q.split(/\s+/).every(t => hay.includes(t));
+  };
 
   /* ---------------- one window ----------- */
   function shot(w, k) {
@@ -81,7 +94,7 @@ export function mountOverview(host) {
     return (tx?.textContent || '').trim() || w.app.name;
   };
 
-  function item(w, k, x, y) {
+  function item(w, k, x0, y0) {
     const title = titleOf(w);
     const tabs = w.group ? w.group.tabs.length : 0;
     const el = h('button.overview__item', {
@@ -90,16 +103,36 @@ export function mountOverview(host) {
       /* base.css's button reset drops border+margin but not the UA's
          padding:1px 6px / text-align:center — both would inset and clip
          the clone inside .overview__item's overflow:hidden. */
-      style: { left: Math.round(x) + 'px', top: Math.round(y) + 'px',
+      style: { left: Math.round(x0) + 'px', top: Math.round(y0) + 'px',
                width: Math.round(w.w * k) + 'px', height: Math.round(w.h * k) + 'px',
                padding: '0', textAlign: 'left' },
       onclick: () => { close(); wm.focus(w, { lift: true }); },
     },
       shot(w, k),
       h('div.overview__cap', icon(w.app.icon), h('span.trunc', { text: title }),
-        tabs > 1 ? h('span.overview__tabs', { text: `${tabs} tabs` }) : null));
+        tabs > 1 ? h('span.overview__tabs', { text: t('{tabs} tabs', { tabs }) }) : null));
     el.addEventListener('pointerdown', e => dragWindow(e, el, w));
-    return el;
+    /* a close button on each one: a sibling (a button can't hold a button), shown on hover or focus */
+    const x = h('button.overview__close', {
+      type: 'button', 'aria-label': t('Close {title}', { title }), title: t('Close window'), dataset: { win: String(w.id) },
+      style: { left: Math.round(x0 + w.w * k) - 30 + 'px', top: Math.round(y0) + 6 + 'px' },
+      onpointerdown: e => e.stopPropagation(),
+      onclick: e => { e.stopPropagation(); closeFrom(w); },
+    }, icon('x'));
+    return [el, x];
+  }
+
+  /* closing from here: the window goes, the rest re-lay themselves out, focus stays in the grid */
+  function closeFrom(w) {
+    const order = [...grid.querySelectorAll('.overview__item')].map(b => b.dataset.win);
+    const at = order.indexOf(String(w.id));
+    wm.close(w.id);
+    setTimeout(() => {
+      if (!S.open) return;
+      paint();
+      const next = [...grid.querySelectorAll('.overview__item')];
+      (next[Math.min(at, next.length - 1)] || find)?.focus({ preventScroll: true });
+    }, 60);
   }
 
   /* ---------------- the desktop strip ---- */
@@ -133,7 +166,7 @@ export function mountOverview(host) {
                width: Math.max(6, Math.round(w.w * k)) + 'px', height: Math.max(5, Math.round(w.h * k)) + 'px' },
     }, w.w * k > 22 ? icon(w.app.icon) : null));
     const n = wm.onDesktop(d.id).length;
-    const name = h('div.ov-desk__name', { text: d.label, title: 'Double-click to rename' });
+    const name = h('div.ov-desk__name', { text: d.label, title: t('Double-click to rename') });
     const el = h('div.ov-desk' + (cur ? '.is-current' : ''), {
       role: 'listitem', dataset: { desk: d.id },
     },
@@ -146,7 +179,7 @@ export function mountOverview(host) {
       }, ...minis),
       name,
       DESK.count() > 1 ? h('button.ov-desk__x', {
-        'aria-label': `Remove ${d.label}`, title: 'Remove desktop',
+        'aria-label': t('Remove {label}', { label: d.label }), title: t('Remove desktop'),
         onclick: e => { e.stopPropagation(); wm.removeDesktop(d.id); },
       }, icon('x')) : null);
     name.addEventListener('dblclick', e => { e.stopPropagation(); rename(d, name); });
@@ -158,10 +191,10 @@ export function mountOverview(host) {
     return h('div.ov-desk.ov-desk--add', { role: 'listitem', dataset: { desk: '+' } },
       h('button.ov-desk__thumb', {
         style: { width: tw + 'px', height: th + 'px' },
-        'aria-label': 'New desktop', title: 'New desktop',
+        'aria-label': t('New desktop'), title: t('New desktop'),
         onclick: () => { wm.addDesktop(); paintStrip(); },
       }, icon('plus')),
-      h('div.ov-desk__name', { text: 'New' }));
+      h('div.ov-desk__name', { text: t('New') }));
   }
 
   function paintStrip() {
@@ -173,7 +206,7 @@ export function mountOverview(host) {
 
   function rename(d, nameEl) {
     S.renaming = d.id;
-    const input = h('input.ov-desk__input', { value: d.name || d.label, 'aria-label': 'Desktop name', maxlength: '32' });
+    const input = h('input.ov-desk__input', { value: d.name || d.label, 'aria-label': t('Desktop name'), maxlength: '32' });
     let done = false;
     const finish = keep => {
       if (done) return;
@@ -201,17 +234,17 @@ export function mountOverview(host) {
     const own = DESK.wallpaperOf(d.id);
     const papers = WP.list(store);
     api.menu([
-      { label: 'Rename…', icon: 'edit-3', onClick: () => {
+      { label: t('Rename…'), icon: 'edit-3', onClick: () => {
         const el = strip.querySelector(`.ov-desk[data-desk="${d.id}"] .ov-desk__name`);
         if (el) rename(d, el);
       } },
-      { label: 'Wallpaper', icon: 'wallpaper', items: [
-        { label: 'Same as the others', checked: !own, onClick: () => { DESK.setWallpaper(d.id, null); paintStrip(); } },
+      { label: t('Wallpaper'), icon: 'wallpaper', items: [
+        { label: t('Same as the others'), checked: !own, onClick: () => { DESK.setWallpaper(d.id, null); paintStrip(); } },
         '-',
         ...papers.map(p => ({ label: p.name, checked: own === p.id, onClick: () => { DESK.setWallpaper(d.id, p.id); paintStrip(); } })),
       ] },
       '-',
-      { label: 'Remove Desktop', icon: 'trash', danger: true, disabled: DESK.count() < 2,
+      { label: t('Remove Desktop'), icon: 'trash', danger: true, disabled: DESK.count() < 2,
         onClick: () => wm.removeDesktop(d.id) },
     ], e.clientX, e.clientY);
   }
@@ -270,10 +303,13 @@ export function mountOverview(host) {
   function paint() {
     paintStrip();
     api.clear(grid);
-    const wins = wm.onDesktop().filter(seen);
-    if (!wins.length) {
+    const every = wm.onDesktop().filter(seen);
+    const wins = every.filter(matches);
+    none.textContent = every.length && !wins.length ? `No window matches “${S.query.trim()}”` : '';
+    none.hidden = !none.textContent;
+    if (!wins.length && !every.length) {
       grid.appendChild(h('div.empty', icon('layers'), h('b', { text: `No open windows on ${DESK.label(DESK.current())}` }),
-        h('small', { text: 'Launch something from the dock or press ' + api.fmt.modLabel + 'K.' })));
+        h('small', { text: t('Launch something from the dock or press ') + api.fmt.modLabel + 'K.' })));
       return;
     }
 
@@ -294,7 +330,7 @@ export function mountOverview(host) {
       const cx = a.x + PAD + (gw - band) / 2 + col * (cw + GAP);
       const cy = top + row * (ch + GAP);
       const k = Math.max(0.1, Math.min(cw / w.w, ch / w.h, 1));
-      grid.appendChild(item(w, k, cx + (cw - w.w * k) / 2, cy + (ch - w.h * k) / 2));
+      grid.append(...item(w, k, cx + (cw - w.w * k) / 2, cy + (ch - w.h * k) / 2));
     });
   }
 
@@ -303,7 +339,7 @@ export function mountOverview(host) {
     if (S.open) return;
     S.open = true;
     host.appendChild(wrap);
-    S.release = L.push({ name: 'overview', el: wrap, trap: true, close: () => (S.cancelRename ? S.cancelRename() : close()) });
+    S.release = L.push({ name: 'overview', el: wrap, trap: true, close: () => (S.cancelRename ? S.cancelRename() : S.query ? setQuery('') : close()) });
     paint();
     /* start on the window that was in front */
     const act = wm.getActive();
@@ -312,6 +348,8 @@ export function mountOverview(host) {
   function close() {
     if (!S.open) return;
     S.open = false;
+    S.query = '';
+    find.value = '';
     S.renaming = null;
     S.cancelRename = null;
     wrap.remove();
@@ -321,6 +359,30 @@ export function mountOverview(host) {
     S.release?.();
     S.release = null;
   }
+  function setQuery(q) {
+    S.query = q;
+    find.value = q;
+    paint();
+    if (!q) (grid.querySelector('.overview__item'))?.focus({ preventScroll: true });
+  }
+  find.addEventListener('input', () => { S.query = find.value; paint(); });
+  find.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = grid.querySelector('.overview__item');
+      if (first) first.click();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      grid.querySelector('.overview__item')?.focus({ preventScroll: true });
+    }
+  });
+  /* typing with the grid focused goes to the filter */
+  wrap.addEventListener('keydown', e => {
+    if (e.target === find || S.renaming || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key.length === 1 && /\S/.test(e.key) && !e.target.closest?.('input')) {
+      find.focus({ preventScroll: true });     /* the key then types into it */
+    }
+  }, true);
   const toggle = () => (S.open ? close() : open());
   const repaint = () => { if (S.open && !S.renaming) api.raf('overview:paint', paint); };
 
@@ -328,6 +390,7 @@ export function mountOverview(host) {
   const unbind = [
     bus.on('overview:toggle', toggle),
     bus.on('desktop:switch', repaint),
+    bus.on('win:title', repaint),
     bus.on('desktops:change', repaint),
     api.on(window, 'keydown', e => {
       /* ⌘` / Ctrl+` unless changed in Settings › Shortcuts (js/core/keymap.js) */

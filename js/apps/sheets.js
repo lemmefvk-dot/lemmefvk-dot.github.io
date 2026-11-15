@@ -23,6 +23,26 @@
      Tab leaves the grid (no keyboard trap); while editing, Tab saves
      and moves right. While typing a formula, arrows or clicks after
      an operator insert a reference (⇧ / drag for a range).
+   · Rows are 24px, except a row with wrapped text (as tall as its
+     text needs, worked out from the words and the column's width) and
+     a row a filter hides (0). Those few are kept in a sorted list with
+     a running total, so "where is row r" and "which row is at y" are
+     binary searches, and a sheet without any costs nothing.
+   · Frozen rows and columns are in-flow sticky elements at the start
+     of the body and of each row; everything else stays absolutely
+     placed. Merged cells are one box drawn over their area.
+
+   DATA AND FORMAT (each one undoable, and saved in the .sheet file)
+   · Sort a range by a column (A → Z, Z → A; a header row is kept on
+     top); filters on a header row (values to show, or a condition);
+     conditional formatting (first matching rule colours the cell);
+     dropdowns and number checks (refused, or allowed and marked);
+     freeze, borders, merge, wrap; tab colours; duplicate a sheet.
+   · Describe my data sends the selected cells' shown values to the
+     model in Settings › AI model (js/portal/llm.js), only when pressed;
+     the reply is text in a panel and never goes into a cell.
+   · Send to Statistics hands a column (or two, as x and y) to Static
+     Study's Statistics tab. Print lays the sheet out as a table.
 
    FILES
    · .sheet (JSON: every sheet, formulas, formats, widths, charts)
@@ -85,8 +105,145 @@ function cleanStyle(s) {
   if (s.i) o.i = true;
   if (s.al) o.al = s.al;
   if (s.nf) { o.nf = s.nf; if (Number.isFinite(s.dp)) o.dp = s.dp; }
+  if (s.wr) o.wr = true;
+  const bd = typeof s.bd === 'string' ? 'tblr'.split('').filter(k => s.bd.includes(k)).join('') : '';
+  if (bd) o.bd = bd;
   return Object.keys(o).length ? o : null;
 }
+
+/* ---- what a sheet keeps besides its cells (sheet.meta, saved in the .sheet file) ----
+   freeze  { r, c }               rows above r and columns left of c stay put
+   merges  [{ r1, c1, r2, c2 }]   one cell drawn over the area (the top-left one's);
+                                  the cells under it are kept, and come back on unmerge
+   filter  { r1, c1, r2, c2, by } r1 is the header row; by[col] = { vals?, op?, a? }
+   cf      [{ r1…c2, op, a, b, fill, bold }]   conditional formatting: first rule that matches
+   dv      [{ r1…c2, kind, opts, min, max, strict }]  a dropdown list or a number check
+   tab     1-8                    the tab's colour (--chart-N)
+   Every part is checked when a file is read: a rule that doesn't make sense is dropped. */
+const CF_OPS = [['gt', 'Greater than'], ['lt', 'Less than'], ['ge', 'At least'], ['le', 'At most'], ['eq', 'Equal to'], ['ne', 'Not equal to'], ['between', 'Between'], ['text', 'Text contains'], ['empty', 'Is empty'], ['filled', 'Is not empty']];
+const FILLS = [['red', 'Red', 8], ['orange', 'Orange', 2], ['yellow', 'Yellow', 4], ['green', 'Green', 3], ['blue', 'Blue', 1], ['purple', 'Purple', 7], ['pink', 'Pink', 5]];
+const TAB_COLORS = [['', 'No colour'], [1, 'Blue'], [2, 'Orange'], [3, 'Green'], [4, 'Yellow'], [5, 'Pink'], [6, 'Dark green'], [7, 'Purple'], [8, 'Red']];
+const FILTER_OPS = [['', 'No condition'], ['gt', 'Greater than'], ['lt', 'Less than'], ['eq', 'Equal to'], ['ne', 'Not equal to'], ['text', 'Contains'], ['empty', 'Is empty'], ['filled', 'Is not empty']];
+const CF_MAX = 100, DV_MAX = 100, MERGE_MAX = 500, MERGE_AREA = 20000, FILTER_VALS = 2000, FREEZE_R = 30, FREEZE_C = 12;
+const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+function cleanRect(o) {
+  if (!o || typeof o !== 'object') return null;
+  const { r1, c1, r2, c2 } = o;
+  if (![r1, r2].every(v => isInt(v, 0, E.MAX_ROWS - 1)) || ![c1, c2].every(v => isInt(v, 0, E.MAX_COLS - 1)) || r2 < r1 || c2 < c1) return null;
+  return { r1, c1, r2, c2 };
+}
+const overlaps = (a, b) => a.r1 <= b.r2 && b.r1 <= a.r2 && a.c1 <= b.c2 && b.c1 <= a.c2;
+const shortText = (v, n) => (typeof v === 'string' ? v.slice(0, n) : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
+function cleanMeta(m) {
+  const o = {};
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return o;
+  if (m.freeze && (isInt(m.freeze.r, 0, FREEZE_R) || isInt(m.freeze.c, 0, FREEZE_C))) {
+    const r = isInt(m.freeze.r, 0, FREEZE_R) ? m.freeze.r : 0, c = isInt(m.freeze.c, 0, FREEZE_C) ? m.freeze.c : 0;
+    if (r || c) o.freeze = { r, c };
+  }
+  if (Array.isArray(m.merges)) {
+    const out = [];
+    for (const x of m.merges.slice(0, MERGE_MAX)) {
+      const g = cleanRect(x);
+      if (!g || (g.r1 === g.r2 && g.c1 === g.c2) || (g.r2 - g.r1 + 1) * (g.c2 - g.c1 + 1) > MERGE_AREA || out.some(y => overlaps(y, g))) continue;
+      out.push(g);
+    }
+    if (out.length) o.merges = out;
+  }
+  if (m.filter) {
+    const g = cleanRect(m.filter);
+    if (g && g.c2 - g.c1 < 200) {
+      const by = {};
+      for (const [k, v] of Object.entries(m.filter.by && typeof m.filter.by === 'object' ? m.filter.by : {})) {
+        const c = Number(k);
+        if (!isInt(c, g.c1, g.c2) || !v || typeof v !== 'object') continue;
+        const f = {};
+        if (Array.isArray(v.vals)) f.vals = v.vals.filter(x => typeof x === 'string').slice(0, FILTER_VALS).map(x => x.slice(0, 200));
+        if (FILTER_OPS.some(p => p[0] && p[0] === v.op)) { f.op = v.op; f.a = shortText(v.a, 200); }
+        if (f.vals || f.op) by[c] = f;
+      }
+      o.filter = { ...g, by };
+    }
+  }
+  if (Array.isArray(m.cf)) {
+    const out = [];
+    for (const x of m.cf.slice(0, CF_MAX)) {
+      const g = cleanRect(x);
+      if (!g || !CF_OPS.some(p => p[0] === x.op) || !FILLS.some(f => f[0] === x.fill)) continue;
+      out.push({ ...g, op: x.op, a: shortText(x.a, 200), b: shortText(x.b, 200), fill: x.fill, bold: x.bold === true });
+    }
+    if (out.length) o.cf = out;
+  }
+  if (Array.isArray(m.dv)) {
+    const out = [];
+    for (const x of m.dv.slice(0, DV_MAX)) {
+      const g = cleanRect(x);
+      if (!g || !['list', 'int', 'num'].includes(x.kind)) continue;
+      const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+      const opts = x.kind === 'list' && Array.isArray(x.opts) ? [...new Set(x.opts.filter(s => typeof s === 'string').map(s => s.trim().slice(0, 100)).filter(Boolean))].slice(0, 100) : [];
+      if (x.kind === 'list' && !opts.length) continue;
+      out.push({ ...g, kind: x.kind, opts, min: num(x.min), max: num(x.max), strict: x.strict !== false });
+    }
+    if (out.length) o.dv = out;
+  }
+  if (isInt(m.tab, 1, 8)) o.tab = m.tab;
+  return o;
+}
+/** one cell's value against a rule's condition (conditional formatting and filters) */
+function testOp(op, v, shown, a, b) {
+  if (op === 'empty') return v == null || v === '';
+  if (op === 'filled') return !(v == null || v === '');
+  if (op === 'text') return !!a && String(shown).toLowerCase().includes(String(a).toLowerCase());
+  if (v == null || v === '') return false;
+  const A = E.parseLiteral(String(a ?? '').trim()).v, B = E.parseLiteral(String(b ?? '').trim()).v;
+  const num = typeof v === 'number' && typeof A === 'number';
+  const d = num ? (Math.abs(v - A) < 1e-12 ? 0 : v < A ? -1 : 1)
+    : String(shown).toLowerCase().localeCompare(String(a ?? '').trim().toLowerCase(), undefined, { sensitivity: 'base' });
+  switch (op) {
+    case 'gt': return (num || typeof A !== 'number') && d > 0;
+    case 'lt': return (num || typeof A !== 'number') && d < 0;
+    case 'ge': return (num || typeof A !== 'number') && d >= 0;
+    case 'le': return (num || typeof A !== 'number') && d <= 0;
+    case 'eq': return d === 0;
+    case 'ne': return d !== 0;
+    case 'between': {
+      if (typeof v !== 'number' || typeof A !== 'number' || typeof B !== 'number') return false;
+      return v >= Math.min(A, B) && v <= Math.max(A, B);
+    }
+    default: return false;
+  }
+}
+/** does a value pass a dropdown / number check? (an empty cell always does) */
+function dvPass(d, v, shown) {
+  if (v == null || v === '') return true;
+  if (d.kind === 'list') return d.opts.some(o => o.toLowerCase() === String(shown).trim().toLowerCase());
+  if (typeof v !== 'number') return false;
+  if (d.kind === 'int' && !Number.isInteger(v)) return false;
+  return (d.min == null || v >= d.min) && (d.max == null || v <= d.max);
+}
+const dvSays = d => {
+  if (d.kind === 'list') return `one of: ${d.opts.slice(0, 6).join(', ')}${d.opts.length > 6 ? '…' : ''}`;
+  const what = d.kind === 'int' ? 'a whole number' : 'a number';
+  if (d.min != null && d.max != null) return `${what} from ${E.general(d.min)} to ${E.general(d.max)}`;
+  if (d.min != null) return `${what} of at least ${E.general(d.min)}`;
+  if (d.max != null) return `${what} of at most ${E.general(d.max)}`;
+  return what;
+};
+/** sort order: numbers, then text (A–Z, any case), then TRUE/FALSE, then errors; blanks always last */
+function sortKey(a, b, desc) {
+  const blank = v => v == null || v === '';
+  if (blank(a) || blank(b)) return blank(a) === blank(b) ? 0 : blank(a) ? 1 : -1;
+  const rank = v => (typeof v === 'number' ? 0 : typeof v === 'string' ? 1 : typeof v === 'boolean' ? 2 : 3);
+  let d = rank(a) - rank(b);
+  if (!d) {
+    if (typeof a === 'number') d = a - b;
+    else if (typeof a === 'string') d = a.localeCompare(b, undefined, { sensitivity: 'base' });
+    else if (typeof a === 'boolean') d = (a ? 1 : 0) - (b ? 1 : 0);
+    else d = String(a.code).localeCompare(String(b.code));
+  }
+  return desc ? -d : d;
+}
+const lowerBound = (arr, x) => { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < x) lo = m + 1; else hi = m; } return lo; };
 const sheetNameFor = stem => (String(stem || '').replace(/[[\]*?/\\:]+/g, ' ').trim().slice(0, 60) || 'Sheet1');
 let mctx = null;
 const textW = (t, font) => { mctx = mctx || document.createElement('canvas').getContext('2d'); mctx.font = font; return mctx.measureText(t).width; };
@@ -104,7 +261,7 @@ defineApp({
   icon: 'table',
   g1: '#8ee6b0', g2: '#14794a',
   category: 'Productivity',
-  keywords: ['spreadsheet', 'sheet', 'sheets', 'excel', 'csv', 'tsv', 'table', 'formula', 'chart', 'budget', 'numbers', 'cells'],
+  keywords: ['spreadsheet', 'sheet', 'sheets', 'excel', 'csv', 'tsv', 'table', 'formula', 'chart', 'budget', 'numbers', 'cells', 'sort', 'filter', 'conditional formatting', 'dropdown', 'freeze', 'merge', 'scatter', 'trend line', 'xlookup'],
   desc: 'Spreadsheets with formulas and charts; opens and saves CSV',
   pinned: true,
   handles: ['sheet'],
@@ -126,6 +283,7 @@ defineApp({
     ['Mod+A', 'Select everything'],
     ['Shift+Space', 'Select the row'],
     ['Shift+F10', 'Cell menu: fill, clear, charts, column width'],
+    ['Alt+Down', 'Open a filter header’s or a dropdown cell’s list'],
   ],
 
   mount(ctx) {
@@ -186,13 +344,33 @@ defineApp({
     const bFillR = tb('arrow-right', 'Fill right', () => fill('right'), `${MODK}R`);
     const chartCount = h('span.ss-bar__count');
     const bCharts = h('button.ibtn.tip.tip--below', { type: 'button', 'data-tip': 'Charts panel', 'aria-label': 'Charts panel', 'aria-pressed': 'false', onclick: () => toggleCharts() }, icon('sidebar'), chartCount);
+    /* after a toolbar action the keyboard goes back to the grid (unless a dialog took it) */
+    const backToGrid = () => { if (!S.dead && !app.querySelector('.ss-dlg') && !aiPanel.contains(document.activeElement)) grid.focus({ preventScroll: true }); };
+    /* a toolbar button that opens a menu under itself */
+    const mb = (ic, label, items) => {
+      const b = tb(ic, label, () => {
+        const r = b.getBoundingClientRect();
+        const wrapIt = it => (it && typeof it === 'object' && it.onClick ? { ...it, onClick: () => { it.onClick(); backToGrid(); } } : it);
+        api.menu(items().map(wrapIt), r.left, r.bottom + 4, { label });
+      });
+      b.setAttribute('aria-haspopup', 'menu');
+      return b;
+    };
+    const bWrap = h('button.ibtn.tip.tip--below', { type: 'button', 'data-tip': 'Wrap text', 'aria-label': 'Wrap text', 'aria-pressed': 'false', onclick: () => { toggleStyle('wr'); backToGrid(); } },
+      h('span.ss-dec', { text: 'a↵b', 'aria-hidden': 'true' }));
     const bar = h('div.app__bar.ss-bar', { role: 'toolbar', 'aria-label': 'Sheet tools' },
-      bUndo, bRedo, sep(), bBold, bItal, sep(), bAl.left, bAl.center, bAl.right, sep(), selFmt, bLess, bMore, sep(),
+      bUndo, bRedo, sep(), bBold, bItal, bWrap, sep(), bAl.left, bAl.center, bAl.right, sep(), selFmt, bLess, bMore, sep(),
       bFillD, bFillR, sep(),
+      mb('grid', 'Borders and merging', () => formatItems()),
+      mb('filter', 'Sort and filter', () => dataItems()),
+      mb('snowflake', 'Freeze rows and columns', () => freezeItems()),
+      sep(),
       tb('bar-chart', 'Bar chart from selection', () => addChart('bar')),
       tb('line-chart', 'Line chart from selection', () => addChart('line')),
       tb('pie-chart', 'Pie chart from selection', () => addChart('pie')),
+      mb('trending-up', 'More charts', () => Chart.TYPES.filter(t => !['bar', 'line', 'pie'].includes(t)).map(t => ({ label: `${Chart.TYPE_NAMES[t]} chart`, icon: Chart.TYPE_ICONS[t], onClick: () => addChart(t) }))),
       h('div.ss-grow'),
+      tb('sparkles', 'Describe my data (AI)', () => describeData()),
       tb('search', 'Find', () => openFind(), `${MODK}F`), bCharts);
 
     const nameBox = h('input.ss-name', { 'aria-label': 'Cell reference — type one and press Enter to go there', spellcheck: 'false', autocomplete: 'off' });
@@ -228,6 +406,13 @@ defineApp({
     const app = h('div.app.app--col.ss', bar, fxRow, findBar, banner, mid, foot, live, picker);
     root.appendChild(app);
     const offRove = roving(bar, { items: 'button, select', orientation: 'horizontal' });
+    /* ⌘Z / ⇧⌘Z work from the toolbar too, straight after pressing one of its buttons */
+    bar.addEventListener('keydown', e => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+      else if (k === 'y') { e.preventDefault(); redo(); }
+    });
 
     win.setTools(
       h('button.ibtn.tip', { type: 'button', 'data-tip': `Save  ${MODK}S`, 'aria-label': 'Save', onclick: () => saveCmd() }, icon('save')),
@@ -238,11 +423,28 @@ defineApp({
     let nRows = MIN_ROWS, nCols = 0, colX = new Float64Array(1), colsDirty = true, totalW = 0, lastW = -1, lastH = -1, lastRC = '';
     const sheet = () => S.book.sheet(S.sid);
     const width = c => sheet().colW.get(c) || COL_W;
+    /* rows that aren't ROW_H tall: sorted, with acc[j] = how much taller than
+       ROW_H the rows before the j-th one are, all together */
+    let RG = { rows: [], hs: [], acc: [0] };
+    let hidden = new Set();                         /* rows the filter hides */
+    let FR = 0, FC = 0;                             /* frozen rows, frozen columns */
+    const rowTop = r => (RG.rows.length ? r * ROW_H + RG.acc[lowerBound(RG.rows, r)] : r * ROW_H);
+    const rowH = r => { if (!RG.rows.length) return ROW_H; const j = lowerBound(RG.rows, r); return RG.rows[j] === r ? RG.hs[j] : ROW_H; };
+    /** the row at y (body px): the last row that starts at or above it */
+    function rowAt(y) {
+      if (y <= 0) return 0;
+      if (!RG.rows.length) return Math.floor(y / ROW_H);
+      let lo = 0, hi = Math.max(nRows, RG.rows[RG.rows.length - 1] + 1) - 1;
+      while (lo < hi) { const m = (lo + hi + 1) >> 1; if (rowTop(m) <= y) lo = m; else hi = m - 1; }
+      return lo;
+    }
+    const frozenH = () => (FR ? rowTop(FR) : 0);
+    const frozenW = () => (FC ? colX[Math.min(FC, nCols)] : 0);
     function layout() {
       const ext = S.book.extentOf(S.sid);
       const fr = Number.isFinite(S.focus.r) ? S.focus.r : 0, fc = Number.isFinite(S.focus.c) ? S.focus.c : 0;
       const rows = Math.min(E.MAX_ROWS, Math.max(MIN_ROWS, ext.r + 101, S.cur.r + 51, fr + 51));
-      const cols = Math.min(E.MAX_COLS, Math.max(MIN_COLS, ext.c + 6, S.cur.c + 6, fc + 6));
+      const cols = Math.min(E.MAX_COLS, Math.max(MIN_COLS, ext.c + 6, S.cur.c + 6, fc + 6, FC + 6));
       if (cols !== nCols || colsDirty) {
         nCols = cols;
         colX = new Float64Array(cols + 1);
@@ -252,7 +454,7 @@ defineApp({
       nRows = rows;
       totalW = HEAD_W + colX[nCols];
       if (totalW !== lastW) { head.style.width = `${totalW}px`; body.style.width = `${totalW}px`; lastW = totalW; }
-      const hh = nRows * ROW_H;
+      const hh = rowTop(nRows);
       if (hh !== lastH) { body.style.height = `${hh}px`; lastH = hh; }
       const rc = `${nRows + 1}x${nCols + 1}`;
       if (rc !== lastRC) { grid.setAttribute('aria-rowcount', String(nRows + 1)); grid.setAttribute('aria-colcount', String(nCols + 1)); lastRC = rc; }
@@ -265,8 +467,98 @@ defineApp({
       return lo;
     }
 
+    /* ================= what the sheet keeps besides cells ================= */
+    /* indexes over sheet.meta, rebuilt when the meta object changes (every
+       change makes a new one, so identity says when) */
+    let IX = { meta: null, merges: [], mergeRows: new Map(), cf: [], dv: [], filter: null };
+    function ix() {
+      const m = sheet().meta || {};
+      if (IX.meta === m) return IX;
+      const mergeRows = new Map();
+      for (const g of m.merges || []) for (let r = g.r1; r <= g.r2; r++) { const a = mergeRows.get(r); if (a) a.push(g); else mergeRows.set(r, [g]); }
+      IX = { meta: m, merges: m.merges || [], mergeRows, cf: m.cf || [], dv: m.dv || [], filter: m.filter || null };
+      return IX;
+    }
+    const mergeAt = (r, c) => { const a = ix().mergeRows.get(r); return a ? a.find(g => c >= g.c1 && c <= g.c2) || null : null; };
+    const ruleAt = (list, r, c) => list.find(g => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2) || null;
+    const shownOf = x => (x && x.raw !== '' ? E.formatValue(x.v, fmtOf(x)) : '');
+    /** the filter's range as it stands: the header row, and the data under it down to where it ends */
+    function filterSpan(f = ix().filter) {
+      if (!f) return null;
+      const ext = S.book.extentOf(S.sid);
+      let r2 = f.r2;
+      const rowFilled = r => { for (let c = f.c1; c <= f.c2; c++) if (filled(r, c)) return true; return false; };
+      while (r2 < ext.r && rowFilled(r2 + 1)) r2++;
+      return { ...f, r2 };
+    }
+    /** which rows the filter hides now (worked out when it changes, as other spreadsheets do) */
+    let fltEnd = -1;                                /* the filter's last row, when it was applied */
+    function applyFilter() {
+      const f = filterSpan();
+      const out = new Set();
+      fltEnd = f ? f.r2 : -1;
+      if (f && Object.keys(f.by).length) {
+        for (let r = f.r1 + 1; r <= f.r2; r++) {
+          for (const [k, rule] of Object.entries(f.by)) {
+            const x = S.book.cell(S.sid, r, Number(k)), v = x ? x.v : null, shown = shownOf(x);
+            if ((rule.vals && !rule.vals.includes(shown)) || (rule.op && !testOp(rule.op, v, shown, rule.a))) { out.add(r); break; }
+          }
+        }
+      }
+      hidden = out;
+    }
+    /* how tall a wrapped cell's text is in its column, measured with the grid's font */
+    function wrapLines(text, wpx, font) {
+      let n = 0;
+      for (const para of String(text).split('\n')) {
+        n++;
+        let line = '';
+        for (const word of para.split(/(\s+)/)) {
+          const next = line + word;
+          if (!line || textW(next, font) <= wpx) { line = next; continue; }
+          n++;
+          line = word.trimStart();
+          while (line && textW(line, font) > wpx && line.length > 1) {        /* a word longer than the column */
+            let k = line.length;
+            while (k > 1 && textW(line.slice(0, k), font) > wpx) k--;
+            line = line.slice(k);
+            if (line) n++;
+          }
+        }
+        if (n > 40) return 40;
+      }
+      return n;
+    }
+    function rebuildRows() {
+      const sh = sheet(), hs = new Map();
+      for (const r of hidden) hs.set(r, 0);
+      let font = null, k = 0;
+      for (const x of sh.cells.values()) {
+        if (!x.s || !x.s.wr || x.raw === '' || hidden.has(x.r) || mergeAt(x.r, x.c)) continue;
+        if (++k > 4000) break;
+        font = font || gridFont();
+        const want = Math.min(600, Math.max(ROW_H, wrapLines(shownOf(x), width(x.c) - 13, font) * 16 + 8));
+        if (want > (hs.get(x.r) || ROW_H)) hs.set(x.r, want);
+      }
+      const rows = [...hs.keys()].sort((a, b) => a - b);
+      const out = { rows, hs: rows.map(r => hs.get(r)), acc: [0] };
+      for (let j = 0; j < rows.length; j++) out.acc.push(out.acc[j] + out.hs[j] - ROW_H);
+      RG = out;
+      lastH = -1;
+    }
+    /** after sheet.meta (or the sheet shown) changed: indexes, filter, rows, freeze, a full repaint */
+    function metaChanged() {
+      ix();
+      const fz = sheet().meta.freeze;
+      const nr = fz ? fz.r : 0, nc = fz ? fz.c : 0;
+      if (nr !== FR || nc !== FC) { FR = nr; FC = nc; resetRows(); }
+      applyFilter();
+      rebuildRows();
+      paint(true);
+    }
+
     /* ================= painting ================= */
-    const rowsOn = new Map(), spare = [], headCells = [];
+    const rowsOn = new Map(), spare = [], headCells = [], fzRows = new Map(), fzHead = [], mgEls = [];
     let win0 = { r0: -1, r1: -1, c0: -1, c1: -1 };
     let activeCel = null;
     const stats = { paints: 0, ms: 0, worst: 0 };
@@ -276,14 +568,16 @@ defineApp({
       layout();
       const st = grid.scrollTop, sl = grid.scrollLeft;
       const vh = grid.clientHeight || 400, vw = grid.clientWidth || 600;
-      const r0 = Math.max(0, Math.floor(st / ROW_H) - OVER_R);
-      const r1 = Math.min(nRows - 1, Math.ceil((st + vh - HEAD_H) / ROW_H) + OVER_R);
-      const c0 = Math.max(0, colAt(sl) - 1);
-      const c1 = Math.min(nCols - 1, colAt(sl + vw - HEAD_W) + 1);
+      const FH = frozenH(), FW = frozenW();
+      const r0 = Math.max(FR, rowAt(st + FH) - OVER_R);
+      const r1 = Math.min(nRows - 1, rowAt(st + vh - HEAD_H) + OVER_R);
+      const c0 = Math.max(FC, colAt(sl + FW) - 1);
+      const c1 = Math.max(c0, Math.min(nCols - 1, colAt(sl + vw - HEAD_W) + 1));
       const colsChanged = force || c0 !== win0.c0 || c1 !== win0.c1;
       if (colsChanged || r0 !== win0.r0 || r1 !== win0.r1) {
-        for (const [r, el] of rowsOn) if (r < r0 || r > r1) { rowsOn.delete(r); spare.push(el); }
+        for (const [r, el] of rowsOn) if (r < r0 || r > r1 || hidden.has(r)) { rowsOn.delete(r); spare.push(el); }
         for (let r = r0; r <= r1; r++) {
+          if (hidden.has(r)) continue;
           let el = rowsOn.get(r);
           if (!el) {
             el = spare.pop() || makeRow();
@@ -293,9 +587,10 @@ defineApp({
           } else if (colsChanged) fillRow(el, r, c0, c1);
         }
         for (const el of spare) if (el.parentNode) el.remove();
-        if (colsChanged) fillHead(c0, c1);
+        if (colsChanged) { fillHead(c0, c1); paintFrozenRows(c0, c1); }
         win0 = { r0, r1, c0, c1 };
       }
+      paintMerges();
       paintSel();
       const ms = performance.now() - t0;
       stats.paints++; stats.ms = ms;
@@ -304,23 +599,50 @@ defineApp({
     function makeRow() {
       const rh = h('div.ss-rh', { role: 'rowheader', 'aria-colindex': '1' });
       const el = h('div.ss-row', { role: 'row' }, rh);
-      el._rh = rh; el._cells = []; el._r = -1; el._w = -1;
+      el._rh = rh; el._cells = []; el._fz = []; el._r = -1; el._w = -1; el._h = ROW_H;
       return el;
     }
-    function fillRow(el, r, c0, c1) {
+    /* the frozen rows: in-flow and sticky at the top of the body, in order */
+    function paintFrozenRows(c0, c1) {
+      for (const [r, el] of fzRows) if (r >= FR || hidden.has(r)) { fzRows.delete(r); el.remove(); }
+      let prev = null;
+      for (let r = 0; r < FR; r++) {
+        if (hidden.has(r)) continue;
+        let el = fzRows.get(r);
+        if (!el) { el = makeRow(); el.classList.add('is-frz'); fzRows.set(r, el); }
+        if (prev ? prev.nextSibling !== el : body.firstChild !== el) { if (prev) prev.after(el); else body.prepend(el); }
+        fillRow(el, r, c0, c1, true);
+        el.classList.remove('is-frzl');
+        prev = el;
+      }
+      if (prev) prev.classList.add('is-frzl');       /* the line under the frozen rows */
+    }
+    function fillRow(el, r, c0, c1, frozen = false) {
+      const top = frozen ? HEAD_H + rowTop(r) : rowTop(r), hh = rowH(r);
       if (el._r !== r) {
         el._r = r;
-        el.style.top = `${r * ROW_H}px`;
         el.setAttribute('aria-rowindex', String(r + 2));
         el._rh.textContent = String(r + 1);
       }
+      if (el._top !== top) { el._top = top; el.style.top = `${top}px`; }
+      if (el._h !== hh) { el._h = hh; el.style.height = hh === ROW_H ? '' : `${hh}px`; }
       if (el._w !== totalW) { el._w = totalW; el.style.width = `${totalW}px`; }
+      /* row numbers under an active filter are tinted, as other spreadsheets do */
+      const f = ix().filter;
+      const inFlt = !!f && hidden.size > 0 && r > f.r1 && r <= fltEnd;
+      if (el._flt !== inFlt) { el._flt = inFlt; el._rh.classList.toggle('is-flt', inFlt); }
+      /* frozen columns: in-flow and sticky, straight after the row number */
+      const fz = el._fz;
+      while (fz.length < FC) { const x = h('div.ss-c.is-fz', { role: 'gridcell' }); x._c = -1; (fz.length ? fz[fz.length - 1] : el._rh).after(x); fz.push(x); }
+      while (fz.length > FC) fz.pop().remove();
+      for (let c = 0; c < FC; c++) fillCell(fz[c], r, c, true);
       const need = c1 - c0 + 1, cells = el._cells;
       while (cells.length < need) { const x = h('div.ss-c', { role: 'gridcell' }); x._c = -1; cells.push(x); el.appendChild(x); }
       while (cells.length > need) cells.pop().remove();
       for (let i = 0; i < need; i++) fillCell(cells[i], r, c0 + i);
     }
-    function fillCell(x, r, c) {
+    /** what a cell looks like: { text, cls } */
+    function cellLook(r, c) {
       const cell = S.book.cell(S.sid, r, c);
       let text = '', cls = 'ss-c';
       if (cell) {
@@ -332,9 +654,33 @@ defineApp({
           else if (v instanceof E.CellError) cls += ' is-err';
         }
         const s = cell.s;
-        if (s) { if (s.b) cls += ' is-b'; if (s.i) cls += ' is-i'; if (s.al) cls += ` al-${s.al[0]}`; }
+        if (s) {
+          if (s.b) cls += ' is-b'; if (s.i) cls += ' is-i'; if (s.al) cls += ` al-${s.al[0]}`;
+          if (s.wr) cls += ' is-wrap';
+          if (s.bd) for (const k of s.bd) cls += ` bd-${k}`;
+        }
       }
+      const I = ix();
+      if (I.cf.length) {
+        const v = cell ? cell.v : null, shown = cell && cell.raw !== '' ? text : '';
+        const rule = I.cf.find(g => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2 && testOp(g.op, v, shown, g.a, g.b));
+        if (rule) { cls += ` cf-${rule.fill}`; if (rule.bold && !cls.includes(' is-b')) cls += ' is-b'; }
+      }
+      if (I.dv.length) {
+        const d = ruleAt(I.dv, r, c);
+        if (d) {
+          if (d.kind === 'list') cls += ' has-dd';
+          if (cell && cell.raw !== '' && !dvPass(d, cell.v, text)) cls += ' is-bad';
+        }
+      }
+      const f = I.filter;
+      if (f && r === f.r1 && c >= f.c1 && c <= f.c2) cls += f.by[c] ? ' has-flt is-flt' : ' has-flt';
       if (S.find.set && S.find.set.has(LK(r, c))) cls += S.find.now === LK(r, c) ? ' is-hit is-now' : ' is-hit';
+      return { text, cls };
+    }
+    function fillCell(x, r, c, frozen = false) {
+      const look = cellLook(r, c), text = look.text;
+      const cls = frozen ? `${look.cls} is-fz${c === FC - 1 ? ' is-fzl' : ''}` : look.cls;
       if (x._c !== c) { x._c = c; x.setAttribute('aria-colindex', String(c + 2)); }
       const left = HEAD_W + colX[c], w = colX[c + 1] - colX[c];
       if (x._x !== left) { x._x = left; x.style.left = `${left}px`; }
@@ -344,51 +690,99 @@ defineApp({
     }
     function fillHead(c0, c1) {
       const need = c1 - c0 + 1;
-      while (headCells.length < need) {
-        const x = h('div.ss-ch', { role: 'columnheader' }, h('span'), h('div.ss-grip', { 'aria-hidden': 'true' }));
-        x._lab = x.firstChild; x._c = -1;
-        headCells.push(x); head.appendChild(x);
-      }
-      while (headCells.length > need) headCells.pop().remove();
-      for (let i = 0; i < need; i++) {
-        const x = headCells[i], c = c0 + i;
+      const put = (x, c) => {
         if (x._c !== c) { x._c = c; x._lab.textContent = E.colName(c); x.setAttribute('aria-colindex', String(c + 2)); x.dataset.c = String(c); }
         const left = HEAD_W + colX[c], w = colX[c + 1] - colX[c];
         if (x._x !== left) { x._x = left; x.style.left = `${left}px`; }
         if (x._wd !== w) { x._wd = w; x.style.width = `${w}px`; }
+      };
+      const mk = () => { const x = h('div.ss-ch', { role: 'columnheader' }, h('span'), h('div.ss-grip', { 'aria-hidden': 'true' })); x._lab = x.firstChild; x._c = -1; return x; };
+      while (fzHead.length < FC) { const x = mk(); x.classList.add('is-fz'); (fzHead.length ? fzHead[fzHead.length - 1] : corner).after(x); fzHead.push(x); }
+      while (fzHead.length > FC) fzHead.pop().remove();
+      for (let c = 0; c < FC; c++) put(fzHead[c], c);
+      while (headCells.length < need) { const x = mk(); headCells.push(x); head.appendChild(x); }
+      while (headCells.length > need) headCells.pop().remove();
+      for (let i = 0; i < need; i++) put(headCells[i], c0 + i);
+    }
+    /** an area of cells in body px, as it is drawn now: frozen rows and columns
+        stay put while the rest scrolls under them. null when nothing of it shows. */
+    function areaRect(g) {
+      if (g.r1 > nRows - 1 || g.c1 > nCols - 1) return null;
+      const r2 = Math.min(g.r2, nRows - 1), c2 = Math.min(g.c2, nCols - 1);
+      const st = grid.scrollTop, sl = grid.scrollLeft;
+      let y = rowTop(g.r1), y2 = rowTop(r2 + 1), x = HEAD_W + colX[g.c1], x2 = HEAD_W + colX[c2 + 1];
+      if (FR) {
+        const FH = frozenH();
+        if (g.r1 < FR) y += st; else y = Math.max(y, st + FH);
+        y2 = r2 < FR ? y2 + st : g.r1 < FR ? Math.max(y2, st + FH) : y2;
+        if (g.r1 >= FR && y2 <= st + FH) return null;
       }
+      /* columns: nothing is drawn over the row numbers or the frozen columns */
+      const minX = sl + HEAD_W + frozenW();
+      if (g.c1 < FC) x += sl; else x = Math.max(x, minX);
+      x2 = c2 < FC ? x2 + sl : g.c1 < FC ? Math.max(x2, minX) : x2;
+      if (g.c1 >= FC && x2 <= minX) return null;
+      if (y2 <= y || x2 <= x) return null;
+      return { x, y, w: x2 - x, h: y2 - y, frozen: g.r1 < FR || g.c1 < FC };
     }
     function box(el, g) {
-      if (!g || g.r1 > nRows - 1 || g.c1 > nCols - 1) { if (el._on) { el.style.display = 'none'; el._on = false; } return; }
-      const r2 = Math.min(g.r2, nRows - 1), c2 = Math.min(g.c2, nCols - 1);
-      const x = HEAD_W + colX[g.c1], y = g.r1 * ROW_H, w = colX[c2 + 1] - colX[g.c1], hh = (r2 - g.r1 + 1) * ROW_H;
-      el.style.cssText = `display:block;left:${x - 1}px;top:${y - 1}px;width:${w + 1}px;height:${hh + 1}px`;
+      const a = g && areaRect(g);
+      if (!a) { if (el._on) { el.style.display = 'none'; el._on = false; } return; }
+      el.style.cssText = `display:block;left:${a.x - 1}px;top:${a.y - 1}px;width:${a.w + 1}px;height:${a.h + 1}px`;
       el._on = true;
+    }
+    /* merged cells: one box over each area that is in view, drawn as its top-left cell */
+    function paintMerges() {
+      const list = ix().merges;
+      let n = 0;
+      if (list.length) {
+        const { r0, r1, c0, c1 } = win0;
+        for (const g of list) {
+          const inRows = (g.r2 >= r0 && g.r1 <= r1) || g.r1 < FR, inCols = (g.c2 >= c0 && g.c1 <= c1) || g.c1 < FC;
+          if (!inRows || !inCols) continue;
+          const a = areaRect(g);
+          if (!a) continue;
+          let el = mgEls[n];
+          if (!el) { el = h('div', { 'aria-hidden': 'true' }); mgEls.push(el); }
+          if (el.parentNode !== body) body.appendChild(el);
+          const look = cellLook(g.r1, g.c1);
+          const cls = `${look.cls} ss-mg${a.frozen ? ' is-mgfz' : ''}`;
+          if (el._k !== cls) { el._k = cls; el.className = cls; }
+          if (el._t !== look.text) { el._t = look.text; el.textContent = look.text; }
+          el.style.cssText = `left:${a.x}px;top:${a.y}px;width:${a.w}px;height:${a.h}px`;
+          n++;
+        }
+      }
+      while (mgEls.length > n) mgEls.pop().remove();
     }
     function paintSel() {
       const g = selRect();
       const multi = g.r1 !== g.r2 || g.c1 !== g.c2;
-      box(selBox, multi ? g : null);
-      box(curBox, { r1: S.cur.r, c1: S.cur.c, r2: S.cur.r, c2: S.cur.c });
+      const m = mergeAt(S.cur.r, S.cur.c);
+      box(selBox, multi && !(m && m.r1 === g.r1 && m.c1 === g.c1 && m.r2 === g.r2 && m.c2 === g.c2) ? g : null);
+      box(curBox, m || { r1: S.cur.r, c1: S.cur.c, r2: S.cur.r, c2: S.cur.c });
       box(clipBox, S.clip && S.clip.sid === S.sid ? S.clip.g : null);
       box(ptBox, S.edit && S.edit.point && S.edit.point.g ? S.edit.point.g : null);
-      for (const [r, el] of rowsOn) {
+      const allRows = [...rowsOn, ...fzRows];
+      for (const [r, el] of allRows) {
         const rs = r >= g.r1 && r <= g.r2;
         if (el._rs !== rs) { el._rs = rs; el._rh.classList.toggle('is-sel', rs); }
-        for (const x of el._cells) {
+        for (const x of el._fz.length ? [...el._fz, ...el._cells] : el._cells) {
           const s = rs && x._c >= g.c1 && x._c <= g.c2;
           if (x._s !== s) { x._s = s; x.setAttribute('aria-selected', String(s)); }
         }
       }
-      for (const x of headCells) { const s = x._c >= g.c1 && x._c <= g.c2; if (x._s !== s) { x._s = s; x.classList.toggle('is-sel', s); } }
-      const row = rowsOn.get(S.cur.r);
-      const cel = row ? row._cells.find(x => x._c === S.cur.c) : null;
+      for (const x of fzHead.length ? [...fzHead, ...headCells] : headCells) { const s = x._c >= g.c1 && x._c <= g.c2; if (x._s !== s) { x._s = s; x.classList.toggle('is-sel', s); } }
+      const row = rowsOn.get(S.cur.r) || fzRows.get(S.cur.r);
+      const cel = row ? (S.cur.c < FC ? row._fz[S.cur.c] : row._cells.find(x => x._c === S.cur.c)) || null : null;
       if (activeCel && activeCel !== cel) { activeCel.removeAttribute('id'); activeCel.removeAttribute('aria-label'); }
       activeCel = cel || null;
       if (cel) {
         cel.id = `${uid}-cur`;
         const raw = rawAt(S.cur.r, S.cur.c);
-        const label = `${E.cellName(S.cur.r, S.cur.c)}, ${cel._t || 'blank'}${E.isFormula(raw) ? `, formula ${raw}` : ''}`;
+        const d = ix().dv.length ? ruleAt(ix().dv, S.cur.r, S.cur.c) : null;
+        const extra = `${m ? `, merged ${E.rangeName(m)}` : ''}${d && d.kind === 'list' ? ', has a dropdown (Alt+Down)' : ''}${/ is-bad/.test(cel._k || '') ? `, doesn’t pass its check: ${dvSays(d)}` : ''}`;
+        const label = `${E.cellName(S.cur.r, S.cur.c)}, ${cel._t || 'blank'}${E.isFormula(raw) ? `, formula ${raw}` : ''}${extra}`;
         if (cel.getAttribute('aria-label') !== label) cel.setAttribute('aria-label', label);
         if (grid.getAttribute('aria-activedescendant') !== cel.id) grid.setAttribute('aria-activedescendant', cel.id);
       } else grid.removeAttribute('aria-activedescendant');
@@ -402,7 +796,20 @@ defineApp({
       const a = S.anchor, f = S.focus;
       const fin = (v, max) => (Number.isFinite(v) ? Math.min(v, max) : max);
       const ar = fin(a.r, nRows - 1), fr = fin(f.r, nRows - 1), ac = fin(a.c, nCols - 1), fc = fin(f.c, nCols - 1);
-      return { r1: Math.min(ar, fr), r2: Math.max(ar, fr), c1: Math.min(ac, fc), c2: Math.max(ac, fc) };
+      const g = { r1: Math.min(ar, fr), r2: Math.max(ar, fr), c1: Math.min(ac, fc), c2: Math.max(ac, fc) };
+      return ix().merges.length ? withMerges(g) : g;
+    }
+    /* a selection that cuts into a merged area takes all of it in */
+    function withMerges(g) {
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const m of IX.merges) {
+          if (!overlaps(m, g) || (m.r1 >= g.r1 && m.r2 <= g.r2 && m.c1 >= g.c1 && m.c2 <= g.c2)) continue;
+          g = { r1: Math.min(g.r1, m.r1), r2: Math.max(g.r2, m.r2), c1: Math.min(g.c1, m.c1), c2: Math.max(g.c2, m.c2) };
+          grew = true;
+        }
+      }
+      return g;
     }
     /** the selection as worked on: whole rows/columns (and huge areas) stop at the data */
     function opRect() {
@@ -424,16 +831,27 @@ defineApp({
       if (!Number.isFinite(f.c)) return `${Math.min(a.r, f.r) + 1}:${Math.max(a.r, f.r) + 1}`;
       return E.rangeName(selRect());
     }
+    /* scroll so the cell shows — below the frozen rows and right of the frozen columns */
     function reveal(r, c) {
       layout();
-      const top = r * ROW_H, vh = grid.clientHeight - HEAD_H;
-      if (top < grid.scrollTop) grid.scrollTop = top;
-      else if (top + ROW_H > grid.scrollTop + vh) grid.scrollTop = top + ROW_H - vh;
-      const L = colX[c], R = colX[c + 1], vw = grid.clientWidth - HEAD_W;
-      if (L < grid.scrollLeft) grid.scrollLeft = L;
-      else if (R > grid.scrollLeft + vw) grid.scrollLeft = Math.min(L, R - vw);
+      if (r >= FR) {
+        const top = rowTop(r), bot = top + Math.max(ROW_H, rowH(r)), vh = grid.clientHeight - HEAD_H, FH = frozenH();
+        if (top < grid.scrollTop + FH) grid.scrollTop = top - FH;
+        else if (bot > grid.scrollTop + vh) grid.scrollTop = bot - vh;
+      }
+      if (c >= FC) {
+        const L = colX[c], R = colX[c + 1], vw = grid.clientWidth - HEAD_W, FW = frozenW();
+        if (L < grid.scrollLeft + FW) grid.scrollLeft = L - FW;
+        else if (R > grid.scrollLeft + vw) grid.scrollLeft = Math.min(L - FW, R - vw);
+      }
     }
     function select(cur, anchor = cur, focus = cur, { show = true } = {}) {
+      /* the active cell of a merged area is its top-left cell */
+      const m = ix().merges.length && Number.isFinite(cur.r) && Number.isFinite(cur.c) ? mergeAt(cur.r, cur.c) : null;
+      if (m) {
+        cur = { r: m.r1, c: m.c1 };
+        if (anchor.r === focus.r && anchor.c === focus.c) { anchor = cur; focus = cur; }
+      }
       S.cur = { ...cur }; S.anchor = { ...anchor }; S.focus = { ...focus };
       if (show) {
         const f = Number.isFinite(focus.r) && Number.isFinite(focus.c) ? focus : cur;
@@ -447,7 +865,15 @@ defineApp({
       if (extend) select(S.cur, S.anchor, p, { show });
       else select(p, p, p, { show });
     }
-    const topRow = () => Math.floor(grid.scrollTop / ROW_H);
+    const topRow = () => rowAt(grid.scrollTop + frozenH());
+    /** one step from a cell: out of the far side of a merged area, and past rows a filter hides */
+    function stepFrom(p, dr, dc) {
+      const m = mergeAt(p.r, p.c);
+      let r = p.r + dr, c = p.c + dc;
+      if (m) { if (dr > 0) r = m.r2 + 1; if (dc > 0) c = m.c2 + 1; if (dr < 0) r = m.r1 - 1; if (dc < 0) c = m.c1 - 1; if (!dr) r = p.r; if (!dc) c = p.c; }
+      for (let k = 0; dr && hidden.has(r) && k < 100000; k++) r += dr;
+      return { r: clamp(r, 0, E.MAX_ROWS - 1), c: clamp(c, 0, E.MAX_COLS - 1) };
+    }
     function selectCols(a, b) { select({ r: topRow(), c: a }, { r: 0, c: a }, { r: Infinity, c: b }, { show: false }); }
     function selectRows(a, b) { select({ r: a, c: S.cur.c }, { r: a, c: 0 }, { r: b, c: Infinity }, { show: false }); }
     function selectAll() { select({ r: S.cur.r, c: S.cur.c }, { r: 0, c: 0 }, { r: Infinity, c: Infinity }, { show: false }); say('Everything selected'); }
@@ -475,11 +901,13 @@ defineApp({
       if (S.edit || e.target !== grid) return;
       const k = e.key, mod = e.ctrlKey || e.metaKey;
       if (ARROW[k]) {
+        /* Alt+↓ opens the cell's filter or dropdown */
+        if (k === 'ArrowDown' && e.altKey && !mod && !e.shiftKey && cellPopup(S.cur.r, S.cur.c)) { e.preventDefault(); return; }
         if (e.altKey) return;                       /* ⌃⌥ / ⌘⌥ arrows snap the window */
         e.preventDefault();
         const [dr, dc] = ARROW[k];
         const from = e.shiftKey ? finFocus() : S.cur;
-        const to = mod ? edgeFrom(from.r, from.c, dr, dc) : { r: from.r + dr, c: from.c + dc };
+        const to = mod ? edgeFrom(from.r, from.c, dr, dc) : stepFrom(from, dr, dc);
         moveTo(to.r, to.c, e.shiftKey);
         return;
       }
@@ -544,20 +972,22 @@ defineApp({
     function placeEditor() {
       if (!S.edit) return;
       const { r, c } = S.edit;
-      editor.style.left = `${HEAD_W + colX[c] - grid.scrollLeft - 1}px`;
-      editor.style.top = `${HEAD_H + r * ROW_H - grid.scrollTop - 1}px`;
+      editor.style.left = `${HEAD_W + colX[c] - (c < FC ? 0 : grid.scrollLeft) - 1}px`;
+      editor.style.top = `${HEAD_H + rowTop(r) - (r < FR ? 0 : grid.scrollTop) - 1}px`;
     }
     function sizeEditor() {
       if (!S.edit) return;
-      const { c } = S.edit;
+      const { r, c } = S.edit;
+      const m = mergeAt(r, c);
       const lines = editor.value.split('\n');
       const isF = editor.value.startsWith('=');
       const font = isF ? `${Math.round(12 * (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fs-k')) || 1))}px ${getComputedStyle(document.documentElement).getPropertyValue('--mono')}` : gridFont();
-      const w = lines.reduce((m, l) => Math.max(m, textW(l, font)), 0) + 18;
-      const cw = colX[c + 1] - colX[c] + 2;
+      const w = lines.reduce((mx, l) => Math.max(mx, textW(l, font)), 0) + 18;
+      const cw = (m ? colX[m.c2 + 1] - colX[m.c1] : colX[c + 1] - colX[c]) + 2;
+      const ch = (m ? rowTop(m.r2 + 1) - rowTop(m.r1) : rowH(r)) + 2;
       const room = Math.max(cw, wrap.clientWidth - (HEAD_W + colX[c] - grid.scrollLeft) - 6);
       editor.style.width = `${Math.min(Math.max(cw, w), room)}px`;
-      editor.style.height = `${Math.max(ROW_H + 2, lines.length * 16 + 10)}px`;
+      editor.style.height = `${Math.max(ROW_H + 2, ch, lines.length * 16 + 10)}px`;
       editor.classList.toggle('is-formula', isF);
       fx.style.height = lines.length > 1 ? `${Math.min(92, lines.length * 16 + 10)}px` : '';
     }
@@ -579,6 +1009,22 @@ defineApp({
       let raw = editEl().value;
       endEdit();
       if (E.isFormula(raw)) raw = closeParens(raw);
+      /* a cell with a check that refuses: what doesn't pass isn't put in */
+      const d = ix().dv.length ? ruleAt(IX.dv, r, c) : null;
+      if (d && d.strict && raw !== '' && raw !== rawAt(r, c)) {
+        const v = E.isFormula(raw) ? E.evaluateFormula(S.book, S.sid, raw) : E.parseLiteral(raw).v;
+        const x = S.book.cell(S.sid, r, c);
+        const shown = E.formatValue(v, x && x.s && x.s.nf ? fmtOf(x) : E.parseLiteral(raw).fmt);
+        if (!dvPass(d, v, shown)) {
+          const msg = `${E.cellName(r, c)} takes ${dvSays(d)}, so “${raw.slice(0, 40)}” wasn’t put in.`;
+          api.notify({ app: 'Static Sheets', icon: 'alert', title: 'That doesn’t fit this cell', message: msg, timeout: 6000 });
+          say(msg);
+          paint();
+          syncBars();
+          if (refocus) grid.focus({ preventScroll: true });
+          return;
+        }
+      }
       applyChanges([{ r, c, raw }], 'Edit');
       /* a formula that worked out to a real value (not an error) — Achievements count it */
       { const x = E.isFormula(raw) ? S.book.cell(S.sid, r, c) : null; if (x && x.f && !E.isErr(x.v)) api.bus.emit('sheets:formula', { raw }); }
@@ -692,10 +1138,15 @@ defineApp({
     function hitAt(e) {
       const rect = grid.getBoundingClientRect();
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
-      const r = clamp(Math.floor((y - HEAD_H + grid.scrollTop) / ROW_H), 0, nRows - 1);
-      const c = clamp(colAt(x - HEAD_W + grid.scrollLeft), 0, nCols - 1);
+      /* over the frozen rows and columns, the page hasn't scrolled */
+      const by = y - HEAD_H, bx = x - HEAD_W;
+      const r = clamp(rowAt(FR && by < frozenH() ? by : by + grid.scrollTop), 0, nRows - 1);
+      const c = clamp(colAt(FC && bx < frozenW() ? bx : bx + grid.scrollLeft), 0, nCols - 1);
       const kind = y < HEAD_H ? (x < HEAD_W ? 'all' : 'col') : x < HEAD_W ? 'row' : 'cell';
-      return { kind, r, c, outside: x > grid.clientWidth || y > grid.clientHeight };
+      /* how far from the right edge of its cell (or merged area) the pointer is: the ▾ of a filter or dropdown */
+      const m = kind === 'cell' ? mergeAt(r, c) : null;
+      const cellRight = HEAD_W + colX[(m ? m.c2 : c) + 1] - (c < FC ? 0 : grid.scrollLeft);
+      return { kind, r, c, outside: x > grid.clientWidth || y > grid.clientHeight, fromRight: cellRight - x };
     }
     function autoScroll(e) {
       const rect = grid.getBoundingClientRect();
@@ -725,6 +1176,11 @@ defineApp({
       }
       e.preventDefault();
       grid.focus({ preventScroll: true });
+      /* the ▾ at a filter header's or a dropdown cell's right edge */
+      if (hit.kind === 'cell' && !e.shiftKey && hit.fromRight >= 0 && hit.fromRight <= 18) {
+        const at = mergeAt(hit.r, hit.c) || { r1: hit.r, c1: hit.c };
+        if (popupKind(at.r1, at.c1)) { moveTo(at.r1, at.c1, false, false); cellPopup(at.r1, at.c1); return; }
+      }
       if (hit.kind === 'cell') { moveTo(hit.r, hit.c, e.shiftKey, false); drag = { kind: 'cell' }; }
       else if (hit.kind === 'col') { const a = e.shiftKey && !Number.isFinite(S.focus.r) ? S.anchor.c : hit.c; selectCols(a, hit.c); drag = { kind: 'col', a }; }
       else if (hit.kind === 'row') { const a = e.shiftKey && !Number.isFinite(S.focus.c) ? S.anchor.r : hit.r; selectRows(a, hit.r); drag = { kind: 'row', a }; }
@@ -826,9 +1282,11 @@ defineApp({
       const k = S.book.set(sid, r, c, st.raw);
       if (k != null) keys.push(k);
     }
-    /** Every edit goes through here: [{ r, c, raw?, s? }] → one undo step. */
-    function applyChanges(list, label, { sid = S.sid, cols = null } = {}) {
-      const rec = { label, sid, cells: [], cols: [], sel: snapSel() };
+    /** Every edit goes through here: [{ r, c, raw?, s? }] → one undo step.
+        cols: column widths; meta: fn(copy of sheet.meta) → what the sheet keeps
+        besides cells (freeze, merges, filter, rules, tab colour) changes too. */
+    function applyChanges(list, label, { sid = S.sid, cols = null, meta = null, refilter = false } = {}) {
+      const rec = { label, sid, cells: [], cols: [], meta: null, refilter, sel: snapSel() };
       const keys = [];
       for (const ch of list) {
         const x = S.book.cell(sid, ch.r, ch.c);
@@ -847,17 +1305,25 @@ defineApp({
           setColW(sid, c, after);
         }
       }
-      if (!rec.cells.length && !rec.cols.length) return false;
+      if (meta) {
+        const sh = S.book.sheet(sid), before = sh.meta || {};
+        const copy = JSON.parse(JSON.stringify(before));
+        const out = meta(copy);
+        const next = cleanMeta(out === undefined ? copy : out);
+        if (JSON.stringify(next) !== JSON.stringify(before)) { rec.meta = { before, after: next }; sh.meta = next; }
+      }
+      if (!rec.cells.length && !rec.cols.length && !rec.meta) return false;
       S.undo.push(rec);
       if (S.undo.length > UNDO_MAX) S.undo.shift();
       S.redo.length = 0;
-      afterChange(keys);
+      afterChange(keys, rec);
       return true;
     }
-    function afterChange(keys) {
+    function afterChange(keys, rec = null) {
       if (keys.length) S.book.recalc(keys);
       if (S.find.open && findIn.value) runFind();
-      paint(true);
+      if (rec && (rec.meta || rec.refilter) && rec.sid === S.sid) { metaChanged(); if (rec.meta) renderTabs(); }
+      else { rebuildRows(); paint(true); }
       syncBars();
       drawCharts();
       markDirty();
@@ -869,8 +1335,9 @@ defineApp({
       const list = side === 'before' ? [...rec.cells].reverse() : rec.cells;
       for (const x of list) put(rec.sid, x.r, x.c, x[side], keys);
       for (const x of rec.cols) setColW(rec.sid, x.c, x[side]);
+      if (rec.meta) S.book.sheet(rec.sid).meta = rec.meta[side];
       S.cur = { ...rec.sel.cur }; S.anchor = { ...rec.sel.anchor }; S.focus = { ...rec.sel.focus };
-      afterChange(keys);
+      afterChange(keys, rec);
       reveal(S.cur.r, S.cur.c);
       paint();
     }
@@ -899,19 +1366,20 @@ defineApp({
       const sh = sheet();
       const area = (g.r2 - g.r1 + 1) * (g.c2 - g.c1 + 1);
       if (area > sh.cells.size) {
-        for (const x of [...sh.cells.values()]) if (x.r >= g.r1 && x.r <= g.r2 && x.c >= g.c1 && x.c <= g.c2) fn(x);
+        for (const x of [...sh.cells.values()]) if (x.r >= g.r1 && x.r <= g.r2 && x.c >= g.c1 && x.c <= g.c2 && !hidden.has(x.r)) fn(x);
       } else {
-        for (let r = g.r1; r <= g.r2; r++) for (let c = g.c1; c <= g.c2; c++) { const x = S.book.cell(S.sid, r, c); if (x) fn(x); }
+        for (let r = g.r1; r <= g.r2; r++) { if (hidden.has(r)) continue; for (let c = g.c1; c <= g.c2; c++) { const x = S.book.cell(S.sid, r, c); if (x) fn(x); } }
       }
     }
     function restyle(label, fn) {
       if (S.edit) commitEdit(0, 0, false);
       const g = opRect(), list = [];
       for (let r = g.r1; r <= g.r2; r++) {
+        if (hidden.has(r)) continue;                 /* rows a filter hides are left as they are */
         for (let c = g.c1; c <= g.c2; c++) {
           const x = S.book.cell(S.sid, r, c);
           const s = { ...((x && x.s) || {}) };
-          fn(s);
+          fn(s, r, c);
           list.push({ r, c, s });
         }
       }
@@ -920,7 +1388,7 @@ defineApp({
     const activeStyle = () => { const x = S.book.cell(S.sid, S.cur.r, S.cur.c); return (x && x.s) || {}; };
     function toggleStyle(k) {
       const on = !activeStyle()[k];
-      const name = k === 'b' ? 'Bold' : 'Italic';
+      const name = k === 'b' ? 'Bold' : k === 'wr' ? 'Wrap text' : 'Italic';
       if (restyle(name, s => { s[k] = on; })) say(`${name} ${on ? 'on' : 'off'}`);
     }
     function align(al) {
@@ -964,12 +1432,13 @@ defineApp({
         if (src < 0) return;
         for (let c = g.c1; c <= g.c2; c++) {
           const x = S.book.cell(S.sid, src, c);
-          for (let r = from; r <= g.r2; r++) list.push({ r, c, raw: x ? E.shiftFormula(x.raw, r - src, 0) : '', s: x && x.s ? { ...x.s } : null });
+          for (let r = from; r <= g.r2; r++) if (!hidden.has(r)) list.push({ r, c, raw: x ? E.shiftFormula(x.raw, r - src, 0) : '', s: x && x.s ? { ...x.s } : null });
         }
       } else {
         const src = g.c1 === g.c2 ? g.c1 - 1 : g.c1, from = g.c1 === g.c2 ? g.c1 : g.c1 + 1;
         if (src < 0) return;
         for (let r = g.r1; r <= g.r2; r++) {
+          if (hidden.has(r)) continue;
           const x = S.book.cell(S.sid, r, src);
           for (let c = from; c <= g.c2; c++) list.push({ r, c, raw: x ? E.shiftFormula(x.raw, 0, c - src) : '', s: x && x.s ? { ...x.s } : null });
         }
@@ -983,8 +1452,10 @@ defineApp({
        formulas and formats, used when that same text is pasted back. */
     function copySel(cut) {
       if (S.edit) commitEdit(0, 0, false);
-      const g = opRect(), rows = [], cells = [];
+      const g = opRect(), rows = [], cells = [], from = [];
       for (let r = g.r1; r <= g.r2; r++) {
+        if (hidden.has(r)) continue;               /* as other spreadsheets: only the rows a filter shows */
+        from.push(r);
         const row = [], cr = [];
         for (let c = g.c1; c <= g.c2; c++) {
           const x = S.book.cell(S.sid, r, c);
@@ -994,7 +1465,7 @@ defineApp({
         rows.push(row); cells.push(cr);
       }
       const tsv = CSV.write(rows, '\t').replace(/\n$/, '');
-      S.clip = { sid: S.sid, g, cells, tsv, cut };
+      S.clip = { sid: S.sid, g, cells, tsv, cut, from };
       paintSel();
       const n = (g.r2 - g.r1 + 1) * (g.c2 - g.c1 + 1);
       say(`${cut ? 'Cut' : 'Copied'} ${n === 1 ? E.cellName(g.r1, g.c1) : `${n} cells`}`);
@@ -1025,12 +1496,13 @@ defineApp({
       const C = S.clip, g = opRect();
       const dr = g.r1 - C.g.r1, dc = g.c1 - C.g.c1;
       const clears = [], list = [];
-      if (C.cut) C.cells.forEach((row, i) => row.forEach((x, j) => clears.push({ r: C.g.r1 + i, c: C.g.c1 + j, raw: '', s: null })));
+      if (C.cut) C.cells.forEach((row, i) => row.forEach((x, j) => clears.push({ r: C.from ? C.from[i] : C.g.r1 + i, c: C.g.c1 + j, raw: '', s: null })));
       if (C.cut && C.sid === S.sid) list.push(...clears);
       C.cells.forEach((row, i) => row.forEach((x, j) => {
         const r = g.r1 + i, c = g.c1 + j;
         if (r >= E.MAX_ROWS || c >= E.MAX_COLS) return;
-        list.push({ r, c, raw: x ? (C.cut ? x.raw : E.shiftFormula(x.raw, dr, dc)) : '', s: x && x.s ? { ...x.s } : null });
+        const rdr = C.from ? r - C.from[i] : dr;
+        list.push({ r, c, raw: x ? (C.cut ? x.raw : E.shiftFormula(x.raw, rdr, dc)) : '', s: x && x.s ? { ...x.s } : null });
       }));
       applyChanges(list, C.cut ? 'Move' : 'Paste');
       if (C.cut && C.sid !== S.sid) applyChanges(clears, 'Move', { sid: C.sid });
@@ -1133,7 +1605,7 @@ defineApp({
 
     /* ================= charts ================= */
     const showAt = sid => (r, c) => { const x = S.book.cell(sid, r, c); return x ? E.formatValue(x.v, fmtOf(x)) : ''; };
-    const chartSpec = ch => ({ type: ch.type, title: ch.title, data: Chart.chartData(S.book, ch.sid, ch.g, showAt(ch.sid)) });
+    const chartSpec = ch => ({ type: ch.type, title: ch.title, xLabel: ch.xLabel || '', yLabel: ch.yLabel || '', trend: ch.trend !== false, data: Chart.chartData(S.book, ch.sid, ch.g, showAt(ch.sid), ch.type) });
     /** the block of data around a cell (what a chart uses when one cell is selected) */
     function regionAround(r, c) {
       const ext = S.book.extentOf(S.sid);
@@ -1155,14 +1627,17 @@ defineApp({
       if (S.edit) commitEdit(0, 0, false);
       let g = opRect();
       if (g.r1 === g.r2 && g.c1 === g.c2) g = regionAround(g.r1, g.c1);
-      const data = Chart.chartData(S.book, S.sid, g, showAt(S.sid));
+      const data = Chart.chartData(S.book, S.sid, g, showAt(S.sid), type);
       if (!data.series.length) {
-        api.notify({ app: 'Static Sheets', icon: 'bar-chart', title: 'Nothing to chart yet', message: 'Select cells with numbers in them — a column of names beside them becomes the labels — then pick a chart.' });
-        say('Select some numbers to chart first');
+        const scatter = type === 'scatter';
+        api.notify({ app: 'Static Sheets', icon: 'bar-chart', title: 'Nothing to chart yet', message: scatter
+          ? 'A scatter chart needs two columns of numbers side by side: x on the left, y on the right. Select them, then pick Scatter.'
+          : 'Select cells with numbers in them — a column of names beside them becomes the labels — then pick a chart.' });
+        say(scatter ? 'Select two columns of numbers first' : 'Select some numbers to chart first');
         return null;
       }
       const one = data.series.length === 1 && !/^(Column|Row) /.test(data.series[0].name);
-      const ch = { id: ++S.chartSeq, sid: S.sid, g, type, title: one ? data.series[0].name : `Chart ${S.charts.filter(x => x.sid === S.sid).length + 1}` };
+      const ch = { id: ++S.chartSeq, sid: S.sid, g, type, title: one ? data.series[0].name : `Chart ${S.charts.filter(x => x.sid === S.sid).length + 1}`, xLabel: data.xy ? '' : data.labelHead || '', yLabel: '', trend: true };
       S.charts.push(ch);
       S.showCharts = true;
       renderCharts();
@@ -1184,7 +1659,7 @@ defineApp({
       panel.append(h('div.ss-charts__head', h('b', { text: 'Charts' }), h('div.ss-grow'), tb('x', 'Hide charts', () => toggleCharts(false), null, '')));
       if (!list.length) {
         panel.append(h('div.empty', icon('bar-chart'), h('b', { text: 'No charts on this sheet' }),
-          h('small', { text: 'Select a range with numbers and pick Bar, Line or Pie in the toolbar.' })));
+          h('small', { text: 'Select a range with numbers and pick Bar, Line or Pie in the toolbar (More charts has stacked bar, stacked area and scatter).' })));
         return;
       }
       for (const ch of list) panel.append(chartCard(ch));
@@ -1198,12 +1673,25 @@ defineApp({
       title.addEventListener('input', () => { ch.title = title.value; drawOne(ch); markDirty(); });
       const type = h('select.select', { 'aria-label': 'Chart type' }, Chart.TYPES.map(t => h('option', { value: t, text: Chart.TYPE_NAMES[t] })));
       type.value = ch.type;
-      type.addEventListener('change', () => { ch.type = type.value; drawOne(ch); markDirty(); say(`${Chart.TYPE_NAMES[ch.type]} chart`); });
+      type.addEventListener('change', () => { ch.type = type.value; drawOne(ch); paintAxes(); markDirty(); say(`${Chart.TYPE_NAMES[ch.type]} chart`); });
       const more = h('button.ibtn', { type: 'button', 'aria-label': `Chart menu: ${ch.title || 'chart'}`, 'aria-haspopup': 'menu', onclick: e => chartMenu(ch, e.currentTarget) }, icon('more-horizontal'));
       const note = h('span.dim');
       const sh = S.book.sheet(ch.sid);
+      /* axis titles, and a scatter's trend line */
+      const axis = (k, label) => {
+        const inp = h('input.ss-chart__axis', { 'aria-label': label, placeholder: label, spellcheck: 'false', maxlength: '80' });
+        inp.value = ch[k] || '';
+        inp.addEventListener('input', () => { ch[k] = inp.value.slice(0, 80); drawOne(ch); markDirty(); });
+        return inp;
+      };
+      const trend = h('input', { type: 'checkbox', 'aria-label': 'Trend line', checked: ch.trend !== false ? true : null,
+        onchange: e => { ch.trend = e.target.checked; drawOne(ch); markDirty(); say(ch.trend ? 'Trend line on' : 'Trend line off'); } });
+      const trendRow = h('label.ss-chart__trend', trend, h('span', { text: 'Trend line (least squares)' }));
+      const axes = h('div.ss-chart__axes', axis('xLabel', 'X axis title'), axis('yLabel', 'Y axis title'));
+      function paintAxes() { axes.hidden = !Chart.hasAxes(ch.type); trendRow.hidden = ch.type !== 'scatter'; }
+      paintAxes();
       const el = h('div.ss-chart', { dataset: { chart: String(ch.id) } },
-        h('div.ss-chart__top', title, type, more), canvas,
+        h('div.ss-chart__top', title, type, more), canvas, axes, trendRow,
         h('div.ss-chart__foot', h('code', { text: `${E.quoteSheet(sh ? sh.name : '?')}!${E.rangeName(ch.g)}` }), h('div.ss-grow'), note), tip);
       cards.set(ch.id, { el, canvas, tip, note, layout: null });
       canvas.addEventListener('pointermove', e => hoverChart(ch, e));
@@ -1240,6 +1728,15 @@ defineApp({
           if (a < -Math.PI / 2) a += Math.PI * 2;
           const i = L.slices.findIndex(s => a >= s.a0 && a < s.a1);
           if (i >= 0) { const s = L.slices[i]; headText = s.label; rows = [{ color: theme.colors[i], text: `${E.general(s.v)} · ${Math.round(s.share * 1000) / 10}%` }]; }
+        }
+      } else if (L.kind === 'scatter' && L.pts) {
+        /* the nearest point, within 12px */
+        let best = null, bd = 144;
+        for (const p of L.pts) { const d = (p.x - x) ** 2 + (p.y - y) ** 2; if (d < bd) { bd = d; best = p; } }
+        if (best) {
+          const sp = chartSpec(ch).data.series[best.k];
+          headText = sp ? sp.name : 'Point';
+          rows = [{ color: theme.colors[best.k], text: `x ${E.general(best.vx)}, y ${E.general(best.vy)}` }];
         }
       } else if (L.plot && y >= L.plot.top - 8 && y <= L.plot.bottom + 18) {
         const cat = L.cats.find(k => x >= k.x0 && x < k.x1);
@@ -1309,7 +1806,10 @@ defineApp({
           continue;
         }
         const on = sh.id === S.sid;
-        const t = h('button.ss-tab', { type: 'button', role: 'tab', 'aria-selected': String(on), 'aria-controls': grid.id, tabindex: on ? '0' : '-1', dataset: { sid: String(sh.id) }, text: sh.name });
+        const tc = sh.meta && sh.meta.tab;
+        const t = h('button.ss-tab', { type: 'button', role: 'tab', 'aria-selected': String(on), 'aria-controls': grid.id, tabindex: on ? '0' : '-1', dataset: { sid: String(sh.id) }, text: sh.name,
+          class: tc ? 'has-color' : null, style: tc ? { '--tab': `var(--chart-${tc})` } : null,
+          'aria-description': tc ? `${TAB_COLORS.find(c => c[0] === tc)[1].toLowerCase()} tab` : null });
         t.addEventListener('click', () => switchSheet(sh.id));
         t.addEventListener('dblclick', () => { renaming = sh.id; renderTabs(); });
         t.addEventListener('contextmenu', e => { e.preventDefault(); tabMenu(sh, e.clientX, e.clientY); });
@@ -1328,13 +1828,20 @@ defineApp({
       }
     }
     function tabMenu(sh, x, y) {
+      const cur = (sh.meta && sh.meta.tab) || '';
       api.menu([
         { label: 'Rename…', icon: 'edit-3', hint: 'F2', onClick: () => { renaming = sh.id; renderTabs(); } },
+        { label: 'Duplicate', icon: 'copy', onClick: () => duplicateSheet(sh.id) },
+        { label: 'Tab colour', icon: 'palette', items: TAB_COLORS.map(([n, name]) => ({ label: name, checked: n === cur, onClick: () => setTabColor(sh.id, n) })) },
+        '-',
         { label: 'Delete sheet', icon: 'trash', danger: true, disabled: S.book.sheets.length < 2, onClick: () => deleteSheet(sh.id) },
       ], x, y, { label: `Sheet ${sh.name}` });
     }
     function resetRows() {
       for (const [r, el] of rowsOn) { rowsOn.delete(r); spare.push(el); el.remove(); }
+      for (const [r, el] of fzRows) { fzRows.delete(r); el.remove(); }
+      /* rows come back from the pool with the frozen columns' cells rebuilt */
+      for (const el of spare) { for (const x of el._fz) x.remove(); el._fz = []; }
       win0 = { r0: -1, r1: -1, c0: -1, c1: -1 };
       colsDirty = true;
     }
@@ -1348,6 +1855,8 @@ defineApp({
         const v = S.views.get(sid) || { cur: { r: 0, c: 0 }, anchor: { r: 0, c: 0 }, focus: { r: 0, c: 0 }, top: 0, left: 0 };
         S.cur = v.cur; S.anchor = v.anchor; S.focus = v.focus;
         resetRows();
+        FR = -1;                               /* metaChanged sets this sheet's frozen panes */
+        metaChanged();
         layout();
         grid.scrollTop = v.top; grid.scrollLeft = v.left;
         if (S.find.open) runFind();
@@ -1407,6 +1916,541 @@ defineApp({
       say(`${sh.name} deleted`);
     }
 
+    /* ================= borders, merge, freeze ================= */
+    function formatItems() {
+      const m = mergeAt(S.cur.r, S.cur.c), g = opRect();
+      const multi = g.r1 !== g.r2 || g.c1 !== g.c2;
+      return [
+        { label: 'All borders', icon: 'grid', onClick: () => borders('all') },
+        { label: 'Outside borders', icon: 'square', onClick: () => borders('outside') },
+        { label: 'Bottom border', icon: 'minus', onClick: () => borders('bottom') },
+        { label: 'No borders', icon: 'x', onClick: () => borders('none') },
+        '-',
+        m ? { label: `Unmerge ${E.rangeName(m)}`, icon: 'minimize-2', onClick: () => unmerge() }
+          : { label: 'Merge cells', icon: 'maximize-2', disabled: !multi, onClick: () => mergeCells() },
+        { label: 'Wrap text', icon: 'type', checked: !!activeStyle().wr, onClick: () => toggleStyle('wr') },
+        '-',
+        { label: 'Conditional formatting…', icon: 'droplet', onClick: () => cfDialog() },
+        { label: 'Dropdown or number check…', icon: 'check-circle', onClick: () => dvDialog() },
+        { label: 'Clear formatting', icon: 'type', onClick: clearFormatting },
+      ];
+    }
+    /* borders are part of each cell's style: t b l r */
+    function borders(kind) {
+      const g = opRect();
+      const sides = (r, c) => {
+        if (kind === 'none') return '';
+        if (kind === 'all') return 'tblr';
+        if (kind === 'bottom') return r === g.r2 ? 'b' : '';
+        return `${r === g.r1 ? 't' : ''}${r === g.r2 ? 'b' : ''}${c === g.c1 ? 'l' : ''}${c === g.c2 ? 'r' : ''}`;
+      };
+      const label = { all: 'All borders', outside: 'Outside borders', bottom: 'Bottom border', none: 'No borders' }[kind];
+      if (restyle(label, (s, r, c) => {
+        const keep = kind === 'none' || kind === 'all' ? '' : (s.bd || '');
+        const next = [...new Set((keep + sides(r, c)).split(''))].join('');
+        if (next) s.bd = next; else delete s.bd;
+      })) say(label);
+    }
+    function mergeCells() {
+      if (S.edit) commitEdit(0, 0, false);
+      const g = opRect();
+      if (g.r1 === g.r2 && g.c1 === g.c2) { say('Select two or more cells to merge'); return; }
+      if ((g.r2 - g.r1 + 1) * (g.c2 - g.c1 + 1) > MERGE_AREA) { api.notify({ app: 'Static Sheets', icon: 'alert', title: 'That’s too big to merge', message: `A merged area can hold up to ${MERGE_AREA.toLocaleString()} cells.` }); return; }
+      const f = ix().filter;
+      if (f && overlaps(g, { r1: f.r1, c1: f.c1, r2: fltEnd, c2: f.c2 })) { api.notify({ app: 'Static Sheets', icon: 'alert', title: 'Can’t merge inside a filter', message: 'Remove the filter first, then merge.' }); return; }
+      let hiddenOnes = 0;
+      eachExisting(g, x => { if (x.raw !== '' && !(x.r === g.r1 && x.c === g.c1)) hiddenOnes++; });
+      if (applyChanges([], 'Merge cells', { meta: m => { m.merges = [...(m.merges || []).filter(x => !overlaps(x, g)), g]; } })) {
+        select({ r: g.r1, c: g.c1 });
+        say(`Merged ${E.rangeName(g)}`);
+        if (hiddenOnes) api.notify({ app: 'Static Sheets', icon: 'info', title: `Merged ${E.rangeName(g)}`, message: `Only the top-left cell shows. The ${hiddenOnes === 1 ? 'other cell that had something in it is' : `${hiddenOnes} other cells that had something in them are`} kept under it, and come back if you unmerge.`, timeout: 8000 });
+      }
+    }
+    function unmerge() {
+      const m = mergeAt(S.cur.r, S.cur.c);
+      if (!m) return;
+      if (applyChanges([], 'Unmerge', { meta: mm => { mm.merges = (mm.merges || []).filter(x => !(x.r1 === m.r1 && x.c1 === m.c1)); } })) {
+        select({ r: m.r1, c: m.c1 }, { r: m.r1, c: m.c1 }, { r: m.r2, c: m.c2 });
+        say(`Unmerged ${E.rangeName(m)}`);
+      }
+    }
+    function freezeItems() {
+      const fz = sheet().meta.freeze || { r: 0, c: 0 };
+      const at = { r: S.cur.r, c: S.cur.c };
+      return [
+        { label: 'Freeze the top row', icon: 'snowflake', checked: fz.r === 1 && !fz.c, onClick: () => freeze(1, 0) },
+        { label: 'Freeze the first column', icon: 'snowflake', checked: fz.c === 1 && !fz.r, onClick: () => freeze(0, 1) },
+        { label: `Freeze rows above and columns left of ${E.cellName(at.r, at.c)}`, icon: 'snowflake', disabled: !at.r && !at.c, onClick: () => freeze(at.r, at.c) },
+        '-',
+        { label: 'Unfreeze', icon: 'x', disabled: !fz.r && !fz.c, onClick: () => freeze(0, 0) },
+      ];
+    }
+    function freeze(r, c) {
+      if (r > FREEZE_R || c > FREEZE_C) { api.notify({ app: 'Static Sheets', icon: 'alert', title: 'That’s a lot to freeze', message: `Up to ${FREEZE_R} rows and ${FREEZE_C} columns can be frozen.` }); return; }
+      /* what stays put has to leave room to scroll the rest */
+      if (r && rowTop(r) > grid.clientHeight - HEAD_H - ROW_H * 2) { api.notify({ app: 'Static Sheets', icon: 'alert', title: 'Those rows don’t fit', message: 'Frozen rows have to leave room in the window for the rest to scroll. Freeze fewer, or make the window taller.' }); return; }
+      if (c && colX[Math.min(c, nCols)] > grid.clientWidth - HEAD_W - 60) { api.notify({ app: 'Static Sheets', icon: 'alert', title: 'Those columns don’t fit', message: 'Frozen columns have to leave room in the window for the rest to scroll.' }); return; }
+      const label = !r && !c ? 'Unfreeze' : 'Freeze';
+      if (applyChanges([], label, { meta: m => { if (r || c) m.freeze = { r, c }; else delete m.freeze; } })) {
+        say(!r && !c ? 'Nothing frozen' : `Frozen: ${r ? `${r} row${r === 1 ? '' : 's'}` : ''}${r && c ? ' and ' : ''}${c ? `${c} column${c === 1 ? '' : 's'}` : ''}`);
+      }
+    }
+
+    /* ================= sort and filter ================= */
+    function dataItems() {
+      const f = ix().filter, c = S.cur.c;
+      const inFlt = f && c >= f.c1 && c <= f.c2;
+      return [
+        { label: `Sort A → Z by column ${E.colName(c)}`, icon: 'arrow-down', onClick: () => sortCmd(false) },
+        { label: `Sort Z → A by column ${E.colName(c)}`, icon: 'arrow-up', onClick: () => sortCmd(true) },
+        '-',
+        f ? { label: 'Remove the filter', icon: 'x', onClick: () => removeFilter() } : { label: 'Filter', icon: 'filter', onClick: () => addFilter() },
+        f && inFlt ? { label: `Filter column ${E.colName(c)}…`, icon: 'filter', onClick: () => filterPanel(c) } : null,
+        f ? { label: 'Reapply the filter', icon: 'refresh', disabled: !Object.keys(f.by).length, onClick: () => { applyFilter(); rebuildRows(); paint(true); syncBars(); say(`Showing ${visibleCount()} rows`); } } : null,
+        '-',
+        { label: 'Dropdown or number check…', icon: 'check-circle', onClick: () => dvDialog() },
+        { label: 'Send to Statistics', icon: 'bar-chart', onClick: () => sendToStats() },
+      ].filter(Boolean);
+    }
+    /** the area to sort or filter: the selection, or the block of data around one cell */
+    const dataArea = () => { const g = opRect(); return g.r1 === g.r2 && g.c1 === g.c2 ? regionAround(g.r1, g.c1) : g; };
+    /* a top row of text over a column with numbers in it, or the filter's own header, is a header */
+    function hasHeader(g) {
+      const f = ix().filter;
+      if (f && f.r1 === g.r1 && f.c1 <= g.c1 && f.c2 >= g.c2) return true;
+      if (g.r2 <= g.r1) return false;
+      let text = 0, cells = 0, numsBelow = false;
+      for (let c = g.c1; c <= g.c2; c++) {
+        const x = S.book.cell(S.sid, g.r1, c);
+        if (x && x.raw !== '') { cells++; if (typeof x.v === 'string') text++; }
+        for (let r = g.r1 + 1; r <= Math.min(g.r2, g.r1 + 20) && !numsBelow; r++) { const y = S.book.cell(S.sid, r, c); if (y && typeof y.v === 'number') numsBelow = true; }
+      }
+      return cells > 0 && text === cells && numsBelow;
+    }
+    function sortCmd(desc, col = S.cur.c, area = null) {
+      if (S.edit) commitEdit(0, 0, false);
+      const f = ix().filter;
+      let g = area || (f && col >= f.c1 && col <= f.c2 ? { r1: f.r1, c1: f.c1, r2: fltEnd, c2: f.c2 } : dataArea());
+      if (col < g.c1 || col > g.c2) g = { ...g, c1: Math.min(g.c1, col), c2: Math.max(g.c2, col) };
+      if (ix().merges.some(m => overlaps(m, g))) { api.notify({ app: 'Static Sheets', icon: 'alert', title: 'Merged cells can’t be sorted', message: 'Unmerge the cells in that range first, then sort.' }); return false; }
+      const head = hasHeader(g), top = head ? g.r1 + 1 : g.r1;
+      if (top >= g.r2) { say('There’s nothing to sort there'); return false; }
+      const rows = [];
+      for (let r = top; r <= g.r2; r++) {
+        const key = S.book.cell(S.sid, r, col);
+        const cells = [];
+        for (let c = g.c1; c <= g.c2; c++) { const x = S.book.cell(S.sid, r, c); cells.push(x ? { raw: x.raw, s: x.s ? { ...x.s } : null } : null); }
+        rows.push({ r, v: key && key.raw !== '' ? key.v : null, cells });
+      }
+      rows.sort((a, b) => sortKey(a.v, b.v, desc) || a.r - b.r);          /* stable: ties keep their order */
+      const list = [];
+      rows.forEach((row, i) => {
+        const nr = top + i;
+        row.cells.forEach((x, j) => list.push({ r: nr, c: g.c1 + j, raw: x ? E.shiftFormula(x.raw, nr - row.r, 0) : '', s: x ? x.s : null }));
+      });
+      const label = `Sort ${desc ? 'Z → A' : 'A → Z'}`;
+      const did = applyChanges(list, label, { refilter: !!f });
+      const where = `${E.rangeName({ r1: top, c1: g.c1, r2: g.r2, c2: g.c2 })} by column ${E.colName(col)}, ${desc ? 'Z → A' : 'A → Z'}${head ? ` (row ${g.r1 + 1} stays on top as the header)` : ''}`;
+      say(did ? `Sorted ${where}` : `Already in that order: ${where}`);
+      if (did) select({ r: top, c: col }, { r: top, c: g.c1 }, { r: g.r2, c: g.c2 }, { show: false });
+      return did;
+    }
+    function visibleCount() { const f = filterSpan(); if (!f) return 0; let n = 0; for (let r = f.r1 + 1; r <= f.r2; r++) if (!hidden.has(r)) n++; return n; }
+    function addFilter() {
+      if (S.edit) commitEdit(0, 0, false);
+      const g = dataArea();
+      if (g.r2 <= g.r1 && !filled(g.r1, g.c1)) { api.notify({ app: 'Static Sheets', icon: 'filter', title: 'Nothing to filter yet', message: 'Click in a table with a header row (names on top, data under them), then choose Filter.' }); return; }
+      if (ix().merges.some(m => overlaps(m, g))) { api.notify({ app: 'Static Sheets', icon: 'alert', title: 'Can’t filter merged cells', message: 'Unmerge the cells in that table first.' }); return; }
+      if (applyChanges([], 'Filter', { meta: m => { m.filter = { ...g, by: {} }; } })) {
+        say(`Filter on ${E.rangeName(g)}: row ${g.r1 + 1} is the header. Press Alt+Down on a header cell to filter that column.`);
+      }
+    }
+    function removeFilter() {
+      if (applyChanges([], 'Remove filter', { meta: m => { delete m.filter; } })) say('Filter removed: every row shows');
+    }
+    /* the ▾ on a cell: a filter header first, then a dropdown */
+    function popupKind(r, c) {
+      const f = ix().filter;
+      if (f && r === f.r1 && c >= f.c1 && c <= f.c2) return 'filter';
+      const d = IX.dv.length ? ruleAt(IX.dv, r, c) : null;
+      return d && d.kind === 'list' ? 'list' : null;
+    }
+    function cellPopup(r, c) {
+      const k = popupKind(r, c);
+      if (k === 'filter') { filterPanel(c); return true; }
+      if (k === 'list') { listMenu(r, c); return true; }
+      return false;
+    }
+    function listMenu(r, c) {
+      const d = ruleAt(ix().dv, r, c);
+      const x = S.book.cell(S.sid, r, c), cur = shownOf(x).toLowerCase();
+      const cel = activeCel && activeCel.isConnected ? activeCel.getBoundingClientRect() : grid.getBoundingClientRect();
+      /* an option that would read as something else (007, 1/2) goes in as text */
+      const rawFor = o => (E.formatValue(E.parseLiteral(o).v, E.parseLiteral(o).fmt) === o && !E.isFormula(o) ? o : `'${o}`);
+      api.menu([
+        ...d.opts.map(o => ({ label: o, checked: o.toLowerCase() === cur, onClick: () => { applyChanges([{ r, c, raw: rawFor(o) }], 'Choose'); grid.focus({ preventScroll: true }); say(`${E.cellName(r, c)}: ${o}`); } })),
+        '-',
+        { label: 'Clear', icon: 'x', disabled: !x || x.raw === '', onClick: () => { applyChanges([{ r, c, raw: '' }], 'Clear'); grid.focus({ preventScroll: true }); } },
+      ], cel.left, cel.bottom + 2, { label: `Choose for ${E.cellName(r, c)}` });
+    }
+
+    /* a small sheet over the window, like Save as: focus stays inside, Esc closes */
+    function dialog(title, build, { wide = false } = {}) {
+      if (S.edit) commitEdit(0, 0, false);
+      if (app.querySelector('.ss-dlg')) return null;
+      const close = () => { dlg.remove(); grid.focus({ preventScroll: true }); };
+      const card = h(`form.ss-dlg__card${wide ? '.is-wide' : ''}`, { role: 'dialog', 'aria-modal': 'true', 'aria-label': title }, h('h2', { text: title }));
+      const dlg = h('div.ss-dlg', { onpointerdown: e => { if (e.target === dlg) close(); } }, card);
+      card.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+        if (e.key === 'Tab') {
+          const f = [...card.querySelectorAll('input:not([disabled]), select, button:not([disabled]), textarea')].filter(n => n.offsetParent !== null);
+          const i = f.indexOf(document.activeElement);
+          if (e.shiftKey && i === 0) { e.preventDefault(); f[f.length - 1].focus(); }
+          else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); }
+        }
+      });
+      build(card, close);
+      app.appendChild(dlg);
+      const first = card.querySelector('input, select, textarea, button');
+      if (first) first.focus();
+      return { card, close };
+    }
+    function filterPanel(c) {
+      const f0 = filterSpan();
+      if (!f0) return;
+      const head = shownOf(S.book.cell(S.sid, f0.r1, c)) || `Column ${E.colName(c)}`;
+      const vals = new Map();
+      for (let r = f0.r1 + 1; r <= f0.r2 && vals.size < 5000; r++) { const t = shownOf(S.book.cell(S.sid, r, c)); vals.set(t, (vals.get(t) || 0) + 1); }
+      const all = [...vals.keys()].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+      const rule = f0.by[c] || {};
+      const on = new Set(rule.vals || all);
+      const SHOWN = 300;
+      dialog(`Filter “${head.slice(0, 40)}”`, (card, close) => {
+        const search = h('input', { type: 'search', placeholder: 'Search the values', 'aria-label': 'Search the values', spellcheck: 'false' });
+        const list = h('div.ss-flt__list', { role: 'group', 'aria-label': 'Values to show' });
+        const note = h('p.ss-flt__note');
+        const paintList = () => {
+          api.clear(list);
+          const q = search.value.trim().toLowerCase();
+          const hits = all.filter(v => !q || v.toLowerCase().includes(q));
+          for (const v of hits.slice(0, SHOWN)) {
+            list.append(h('label.ss-flt__item', h('input', { type: 'checkbox', checked: on.has(v) ? true : null, onchange: e => { if (e.target.checked) on.add(v); else on.delete(v); } }),
+              h('span', { text: v === '' ? '(Blanks)' : v }), h('small', { text: String(vals.get(v)) })));
+          }
+          note.textContent = hits.length > SHOWN ? `Showing the first ${SHOWN} of ${hits.length} values — search, or use a condition below.` : '';
+        };
+        search.addEventListener('input', paintList);
+        const op = h('select', { 'aria-label': 'Condition' }, FILTER_OPS.map(([v, t]) => h('option', { value: v, text: t })));
+        op.value = rule.op || '';
+        const a = h('input', { 'aria-label': 'Condition value', spellcheck: 'false', placeholder: 'Value' });
+        a.value = rule.a || '';
+        const paintOp = () => { a.hidden = !op.value || op.value === 'empty' || op.value === 'filled'; };
+        op.addEventListener('change', paintOp);
+        paintOp();
+        const btn = (text, fn, cls = '') => h(`button.btn.btn--sm${cls}`, { type: 'button', text, onclick: fn });
+        card.append(
+          h('div.ss-dlg__row', btn('Sort A → Z', () => { close(); sortCmd(false, c); }), btn('Sort Z → A', () => { close(); sortCmd(true, c); })),
+          h('label', 'Show rows with these values', search),
+          h('div.ss-dlg__row', btn('Select all', () => { for (const v of all) on.add(v); paintList(); }, '.btn--ghost'), btn('Clear all', () => { on.clear(); paintList(); }, '.btn--ghost')),
+          list, note,
+          h('label', 'And where the value is', op, a),
+          h('div.ss-dlg__btns',
+            h('button.btn.btn--ghost', { type: 'button', text: 'Cancel', onclick: close }),
+            h('button.btn.btn--ghost', { type: 'button', text: 'Clear this filter', disabled: !f0.by[c] ? true : null, onclick: () => { close(); setColumnFilter(c, null); } }),
+            h('button.btn.btn--primary', { type: 'submit', text: 'Show' })));
+        card.addEventListener('submit', e => {
+          e.preventDefault();
+          const next = {};
+          if (on.size < all.length) next.vals = all.filter(v => on.has(v));
+          if (op.value) { next.op = op.value; next.a = a.value.trim(); }
+          close();
+          setColumnFilter(c, Object.keys(next).length ? next : null);
+        });
+        paintList();
+      }, { wide: true });
+    }
+    function setColumnFilter(c, rule) {
+      const end = fltEnd;
+      const did = applyChanges([], rule ? `Filter column ${E.colName(c)}` : `Clear the filter on ${E.colName(c)}`, { meta: m => {
+        if (!m.filter) return;
+        m.filter.r2 = Math.max(m.filter.r2, end);
+        if (rule) m.filter.by[c] = rule; else delete m.filter.by[c];
+      } });
+      if (!did) { applyFilter(); rebuildRows(); paint(true); }
+      const f = filterSpan();
+      say(f ? `Showing ${visibleCount()} of ${f.r2 - f.r1} rows` : 'Filter changed');
+    }
+
+    /* ================= conditional formatting ================= */
+    function cfDialog() {
+      const g = opRect();
+      dialog('Conditional formatting', (card, close) => {
+        const listEl = h('div.ss-cf__list', { role: 'list', 'aria-label': 'Rules on this sheet' });
+        const paintRules = () => {
+          api.clear(listEl);
+          const rules = ix().cf;
+          if (!rules.length) { listEl.append(h('p.ss-flt__note', { text: 'No rules on this sheet yet.' })); return; }
+          rules.forEach((x, i) => {
+            const opName = CF_OPS.find(o => o[0] === x.op)[1];
+            const what = x.op === 'empty' || x.op === 'filled' ? opName.toLowerCase() : x.op === 'between' ? `between ${x.a} and ${x.b}` : `${opName.toLowerCase()} ${x.a}`;
+            listEl.append(h('div.ss-cf__rule', { role: 'listitem' },
+              h('span.ss-cf__sw', { class: `cf-${x.fill}`, 'aria-hidden': 'true' }),
+              h('span.grow', { text: `${E.rangeName(x)}: ${what}${x.bold ? ', bold' : ''}` }),
+              h('button.ibtn', { type: 'button', 'aria-label': `Delete the rule for ${E.rangeName(x)}`, onclick: () => { applyChanges([], 'Delete rule', { meta: m => { m.cf = (m.cf || []).filter((_, j) => j !== i); } }); paintRules(); } }, icon('trash'))));
+          });
+        };
+        const op = h('select', { 'aria-label': 'Condition' }, CF_OPS.map(([v, t]) => h('option', { value: v, text: t })));
+        const a = h('input', { 'aria-label': 'Value', spellcheck: 'false', placeholder: 'Value' });
+        const b = h('input', { 'aria-label': 'And', spellcheck: 'false', placeholder: 'and' });
+        const paintOp = () => { a.hidden = op.value === 'empty' || op.value === 'filled'; b.hidden = op.value !== 'between'; };
+        op.addEventListener('change', paintOp);
+        paintOp();
+        const fill = h('div.ss-cf__fills', { role: 'radiogroup', 'aria-label': 'Colour' },
+          FILLS.map(([id, name], i) => h('label.ss-cf__fill', { title: name },
+            h('input.sr', { type: 'radio', name: `${uid}-cf`, value: id, checked: i === 0 ? true : null, 'aria-label': name }),
+            h('span.ss-cf__sw', { class: `cf-${id}` }))));
+        const bold = h('input', { type: 'checkbox' });
+        const why = h('div.ss-dlg__why', { role: 'alert' });
+        card.append(listEl,
+          h('div.side__label', { text: `New rule for ${E.rangeName(g)}` }),
+          h('label', 'Colour the cell when it is', op, a, b),
+          h('div.ss-dlg__row', fill, h('label.ss-dlg__check', bold, h('span', { text: 'Bold' }))),
+          why,
+          h('div.ss-dlg__btns', h('button.btn.btn--ghost', { type: 'button', text: 'Done', onclick: close }), h('button.btn.btn--primary', { type: 'submit', text: 'Add rule' })));
+        card.addEventListener('submit', e => {
+          e.preventDefault();
+          const needA = op.value !== 'empty' && op.value !== 'filled';
+          if (needA && !a.value.trim()) { why.textContent = 'Give it a value to compare with.'; a.focus(); return; }
+          if (op.value === 'between' && (typeof E.parseLiteral(a.value.trim()).v !== 'number' || typeof E.parseLiteral(b.value.trim()).v !== 'number')) { why.textContent = 'Between needs two numbers.'; return; }
+          if (ix().cf.length >= CF_MAX) { why.textContent = `A sheet holds up to ${CF_MAX} rules.`; return; }
+          const fillId = card.querySelector(`input[name="${uid}-cf"]:checked`)?.value || 'red';
+          applyChanges([], 'Conditional formatting', { meta: m => { m.cf = [...(m.cf || []), { ...g, op: op.value, a: needA ? a.value.trim() : '', b: op.value === 'between' ? b.value.trim() : '', fill: fillId, bold: bold.checked }]; } });
+          why.textContent = '';
+          a.value = ''; b.value = '';
+          paintRules();
+          say(`Rule added for ${E.rangeName(g)}`);
+        });
+        paintRules();
+      }, { wide: true });
+    }
+
+    /* ================= dropdowns and number checks ================= */
+    function dvDialog() {
+      const g = opRect();
+      const had = ix().dv.find(d => overlaps(d, g)) || null;
+      dialog(`Check what goes in ${E.rangeName(g)}`, (card, close) => {
+        const kind = h('select', { 'aria-label': 'Allow' },
+          h('option', { value: 'list', text: 'A choice from a list (dropdown)' }), h('option', { value: 'int', text: 'A whole number' }), h('option', { value: 'num', text: 'A number' }));
+        kind.value = had ? had.kind : 'list';
+        const opts = h('textarea.ss-dlg__ta', { 'aria-label': 'Choices, one per line or separated by commas', rows: '4', spellcheck: 'false' });
+        opts.value = had && had.kind === 'list' ? had.opts.join('\n') : '';
+        const min = h('input', { 'aria-label': 'Smallest', inputmode: 'decimal', placeholder: 'No smallest' });
+        const max = h('input', { 'aria-label': 'Largest', inputmode: 'decimal', placeholder: 'No largest' });
+        if (had && had.kind !== 'list') { min.value = had.min == null ? '' : String(had.min); max.value = had.max == null ? '' : String(had.max); }
+        const strict = h('select', { 'aria-label': 'When something else is typed' },
+          h('option', { value: 'yes', text: 'Refuse it' }), h('option', { value: 'no', text: 'Allow it, but mark the cell' }));
+        strict.value = had && had.strict === false ? 'no' : 'yes';
+        const optsBox = h('label', 'Choices (one per line, or separated by commas)', opts);
+        const range = h('div.ss-dlg__row', h('label', 'From', min), h('label', 'To', max));
+        const paintKind = () => { optsBox.hidden = kind.value !== 'list'; range.hidden = kind.value === 'list'; };
+        kind.addEventListener('change', paintKind);
+        paintKind();
+        const why = h('div.ss-dlg__why', { role: 'alert' });
+        card.append(h('label', 'Allow', kind), optsBox, range, h('label', 'When something else is typed', strict), why,
+          h('div.ss-dlg__btns',
+            h('button.btn.btn--ghost', { type: 'button', text: 'Cancel', onclick: close }),
+            h('button.btn.btn--ghost', { type: 'button', text: 'Remove check', disabled: had ? null : true, onclick: () => {
+              applyChanges([], 'Remove check', { meta: m => { m.dv = (m.dv || []).filter(d => !overlaps(d, g)); } });
+              close(); say(`No check on ${E.rangeName(g)}`);
+            } }),
+            h('button.btn.btn--primary', { type: 'submit', text: 'Save' })));
+        card.addEventListener('submit', e => {
+          e.preventDefault();
+          const rule = { ...g, kind: kind.value, strict: strict.value === 'yes', opts: [], min: null, max: null };
+          if (rule.kind === 'list') {
+            rule.opts = [...new Set(opts.value.split(/[\n,]/).map(s => s.trim()).filter(Boolean))];
+            if (!rule.opts.length) { why.textContent = 'Type at least one choice.'; opts.focus(); return; }
+          } else {
+            for (const [k, inp] of [['min', min], ['max', max]]) {
+              const t = inp.value.trim();
+              if (!t) continue;
+              const v = E.parseLiteral(t).v;
+              if (typeof v !== 'number') { why.textContent = `“${t}” isn’t a number.`; inp.focus(); return; }
+              rule[k] = v;
+            }
+            if (rule.min != null && rule.max != null && rule.min > rule.max) { why.textContent = 'From has to be smaller than To.'; return; }
+          }
+          applyChanges([], rule.kind === 'list' ? 'Dropdown' : 'Number check', { meta: m => { m.dv = [...(m.dv || []).filter(d => !overlaps(d, g)), rule]; } });
+          close();
+          const bad = [];
+          eachExisting(g, x => { if (x.raw !== '' && !dvPass(rule, x.v, shownOf(x))) bad.push(E.cellName(x.r, x.c)); });
+          say(`${E.rangeName(g)} takes ${dvSays(rule)}${bad.length ? `. ${bad.length} cell${bad.length === 1 ? '' : 's'} already in it don’t, and are marked: ${bad.slice(0, 4).join(', ')}` : ''}`);
+        });
+      });
+    }
+
+    /* ================= describe my data (AI, only when asked) ================= */
+    const AI_CELLS = 2000, AI_CHARS = 12000;
+    const aiOut = h('div.ss-ai__out', { 'aria-live': 'polite' });
+    const aiState = h('p.ss-ai__state');
+    const aiFine = h('p.ss-ai__fine');
+    const aiCopy = h('button.btn.btn--sm', { type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(aiOut.textContent); aiState.textContent = 'Copied.'; } catch (e) { aiState.textContent = 'Copying was blocked here — select the text instead.'; } } }, icon('copy'), h('span', { text: 'Copy' }));
+    const aiAgain = h('button.btn.btn--sm', { type: 'button', onclick: () => describeData(AI.g) }, icon('refresh'), h('span', { text: 'Ask again' }));
+    const aiPanel = h('aside.ss-ai', { hidden: true, 'aria-label': 'Describe my data' },
+      h('div.ss-ai__head', icon('sparkles'), h('b', { text: 'About this data' }), h('button.ibtn', { type: 'button', 'aria-label': 'Close', onclick: () => closeAI() }, icon('x'))),
+      aiState, aiOut, h('div.ss-ai__acts', aiCopy, aiAgain), aiFine);
+    aiPanel.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeAI(); } });
+    app.appendChild(aiPanel);
+    const AI = { ctl: null, g: null };
+    function closeAI() { AI.ctl?.abort(); AI.ctl = null; aiPanel.hidden = true; grid.focus({ preventScroll: true }); }
+    async function describeData(area) {
+      if (S.edit) commitEdit(0, 0, false);
+      let g = area || opRect();
+      if (!area && g.r1 === g.r2 && g.c1 === g.c2) g = regionAround(g.r1, g.c1);
+      const ext = S.book.recount(S.sid);
+      g = { r1: g.r1, c1: g.c1, r2: Math.min(g.r2, ext.r), c2: Math.min(g.c2, ext.c) };
+      if (g.r2 < g.r1 || g.c2 < g.c1) { api.notify({ app: 'Static Sheets', icon: 'sparkles', title: 'Nothing to describe yet', message: 'Select some cells with data in them first.' }); return; }
+      /* what is sent: the cells' shown values as tab-separated rows, and nothing else */
+      const rows = [];
+      let n = 0, cut = false;
+      for (let r = g.r1; r <= g.r2 && !cut; r++) {
+        if (hidden.has(r)) continue;
+        const row = [];
+        for (let c = g.c1; c <= g.c2; c++) { row.push(shownOf(S.book.cell(S.sid, r, c)).replace(/[\t\n]+/g, ' ')); n++; }
+        rows.push(row);
+        if (n >= AI_CELLS) cut = r < g.r2;
+      }
+      let tsv = rows.map(r => r.join('\t')).join('\n');
+      if (tsv.length > AI_CHARS) { tsv = tsv.slice(0, AI_CHARS); cut = true; }
+      if (!tsv.replace(/\s/g, '')) { api.notify({ app: 'Static Sheets', icon: 'sparkles', title: 'Those cells are empty', message: 'Select some cells with data in them first.' }); return; }
+      AI.ctl?.abort();
+      const ctl = new AbortController();
+      AI.ctl = ctl; AI.g = g;
+      const range = `${E.quoteSheet(sheet().name)}!${E.rangeName(g)}`;
+      const LLM = await import('../portal/llm.js');
+      const { describe } = await import('../portal/aimodel.js');
+      if (S.dead || AI.ctl !== ctl) return;
+      const who = describe();
+      aiOut.textContent = '';
+      aiState.textContent = `Asking ${who.name || 'the model'}…`;
+      aiFine.textContent = `Only the shown values of ${range}${cut ? ' (the first part of it)' : ''}${hidden.size ? ', without the rows a filter hides,' : ''} were sent, to ${who.host}, because you pressed the button. A model can get things wrong: check what it says against your data. Nothing in the sheet is changed.`;
+      aiCopy.disabled = true;
+      aiPanel.hidden = false;
+      try {
+        const text = await LLM.stream([
+          { role: 'system', content: 'You describe a small table from a student’s spreadsheet. Use only the data given; say plainly when it is too little to tell. Reply in plain text, no tables: one sentence on what the data seems to be, then 3 to 6 short points on totals, ranges, trends or anything that stands out, each on its own line starting with "- ". Do not invent numbers: any number you give must come from the data or be a simple sum or average of it.' },
+          { role: 'user', content: `Cells ${range}, tab-separated, one row per line:\n\n${tsv}` },
+        ], {
+          signal: ctl.signal,
+          onText: t => { if (AI.ctl === ctl) aiOut.textContent = t; },
+          onWait: w => { if (AI.ctl === ctl) aiState.textContent = w.reason === 'busy' ? 'The model is busy — trying again in a moment…' : 'Waiting for another request to finish…'; },
+        });
+        if (AI.ctl !== ctl) return;
+        aiOut.textContent = text;
+        aiState.textContent = `From ${who.name || 'the model'}, about ${range}.`;
+      } catch (err) {
+        if (AI.ctl !== ctl || err.name === 'AbortError') return;
+        aiState.textContent = String(err && err.message || err);
+      }
+      aiCopy.disabled = !aiOut.textContent;
+    }
+
+    /* ================= send to Static Study › Statistics ================= */
+    function sendToStats() {
+      if (S.edit) commitEdit(0, 0, false);
+      let g = opRect();
+      if (g.r1 === g.r2 && g.c1 === g.c2) { const a = regionAround(g.r1, g.c1); g = { r1: a.r1, r2: a.r2, c1: g.c1, c2: g.c1 }; }
+      const ext = S.book.recount(S.sid);
+      g = { ...g, r2: Math.min(g.r2, ext.r) };
+      const num = (r, c) => { const x = S.book.cell(S.sid, r, c); return x && typeof x.v === 'number' && Number.isFinite(x.v) ? x.v : null; };
+      const visible = r => !hidden.has(r);
+      let stats = null, what = '';
+      if (g.c2 > g.c1) {
+        const pts = [];
+        for (let r = g.r1; r <= g.r2; r++) { const x = num(r, g.c1), y = num(r, g.c1 + 1); if (visible(r) && x != null && y != null) pts.push(`${E.general(x)}, ${E.general(y)}`); }
+        if (pts.length) { stats = { mode: 'pairs', text: pts.join('\n') }; what = `${pts.length} x, y pairs from columns ${E.colName(g.c1)} and ${E.colName(g.c1 + 1)}`; }
+      } else {
+        const vals = [];
+        for (let r = g.r1; r <= g.r2; r++) { const v = num(r, g.c1); if (visible(r) && v != null) vals.push(E.general(v)); }
+        if (vals.length) { stats = { mode: 'list', text: vals.join('\n') }; what = `${vals.length} number${vals.length === 1 ? '' : 's'} from ${E.rangeName(g)}`; }
+      }
+      if (!stats) { api.notify({ app: 'Static Sheets', icon: 'bar-chart', title: 'No numbers to send', message: 'Select a column of numbers (or two side by side for x and y), then Send to Statistics.' }); return; }
+      if (!api.getApp('study')) { api.notify({ app: 'Static Sheets', icon: 'alert', title: 'Static Study isn’t installed', message: 'Statistics lives in Static Study.' }); return; }
+      api.openApp('study', { tab: 'stats', stats: { ...stats, from: `${sheet().name}!${E.rangeName(g)}` } });
+      say(`Sent ${what} to Statistics`);
+    }
+
+    /* ================= print ================= */
+    let printEl = null;
+    function printSheet() {
+      if (S.edit) commitEdit(0, 0, false);
+      const sh = sheet(), ext = S.book.recount(S.sid);
+      printEl?.remove();
+      const covered = new Set();
+      const table = h('table');
+      for (let r = 0; r <= ext.r && r < 5000; r++) {
+        if (hidden.has(r)) continue;
+        const tr = h('tr');
+        for (let c = 0; c <= ext.c && c < 200; c++) {
+          if (covered.has(LK(r, c))) continue;
+          const m = mergeAt(r, c);
+          const look = cellLook(r, c);
+          const td = h('td', { class: look.cls.replace(/\b(ss-c|is-hit|is-now|has-dd|has-flt|is-flt)\b/g, '').trim() || null, text: look.text });
+          if (m && m.r1 === r && m.c1 === c) {
+            for (let i = m.r1; i <= m.r2; i++) for (let j = m.c1; j <= m.c2; j++) covered.add(LK(i, j));
+            const rs = [...Array(m.r2 - m.r1 + 1).keys()].filter(i => !hidden.has(m.r1 + i)).length;
+            if (rs > 1) td.rowSpan = rs;
+            if (m.c2 > m.c1) td.colSpan = m.c2 - m.c1 + 1;
+          }
+          tr.append(td);
+        }
+        table.append(tr);
+      }
+      const name = S.doc.path ? vfs.baseName(S.doc.path) : 'Untitled sheet';
+      printEl = h('div.ss-print', { 'aria-hidden': 'true' },
+        h('h1', { text: S.book.sheets.length > 1 ? `${name} — ${sh.name}` : name }),
+        h('p', { text: `Printed ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}${hidden.size ? ` · ${hidden.size} row${hidden.size === 1 ? '' : 's'} hidden by a filter left out` : ''}` }),
+        ext.r < 0 ? h('p', { text: 'This sheet is empty.' }) : table);
+      document.body.appendChild(printEl);
+      document.documentElement.classList.add('ss-printing');
+      const done = () => { document.documentElement.classList.remove('ss-printing'); printEl?.remove(); printEl = null; window.removeEventListener('afterprint', done); };
+      window.addEventListener('afterprint', done);
+      setTimeout(done, 120000);
+      try { window.print(); } catch (e) { done(); }
+    }
+
+    /* ================= tab colours, duplicate a sheet ================= */
+    function setTabColor(sid, n) {
+      if (applyChanges([], 'Tab colour', { sid, meta: m => { if (n) m.tab = n; else delete m.tab; } })) {
+        if (sid !== S.sid) renderTabs();
+        say(n ? `${S.book.sheet(sid).name}: ${TAB_COLORS.find(t => t[0] === n)[1].toLowerCase()} tab` : 'Tab colour removed');
+      }
+    }
+    function duplicateSheet(sid) {
+      if (S.edit) commitEdit(0, 0, false);
+      const src = S.book.sheet(sid);
+      if (!src) return;
+      let name;
+      for (let i = 2; ; i++) { name = `${src.name.slice(0, 54)} (${i})`; if (!S.book.sheetNamed(name)) break; }
+      const sh = S.book.addSheet(name);
+      /* right after the one it copies */
+      S.book.sheets.splice(S.book.sheets.indexOf(sh), 1);
+      S.book.sheets.splice(S.book.sheets.indexOf(src) + 1, 0, sh);
+      for (const x of src.cells.values()) {
+        if (x.s) S.book.setStyle(sh.id, x.r, x.c, { ...x.s });
+        if (x.raw !== '') S.book.set(sh.id, x.r, x.c, x.raw);
+      }
+      for (const [c, w] of src.colW) sh.colW.set(c, w);
+      sh.meta = cleanMeta(JSON.parse(JSON.stringify(src.meta || {})));
+      for (const ch of S.charts.filter(c => c.sid === sid)) S.charts.push({ ...ch, id: ++S.chartSeq, sid: sh.id, g: { ...ch.g } });
+      S.book.relinkAll();
+      switchSheet(sh.id);
+      markDirty();
+      say(`Made ${name}, a copy of ${src.name}`);
+      grid.focus({ preventScroll: true });
+    }
+
     /* ================= menus ================= */
     function cellMenu(x, y) {
       api.menu([
@@ -1422,7 +2466,11 @@ defineApp({
         { label: 'Select row', icon: 'arrow-right', hint: `${SHIFT}Space`, onClick: () => selectRows(S.cur.r, S.cur.r) },
         { label: 'Select column', icon: 'arrow-down', onClick: () => selectCols(S.cur.c, S.cur.c) },
         '-',
-        { label: 'Chart from selection', icon: 'bar-chart', items: Chart.TYPES.map(t => ({ label: `${Chart.TYPE_NAMES[t]} chart`, icon: t === 'line' ? 'line-chart' : `${t}-chart`, onClick: () => addChart(t) })) },
+        { label: 'Sort and filter', icon: 'filter', items: dataItems() },
+        { label: 'Borders and merging', icon: 'grid', items: formatItems() },
+        { label: 'Describe my data (AI)', icon: 'sparkles', onClick: () => describeData() },
+        '-',
+        { label: 'Chart from selection', icon: 'bar-chart', items: Chart.TYPES.map(t => ({ label: `${Chart.TYPE_NAMES[t]} chart`, icon: Chart.TYPE_ICONS[t], onClick: () => addChart(t) })) },
         { label: 'Column width', icon: 'sliders', items: [
           { label: 'Wider', onClick: () => colWidths(w => w + 24) },
           { label: 'Narrower', onClick: () => colWidths(w => w - 24) },
@@ -1452,6 +2500,7 @@ defineApp({
         '-',
         { label: 'Export CSV to Documents', icon: 'file-text', onClick: () => exportCsv() },
         { label: 'Download CSV', icon: 'download', onClick: () => downloadCsv() },
+        { label: 'Print or save as PDF…', icon: 'printer', onClick: () => printSheet() },
         S.doc.path && '-',
         S.doc.path && { label: 'Show in Files', icon: 'folder', onClick: () => api.openApp('files', { path: vfs.parentPath(S.doc.path) }) },
       ].filter(Boolean), r.left, r.bottom + 4, { label: 'File' });
@@ -1471,7 +2520,8 @@ defineApp({
       return (Array.isArray(data.charts) ? data.charts : []).map(c => {
         const sh = c && book.sheetNamed(String(c.sheet || ''));
         const g = c && E.parseRangeName(c.range);
-        return sh && g && Chart.TYPES.includes(c.type) ? { id: ++S.chartSeq, sid: sh.id, g, type: c.type, title: String(c.title || '') } : null;
+        const txt = v => (typeof v === 'string' ? v.slice(0, 80) : '');
+        return sh && g && Chart.TYPES.includes(c.type) ? { id: ++S.chartSeq, sid: sh.id, g, type: c.type, title: String(c.title || ''), xLabel: txt(c.xLabel), yLabel: txt(c.yLabel), trend: c.trend !== false } : null;
       }).filter(Boolean);
     }
     function blankBook() { const b = new E.Book(); b.addSheet('Sheet1'); return b; }
@@ -1496,6 +2546,7 @@ defineApp({
       return { book, charts: [], delim };
     }
     function loadBook(book, charts = [], activeName = null) {
+      for (const sh of book.sheets) sh.meta = cleanMeta(sh.meta);
       S.book = book;
       S.sid = ((activeName && book.sheetNamed(activeName)) || book.sheets[0]).id;
       S.charts = charts;
@@ -1504,6 +2555,8 @@ defineApp({
       S.cur = { r: 0, c: 0 }; S.anchor = { r: 0, c: 0 }; S.focus = { r: 0, c: 0 };
       theme = null;
       resetRows();
+      FR = -1;
+      metaChanged();
       grid.scrollTop = 0; grid.scrollLeft = 0;
       paint(true);
       renderTabs(); renderCharts(); syncBars(); gridLabel();
@@ -1569,11 +2622,13 @@ defineApp({
 
     const bookJSON = () => S.book.toJSON({
       active: sheet().name,
-      charts: S.charts.filter(c => S.book.sheet(c.sid)).map(c => ({ sheet: S.book.sheet(c.sid).name, range: E.rangeName(c.g), type: c.type, title: c.title })),
+      charts: S.charts.filter(c => S.book.sheet(c.sid)).map(c => ({ sheet: S.book.sheet(c.sid).name, range: E.rangeName(c.g), type: c.type, title: c.title,
+        ...(c.xLabel ? { xLabel: c.xLabel } : {}), ...(c.yLabel ? { yLabel: c.yLabel } : {}), ...(c.trend === false ? { trend: false } : {}) })),
     });
     /** plain values on one sheet: a CSV can hold all of it */
     function csvSafe() {
       if (S.book.sheets.length !== 1 || S.charts.length) return false;
+      if (Object.keys(S.book.sheets[0].meta || {}).length) return false;      /* filters, freeze, merges, rules */
       for (const x of S.book.sheets[0].cells.values()) if (x.f || x.s) return false;
       return true;
     }
@@ -1799,6 +2854,7 @@ defineApp({
         const x = S.book.cell(S.sid, S.cur.r, S.cur.c);
         if (x && x.v instanceof E.CellError) parts.push(h('span.ss-status__err', { text: `${x.v.code} ${x.v.why}` }));
       }
+      if (hidden.size) { const f = filterSpan(); if (f) parts.push(h('span.ss-status__flt', icon('filter'), ' Showing ', h('b', { text: String(visibleCount()) }), ` of ${f.r2 - f.r1} rows`)); }
       const d = S.doc;
       let ic, text;
       if (S.problem) { ic = 'alert'; text = S.problem; }
@@ -1819,6 +2875,7 @@ defineApp({
       const x = S.book.cell(S.sid, S.cur.r, S.cur.c), s = (x && x.s) || {};
       bBold.setAttribute('aria-pressed', String(!!s.b));
       bItal.setAttribute('aria-pressed', String(!!s.i));
+      bWrap.setAttribute('aria-pressed', String(!!s.wr));
       for (const [k, b] of Object.entries(bAl)) b.setAttribute('aria-pressed', String(s.al === k));
       const f = fmtOf(x);
       selFmt.value = f && NF.some(n => n[0] === f.nf) ? f.nf : f && f.nf === 'datetime' ? 'date' : 'general';
@@ -1849,6 +2906,7 @@ defineApp({
     app.sheetsDebug = {
       get book() { return S.book; }, get state() { return S; }, stats, get rowsInDom() { return rowsOn.size; },
       openPath, exportChart, exportCsv,
+      get hidden() { return [...hidden]; }, get frozen() { return { r: FR, c: FC }; }, rowTop: r => rowTop(r), rowH: r => rowH(r),
     };
 
     /* ================= start ================= */
@@ -1860,11 +2918,16 @@ defineApp({
     if (opts && opts.path) openPath(vfs.norm(opts.path));
     requestAnimationFrame(() => { if (!S.dead && !app.querySelector('.ss-dlg')) grid.focus({ preventScroll: true }); });
 
+    win.state.save = saveCmd;              /* File › Save in the menu bar */
+    win.state.print = printSheet;          /* File › Print */
+
     return () => {
       if (S.edit) commitEdit(0, 0, false);
       if (tSave) saveNow();
       if (tRec) saveRecovery();
       S.dead = true;
+      AI.ctl?.abort();
+      if (printEl) { printEl.remove(); document.documentElement.classList.remove('ss-printing'); }
       clearTimeout(tSave); clearTimeout(tRec); clearTimeout(sayT);
       cancelAnimationFrame(rafScroll); cancelAnimationFrame(rafTheme);
       document.removeEventListener('copy', onCopy);
